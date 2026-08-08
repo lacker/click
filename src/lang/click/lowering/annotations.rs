@@ -855,6 +855,26 @@ impl AnnotationLowerer<'_> {
             ContractExpression::CBinding(name) => {
                 self.lower_c_fragment_to_spec(&CExpression::Variable(name.clone()), environment)
             }
+            ContractExpression::ResourceCount(resource) => {
+                let ResourceClause::Declared {
+                    kind: ResourceKind::Counted,
+                    name,
+                    arguments,
+                    ..
+                } = resource.as_ref()
+                else {
+                    return Err("`count(...)` expects a counted resource".to_string());
+                };
+                Ok(SpecExpression::CountedResourceCount {
+                    name: name.clone(),
+                    arguments: arguments
+                        .iter()
+                        .map(|argument| {
+                            self.lower_contract_expression_to_spec(argument, environment)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                })
+            }
             ContractExpression::Old(expression) => {
                 let old_environment =
                     environment.old_state(&self.entry_values, self.entry_state.memory())?;

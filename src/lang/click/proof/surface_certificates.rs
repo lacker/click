@@ -2362,6 +2362,12 @@ fn contract_expression_mentions_c_local(
 ) -> bool {
     match expression {
         ContractExpression::CBinding(_) => false,
+        ContractExpression::ResourceCount(resource) => match resource.as_ref() {
+            ResourceClause::Declared { arguments, .. } => arguments
+                .iter()
+                .any(|argument| contract_expression_mentions_c_local(argument, parameter_names)),
+            _ => false,
+        },
         ContractExpression::CFragment(CExpression::Variable(name)) => {
             !parameter_names.contains(name.as_str())
         }

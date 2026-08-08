@@ -20,6 +20,11 @@ lifetime support with a checked copy helper to verify ordinary
 malloc-copy-install-free growth, including unchanged failure and live-prefix
 preservation on success.
 
+`examples/refcount/` verifies a heap object's counted-resource lifecycle. Its
+population body owns the allocation and object once, `count(object_ref(obj))`
+tracks the stored reference count, and the project covers initialization,
+retain, nonfinal release, final release, and free across opaque calls.
+
 ## Basic Function Contracts
 
 - `mdtests/scalar.md`: simplest scalar postcondition.

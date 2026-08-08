@@ -891,6 +891,15 @@ pub(super) fn c_function_contract_certification_assumptions(
     for proposition in resource_definition_facts {
         assumptions = assumptions.assume_proposition(proposition);
     }
+    let population_facts = evaluate_counted_population_fact_propositions(
+        &required_resources,
+        function.composite_resource_definitions(),
+        &entry_state,
+        &assumptions,
+    )?;
+    for proposition in population_facts {
+        assumptions = assumptions.assume_proposition(proposition);
+    }
     let expanded_required_resources = expand_all_composite_resource_facts(
         &required_resources,
         function.composite_resource_definitions(),

@@ -373,6 +373,7 @@ fn infer_contract_expression_type(
         // particular, `c(result)` must not inherit the type of built-in
         // contract `result`.
         ContractExpression::CBinding(_) => Ok(None),
+        ContractExpression::ResourceCount(_) => Ok(Some(C0Type::Int32)),
         ContractExpression::Old(expression) | ContractExpression::At { expression, .. } => {
             infer_contract_expression_type(expression, variables, click_functions, context)
         }
@@ -844,6 +845,17 @@ fn validate_contract_expression_calls(
 ) -> Result<(), ClickError> {
     match expression {
         ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => Ok(()),
+        ContractExpression::ResourceCount(resource) => match resource.as_ref() {
+            ResourceClause::Declared { arguments, .. } => {
+                for argument in arguments {
+                    validate_contract_expression_calls(argument, click_functions, context)?;
+                }
+                Ok(())
+            }
+            _ => Err(ClickError::new(
+                "`count(...)` expects a declared counted resource",
+            )),
+        },
         ContractExpression::Field { base, .. } => {
             validate_contract_expression_calls(base, click_functions, context)
         }

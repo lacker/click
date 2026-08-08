@@ -743,6 +743,52 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                 .filter_map(c_expression_path_value)
                 .collect()
         }
+        SpecExpression::CountedResourceCount { name, arguments } => {
+            let mut argument_paths = vec![(Vec::<CValue>::new(), Vec::new(), Vec::new())];
+            for argument in arguments {
+                let mut next = Vec::new();
+                for (values, facts, obligations) in argument_paths {
+                    let path_assumptions =
+                        assumptions_with_path_context(assumptions, &facts, &obligations);
+                    for argument_path in evaluate_spec_expression_paths_with_loop_entry(
+                        state,
+                        argument,
+                        loop_entry_state,
+                        &path_assumptions,
+                        budget,
+                    )? {
+                        let Some((merged_facts, merged_obligations)) =
+                            merge_execution_pure_facts_and_obligations(
+                                &facts,
+                                &obligations,
+                                &argument_path.facts,
+                                &argument_path.obligations,
+                                assumptions,
+                            )
+                        else {
+                            continue;
+                        };
+                        let mut next_values = values.clone();
+                        next_values.push(argument_path.value);
+                        next.push((next_values, merged_facts, merged_obligations));
+                    }
+                }
+                argument_paths = next;
+            }
+            argument_paths
+                .into_iter()
+                .filter_map(|(arguments, facts, obligations)| {
+                    state
+                        .counted_population(name, &arguments)
+                        .cloned()
+                        .map(|count| SpecExpressionPath {
+                            value: CValue::Int32(count),
+                            facts,
+                            obligations,
+                        })
+                })
+                .collect()
+        }
         SpecExpression::Add(left, right) => {
             evaluate_spec_add_paths(state, left, right, loop_entry_state, assumptions, budget)?
         }

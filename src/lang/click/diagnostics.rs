@@ -948,6 +948,9 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
             format!("{}->{field}", describe_contract_expression(base))
         }
         ContractExpression::CBinding(name) => format!("c({name})"),
+        ContractExpression::ResourceCount(resource) => {
+            format!("count({})", describe_resource_clause(resource))
+        }
         ContractExpression::Old(expression) => {
             format!("old({})", describe_contract_expression(expression))
         }

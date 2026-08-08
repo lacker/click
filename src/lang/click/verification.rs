@@ -1525,31 +1525,46 @@ pub(in crate::lang::click) fn composite_resource_definitions(
                 } if name == definition.name()
             )
         });
-        definitions.push(CCompositeResourceDefinition::new(
-            definition.name(),
-            definition
-                .parameters()
-                .iter()
-                .map(|parameter| {
-                    crate::kernel::CParameter::new(
-                        parameter.name(),
-                        parameter.c_type().to_kernel_type(),
-                    )
-                })
-                .collect(),
-            lower_composite_resource_condition(
-                definition,
-                predicate_environment,
-                click_function_environment,
-            )?,
-            recursive,
-            contains,
-            lower_composite_resource_facts(
-                definition,
-                predicate_environment,
-                click_function_environment,
-            )?,
-        ));
+        let parameters = definition
+            .parameters()
+            .iter()
+            .map(|parameter| {
+                crate::kernel::CParameter::new(
+                    parameter.name(),
+                    parameter.c_type().to_kernel_type(),
+                )
+            })
+            .collect();
+        let condition = lower_composite_resource_condition(
+            definition,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        let facts = lower_composite_resource_facts(
+            definition,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        definitions.push(
+            if definition.multiplicity() == ResourceMultiplicity::Counted {
+                CCompositeResourceDefinition::counted_population(
+                    definition.name(),
+                    parameters,
+                    condition,
+                    contains,
+                    facts,
+                )
+            } else {
+                CCompositeResourceDefinition::new(
+                    definition.name(),
+                    parameters,
+                    condition,
+                    recursive,
+                    contains,
+                    facts,
+                )
+            },
+        );
     }
     Ok(definitions)
 }

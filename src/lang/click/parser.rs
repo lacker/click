@@ -351,9 +351,6 @@ impl Parser {
                 return Err(self.error("expected `;` or composite resource body, got end of input"));
             }
         };
-        if multiplicity == ResourceMultiplicity::Counted && composite_body.is_some() {
-            return Err(self.error("a `counted resource` declaration must end with `;`"));
-        }
         self.current_struct_params = previous_struct_params;
         Ok(ResourceDefinition {
             name,
@@ -2723,6 +2720,21 @@ impl Parser {
                 pointer: Box::new(pointer),
                 value_type,
             }));
+        }
+
+        // `count(resource(args))` is the counted-resource population operator.
+        // Keep the existing pure `count(array, lo, hi, value)` function
+        // unambiguous by recognizing the operator only when its first token is
+        // itself visibly a resource call.
+        if self.peek_ident() == Some("count")
+            && self.peek_next() == Some(&Token::LParen)
+            && matches!(self.tokens.get(self.position + 2), Some(Token::Ident(_)))
+            && self.tokens.get(self.position + 3) == Some(&Token::LParen)
+        {
+            self.position += 2;
+            let resource = self.parse_declared_resource_call()?;
+            self.expect(Token::RParen)?;
+            return Ok(ContractExpression::ResourceCount(Box::new(resource)));
         }
 
         if matches!(self.peek(), Some(Token::Ident(_))) && self.peek_next() == Some(&Token::LParen)

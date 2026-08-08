@@ -421,6 +421,7 @@ pub(in crate::lang::click) fn resource_argument_to_c_expression(
             Box::new(resource_argument_to_c_expression(index)?),
         )),
         ContractExpression::Old(_)
+        | ContractExpression::ResourceCount(_)
         | ContractExpression::At { .. }
         | ContractExpression::If { .. }
         | ContractExpression::RangeFold { .. }

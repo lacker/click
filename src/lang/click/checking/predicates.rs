@@ -991,6 +991,9 @@ pub(in crate::lang::click) fn evaluate_predicate_contract_expression(
         ContractExpression::CBinding(name) => Err(format!(
             "`c({name})` is not available in predicate definitions"
         )),
+        ContractExpression::ResourceCount(_) => {
+            Err("`count(...)` is only available in a counted resource population body".to_string())
+        }
         ContractExpression::Old(_) => {
             Err("`old(...)` is not available in predicate definitions".to_string())
         }

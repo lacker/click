@@ -383,6 +383,9 @@ impl KernelPropositionLowerer {
             ContractExpression::CBinding(name) => {
                 self.lower_requirement_c_expression(&CExpression::Variable(name.clone()))
             }
+            ContractExpression::ResourceCount(_) => Err(ClickError::new(
+                "`count(...)` requires an active counted resource population",
+            )),
             ContractExpression::Old(_) => Err(ClickError::new(
                 "`old(...)` is not available in `requires` clauses",
             )),

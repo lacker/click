@@ -1578,6 +1578,16 @@ pub(super) fn initial_claim_context(
 > {
     let (mut state, arguments) =
         initial_call_state(function_block.requires(), parsed_function.parameters())?;
+    let (population_state, population_facts) = materialize_counted_population_bodies(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        state,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+    )?;
+    state = population_state;
     state = materialize_folded_composite_resource_cells(
         resource_environment,
         parsed_function.parameters(),
@@ -1640,6 +1650,7 @@ pub(super) fn initial_claim_context(
         predicate_environment,
         click_function_environment,
     )?;
+    requirement_pure_facts.extend(population_facts);
     let mut surface_propositions = SurfacePropositionMap::default();
     for requirement in function_block.requires() {
         let surface = match requirement.inner() {

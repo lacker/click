@@ -1,8 +1,8 @@
-# `unfold` rejects a resource without a composite body
+# `unfold` rejects a resource without a body
 
-The composite resource laws (`unfold`, `fold`, `observe`) read the named
-resource's body. A declared token resource has none, so naming one must be
-reported before any law is applied.
+The resource laws (`unfold`, `fold`, `observe`) read the named resource's body.
+Composite and counted resources may provide one. A declared token resource has
+none, so naming one must be reported before any law is applied.
 
 ```c filename=use_token.c
 int32 use_token(int32 fd) {
@@ -26,5 +26,5 @@ int32 use_token(int32 fd) {
 ```
 
 ```expect
-fail: `unfold` expects composite resource `socket_open` to have a body
+fail: `unfold` expects resource `socket_open` to have a body
 ```

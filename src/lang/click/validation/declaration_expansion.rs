@@ -43,10 +43,10 @@ pub(in crate::lang::click) fn expand_declared_resource_clauses(
                         .iter()
                         .map(FunctionParameter::c_type)
                         .collect::<Vec<_>>(),
-                    kind: if definition.composite_body().is_some() {
-                        ResourceKind::Composite
-                    } else if definition.multiplicity() == ResourceMultiplicity::Counted {
+                    kind: if definition.multiplicity() == ResourceMultiplicity::Counted {
                         ResourceKind::Counted
+                    } else if definition.composite_body().is_some() {
+                        ResourceKind::Composite
                     } else {
                         ResourceKind::Token
                     },
@@ -446,6 +446,18 @@ fn expand_declared_resource_proposition(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ClickProposition, ClickError> {
     match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => Ok(ClickProposition::Comparison {
+            left: expand_declared_resource_expression(left, resource_definitions)?,
+            operator,
+            right: expand_declared_resource_expression(right, resource_definitions)?,
+        }),
+        ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
+            expression: expand_declared_resource_expression(expression, resource_definitions)?,
+        }),
         ClickProposition::Separate { left, right } => Ok(ClickProposition::Separate {
             left: expand_declared_resource_subject(left, resource_definitions)?,
             right: expand_declared_resource_subject(right, resource_definitions)?,
@@ -519,8 +531,8 @@ fn expand_declared_resource_proposition(
             item,
             body,
         } => Ok(ClickProposition::RangeAll {
-            start,
-            end,
+            start: expand_declared_resource_expression(start, resource_definitions)?,
+            end: expand_declared_resource_expression(end, resource_definitions)?,
             item,
             body: Box::new(expand_declared_resource_proposition(
                 *body,
@@ -533,16 +545,149 @@ fn expand_declared_resource_proposition(
             item,
             body,
         } => Ok(ClickProposition::RangeAny {
-            start,
-            end,
+            start: expand_declared_resource_expression(start, resource_definitions)?,
+            end: expand_declared_resource_expression(end, resource_definitions)?,
             item,
             body: Box::new(expand_declared_resource_proposition(
                 *body,
                 resource_definitions,
             )?),
         }),
+        ClickProposition::PredicateCall { name, arguments } => {
+            Ok(ClickProposition::PredicateCall {
+                name,
+                arguments: arguments
+                    .into_iter()
+                    .map(|argument| {
+                        expand_declared_resource_expression(argument, resource_definitions)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            })
+        }
         proposition => Ok(proposition),
     }
+}
+
+fn expand_declared_resource_expression(
+    expression: ContractExpression,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+) -> Result<ContractExpression, ClickError> {
+    let recurse =
+        |expression| expand_declared_resource_expression(expression, resource_definitions);
+    Ok(match expression {
+        ContractExpression::ResourceCount(resource) => {
+            let resource = expand_declared_resource_clause(*resource, resource_definitions)?;
+            if !matches!(
+                resource,
+                ResourceClause::Declared {
+                    kind: ResourceKind::Counted,
+                    ..
+                }
+            ) {
+                return Err(ClickError::new("`count(...)` expects a counted resource"));
+            }
+            ContractExpression::ResourceCount(Box::new(resource))
+        }
+        ContractExpression::Field {
+            base,
+            field,
+            lowered,
+        } => ContractExpression::Field {
+            base: Box::new(recurse(*base)?),
+            field,
+            lowered,
+        },
+        ContractExpression::Old(body) => ContractExpression::Old(Box::new(recurse(*body)?)),
+        ContractExpression::At {
+            selector,
+            expression,
+        } => ContractExpression::At {
+            selector,
+            expression: Box::new(recurse(*expression)?),
+        },
+        ContractExpression::Add(left, right) => {
+            ContractExpression::Add(Box::new(recurse(*left)?), Box::new(recurse(*right)?))
+        }
+        ContractExpression::Subtract(left, right) => {
+            ContractExpression::Subtract(Box::new(recurse(*left)?), Box::new(recurse(*right)?))
+        }
+        ContractExpression::Multiply(left, right) => {
+            ContractExpression::Multiply(Box::new(recurse(*left)?), Box::new(recurse(*right)?))
+        }
+        ContractExpression::Divide(left, right) => {
+            ContractExpression::Divide(Box::new(recurse(*left)?), Box::new(recurse(*right)?))
+        }
+        ContractExpression::Remainder(left, right) => {
+            ContractExpression::Remainder(Box::new(recurse(*left)?), Box::new(recurse(*right)?))
+        }
+        ContractExpression::ShiftLeft(left, right) => {
+            ContractExpression::ShiftLeft(Box::new(recurse(*left)?), Box::new(recurse(*right)?))
+        }
+        ContractExpression::ShiftRight(left, right) => {
+            ContractExpression::ShiftRight(Box::new(recurse(*left)?), Box::new(recurse(*right)?))
+        }
+        ContractExpression::BitwiseAnd(left, right) => {
+            ContractExpression::BitwiseAnd(Box::new(recurse(*left)?), Box::new(recurse(*right)?))
+        }
+        ContractExpression::BitwiseOr(left, right) => {
+            ContractExpression::BitwiseOr(Box::new(recurse(*left)?), Box::new(recurse(*right)?))
+        }
+        ContractExpression::BitwiseXor(left, right) => {
+            ContractExpression::BitwiseXor(Box::new(recurse(*left)?), Box::new(recurse(*right)?))
+        }
+        ContractExpression::BitwiseNot(body) => {
+            ContractExpression::BitwiseNot(Box::new(recurse(*body)?))
+        }
+        ContractExpression::Index(base, index) => {
+            ContractExpression::Index(Box::new(recurse(*base)?), Box::new(recurse(*index)?))
+        }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => ContractExpression::If {
+            condition: Box::new(expand_declared_resource_proposition(
+                *condition,
+                resource_definitions,
+            )?),
+            then_branch: Box::new(recurse(*then_branch)?),
+            else_branch: Box::new(recurse(*else_branch)?),
+        },
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => ContractExpression::RangeFold {
+            start: Box::new(recurse(*start)?),
+            end: Box::new(recurse(*end)?),
+            initial: Box::new(recurse(*initial)?),
+            accumulator,
+            item,
+            body: Box::new(recurse(*body)?),
+        },
+        ContractExpression::Let {
+            name,
+            c_type,
+            value,
+            body,
+        } => ContractExpression::Let {
+            name,
+            c_type,
+            value: Box::new(recurse(*value)?),
+            body: Box::new(recurse(*body)?),
+        },
+        ContractExpression::Call { name, arguments } => ContractExpression::Call {
+            name,
+            arguments: arguments
+                .into_iter()
+                .map(recurse)
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        expression => expression,
+    })
 }
 
 fn declared_resource_info(

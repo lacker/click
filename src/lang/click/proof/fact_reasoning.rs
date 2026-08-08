@@ -637,8 +637,15 @@ pub(super) fn describe_condition_search_miss(
         .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
         .count();
     format!(
-        "condition-certificate premise search did not derive {} from {candidate_count} ambient condition facts; smart search tries individual facts and pairs and is heuristic, so split the execution into smaller steps or provide the exact premises with simple tactics",
+        "condition-certificate premise search did not derive {} from {candidate_count} ambient condition facts: {}; smart search tries individual facts and pairs and is heuristic, so split the execution into smaller steps or provide the exact premises with simple tactics",
         describe_pure_fact(proposition, parameters, arguments),
+        describe_pure_facts(
+            &available
+                .iter()
+                .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
+                .cloned()
+                .collect::<Vec<_>>()
+        ),
     )
 }
 

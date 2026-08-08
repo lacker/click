@@ -147,6 +147,25 @@ impl CCompositeResourceDefinition {
             parameters,
             condition,
             recursive,
+            counted_population: false,
+            contains,
+            facts,
+        }
+    }
+
+    pub fn counted_population(
+        name: impl Into<String>,
+        parameters: Vec<CParameter>,
+        condition: Option<SpecProposition>,
+        contains: Vec<CResourceSpec>,
+        facts: Vec<SpecProposition>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            parameters,
+            condition,
+            recursive: false,
+            counted_population: true,
             contains,
             facts,
         }
@@ -166,6 +185,14 @@ impl CCompositeResourceDefinition {
 
     pub fn is_recursive(&self) -> bool {
         self.recursive
+    }
+
+    pub fn is_counted_population(&self) -> bool {
+        self.counted_population
+    }
+
+    pub fn needs_outcome_resource_transfer(&self) -> bool {
+        self.recursive || self.counted_population
     }
 
     pub fn contains(&self) -> &[CResourceSpec] {

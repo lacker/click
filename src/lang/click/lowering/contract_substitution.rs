@@ -780,6 +780,13 @@ pub(in crate::lang::click) fn collect_contract_expression_referenced_names(
         ContractExpression::CBinding(name) => {
             names.insert(name.clone());
         }
+        ContractExpression::ResourceCount(resource) => {
+            if let ResourceClause::Declared { arguments, .. } = resource.as_ref() {
+                for argument in arguments {
+                    collect_contract_expression_referenced_names(argument, names);
+                }
+            }
+        }
         ContractExpression::Old(expression) | ContractExpression::BitwiseNot(expression) => {
             collect_contract_expression_referenced_names(expression, names);
         }
@@ -929,6 +936,30 @@ pub(in crate::lang::click) fn substitute_contract_expression(
 ) -> Result<ContractExpression, String> {
     match expression {
         ContractExpression::CBinding(_) => Ok(expression.clone()),
+        ContractExpression::ResourceCount(resource) => {
+            let ResourceClause::Declared {
+                access,
+                kind,
+                name,
+                arguments,
+                parameter_types,
+            } = resource.as_ref()
+            else {
+                return Err("`count(...)` expects a declared counted resource".to_string());
+            };
+            Ok(ContractExpression::ResourceCount(Box::new(
+                ResourceClause::Declared {
+                    access: *access,
+                    kind: *kind,
+                    name: name.clone(),
+                    arguments: arguments
+                        .iter()
+                        .map(|argument| substitute_contract_expression(argument, substitutions))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    parameter_types: parameter_types.clone(),
+                },
+            )))
+        }
         ContractExpression::CFragment(CExpression::Variable(name)) => Ok(substitutions
             .get(name)
             .cloned()
@@ -1247,6 +1278,7 @@ pub(in crate::lang::click) fn contract_expression_as_c_fragment(
         ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
         ContractExpression::CBinding(name) => Some(CExpression::Variable(name.clone())),
+        ContractExpression::ResourceCount(_) => None,
         ContractExpression::Old(_) => None,
         ContractExpression::At { .. } => None,
         ContractExpression::Add(left, right) => Some(CExpression::Add(
@@ -1323,6 +1355,7 @@ pub(in crate::lang::click) fn contract_expression_to_c_fragment(
         ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
         ContractExpression::CBinding(name) => Some(CExpression::Variable(name.clone())),
+        ContractExpression::ResourceCount(_) => None,
         ContractExpression::Old(_) => None,
         ContractExpression::At { .. } => None,
         ContractExpression::Add(left, right) => Some(CExpression::Add(

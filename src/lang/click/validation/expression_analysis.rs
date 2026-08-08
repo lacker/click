@@ -45,6 +45,12 @@ pub(in crate::lang::click) fn contains_old_expression(expression: &ContractExpre
     match expression {
         ContractExpression::Old(_) => true,
         ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => false,
+        ContractExpression::ResourceCount(resource) => match resource.as_ref() {
+            ResourceClause::Declared { arguments, .. } => {
+                arguments.iter().any(contains_old_expression)
+            }
+            _ => false,
+        },
         ContractExpression::Field { base, .. } => contains_old_expression(base),
         ContractExpression::At { expression, .. } => contains_old_expression(expression),
         ContractExpression::Add(left, right)
@@ -152,6 +158,12 @@ pub(in crate::lang::click) fn contains_at_expression(expression: &ContractExpres
     match expression {
         ContractExpression::At { .. } => true,
         ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => false,
+        ContractExpression::ResourceCount(resource) => match resource.as_ref() {
+            ResourceClause::Declared { arguments, .. } => {
+                arguments.iter().any(contains_at_expression)
+            }
+            _ => false,
+        },
         ContractExpression::Field { base, .. } => contains_at_expression(base),
         ContractExpression::Old(expression) | ContractExpression::BitwiseNot(expression) => {
             contains_at_expression(expression)
@@ -260,6 +272,13 @@ pub(super) fn collect_click_function_calls(
 ) {
     match expression {
         ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => {}
+        ContractExpression::ResourceCount(resource) => {
+            if let ResourceClause::Declared { arguments, .. } = resource.as_ref() {
+                for argument in arguments {
+                    collect_click_function_calls(argument, calls);
+                }
+            }
+        }
         ContractExpression::Field { base, .. } => collect_click_function_calls(base, calls),
         ContractExpression::Old(body) => collect_click_function_calls(body, calls),
         ContractExpression::At { expression, .. } => {
@@ -607,6 +626,14 @@ fn validate_recursive_calls_in_expression(
     };
     match expression {
         ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => Ok(()),
+        ContractExpression::ResourceCount(resource) => {
+            if let ResourceClause::Declared { arguments, .. } = resource.as_ref() {
+                for argument in arguments {
+                    recurse(argument, lower_bounds)?;
+                }
+            }
+            Ok(())
+        }
         ContractExpression::Field { base, .. } => recurse(base, lower_bounds),
         ContractExpression::Old(body) | ContractExpression::BitwiseNot(body) => {
             recurse(body, lower_bounds)

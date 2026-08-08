@@ -631,4 +631,44 @@ impl CState {
     pub fn resources(&self) -> &ResourceContext {
         &self.resources
     }
+
+    pub fn with_counted_population(
+        mut self,
+        name: impl Into<String>,
+        arguments: Vec<CValue>,
+        count: Bitvector32Term,
+    ) -> Self {
+        let name = name.into();
+        if let Some(population) = self
+            .counted_populations
+            .iter_mut()
+            .find(|population| population.name == name && population.arguments == arguments)
+        {
+            population.count = count;
+        } else {
+            self.counted_populations.push(CCountedPopulation {
+                name,
+                arguments,
+                count,
+            });
+        }
+        self
+    }
+
+    pub fn counted_population(&self, name: &str, arguments: &[CValue]) -> Option<&Bitvector32Term> {
+        self.counted_populations
+            .iter()
+            .find(|population| population.name == name && population.arguments == arguments)
+            .map(|population| &population.count)
+    }
+
+    pub fn without_counted_population(mut self, name: &str, arguments: &[CValue]) -> Self {
+        self.counted_populations
+            .retain(|population| population.name != name || population.arguments != arguments);
+        self
+    }
+
+    pub fn counted_populations(&self) -> &[CCountedPopulation] {
+        &self.counted_populations
+    }
 }

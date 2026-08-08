@@ -31,6 +31,38 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
             .find_map(|(local_name, value)| (local_name == name).then(|| value.clone()))
             .or_else(|| parameter_values.get(name).cloned())
             .ok_or_else(|| format!("C binding `{name}` is not in scope")),
+        ContractExpression::ResourceCount(resource) => {
+            let ResourceClause::Declared {
+                kind: ResourceKind::Counted,
+                name,
+                arguments,
+                ..
+            } = resource.as_ref()
+            else {
+                return Err("`count(...)` expects a counted resource".to_string());
+            };
+            let mut values = Vec::with_capacity(arguments.len());
+            for argument in arguments {
+                values.push(evaluate_contract_expression_with_environment(
+                    parameter_values,
+                    array_refs,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    argument,
+                    predicate_environment,
+                    click_function_environment,
+                    program_point_states,
+                    active_functions,
+                )?);
+            }
+            post_state
+                .counted_population(name, &values)
+                .cloned()
+                .map(CValue::Int32)
+                .ok_or_else(|| format!("counted resource population `{name}` is not in scope"))
+        }
         ContractExpression::Old(expression) => evaluate_contract_expression_with_environment(
             parameter_values,
             &array_refs_with_memory(array_refs, pre_state.memory()),

@@ -140,7 +140,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                 && function
                     .composite_resource_definitions()
                     .iter()
-                    .any(CCompositeResourceDefinition::is_recursive)
+                    .any(CCompositeResourceDefinition::needs_outcome_resource_transfer)
             {
                 function_outcome_from_body_with_resource_transfer(
                     state,
@@ -277,7 +277,7 @@ pub(super) fn execute_c_function_verification_paths(
                 && function
                     .composite_resource_definitions()
                     .iter()
-                    .any(CCompositeResourceDefinition::is_recursive)
+                    .any(CCompositeResourceDefinition::needs_outcome_resource_transfer)
             {
                 function_outcome_from_body_with_resource_transfer(
                     state,
@@ -673,12 +673,60 @@ fn execute_verified_function_rule(
                 function.return_type(),
             );
         }
-        post_state.resources = transfer.caller_resources_after_requirements.clone();
+        let mut transition_state = post_state
+            .clone()
+            .with_resource_context(transfer.callee_resources.clone());
+        let mut population_obligations = Vec::new();
+        let population_transition = match apply_counted_population_transitions(
+            caller_state,
+            &mut transition_state,
+            function,
+            &arguments_path.values,
+            &effective_assumptions,
+            &mut population_obligations,
+            budget,
+        )? {
+            Ok(transition) => transition,
+            Err(error) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
+        };
+        post_state.counted_populations = transition_state.counted_populations;
+        for obligation in population_obligations {
+            facts.push(ExecutionPureFact::certified(
+                obligation.proposition().clone(),
+            ));
+        }
+        for proposition in &population_transition.population_facts {
+            facts.push(ExecutionPureFact::certified(proposition.clone()));
+        }
+        let caller_resources_after_requirements =
+            match apply_counted_population_transition_resources(
+                transfer.caller_resources_after_requirements.clone(),
+                &population_transition,
+                &effective_assumptions,
+            ) {
+                Ok(resources) => resources,
+                Err(error) => {
+                    paths.push(CFunctionPath {
+                        outcome: CFunctionOutcome::RuntimeError(error),
+                        facts,
+                        obligations,
+                    });
+                    continue;
+                }
+            };
+        post_state.resources = caller_resources_after_requirements.clone();
         let output_resource_state =
             with_contract_argument_views(&post_state, function, &arguments_path.values);
 
         let return_resources = match evaluate_function_return_resources(
-            &transfer.caller_resources_after_requirements,
+            &caller_resources_after_requirements,
             &output_resource_state,
             post_state.resources(),
             function,
@@ -748,6 +796,7 @@ fn execute_verified_function_rule(
         let mut return_state = caller_state.clone();
         return_state.memory = post_state.memory;
         return_state.resources = return_resources;
+        return_state.counted_populations = post_state.counted_populations;
         paths.push(CFunctionPath {
             outcome: CFunctionOutcome::Return {
                 value: result,
@@ -1008,6 +1057,7 @@ pub(super) fn bind_c_function_arguments(
     let mut callee_state = CState::new()
         .with_memory(caller_state.memory.clone())
         .with_resource_context(caller_state.resources.clone());
+    callee_state.counted_populations = caller_state.counted_populations.clone();
     for (parameter, value) in function.parameters().iter().zip(values) {
         let value = coerce_c_null_pointer_constant(value.clone(), parameter.c_type())?;
         callee_state
@@ -1015,6 +1065,80 @@ pub(super) fn bind_c_function_arguments(
             .set_typed(parameter.name().to_string(), value, parameter.c_type());
     }
     Some(callee_state)
+}
+
+fn evaluate_counted_population_body_resources(
+    required_resources: &ResourceContext,
+    callee_state: &CState,
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
+    let mut body_resources = ResourceContext::new();
+    let evaluation_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
+    for required in required_resources.facts() {
+        let CResource::Counted { name, arguments } = required.resource() else {
+            continue;
+        };
+        let Some(definition) = definitions
+            .iter()
+            .find(|definition| definition.is_counted_population() && definition.name() == name)
+        else {
+            continue;
+        };
+        if definition.parameters().len() != arguments.len() {
+            return Ok(Err(CRuntimeError::FunctionContract(format!(
+                "counted population `{name}` received the wrong number of arguments"
+            ))));
+        }
+        let mut population_state = callee_state.clone();
+        for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+            if parameter.c_type() != argument.c_type() {
+                return Ok(Err(CRuntimeError::TypeMismatch));
+            }
+            population_state.locals.set_typed(
+                parameter.name().to_string(),
+                argument.clone(),
+                parameter.c_type(),
+            );
+        }
+        let Some(body_active) = evaluate_composite_resource_body_condition(
+            definition,
+            &population_state,
+            &evaluation_assumptions,
+            budget,
+        ) else {
+            return Ok(Err(CRuntimeError::FunctionContract(format!(
+                "counted population `{name}` body condition is not decidable"
+            ))));
+        };
+        if !body_active {
+            continue;
+        }
+        for contained in definition.contains() {
+            let fact = match evaluate_function_resource_spec(
+                &population_state,
+                contained,
+                &evaluation_assumptions,
+                budget,
+            )? {
+                Ok(fact) => fact,
+                Err(error) => return Ok(Err(error)),
+            };
+            if !body_resources.satisfies_fact(&fact, assumptions) {
+                body_resources = match body_resources
+                    .try_compose_with_facts_delaying_normalization([fact], assumptions)
+                {
+                    Ok(resources) => resources,
+                    Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+                };
+            }
+        }
+    }
+    Ok(Ok(body_resources))
 }
 
 fn prepare_function_resource_transfer(
@@ -1055,6 +1179,16 @@ fn prepare_function_resource_transfer(
         callee_state.memory(),
         assumptions,
     );
+    let population_body_resources = match evaluate_counted_population_body_resources(
+        &required_resources,
+        callee_state,
+        function.composite_resource_definitions(),
+        assumptions,
+        budget,
+    )? {
+        Ok(resources) => resources,
+        Err(error) => return Ok(Err(error)),
+    };
     let required_composite_heads = required_resources
         .facts()
         .iter()
@@ -1080,6 +1214,24 @@ fn prepare_function_resource_transfer(
     } else {
         canonical_resources
     };
+    for body_resource in population_body_resources.facts() {
+        if !caller_state
+            .resources()
+            .satisfies_fact(body_resource, assumptions)
+        {
+            return Ok(Err(CRuntimeError::MissingResource {
+                resource: body_resource.clone(),
+            }));
+        }
+        if !callee_resources.satisfies_fact(body_resource, assumptions) {
+            callee_resources = match callee_resources
+                .try_compose_with_facts_delaying_normalization([body_resource.clone()], assumptions)
+            {
+                Ok(resources) => resources,
+                Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+            };
+        }
+    }
     if preserve_explicit_representation && has_explicit_representation {
         let viewed_composites = caller_state
             .resources()
@@ -1133,6 +1285,42 @@ fn prepare_function_resource_transfer(
                         .without_exact_representation(&core)
                         .expect("an exact projected resource core should be removable");
                 }
+            }
+        }
+        if let CResource::Counted { name, arguments } = resource.resource()
+            && !return_resources.satisfies_fact(resource, assumptions)
+            && callee_state
+                .counted_population(name, arguments)
+                .is_some_and(|count| {
+                    assumptions.proves(&Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(count.clone()),
+                            Box::new(Bitvector32Term::Constant(1)),
+                        ),
+                        true,
+                    ))
+                })
+        {
+            let singleton = ResourceContext::new().unchecked_with_fact(resource.clone());
+            let body = match evaluate_counted_population_body_resources(
+                &singleton,
+                callee_state,
+                function.composite_resource_definitions(),
+                assumptions,
+                budget,
+            )? {
+                Ok(resources) => resources,
+                Err(error) => return Ok(Err(error)),
+            };
+            let unfolded = body
+                .facts()
+                .iter()
+                .try_fold(return_resources.clone(), |resources, body_resource| {
+                    resources.without_fact(body_resource, assumptions)
+                });
+            if let Some(unfolded) = unfolded {
+                return_resources = unfolded;
+                continue;
             }
         }
         let Some(resources) = consume_resource_fact_definitionally(
@@ -1221,6 +1409,264 @@ fn evaluate_function_return_resources(
     // certified ownership, not newly composed ownership that needs another
     // global validity/normalization pass.
     Ok(Ok(return_resources.unchecked_with_facts(projected_cores)))
+}
+
+fn counted_population_quantities(
+    resources: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+) -> BTreeMap<(String, Vec<CValue>), u32> {
+    let mut quantities = BTreeMap::new();
+    for fact in resources.facts() {
+        let CResource::Counted { name, arguments } = fact.resource() else {
+            continue;
+        };
+        if !definitions
+            .iter()
+            .any(|definition| definition.is_counted_population() && definition.name() == name)
+        {
+            continue;
+        }
+        let quantity = fact.owned_quantity().unwrap_or(0);
+        let total = quantities
+            .entry((name.clone(), arguments.clone()))
+            .or_insert(0u32);
+        *total = total.saturating_add(quantity);
+    }
+    quantities
+}
+
+#[derive(Default)]
+struct CCountedPopulationTransition {
+    initialized_body_resources: Vec<CResourceFact>,
+    finalized_body_resources: Vec<CResourceFact>,
+    population_facts: Vec<Proposition>,
+}
+
+fn apply_counted_population_transition_resources(
+    mut resources: ResourceContext,
+    transition: &CCountedPopulationTransition,
+    assumptions: &Assumptions,
+) -> Result<ResourceContext, CRuntimeError> {
+    for resource in &transition.finalized_body_resources {
+        if resources.facts().contains(resource) {
+            resources = resources
+                .without_exact_representation(resource)
+                .expect("an exact counted population body resource should be removable");
+        }
+    }
+    for resource in &transition.initialized_body_resources {
+        if !resources.satisfies_fact(resource, assumptions) {
+            resources = resources
+                .try_compose_with_facts_delaying_normalization([resource.clone()], assumptions)
+                .map_err(resource_context_runtime_error)?;
+        }
+    }
+    Ok(resources)
+}
+
+fn apply_counted_population_transitions(
+    caller_state: &CState,
+    post_state: &mut CState,
+    function: &CFunction,
+    argument_values: &[CValue],
+    assumptions: &Assumptions,
+    obligations: &mut Vec<ProofObligation>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CCountedPopulationTransition, CRuntimeError>> {
+    let Some(entry_state) = bind_c_function_arguments(caller_state, function, argument_values)
+    else {
+        return Ok(Err(CRuntimeError::TypeMismatch));
+    };
+    let required = match evaluate_function_resource_context(
+        &entry_state,
+        function.resource_requires(),
+        assumptions,
+        budget,
+    )? {
+        Ok(resources) => resources,
+        Err(error) => return Ok(Err(error)),
+    };
+    let post_contract_state = with_contract_argument_views(post_state, function, argument_values);
+    let ensured = match evaluate_function_resource_context(
+        &post_contract_state,
+        function.resource_ensures(),
+        assumptions,
+        budget,
+    )? {
+        Ok(resources) => resources,
+        Err(error) => return Ok(Err(error)),
+    };
+    let required_quantities =
+        counted_population_quantities(&required, function.composite_resource_definitions());
+    let ensured_quantities =
+        counted_population_quantities(&ensured, function.composite_resource_definitions());
+    let keys = required_quantities
+        .keys()
+        .chain(ensured_quantities.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut transition = CCountedPopulationTransition::default();
+    let mut transition_guaranteed_facts = Vec::new();
+    for (name, arguments) in keys {
+        let required_quantity = required_quantities
+            .get(&(name.clone(), arguments.clone()))
+            .copied()
+            .unwrap_or(0);
+        let ensured_quantity = ensured_quantities
+            .get(&(name.clone(), arguments.clone()))
+            .copied()
+            .unwrap_or(0);
+        let new_count =
+            if let Some(old_count) = caller_state.counted_population(&name, &arguments).cloned() {
+                if ensured_quantity >= required_quantity {
+                    Bitvector32Term::add(
+                        old_count,
+                        Bitvector32Term::Constant(ensured_quantity - required_quantity),
+                    )
+                } else {
+                    Bitvector32Term::subtract(
+                        old_count,
+                        Bitvector32Term::Constant(required_quantity - ensured_quantity),
+                    )
+                }
+            } else if required_quantity == 0 && ensured_quantity > 0 {
+                Bitvector32Term::Constant(ensured_quantity)
+            } else {
+                return Ok(Err(CRuntimeError::FunctionContract(format!(
+                    "counted population `{name}` is not initialized"
+                ))));
+            };
+        let population_was_initialized =
+            caller_state.counted_population(&name, &arguments).is_some();
+        let zero = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(new_count.clone()),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        if population_was_initialized && assumptions.proves(&zero) {
+            *post_state = post_state
+                .clone()
+                .without_counted_population(&name, &arguments);
+            let singleton = ResourceContext::new()
+                .unchecked_with_fact(CResourceFact::own_counted(name.clone(), arguments.clone()));
+            let finalized = match evaluate_counted_population_body_resources(
+                &singleton,
+                &entry_state,
+                function.composite_resource_definitions(),
+                assumptions,
+                budget,
+            )? {
+                Ok(resources) => resources,
+                Err(error) => return Ok(Err(error)),
+            };
+            transition
+                .finalized_body_resources
+                .extend(finalized.facts().iter().cloned());
+        } else {
+            *post_state = post_state.clone().with_counted_population(
+                name.clone(),
+                arguments.clone(),
+                new_count.clone(),
+            );
+            // A visible ensured unit witnesses nonemptiness. The transition
+            // preserves the population cardinality invariant algebraically:
+            // entry count >= required units, then both sides change by the
+            // same net contract quantity. Only a population with no locally
+            // returned unit needs an explicit proof that unseen units remain.
+            if ensured_quantity == 0 {
+                obligations.push(
+                    ProofObligation::verification_condition(Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32SignedGreaterThan(
+                            Box::new(new_count),
+                            Box::new(Bitvector32Term::Constant(0)),
+                        ),
+                        true,
+                    ))
+                    .with_context("counted resource population remains nonempty"),
+                );
+            } else {
+                // The entry population contains at least every required unit,
+                // and the transition changes both the population count and
+                // the visible quantity by the same net amount. Therefore a
+                // returned unit is itself a kernel-checked witness that this
+                // population remains nonempty; do not ask the general order
+                // prover to rediscover that resource-algebra law.
+                transition_guaranteed_facts.push(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedGreaterEqual(
+                        Box::new(new_count.clone()),
+                        Box::new(Bitvector32Term::Constant(1)),
+                    ),
+                    true,
+                ));
+            }
+            if !population_was_initialized {
+                let singleton = ResourceContext::new()
+                    .unchecked_with_fact(CResourceFact::own_counted(name, arguments));
+                let initialized = match evaluate_counted_population_body_resources(
+                    &singleton,
+                    post_state,
+                    function.composite_resource_definitions(),
+                    assumptions,
+                    budget,
+                )? {
+                    Ok(resources) => resources,
+                    Err(error) => return Ok(Err(error)),
+                };
+                for resource in initialized.facts() {
+                    if !post_state.resources().satisfies_fact(resource, assumptions) {
+                        return Ok(Err(CRuntimeError::MissingResource {
+                            resource: resource.clone(),
+                        }));
+                    }
+                    transition.initialized_body_resources.push(resource.clone());
+                }
+            }
+        }
+    }
+
+    let post_contract_state = with_contract_argument_views(post_state, function, argument_values);
+    let active_populations = post_contract_state
+        .counted_populations()
+        .iter()
+        .filter_map(|population| {
+            function
+                .composite_resource_definitions()
+                .iter()
+                .any(|definition| {
+                    definition.is_counted_population() && definition.name() == population.name
+                })
+                .then(|| {
+                    CResourceFact::own_counted(
+                        population.name.clone(),
+                        population.arguments.clone(),
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    let active_populations = ResourceContext::new().unchecked_with_facts(active_populations);
+    let Some(population_facts) = evaluate_counted_population_fact_propositions(
+        &active_populations,
+        function.composite_resource_definitions(),
+        &post_contract_state,
+        &Assumptions::new(),
+    ) else {
+        return Ok(Err(CRuntimeError::FunctionContract(
+            "could not evaluate counted population postcondition".to_string(),
+        )));
+    };
+    for proposition in population_facts {
+        transition.population_facts.push(proposition.clone());
+        if !assumptions.proves(&proposition) && !transition_guaranteed_facts.contains(&proposition)
+        {
+            obligations.push(
+                ProofObligation::verification_condition(proposition)
+                    .with_context("counted resource population invariant"),
+            );
+        }
+    }
+    Ok(Ok(transition))
 }
 
 fn resource_fact_composite_head(fact: &CResourceFact) -> Option<(bool, &str)> {
@@ -1643,6 +2089,147 @@ pub(super) fn expand_all_composite_resource_facts_and_propositions(
         )?);
     }
     Some((expanded, propositions))
+}
+
+pub(super) fn evaluate_counted_population_fact_propositions(
+    context: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    state: &CState,
+    assumptions: &Assumptions,
+) -> Option<Vec<Proposition>> {
+    let mut populations = BTreeMap::<(String, Vec<CValue>), u32>::new();
+    for fact in context.facts() {
+        let CResource::Counted { name, arguments } = fact.resource() else {
+            continue;
+        };
+        let quantity = fact.owned_quantity().unwrap_or(0);
+        let entry = populations
+            .entry((name.clone(), arguments.clone()))
+            .or_default();
+        *entry = entry.saturating_add(quantity);
+    }
+    let mut propositions = Vec::new();
+    for ((name, arguments), visible_quantity) in populations {
+        let Some(definition) = definitions
+            .iter()
+            .find(|definition| definition.is_counted_population() && definition.name() == name)
+        else {
+            continue;
+        };
+        if definition.parameters().len() != arguments.len()
+            || state.counted_population(&name, &arguments).is_none()
+        {
+            return None;
+        }
+        if visible_quantity > 0 {
+            propositions.push(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedGreaterEqual(
+                    Box::new(state.counted_population(&name, &arguments)?.clone()),
+                    Box::new(Bitvector32Term::Constant(visible_quantity)),
+                ),
+                true,
+            ));
+        }
+        let mut population_state = state.clone();
+        for (parameter, argument) in definition.parameters().iter().zip(&arguments) {
+            if parameter.c_type() != argument.c_type() {
+                return None;
+            }
+            population_state.locals.set_typed(
+                parameter.name().to_string(),
+                argument.clone(),
+                parameter.c_type(),
+            );
+        }
+        let mut budget = ExecutionBudget::default();
+        let evaluation_assumptions = assumptions
+            .clone()
+            .allow_symbolic_contract_loads()
+            .prefer_symbolic_external_loads();
+        if !evaluate_composite_resource_body_condition(
+            definition,
+            &population_state,
+            &evaluation_assumptions,
+            &mut budget,
+        )? {
+            continue;
+        }
+        let mut fact_assumptions = assumptions.clone();
+        let mut pending = definition.facts().iter().collect::<Vec<_>>();
+        while !pending.is_empty() {
+            let mut next_pending = Vec::new();
+            let mut made_progress = false;
+            for population_fact in pending {
+                let evaluation_assumptions = fact_assumptions
+                    .clone()
+                    .allow_symbolic_contract_loads()
+                    .prefer_symbolic_external_loads();
+                let Ok(paths) = lower_spec_proposition_at_state_with_loop_entry(
+                    &population_state,
+                    population_fact,
+                    None,
+                    &evaluation_assumptions,
+                    &mut budget,
+                ) else {
+                    return None;
+                };
+                let [path] = paths.as_slice() else {
+                    next_pending.push(population_fact);
+                    continue;
+                };
+                if !path.obligations.iter().all(|obligation| {
+                    if fact_assumptions.proves(obligation.proposition()) {
+                        return true;
+                    }
+                    let Proposition::CMemoryLoadable {
+                        memory: obligation_memory,
+                        base,
+                        bytes,
+                    } = obligation.proposition()
+                    else {
+                        return false;
+                    };
+                    memory_snapshots_proven_equal_at_pointer(
+                        obligation_memory,
+                        population_state.memory(),
+                        base,
+                        &fact_assumptions,
+                    ) && bytes.as_const().is_some_and(|bytes| {
+                        resource_context_has_read(
+                            population_state.resources(),
+                            base,
+                            bytes,
+                            &fact_assumptions,
+                        )
+                    })
+                }) {
+                    next_pending.push(population_fact);
+                    continue;
+                }
+                for obligation in &path.obligations {
+                    fact_assumptions =
+                        fact_assumptions.assume_proposition(obligation.proposition().clone());
+                }
+                for path_fact in &path.facts {
+                    let proposition = path_fact.proposition().clone();
+                    if !propositions.contains(&proposition) {
+                        propositions.push(proposition.clone());
+                    }
+                    fact_assumptions = fact_assumptions.assume_proposition(proposition);
+                }
+                if !propositions.contains(&path.proposition) {
+                    propositions.push(path.proposition.clone());
+                }
+                fact_assumptions = fact_assumptions.assume_proposition(path.proposition.clone());
+                made_progress = true;
+            }
+            if !made_progress {
+                return None;
+            }
+            pending = next_pending;
+        }
+    }
+    Some(propositions)
 }
 
 pub(super) fn evaluate_composite_resource_relation_propositions(
@@ -2278,13 +2865,32 @@ fn unreturned_allocation_obligation(
             "could not inspect allocation obligations at function return".to_string(),
         ));
     };
+    let mut budget = ExecutionBudget::default();
+    let population_bodies = match evaluate_counted_population_body_resources(
+        returned_resources,
+        actual_state,
+        function.composite_resource_definitions(),
+        assumptions,
+        &mut budget,
+    ) {
+        Ok(Ok(resources)) => resources,
+        Ok(Err(error)) => return Err(error),
+        Err(limit) => {
+            return Err(CRuntimeError::FunctionContract(format!(
+                "counted population allocation inspection hit execution limit {limit:?}"
+            )));
+        }
+    };
+    let returned_resources = returned_resources
+        .clone()
+        .unchecked_with_facts(population_bodies.facts().iter().cloned());
     Ok(actual
         .facts()
         .iter()
         .filter(|fact| fact.allocation().is_some())
         .find(|allocation| {
             expose_composite_resource_fact(
-                returned_resources,
+                &returned_resources,
                 allocation,
                 function.composite_resource_definitions(),
                 actual_state.memory(),
@@ -2416,9 +3022,29 @@ fn function_outcome_from_body_with_resource_transfer(
             .locals
             .set_typed("result".to_string(), value.clone(), function.return_type());
     }
+    let population_transition = match apply_counted_population_transitions(
+        caller_state,
+        &mut state,
+        function,
+        argument_values,
+        assumptions,
+        &mut obligations,
+        budget,
+    )? {
+        Ok(transition) => transition,
+        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
+    };
+    let caller_resources_after_requirements = match apply_counted_population_transition_resources(
+        transfer.caller_resources_after_requirements.clone(),
+        &population_transition,
+        assumptions,
+    ) {
+        Ok(resources) => resources,
+        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
+    };
     let output_resource_state = with_contract_argument_views(&state, function, argument_values);
     let return_resources = match evaluate_function_return_resources(
-        &transfer.caller_resources_after_requirements,
+        &caller_resources_after_requirements,
         &output_resource_state,
         state.resources(),
         function,

@@ -247,6 +247,10 @@ pub enum SpecMemory {
 pub enum SpecExpression {
     Value(CValue),
     CExpression(CExpression),
+    CountedResourceCount {
+        name: String,
+        arguments: Vec<SpecExpression>,
+    },
     Add(Box<SpecExpression>, Box<SpecExpression>),
     Subtract(Box<SpecExpression>, Box<SpecExpression>),
     Multiply(Box<SpecExpression>, Box<SpecExpression>),
@@ -497,6 +501,7 @@ pub struct CCompositeResourceDefinition {
     pub(super) parameters: Vec<CParameter>,
     pub(super) condition: Option<SpecProposition>,
     pub(super) recursive: bool,
+    pub(super) counted_population: bool,
     pub(super) contains: Vec<CResourceSpec>,
     pub(super) facts: Vec<SpecProposition>,
 }
@@ -1163,6 +1168,14 @@ pub struct CState {
     pub(super) locals: CLocalEnvironment,
     pub(super) memory: CMemory,
     pub(super) resources: ResourceContext,
+    pub(super) counted_populations: Vec<CCountedPopulation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CCountedPopulation {
+    pub(super) name: String,
+    pub(super) arguments: Vec<CValue>,
+    pub(super) count: Bitvector32Term,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]

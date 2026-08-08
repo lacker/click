@@ -89,8 +89,12 @@ fn mdtest_time_limit() -> Duration {
 
 fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) -> Result<(), String> {
     let path = path.to_path_buf();
+    let thread_name = path.file_stem().and_then(|name| name.to_str()).map_or_else(
+        || "click-mdtest".to_string(),
+        |name| format!("mdtest-{name}"),
+    );
     std::thread::Builder::new()
-        .name("click-mdtest".to_string())
+        .name(thread_name)
         .stack_size(64 * 1024 * 1024)
         .spawn(move || run_mdtest_attempt(&path, time_limit))
         .map_err(|error| format!("failed to start mdtest verifier: {error}"))?

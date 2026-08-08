@@ -457,18 +457,38 @@ open_fd(fd)`, and `produces open_fd(fd)` use the same resource context. Token
 resource arguments are type checked, and duplicate identical owned resource
 elements in one resource context are rejected.
 
-For an atomic capability which may have several indistinguishable owned units,
-declare a counted resource:
+For a capability which may have several indistinguishable owned units, declare
+a counted resource:
 
 ```click
-counted resource object_ref(object: struct object*);
+counted resource object_ref(obj: struct object*) {
+    owns object(obj);
+    fact obj->refs == count(object_ref(obj));
+}
 ```
 
 Repeated owned clauses denote a quantity rather than a duplicate-ownership
 error. Each `owns`, `consumes`, or `produces` clause still transfers one unit.
-Counted resources do not yet provide a rule for creating another unit from an
-existing one; a future reference-counting layer must justify that operation
-against the program's concrete counter.
+The optional body belongs to the population as a whole, not once per unit.
+`count(object_ref(obj))` is an `int32` expression naming the population size;
+it is available in that counted resource's body facts and in proofs while the
+population is active. The example above therefore says that all references
+together own the object and that its stored count equals their logical total.
+
+A contract's net counted-resource transfer changes the population count. For
+example, `owns object_ref(obj); produces object_ref(obj);` is a one-unit
+retain, while `owns object_ref(obj); consumes object_ref(obj);` is a one-unit
+nonfinal release. Returning the new resource context is valid only when the
+population body facts hold in the post-state, so these clauses cannot mint a
+reference without the corresponding concrete counter update.
+
+`fold(object_ref(obj))` initializes a population of one from its body
+resources. `unfold(object_ref(obj))` is the inverse lifetime operation and is
+allowed only after proving that the count is exactly one; it exposes the body
+for a final destructor or `free`. Ordinary retain and release operations do
+not fold or unfold the body. Counted clauses currently transfer one unit at a
+time; symbolic quantities such as `owns n of object_ref(obj)` are not part of
+this slice.
 
 Composite resources are declared resources with a body:
 

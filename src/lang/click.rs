@@ -81,6 +81,7 @@ pub use verification::{
 };
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
+const COUNTED_POPULATION_VARIABLE_BASE: u64 = 200_000;
 const MAX_CONCRETE_RANGE_FOLD_STEPS: i64 = 1024;
 /// Maximum UTF-8 bytes in an ordinary verifier error message. Set
 /// `CLICK_FULL_DIAGNOSTICS=1` when an engine investigation needs unbounded
@@ -570,6 +571,10 @@ pub enum ContractExpression {
     /// This is distinct from contract built-ins such as bare `result`, even
     /// when the C binding has the same source name.
     CBinding(String),
+    /// The authoritative population count of one instantiated counted
+    /// resource family. This expression is only meaningful while the
+    /// family's population body is in scope.
+    ResourceCount(Box<ResourceClause>),
     Old(Box<ContractExpression>),
     At {
         selector: VisitSelector,

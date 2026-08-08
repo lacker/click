@@ -1,5 +1,118 @@
 use super::*;
 
+pub(super) fn materialize_counted_population_bodies(
+    resource_environment: &ResourceEnvironment,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    mut state: CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+) -> Result<(CState, Vec<Proposition>), ClickError> {
+    let mut populations = Vec::<(String, Vec<CValue>, u32)>::new();
+    for fact in state.resources().facts() {
+        let CResource::Counted { name, arguments } = fact.resource() else {
+            continue;
+        };
+        let Some(definition) = resource_environment.get(name) else {
+            continue;
+        };
+        if definition.composite_body().is_none() {
+            continue;
+        }
+        let quantity = fact.owned_quantity().unwrap_or(0);
+        if quantity == 0 {
+            continue;
+        }
+        if let Some(existing) =
+            populations
+                .iter_mut()
+                .find(|(existing_name, existing_arguments, _)| {
+                    existing_name == name && existing_arguments == arguments
+                })
+        {
+            existing.2 = existing.2.saturating_add(quantity);
+        } else {
+            populations.push((name.clone(), arguments.clone(), quantity));
+        }
+    }
+
+    let mut next_variable = COUNTED_POPULATION_VARIABLE_BASE;
+    let mut facts = Vec::new();
+
+    for (name, resource_arguments, visible_quantity) in populations {
+        let count = Bitvector32Term::Variable(Variable(next_variable));
+        next_variable = next_variable.saturating_add(1);
+        state = state.with_counted_population(&name, resource_arguments.clone(), count.clone());
+        facts.push(Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(count),
+                Box::new(Bitvector32Term::Constant(visible_quantity)),
+            ),
+            true,
+        ));
+
+        let definition = resource_environment
+            .get(&name)
+            .expect("the population definition was checked above");
+        let body = definition
+            .composite_body()
+            .expect("the population body was checked above");
+        if body.condition().is_some() {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: conditional counted resource population bodies are not supported yet"
+            )));
+        }
+        let substitutions = resource_value_substitutions(definition, &resource_arguments)
+            .map_err(ClickError::new)?;
+        let (memory, body_resources) = instantiate_composite_resource_body_resources(
+            &name,
+            body,
+            &substitutions,
+            parameters,
+            arguments,
+            state.memory().clone(),
+        )
+        .map_err(ClickError::new)?;
+        state = state.with_memory(memory);
+        let assumptions = assumptions_from_propositions(&facts);
+        let resources = state
+            .resources()
+            .clone()
+            .unchecked_with_facts(body_resources.facts().iter().cloned());
+        if let Some(error) = resources.validity_error(&assumptions) {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: counted resource population `{name}` body is invalid: {error:?}"
+            )));
+        }
+        state = state.with_resource_context(resources);
+
+        for body_fact in body.facts() {
+            let instantiated =
+                substitute_click_proposition(body_fact, &substitutions).map_err(ClickError::new)?;
+            let lowered = lower_outcome_proposition(
+                parameters,
+                arguments,
+                &state,
+                &state,
+                &CValue::Int32(Bitvector32Term::Constant(0)),
+                &facts,
+                &instantiated,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}`: could not lower counted resource population `{name}` fact: {message}"
+                ))
+            })?;
+            facts.push(lowered);
+        }
+    }
+
+    Ok((state, facts))
+}
+
 pub(super) fn materialize_folded_composite_resource_cells(
     resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],
@@ -1199,6 +1312,13 @@ pub(super) fn unfold_composite_resource(
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<CState, ClickError> {
+    let unfolds_counted_population = matches!(
+        resource,
+        ResourceClause::Declared {
+            kind: ResourceKind::Counted,
+            ..
+        }
+    );
     let definition = composite_resource_law_definition(
         resource_environment,
         resource,
@@ -1241,6 +1361,34 @@ pub(super) fn unfold_composite_resource(
     };
     let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
+    if unfolds_counted_population {
+        let CResource::Counted {
+            name,
+            arguments: population_arguments,
+        } = abstract_resource.resource()
+        else {
+            unreachable!("a counted resource clause should lower to a counted fact");
+        };
+        let Some(count) = state.counted_population(name, population_arguments) else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `unfold({})` requires an active counted population",
+                describe_resource_clause(resource)
+            )));
+        };
+        let final_unit = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(count.clone()),
+                Box::new(Bitvector32Term::Constant(1)),
+            ),
+            true,
+        );
+        if !assumptions.proves(&final_unit) {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `unfold({})` can finalize only a population whose count is proved equal to 1",
+                describe_resource_clause(resource)
+            )));
+        }
+    }
     // The ordinary case holds the folded composite exactly. Removing that
     // representation must not normalize every unrelated resource in the
     // ambient context. Preserve the equality-aware fallback for callers whose
@@ -1343,7 +1491,7 @@ pub(super) fn unfold_composite_resource(
     // contradictory separation claim to conceal a concretely overlapping
     // pair. This is one validity pass over the complete projection, not one
     // normalization per child.
-    if !already_unfolded {
+    if !already_unfolded && !unfolds_counted_population {
         let ownership_assumptions = assumptions.clone().without_explicit_separation_facts();
         let projected = state
             .resources()
@@ -1400,7 +1548,7 @@ pub(super) fn unfold_composite_resource(
     // history rather than the size of the resource body. The definition's
     // pure facts are simultaneous consequences of the same composite law, so
     // make them available while canonicalizing its children.
-    if !already_unfolded {
+    if !already_unfolded && !unfolds_counted_population {
         let composition_assumptions = assumptions_from_propositions(available_pure_facts);
         let resources = state
             .resources()
@@ -1456,6 +1604,13 @@ pub(super) fn fold_composite_resources_on_outcome(
     unfolded_predicates: &[String],
 ) -> Result<CFunctionOutcome, ClickError> {
     for resource in resource_folds {
+        let folds_counted_population = matches!(
+            resource,
+            ResourceClause::Declared {
+                kind: ResourceKind::Counted,
+                ..
+            }
+        );
         let definition = composite_resource_law_definition(
             resource_environment,
             resource,
@@ -1496,6 +1651,38 @@ pub(super) fn fold_composite_resources_on_outcome(
                 describe_resource_clause(resource)
             ))
         })?;
+        if folds_counted_population {
+            let CFunctionOutcome::Return { value, state } = &mut outcome else {
+                unreachable!("the return outcome was checked above");
+            };
+            let population = lower_resource_clause_at_state_with_result(
+                resource, parameters, arguments, state, value,
+            )?;
+            let CResource::Counted {
+                name,
+                arguments: population_arguments,
+            } = population.resource()
+            else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: `fold({})` did not lower to a counted resource",
+                    describe_resource_clause(resource)
+                )));
+            };
+            if state
+                .counted_population(name, population_arguments)
+                .is_some()
+            {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: `fold({})` cannot initialize an existing counted population",
+                    describe_resource_clause(resource)
+                )));
+            }
+            *state = state.clone().with_counted_population(
+                name.clone(),
+                population_arguments.clone(),
+                Bitvector32Term::Constant(1),
+            );
+        }
         let body_facts = if body_active {
             composite_body.facts()
         } else {
@@ -1605,7 +1792,11 @@ pub(super) fn fold_composite_resources_on_outcome(
             lowered_contained.push(lowered);
         }
         let mut resources = post_state.resources().clone();
-        for lowered in &lowered_contained {
+        for lowered in if folds_counted_population {
+            &[]
+        } else {
+            lowered_contained.as_slice()
+        } {
             // Prefer consuming an equivalent whole representation. Generic
             // range consumption is allowed to treat a requirement as a
             // subrange; when the two endpoints are framed spellings from
@@ -1709,12 +1900,12 @@ fn composite_resource_law_definition<'a>(
     if !matches!(
         resource,
         ResourceClause::Declared {
-            kind: ResourceKind::Composite,
+            kind: ResourceKind::Composite | ResourceKind::Counted,
             ..
         }
     ) {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `{action}` expects composite resource `{name}` to have a body"
+            "`{claim_label}` tactic {tactic_index}: `{action}` expects resource `{name}` to have a body"
         )));
     }
     let definition = resource_environment.get(name).ok_or_else(|| {

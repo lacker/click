@@ -702,6 +702,17 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
         SpecExpression::CExpression(expression) => SpecExpression::CExpression(
             substitute_bitvector_variable_in_c_expression(expression, from, to),
         ),
+        SpecExpression::CountedResourceCount { name, arguments } => {
+            SpecExpression::CountedResourceCount {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| {
+                        substitute_bitvector_variable_in_spec_expression(argument, from, to)
+                    })
+                    .collect(),
+            }
+        }
         SpecExpression::Add(left, right) => SpecExpression::Add(
             Box::new(substitute_bitvector_variable_in_spec_expression(
                 left, from, to,
@@ -1139,6 +1150,26 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
         locals: CLocalEnvironment { bindings },
         memory: substitute_bitvector_variable_in_memory(&state.memory, from, to),
         resources: substitute_bitvector_variable_in_resource_context(&state.resources, from, to),
+        counted_populations: state
+            .counted_populations
+            .iter()
+            .map(|population| CCountedPopulation {
+                name: population.name.clone(),
+                arguments: population
+                    .arguments
+                    .iter()
+                    .map(|argument| substitute_bitvector_variable_in_c_value(argument, from, to))
+                    .collect(),
+                count: match substitute_bitvector_variable_in_c_value(
+                    &CValue::Int32(population.count.clone()),
+                    from,
+                    to,
+                ) {
+                    CValue::Int32(count) => count,
+                    _ => unreachable!("an int32 population count remains int32"),
+                },
+            })
+            .collect(),
     }
 }
 
@@ -1264,6 +1295,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
                     substitute_bitvector_variable_in_spec_proposition(condition, from, to)
                 }),
                 recursive: definition.recursive,
+                counted_population: definition.counted_population,
                 contains: definition
                     .contains
                     .iter()

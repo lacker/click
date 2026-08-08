@@ -1040,6 +1040,30 @@ fn collect_resource_fact_reads_from_contract_expression(
             Ok(())
         }
         ContractExpression::CBinding(_) => Ok(()),
+        ContractExpression::ResourceCount(resource) => {
+            let ResourceClause::Declared {
+                kind: ResourceKind::Counted,
+                arguments,
+                ..
+            } = resource.as_ref()
+            else {
+                return Err(ClickError::new(format!(
+                    "`count(...)` inside resource `{resource_name}` expects a counted resource"
+                )));
+            };
+            for argument in arguments {
+                collect_resource_fact_reads_from_contract_expression(
+                    argument,
+                    predicate_definitions,
+                    click_function_definitions,
+                    visited_predicates,
+                    visited_functions,
+                    reads,
+                    resource_name,
+                )?;
+            }
+            Ok(())
+        }
         ContractExpression::Old(_) => Err(ClickError::new(format!(
             "`old(...)` is not available inside resource `{resource_name}` fact"
         ))),

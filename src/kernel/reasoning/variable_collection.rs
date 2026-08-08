@@ -383,6 +383,11 @@ pub(in crate::kernel) fn collect_spec_expression_bitvector_variables(
         SpecExpression::CExpression(expression) => {
             collect_c_expression_bitvector_variables(expression, variables);
         }
+        SpecExpression::CountedResourceCount { arguments, .. } => {
+            for argument in arguments {
+                collect_spec_expression_bitvector_variables(argument, variables);
+            }
+        }
         SpecExpression::Add(left, right)
         | SpecExpression::Subtract(left, right)
         | SpecExpression::Multiply(left, right)
@@ -606,6 +611,12 @@ pub(in crate::kernel) fn collect_c_state_bitvector_variables(
     }
     collect_memory_bitvector_variables(&state.memory, variables);
     collect_resource_context_bitvector_variables(&state.resources, variables);
+    for population in &state.counted_populations {
+        for argument in &population.arguments {
+            collect_c_value_bitvector_variables(argument, variables);
+        }
+        collect_c_value_bitvector_variables(&CValue::Int32(population.count.clone()), variables);
+    }
 }
 
 pub(in crate::kernel) fn collect_resource_context_bitvector_variables(

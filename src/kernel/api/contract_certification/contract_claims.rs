@@ -559,7 +559,16 @@ fn prepare_function_claim_path(
     ) else {
         return Err("the required composite resources cannot be expanded".to_string());
     };
-    let assumptions = assumptions_with_propositions(&assumptions, &definition_facts);
+    let mut assumptions = assumptions_with_propositions(&assumptions, &definition_facts);
+    let Some(population_facts) = evaluate_counted_population_fact_propositions(
+        &required_resources,
+        function.composite_resource_definitions(),
+        &entry_state,
+        &assumptions,
+    ) else {
+        return Err("the counted population facts cannot be evaluated".to_string());
+    };
+    assumptions = assumptions_with_propositions(&assumptions, &population_facts);
     let Some(entry_resources) = expand_all_composite_resource_facts(
         entry_state.resources(),
         function.composite_resource_definitions(),

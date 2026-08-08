@@ -345,6 +345,22 @@ impl Assumptions {
                 {
                     bound_is_above(lower)
                 }
+                (ConditionTerm::Bitvector32SignedGreaterThan(fact_left, lower), true)
+                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
+                {
+                    self.decide(&ConditionTerm::signed_greater_equal(
+                        lower.as_ref().clone(),
+                        right.clone(),
+                    )) == Some(true)
+                }
+                (ConditionTerm::Bitvector32SignedLessThan(lower, fact_left), true)
+                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
+                {
+                    self.decide(&ConditionTerm::signed_greater_equal(
+                        lower.as_ref().clone(),
+                        right.clone(),
+                    )) == Some(true)
+                }
                 _ => false,
             })
     }
@@ -366,6 +382,22 @@ impl Assumptions {
                     )) == Some(true)
                 }
                 (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true)
+                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
+                {
+                    self.decide(&ConditionTerm::signed_greater_equal(
+                        lower.as_ref().clone(),
+                        right.clone(),
+                    )) == Some(true)
+                }
+                (ConditionTerm::Bitvector32SignedGreaterThan(fact_left, lower), true)
+                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
+                {
+                    self.decide(&ConditionTerm::signed_greater_equal(
+                        lower.as_ref().clone(),
+                        right.clone(),
+                    )) == Some(true)
+                }
+                (ConditionTerm::Bitvector32SignedLessThan(lower, fact_left), true)
                     if self.bitvector_terms_equal_for_transport(fact_left, left) =>
                 {
                     self.decide(&ConditionTerm::signed_greater_equal(
