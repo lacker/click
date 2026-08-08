@@ -45,6 +45,8 @@ pub(in crate::lang::click) fn expand_declared_resource_clauses(
                         .collect::<Vec<_>>(),
                     kind: if definition.composite_body().is_some() {
                         ResourceKind::Composite
+                    } else if definition.multiplicity() == ResourceMultiplicity::Counted {
+                        ResourceKind::Counted
                     } else {
                         ResourceKind::Token
                     },

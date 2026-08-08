@@ -560,11 +560,21 @@ pub(super) fn describe_resource_fact(
             | CResource::Token {
                 name,
                 arguments: resource_arguments,
+            }
+            | CResource::Counted {
+                name,
+                arguments: resource_arguments,
             },
-        ) => format!(
-            "owns {}",
-            format_declared_resource(name, resource_arguments, parameters, arguments)
-        ),
+            quantity,
+        ) => {
+            let resource =
+                format_declared_resource(name, resource_arguments, parameters, arguments);
+            if quantity.get() == 1 {
+                format!("owns {resource}")
+            } else {
+                format!("owns {resource} (quantity {})", quantity.get())
+            }
+        }
         CResourceFact::View(
             CResource::Composite {
                 name,
@@ -573,12 +583,16 @@ pub(super) fn describe_resource_fact(
             | CResource::Token {
                 name,
                 arguments: resource_arguments,
+            }
+            | CResource::Counted {
+                name,
+                arguments: resource_arguments,
             },
         ) => format!(
             "views {}",
             format_declared_resource(name, resource_arguments, parameters, arguments)
         ),
-        CResourceFact::Own(CResource::Memory(_)) | CResourceFact::View(CResource::Memory(_)) => {
+        CResourceFact::Own(CResource::Memory(_), _) | CResourceFact::View(CResource::Memory(_)) => {
             unreachable!("memory resources handled above")
         }
     }
@@ -601,6 +615,10 @@ fn describe_c_resource(
             arguments: resource_arguments,
         }
         | CResource::Token {
+            name,
+            arguments: resource_arguments,
+        }
+        | CResource::Counted {
             name,
             arguments: resource_arguments,
         } => format_declared_resource(name, resource_arguments, parameters, arguments),

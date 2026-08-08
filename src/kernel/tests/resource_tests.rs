@@ -68,6 +68,59 @@ fn exact_resource_views_are_preserved_when_satisfied() {
 }
 
 #[test]
+fn counted_resources_normalize_and_consume_one_unit_at_a_time() {
+    let unit = CResourceFact::own_counted("object_ref".to_string(), vec![int32(7)]);
+    let context = ResourceContext::new()
+        .try_compose_with_facts([unit.clone(), unit.clone()], &Assumptions::new())
+        .expect("equal counted facts should compose");
+
+    assert_eq!(context.facts().len(), 1);
+    assert_eq!(context.facts()[0].owned_quantity(), Some(2));
+
+    let remaining = context
+        .without_fact(&unit, &Assumptions::new())
+        .expect("one unit should be consumable from a count of two");
+    assert_eq!(remaining.facts(), &[unit]);
+}
+
+#[test]
+fn counted_resource_quantities_are_part_of_context_equality() {
+    let unit = CResourceFact::own_counted("object_ref".to_string(), vec![int32(7)]);
+    let one = ResourceContext::new()
+        .try_compose_with_fact(unit.clone(), &Assumptions::new())
+        .unwrap();
+    let two = ResourceContext::new()
+        .try_compose_with_facts([unit.clone(), unit], &Assumptions::new())
+        .unwrap();
+    let two_uncompacted = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_counted(
+            "object_ref".to_string(),
+            vec![int32(7)],
+        ))
+        .unchecked_with_fact(CResourceFact::own_counted(
+            "object_ref".to_string(),
+            vec![int32(7)],
+        ));
+
+    assert!(!resource_contexts_definitionally_equal_with_definitions(
+        &[],
+        &CMemory::new(),
+        &one,
+        &CMemory::new(),
+        &two,
+        &Assumptions::new(),
+    ));
+    assert!(resource_contexts_definitionally_equal_with_definitions(
+        &[],
+        &CMemory::new(),
+        &two_uncompacted,
+        &CMemory::new(),
+        &two,
+        &Assumptions::new(),
+    ));
+}
+
+#[test]
 fn missing_composite_query_ignores_ambient_memory_splits() {
     let base = Pointer {
         block: "backing".into(),
@@ -161,9 +214,9 @@ fn resource_context_observes_same_and_cross_family_separation() {
         arguments: vec![],
     };
     let facts = ResourceContext::new()
-        .unchecked_with_fact(CResourceFact::Own(memory.clone()))
-        .unchecked_with_fact(CResourceFact::Own(token.clone()))
-        .unchecked_with_fact(CResourceFact::Own(other_token.clone()))
+        .unchecked_with_fact(CResourceFact::own(memory.clone()))
+        .unchecked_with_fact(CResourceFact::own(token.clone()))
+        .unchecked_with_fact(CResourceFact::own(other_token.clone()))
         .observable_facts(&Assumptions::new())
         .expect("distinct owned resources should compose validly");
 
@@ -187,11 +240,11 @@ fn composite_resource_arguments_respect_proven_pointer_equality() {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(40_001)), 4),
     };
-    let left = CResourceFact::Own(CResource::Composite {
+    let left = CResourceFact::own(CResource::Composite {
         name: "list".to_string(),
         arguments: vec![CValue::Pointer(left_pointer.clone())],
     });
-    let right = CResourceFact::Own(CResource::Composite {
+    let right = CResourceFact::own(CResource::Composite {
         name: "list".to_string(),
         arguments: vec![CValue::Pointer(right_pointer.clone())],
     });

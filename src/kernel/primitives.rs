@@ -7,6 +7,7 @@ use super::reasoning::{
     resource_context_has_read, signed_bitvector_constant, signed_i64_bitvector_constant,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU32;
 
 mod contracts;
 mod memory_state;
@@ -356,6 +357,10 @@ pub enum SpecResource {
         arguments: Vec<SpecExpression>,
     },
     Token {
+        name: String,
+        arguments: Vec<SpecExpression>,
+    },
+    Counted {
         name: String,
         arguments: Vec<SpecExpression>,
     },
@@ -1167,7 +1172,7 @@ pub struct ResourceContext {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResourceFact {
-    Own(CResource),
+    Own(CResource, NonZeroU32),
     View(CResource),
 }
 
@@ -1179,6 +1184,10 @@ pub enum CResource {
         arguments: Vec<CValue>,
     },
     Token {
+        name: String,
+        arguments: Vec<CValue>,
+    },
+    Counted {
         name: String,
         arguments: Vec<CValue>,
     },
@@ -1251,6 +1260,7 @@ pub(super) trait ResourceFamilyAlgebra {
 
 struct MemoryResourceAlgebra;
 struct TokenResourceAlgebra;
+struct CountedResourceAlgebra;
 /// The kernel algebra for a folded composite fact is exact-match ownership and
 /// viewing. Source-declared body equivalences are applied as fold, unfold, and
 /// observation laws by the Click proof layer.
@@ -1258,6 +1268,7 @@ struct CompositeResourceAlgebra;
 
 static MEMORY_RESOURCE_ALGEBRA: MemoryResourceAlgebra = MemoryResourceAlgebra;
 static TOKEN_RESOURCE_ALGEBRA: TokenResourceAlgebra = TokenResourceAlgebra;
+static COUNTED_RESOURCE_ALGEBRA: CountedResourceAlgebra = CountedResourceAlgebra;
 static COMPOSITE_RESOURCE_ALGEBRA: CompositeResourceAlgebra = CompositeResourceAlgebra;
 
 /// Primitive resource families. Adding a variant also requires registering one
@@ -1267,10 +1278,11 @@ pub enum ResourceFamily {
     Memory,
     Composite,
     Token,
+    Counted,
 }
 
 impl ResourceFamily {
-    const ALL: [Self; 3] = [Self::Memory, Self::Composite, Self::Token];
+    const ALL: [Self; 4] = [Self::Memory, Self::Composite, Self::Token, Self::Counted];
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1290,6 +1302,12 @@ pub enum CResourceSpec {
         parameter_types: Vec<CType>,
     },
     Token {
+        access: CResourceAccessMode,
+        name: String,
+        arguments: Vec<CExpression>,
+        parameter_types: Vec<CType>,
+    },
+    Counted {
         access: CResourceAccessMode,
         name: String,
         arguments: Vec<CExpression>,

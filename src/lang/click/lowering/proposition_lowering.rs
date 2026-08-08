@@ -361,6 +361,10 @@ impl KernelPropositionLowerer {
                         name: name.clone(),
                         arguments: values,
                     },
+                    ResourceKind::Counted => CResource::Counted {
+                        name: name.clone(),
+                        arguments: values,
+                    },
                 })
             }
         }

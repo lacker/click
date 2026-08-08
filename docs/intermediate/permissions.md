@@ -227,6 +227,31 @@ same token resource twice: duplicate clauses such as two
 `consumes open_fd(fd);` entries are rejected, and a call cannot satisfy two
 callee resource parameters with the same token.
 
+## Counted Resources
+
+Use `counted resource` when several indistinguishable, independently
+consumable units of the same capability may coexist:
+
+```click
+counted resource object_ref(object: struct object*);
+```
+
+Unlike an ordinary token, `object_ref(object)` may appear more than once in a
+resource context. Click stores equal owned units as one canonical fact with a
+quantity. A contract clause transfers one unit: consuming one
+`object_ref(object)` from a quantity of two leaves one unit behind. Viewed
+facts remain idempotent and do not carry a count.
+
+This first counted-resource layer only represents and transfers quantities. It
+does not let a proof mint another unit from one existing unit. In particular,
+declaring a resource counted is not by itself a proof of a C `retain`
+operation. Connecting capability creation and final release to a concrete
+reference-count field requires an additional invariant tying the counted
+capabilities to that authoritative C state.
+
+Counted declarations are atomic and therefore end in `;`; composite resource
+bodies remain exclusive.
+
 A function spec may exist only to consume a resource:
 
 ```click
@@ -507,6 +532,8 @@ Implemented today:
 - an internal memory resource family boundary for entailment, consumption,
   access authorization, splitting, and joining,
 - exact-match token resources declared with `resource name(...)`,
+- counted exact-match resources declared with `counted resource name(...)`,
+  with canonical owned quantities and unit-by-unit contract transfer,
 - composite resources with explicit `unfold(resource)` and
   `fold(resource)` tactics, including composition over other declared
   resources,

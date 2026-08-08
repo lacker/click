@@ -1679,6 +1679,12 @@ pub(in crate::lang::click) fn resource_clause_to_resource_spec(
                     arguments,
                     parameter_types,
                 },
+                ResourceKind::Counted => CResourceSpec::Counted {
+                    access,
+                    name: name.clone(),
+                    arguments,
+                    parameter_types,
+                },
             })
         }
     }

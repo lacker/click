@@ -457,6 +457,19 @@ open_fd(fd)`, and `produces open_fd(fd)` use the same resource context. Token
 resource arguments are type checked, and duplicate identical owned resource
 elements in one resource context are rejected.
 
+For an atomic capability which may have several indistinguishable owned units,
+declare a counted resource:
+
+```click
+counted resource object_ref(object: struct object*);
+```
+
+Repeated owned clauses denote a quantity rather than a duplicate-ownership
+error. Each `owns`, `consumes`, or `produces` clause still transfers one unit.
+Counted resources do not yet provide a rule for creating another unit from an
+existing one; a future reference-counting layer must justify that operation
+against the program's concrete counter.
+
 Composite resources are declared resources with a body:
 
 ```click

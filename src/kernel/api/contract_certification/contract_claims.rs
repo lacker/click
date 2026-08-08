@@ -755,15 +755,17 @@ fn function_claim_holds_on_prepared_path(
             let (Some(return_state), Some(post_state)) = (return_state, post_state) else {
                 return true;
             };
-            let Some(resource) = function.resource_ensures().get(*index) else {
+            if *index >= function.resource_ensures().len() {
                 return false;
-            };
-            let Ok(Ok(expected)) = evaluate_function_resource_context(
-                post_state,
-                std::slice::from_ref(resource),
-                assumptions,
-                &mut budget,
-            ) else {
+            }
+            // Resource clauses describe one jointly returned context. Checking
+            // each clause independently would let one counted unit certify two
+            // identical clauses. The prefix makes every claim account for all
+            // units claimed up to and including its own clause.
+            let resources = &function.resource_ensures()[..=*index];
+            let Ok(Ok(expected)) =
+                evaluate_function_resource_context(post_state, resources, assumptions, &mut budget)
+            else {
                 return false;
             };
             expected.facts().iter().all(|fact| {

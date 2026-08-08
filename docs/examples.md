@@ -236,6 +236,16 @@ sequence:
   permission plus a fact.
 - `mdtests/composite_resource_composes_token.md`: a composite resource can
   bundle another token resource with memory permission and a fact.
+- `mdtests/counted_resource_transfer.md`: two equal counted capabilities
+  normalize to a quantity and are consumed by separate opaque calls one unit
+  at a time.
+- `mdtests/counted_resource_rejects_composite_body.md`: counted declarations
+  are atomic rather than silently assigning multiplicity semantics to a
+  composite body.
+- `mdtests/counted_resource_rejects_minting.md`: a contract cannot turn one
+  counted unit into two merely because the resource is counted.
+- `mdtests/counted_resource_rejects_double_spend.md`: one counted unit cannot
+  satisfy two consuming calls.
 - `mdtests/proof_branch_composite_resource_transform.md`: different branch
   token transformations fold and export one composite resource through an
   `ensuring` interface, then `observe` recovers its fact after the join.

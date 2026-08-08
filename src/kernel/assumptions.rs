@@ -246,6 +246,16 @@ pub(super) fn resources_equal_ignoring_memories(left: &CResource, right: &CResou
                 name: right_name,
                 arguments: right_arguments,
             },
+        )
+        | (
+            CResource::Counted {
+                name: left_name,
+                arguments: left_arguments,
+            },
+            CResource::Counted {
+                name: right_name,
+                arguments: right_arguments,
+            },
         ) => {
             left_name == right_name
                 && left_arguments.len() == right_arguments.len()

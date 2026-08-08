@@ -961,6 +961,10 @@ fn evaluate_predicate_resource_subject(
                     name: name.clone(),
                     arguments: values_out,
                 },
+                ResourceKind::Counted => CResource::Counted {
+                    name: name.clone(),
+                    arguments: values_out,
+                },
             })
         }
     }

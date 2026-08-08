@@ -228,6 +228,10 @@ fn normalize_direct_atomic_resource_loads(resource: &CResource) -> CResource {
             name: name.clone(),
             arguments: arguments.iter().map(normalize_value).collect(),
         },
+        CResource::Counted { name, arguments } => CResource::Counted {
+            name: name.clone(),
+            arguments: arguments.iter().map(normalize_value).collect(),
+        },
     }
 }
 

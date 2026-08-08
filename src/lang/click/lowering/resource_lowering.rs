@@ -353,9 +353,13 @@ fn lower_resource_clause_with_values(
                     name: name.clone(),
                     arguments: resource_values,
                 },
+                ResourceKind::Counted => CResource::Counted {
+                    name: name.clone(),
+                    arguments: resource_values,
+                },
             };
             Ok(match access {
-                ResourceAccessMode::Own => CResourceFact::Own(resource),
+                ResourceAccessMode::Own => CResourceFact::own(resource),
                 ResourceAccessMode::View => CResourceFact::View(resource),
             })
         }

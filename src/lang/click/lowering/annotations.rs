@@ -425,7 +425,7 @@ fn collect_owned_resource_memory_segments_inner(
         } => Ok(()),
         ResourceClause::Declared {
             access: ResourceAccessMode::Own,
-            kind: ResourceKind::Token,
+            kind: ResourceKind::Token | ResourceKind::Counted,
             ..
         } => Ok(()),
         ResourceClause::Declared {
@@ -1064,6 +1064,10 @@ impl AnnotationLowerer<'_> {
                         arguments,
                     },
                     ResourceKind::Token => SpecResource::Token {
+                        name: name.clone(),
+                        arguments,
+                    },
+                    ResourceKind::Counted => SpecResource::Counted {
                         name: name.clone(),
                         arguments,
                     },

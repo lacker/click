@@ -441,7 +441,7 @@ fn standalone_view_cannot_authorize_free() {
         paths.as_slice(),
         [CStatementExecutionPath {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
-                resource: CResourceFact::Own(CResource::Memory(missing)),
+                resource: CResourceFact::Own(CResource::Memory(missing), _),
             }),
             ..
         }] if missing == &complete_access

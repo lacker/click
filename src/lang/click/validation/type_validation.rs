@@ -275,6 +275,7 @@ pub(super) fn reject_duplicate_owned_declared_resource_clauses<'a>(
             resource,
             ResourceClause::Declared {
                 access: ResourceAccessMode::Own,
+                kind: ResourceKind::Composite | ResourceKind::Token,
                 ..
             }
         ) {

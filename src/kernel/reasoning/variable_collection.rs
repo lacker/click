@@ -525,7 +525,9 @@ fn collect_spec_resource_bitvector_variables(
             collect_spec_expression_bitvector_variables(start, variables);
             collect_spec_expression_bitvector_variables(end, variables);
         }
-        SpecResource::Composite { arguments, .. } | SpecResource::Token { arguments, .. } => {
+        SpecResource::Composite { arguments, .. }
+        | SpecResource::Token { arguments, .. }
+        | SpecResource::Counted { arguments, .. } => {
             for argument in arguments {
                 collect_spec_expression_bitvector_variables(argument, variables);
             }
@@ -628,7 +630,9 @@ pub(in crate::kernel) fn collect_c_resource_bitvector_variables(
 ) {
     match resource {
         CResource::Memory(range) => collect_c_memory_range_bitvector_variables(range, variables),
-        CResource::Composite { arguments, .. } | CResource::Token { arguments, .. } => {
+        CResource::Composite { arguments, .. }
+        | CResource::Token { arguments, .. }
+        | CResource::Counted { arguments, .. } => {
             for argument in arguments {
                 collect_c_value_bitvector_variables(argument, variables);
             }
@@ -684,7 +688,9 @@ pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
                 collect_spec_proposition_bitvector_variables(guard, variables);
             }
         }
-        CResourceSpec::Composite { arguments, .. } | CResourceSpec::Token { arguments, .. } => {
+        CResourceSpec::Composite { arguments, .. }
+        | CResourceSpec::Token { arguments, .. }
+        | CResourceSpec::Counted { arguments, .. } => {
             for argument in arguments {
                 collect_c_expression_bitvector_variables(argument, variables);
             }

@@ -1487,12 +1487,15 @@ pub(super) fn expose_composite_resource_fact(
 ) -> Option<ResourceContext> {
     let target_is_available = |context: &ResourceContext| {
         context.facts().iter().any(|available| {
-            let access_compatible = matches!(
-                (available, target),
-                (CResourceFact::Own(_), CResourceFact::Own(_))
-                    | (CResourceFact::Own(_), CResourceFact::View(_))
-                    | (CResourceFact::View(_), CResourceFact::View(_))
-            );
+            let access_compatible = match (available, target) {
+                (
+                    CResourceFact::Own(_, available_quantity),
+                    CResourceFact::Own(_, target_quantity),
+                ) => available_quantity >= target_quantity,
+                (CResourceFact::Own(..), CResourceFact::View(_))
+                | (CResourceFact::View(_), CResourceFact::View(_)) => true,
+                _ => false,
+            };
             access_compatible
                 && super::assumptions::resources_equal_ignoring_memories(
                     available.resource(),
@@ -2130,6 +2133,21 @@ pub(super) fn evaluate_function_resource_spec(
             assumptions,
             budget,
         ),
+        CResourceSpec::Counted {
+            access,
+            name,
+            arguments,
+            parameter_types,
+        } => evaluate_function_declared_resource_spec(
+            state,
+            *access,
+            ResourceFamily::Counted,
+            name,
+            arguments,
+            parameter_types,
+            assumptions,
+            budget,
+        ),
     }
 }
 
@@ -2217,6 +2235,10 @@ fn evaluate_function_declared_resource_spec(
             name: name.to_string(),
             arguments: values,
         },
+        ResourceFamily::Counted => CResource::Counted {
+            name: name.to_string(),
+            arguments: values,
+        },
         ResourceFamily::Memory => {
             return Ok(Err(CRuntimeError::FunctionContract(
                 "declared resources cannot use the raw memory family".to_string(),
@@ -2224,7 +2246,7 @@ fn evaluate_function_declared_resource_spec(
         }
     };
     Ok(Ok(match access {
-        CResourceAccessMode::Own => CResourceFact::Own(resource),
+        CResourceAccessMode::Own => CResourceFact::own(resource),
         CResourceAccessMode::View => CResourceFact::View(resource),
     }))
 }
@@ -2232,8 +2254,11 @@ fn evaluate_function_declared_resource_spec(
 fn resource_fact_transfer_priority(resource: &CResourceFact) -> u8 {
     match resource {
         CResourceFact::View(_) => 0,
-        CResourceFact::Own(CResource::Memory(_)) => 1,
-        CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. }) => 2,
+        CResourceFact::Own(CResource::Memory(_), _) => 1,
+        CResourceFact::Own(
+            CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
+            _,
+        ) => 2,
     }
 }
 
@@ -2286,7 +2311,7 @@ pub(crate) fn unreturned_allocation_at_function_exit(
                 definition.contains().iter().any(|resource| {
                     matches!(
                         resource,
-                        CResourceSpec::Token { name, .. }
+                        CResourceSpec::Token { name, .. } | CResourceSpec::Counted { name, .. }
                             if name == CResourceFact::ALLOCATION_RESOURCE_NAME
                     )
                 })

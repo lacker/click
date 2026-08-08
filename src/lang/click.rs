@@ -165,7 +165,14 @@ pub struct ClickFunctionDefinition {
 pub struct ResourceDefinition {
     name: String,
     parameters: Vec<FunctionParameter>,
+    multiplicity: ResourceMultiplicity,
     composite_body: Option<CompositeResourceBody>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResourceMultiplicity {
+    Exclusive,
+    Counted,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -326,6 +333,7 @@ pub enum ResourceAccessMode {
 pub enum ResourceKind {
     Composite,
     Token,
+    Counted,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1717,6 +1725,10 @@ impl ResourceDefinition {
 
     pub fn parameters(&self) -> &[FunctionParameter] {
         &self.parameters
+    }
+
+    pub fn multiplicity(&self) -> ResourceMultiplicity {
+        self.multiplicity
     }
 
     pub fn composite_body(&self) -> Option<&CompositeResourceBody> {

@@ -897,7 +897,7 @@ pub(super) fn c_function_contract_certification_assumptions(
         entry_state.memory(),
         &assumptions,
     )?;
-    let mut entry_resources = entry_state.resources().clone();
+    let mut entry_resources = entry_state.resources().clone().normalized(&assumptions);
     let mut missing = Vec::new();
     for (index, required) in expanded_required_resources.facts().iter().enumerate() {
         let exposed = expose_composite_resource_fact(
@@ -940,6 +940,7 @@ pub(super) fn c_function_contract_certification_assumptions(
                         }
                         CResource::Composite { name, .. } => format!("composite {name}"),
                         CResource::Token { name, .. } => format!("token {name}"),
+                        CResource::Counted { name, .. } => format!("counted resource {name}"),
                     };
                     format!("{index}: {kind}")
                 })
@@ -1258,8 +1259,13 @@ pub(in crate::kernel) fn resource_contexts_definitionally_equal_with_definitions
     let enriched_assumptions = assumptions_with_propositions(assumptions, &relation_facts);
     let assumptions = &enriched_assumptions;
     let facts_directly_match = |left: &CResourceFact, right: &CResourceFact| match (left, right) {
-        (CResourceFact::Own(left), CResourceFact::Own(right))
-        | (CResourceFact::View(left), CResourceFact::View(right)) => {
+        (CResourceFact::Own(left, left_quantity), CResourceFact::Own(right, right_quantity))
+            if left_quantity == right_quantity =>
+        {
+            crate::kernel::assumptions::resources_equal_ignoring_memories(left, right)
+                && c_resources_directly_match(left, right, assumptions)
+        }
+        (CResourceFact::View(left), CResourceFact::View(right)) => {
             crate::kernel::assumptions::resources_equal_ignoring_memories(left, right)
                 && c_resources_directly_match(left, right, assumptions)
         }

@@ -27,7 +27,7 @@ fn materialize_folded_composite_resource_memory(
     for resource in state.resources().facts() {
         let (name, resource_arguments) = match resource.resource() {
             CResource::Composite { name, arguments } => (name, arguments),
-            CResource::Memory(_) | CResource::Token { .. } => {
+            CResource::Memory(_) | CResource::Token { .. } | CResource::Counted { .. } => {
                 continue;
             }
         };
@@ -73,7 +73,9 @@ pub(super) fn project_initial_composite_resource_cores(
             CResourceFact::View(CResource::Composite { name, arguments }) => {
                 (name, arguments, false)
             }
-            CResourceFact::Own(CResource::Composite { name, arguments }) => (name, arguments, true),
+            CResourceFact::Own(CResource::Composite { name, arguments }, _) => {
+                (name, arguments, true)
+            }
             _ => continue,
         };
         let Some(definition) = resource_environment.get(&name) else {
@@ -643,7 +645,7 @@ fn project_held_resource_observable_facts(
 ) -> Result<CMemory, String> {
     let (name, resource_arguments) = match resource.resource() {
         CResource::Composite { name, arguments } => (name, arguments),
-        CResource::Memory(_) | CResource::Token { .. } => {
+        CResource::Memory(_) | CResource::Token { .. } | CResource::Counted { .. } => {
             return Ok(memory);
         }
     };
@@ -1609,15 +1611,20 @@ pub(super) fn fold_composite_resources_on_outcome(
             // subrange; when the two endpoints are framed spellings from
             // different snapshots, that would leave spurious fragments.
             let directly_matching = resources.facts().iter().find(|available| {
-                matches!(
-                    (available, lowered),
-                    (CResourceFact::Own(_), CResourceFact::Own(_))
-                        | (CResourceFact::View(_), CResourceFact::View(_))
-                ) && c_resources_directly_match(
-                    available.resource(),
-                    lowered.resource(),
-                    &assumptions,
-                )
+                let quantities_match = match (available, lowered) {
+                    (
+                        CResourceFact::Own(_, available_quantity),
+                        CResourceFact::Own(_, lowered_quantity),
+                    ) => available_quantity == lowered_quantity,
+                    (CResourceFact::View(_), CResourceFact::View(_)) => true,
+                    _ => false,
+                };
+                quantities_match
+                    && c_resources_directly_match(
+                        available.resource(),
+                        lowered.resource(),
+                        &assumptions,
+                    )
             });
             if let Some(directly_matching) = directly_matching.cloned() {
                 resources = resources

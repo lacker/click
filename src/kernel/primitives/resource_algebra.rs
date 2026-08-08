@@ -235,7 +235,7 @@ impl ResourceContext {
         assumptions: &Assumptions,
     ) -> Option<&CMemoryRange> {
         for resource in &self.facts {
-            let CResourceFact::Own(CResource::Memory(range)) = resource else {
+            let CResourceFact::Own(CResource::Memory(range), _) = resource else {
                 continue;
             };
             if pointer_has_structural_range_base(pointer, range.base())
@@ -342,6 +342,7 @@ fn resource_family_algebra(family: ResourceFamily) -> &'static dyn ResourceFamil
         ResourceFamily::Memory => &MEMORY_RESOURCE_ALGEBRA,
         ResourceFamily::Composite => &COMPOSITE_RESOURCE_ALGEBRA,
         ResourceFamily::Token => &TOKEN_RESOURCE_ALGEBRA,
+        ResourceFamily::Counted => &COUNTED_RESOURCE_ALGEBRA,
     };
     debug_assert_eq!(algebra.family(), family);
     algebra
@@ -447,6 +448,16 @@ fn exact_resources_proven_equal(
                 name: right_name,
                 arguments: right_arguments,
             },
+        )
+        | (
+            CResource::Counted {
+                name: left_name,
+                arguments: left_arguments,
+            },
+            CResource::Counted {
+                name: right_name,
+                arguments: right_arguments,
+            },
         ) => {
             left_name == right_name
                 && left_arguments.len() == right_arguments.len()
@@ -467,11 +478,15 @@ fn exact_resource_fact_entails(
     assumptions: &Assumptions,
 ) -> bool {
     match (available, required) {
-        (CResourceFact::Own(available), CResourceFact::Own(required)) => {
-            exact_resources_proven_equal(available, required, assumptions)
+        (
+            CResourceFact::Own(available, available_quantity),
+            CResourceFact::Own(required, required_quantity),
+        ) => {
+            available_quantity >= required_quantity
+                && exact_resources_proven_equal(available, required, assumptions)
         }
         (
-            CResourceFact::Own(available) | CResourceFact::View(available),
+            CResourceFact::Own(available, _) | CResourceFact::View(available),
             CResourceFact::View(required),
         ) => exact_resources_proven_equal(available, required, assumptions),
         _ => false,
@@ -489,7 +504,19 @@ fn consume_exact_resource_fact(
     Some(if required.is_view() {
         ResourceFactConsumption::Preserve
     } else {
-        ResourceFactConsumption::Replace(Vec::new())
+        let CResourceFact::Own(available, available_quantity) = available else {
+            unreachable!("owned exact requirement entailed by a viewed fact")
+        };
+        let CResourceFact::Own(_, required_quantity) = required else {
+            unreachable!("checked above")
+        };
+        let residual = available_quantity.get() - required_quantity.get();
+        ResourceFactConsumption::Replace(
+            NonZeroU32::new(residual)
+                .map(|quantity| CResourceFact::Own(available.clone(), quantity))
+                .into_iter()
+                .collect(),
+        )
     })
 }
 
@@ -499,11 +526,11 @@ fn combine_exact_resource_facts(
     assumptions: &Assumptions,
 ) -> Option<CResourceFact> {
     match (left, right) {
-        (CResourceFact::Own(left), CResourceFact::View(right))
-        | (CResourceFact::View(right), CResourceFact::Own(left))
+        (CResourceFact::Own(left, quantity), CResourceFact::View(right))
+        | (CResourceFact::View(right), CResourceFact::Own(left, quantity))
             if exact_resources_proven_equal(left, right, assumptions) =>
         {
-            Some(CResourceFact::Own(left.clone()))
+            Some(CResourceFact::Own(left.clone(), *quantity))
         }
         (CResourceFact::View(left), CResourceFact::View(right))
             if exact_resources_proven_equal(left, right, assumptions) =>
@@ -516,7 +543,7 @@ fn combine_exact_resource_facts(
 
 fn access_mode_core(resource: &CResourceFact) -> Option<CResourceFact> {
     match resource {
-        CResourceFact::Own(resource) | CResourceFact::View(resource) => {
+        CResourceFact::Own(resource, _) | CResourceFact::View(resource) => {
             Some(CResourceFact::View(resource.clone()))
         }
     }
@@ -528,11 +555,11 @@ fn exact_resource_pair_validity_error(
     assumptions: &Assumptions,
 ) -> Option<ResourceContextValidityError> {
     match (left, right) {
-        (CResourceFact::Own(left), CResourceFact::Own(right))
+        (CResourceFact::Own(left, _), CResourceFact::Own(right, _))
             if exact_resources_proven_equal(left, right, assumptions) =>
         {
             Some(ResourceContextValidityError::DuplicateOwnedResourceFact(
-                CResourceFact::Own(left.clone()),
+                CResourceFact::own(left.clone()),
             ))
         }
         _ => None,
@@ -679,11 +706,77 @@ macro_rules! impl_exact_resource_algebra {
 impl_exact_resource_algebra!(TokenResourceAlgebra, ResourceFamily::Token);
 impl_exact_resource_algebra!(CompositeResourceAlgebra, ResourceFamily::Composite);
 
+impl ResourceFamilyAlgebra for CountedResourceAlgebra {
+    fn family(&self) -> ResourceFamily {
+        ResourceFamily::Counted
+    }
+
+    fn pair_validity_error(
+        &self,
+        _left: &CResourceFact,
+        _right: &CResourceFact,
+        _assumptions: &Assumptions,
+    ) -> Option<ResourceContextValidityError> {
+        None
+    }
+
+    fn entails(
+        &self,
+        available: &CResourceFact,
+        required: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> bool {
+        exact_resource_fact_entails(available, required, assumptions)
+    }
+
+    fn consume(
+        &self,
+        available: &CResourceFact,
+        required: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> Option<ResourceFactConsumption> {
+        consume_exact_resource_fact(available, required, assumptions)
+    }
+
+    fn normalize_pair(
+        &self,
+        left: &CResourceFact,
+        right: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> Option<CResourceFact> {
+        match (left, right) {
+            (
+                CResourceFact::Own(left, left_quantity),
+                CResourceFact::Own(right, right_quantity),
+            ) if exact_resources_proven_equal(left, right, assumptions) => left_quantity
+                .get()
+                .checked_add(right_quantity.get())
+                .and_then(NonZeroU32::new)
+                .map(|quantity| CResourceFact::Own(left.clone(), quantity)),
+            _ => combine_exact_resource_facts(left, right, assumptions),
+        }
+    }
+
+    fn core(&self, fact: &CResourceFact) -> Option<CResourceFact> {
+        access_mode_core(fact)
+    }
+
+    fn observable_facts(
+        &self,
+        facts: &[&CResourceFact],
+        _assumptions: &Assumptions,
+    ) -> Vec<Proposition> {
+        same_family_separate_facts(facts)
+    }
+}
+
 fn resource_fact_read_core_range(resource: &CResourceFact) -> Option<CMemoryRange> {
     match resource.core()? {
         CResourceFact::View(CResource::Memory(range)) => Some(range),
-        CResourceFact::View(CResource::Composite { .. } | CResource::Token { .. })
-        | CResourceFact::Own(_) => None,
+        CResourceFact::View(
+            CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
+        )
+        | CResourceFact::Own(..) => None,
     }
 }
 
@@ -711,14 +804,17 @@ fn memory_resource_fact_permits_write(
     assumptions: &Assumptions,
 ) -> bool {
     match resource {
-        CResourceFact::Own(CResource::Memory(range)) => assumptions.pointer_access_in_range(
+        CResourceFact::Own(CResource::Memory(range), _) => assumptions.pointer_access_in_range(
             pointer,
             byte_width,
             range.base(),
             range.start(),
             range.end(),
         ),
-        CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. })
+        CResourceFact::Own(
+            CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
+            _,
+        )
         | CResourceFact::View(_) => false,
     }
 }
@@ -909,10 +1005,15 @@ pub(in crate::kernel) fn memory_range_covers(
 
 fn memory_resource_fact_range(fact: &CResourceFact) -> Option<&CMemoryRange> {
     match fact {
-        CResourceFact::Own(CResource::Memory(range))
+        CResourceFact::Own(CResource::Memory(range), _)
         | CResourceFact::View(CResource::Memory(range)) => Some(range),
-        CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. })
-        | CResourceFact::View(CResource::Composite { .. } | CResource::Token { .. }) => None,
+        CResourceFact::Own(
+            CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
+            _,
+        )
+        | CResourceFact::View(
+            CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
+        ) => None,
     }
 }
 
@@ -1042,6 +1143,7 @@ impl CResource {
             Self::Memory(_) => ResourceFamily::Memory,
             Self::Composite { .. } => ResourceFamily::Composite,
             Self::Token { .. } => ResourceFamily::Token,
+            Self::Counted { .. } => ResourceFamily::Counted,
         }
     }
 }
@@ -1050,7 +1152,7 @@ impl CResourceFact {
     pub const ALLOCATION_RESOURCE_NAME: &'static str = "allocation";
 
     pub fn own_memory(range: CMemoryRange) -> Self {
-        Self::Own(CResource::Memory(range))
+        Self::own(CResource::Memory(range))
     }
 
     pub fn view_memory(range: CMemoryRange) -> Self {
@@ -1058,7 +1160,7 @@ impl CResourceFact {
     }
 
     pub fn own_composite(name: String, arguments: Vec<CValue>) -> Self {
-        Self::Own(CResource::Composite { name, arguments })
+        Self::own(CResource::Composite { name, arguments })
     }
 
     pub fn view_composite(name: String, arguments: Vec<CValue>) -> Self {
@@ -1066,7 +1168,15 @@ impl CResourceFact {
     }
 
     pub fn own_token(name: String, arguments: Vec<CValue>) -> Self {
-        Self::Own(CResource::Token { name, arguments })
+        Self::own(CResource::Token { name, arguments })
+    }
+
+    pub fn own_counted(name: String, arguments: Vec<CValue>) -> Self {
+        Self::own(CResource::Counted { name, arguments })
+    }
+
+    pub fn own(resource: CResource) -> Self {
+        Self::Own(resource, NonZeroU32::MIN)
     }
 
     pub fn own_allocation(base: Pointer, bytes: impl Into<Bitvector32Term>) -> Self {
@@ -1078,7 +1188,7 @@ impl CResourceFact {
     }
 
     pub fn allocation(&self) -> Option<(&Pointer, &Bitvector32Term)> {
-        let Self::Own(CResource::Token { name, arguments }) = self else {
+        let Self::Own(CResource::Token { name, arguments }, _) = self else {
             return None;
         };
         if name != Self::ALLOCATION_RESOURCE_NAME {
@@ -1096,7 +1206,7 @@ impl CResourceFact {
             CResource::Composite { arguments, .. } => arguments.iter().any(
                 |argument| matches!(argument, CValue::Pointer(pointer) if &pointer.block == block),
             ),
-            CResource::Token { .. } => false,
+            CResource::Token { .. } | CResource::Counted { .. } => false,
         }
     }
 
@@ -1125,14 +1235,18 @@ impl CResourceFact {
         Self::View(CResource::Token { name, arguments })
     }
 
+    pub fn view_counted(name: String, arguments: Vec<CValue>) -> Self {
+        Self::View(CResource::Counted { name, arguments })
+    }
+
     pub fn resource(&self) -> &CResource {
         match self {
-            Self::Own(resource) | Self::View(resource) => resource,
+            Self::Own(resource, _) | Self::View(resource) => resource,
         }
     }
 
     pub fn is_own(&self) -> bool {
-        matches!(self, Self::Own(_))
+        matches!(self, Self::Own(..))
     }
 
     pub fn is_view(&self) -> bool {
@@ -1149,35 +1263,50 @@ impl CResourceFact {
 
     pub fn memory_own_range(&self) -> Option<&CMemoryRange> {
         match self {
-            Self::Own(CResource::Memory(range)) => Some(range),
-            Self::Own(CResource::Composite { .. } | CResource::Token { .. }) | Self::View(_) => {
-                None
-            }
+            Self::Own(CResource::Memory(range), _) => Some(range),
+            Self::Own(
+                CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
+                _,
+            )
+            | Self::View(_) => None,
         }
     }
 
     pub fn memory_view_range(&self) -> Option<&CMemoryRange> {
         match self {
             Self::View(CResource::Memory(range)) => Some(range),
-            Self::View(CResource::Composite { .. } | CResource::Token { .. }) | Self::Own(_) => {
-                None
-            }
+            Self::View(
+                CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
+            )
+            | Self::Own(..) => None,
         }
     }
 
     pub fn memory_range(&self) -> Option<&CMemoryRange> {
         match self {
-            Self::Own(CResource::Memory(range)) | Self::View(CResource::Memory(range)) => {
+            Self::Own(CResource::Memory(range), _) | Self::View(CResource::Memory(range)) => {
                 Some(range)
             }
-            Self::Own(CResource::Composite { .. } | CResource::Token { .. })
-            | Self::View(CResource::Composite { .. } | CResource::Token { .. }) => None,
+            Self::Own(
+                CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
+                _,
+            )
+            | Self::View(
+                CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
+            ) => None,
         }
     }
 
     pub fn owned_resource(&self) -> Option<&CResource> {
         match self {
-            Self::Own(resource) => Some(resource),
+            Self::Own(resource, _) => Some(resource),
+            Self::View(_) => None,
+        }
+    }
+
+    pub fn owned_quantity(&self) -> Option<u32> {
+        match self {
+            Self::Own(_, quantity) => Some(quantity.get()),
             Self::View(_) => None,
         }
     }
@@ -1203,8 +1332,8 @@ fn combine_memory_resource_facts(
             CResourceFact::View(CResource::Memory(right)),
         ) => merge_memory_ranges(left, right, assumptions).map(CResourceFact::view_memory),
         (
-            CResourceFact::Own(CResource::Memory(left)),
-            CResourceFact::Own(CResource::Memory(right)),
+            CResourceFact::Own(CResource::Memory(left), _),
+            CResourceFact::Own(CResource::Memory(right), _),
         ) => merge_memory_ranges(left, right, assumptions).map(CResourceFact::own_memory),
         _ => None,
     }

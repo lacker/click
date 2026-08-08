@@ -1016,6 +1016,15 @@ fn substitute_bitvector_variable_in_spec_resource(
                 })
                 .collect(),
         },
+        SpecResource::Counted { name, arguments } => SpecResource::Counted {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| {
+                    substitute_bitvector_variable_in_spec_expression(argument, from, to)
+                })
+                .collect(),
+        },
     }
 }
 
@@ -1153,8 +1162,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource(
     to: &Bitvector32Term,
 ) -> CResourceFact {
     match resource {
-        CResourceFact::Own(resource) => CResourceFact::Own(
+        CResourceFact::Own(resource, quantity) => CResourceFact::Own(
             substitute_bitvector_variable_in_c_resource(resource, from, to),
+            *quantity,
         ),
         CResourceFact::View(resource) => CResourceFact::View(
             substitute_bitvector_variable_in_c_resource(resource, from, to),
@@ -1179,6 +1189,13 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_resource(
                 .collect(),
         },
         CResource::Token { name, arguments } => CResource::Token {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_bitvector_variable_in_c_value(argument, from, to))
+                .collect(),
+        },
+        CResource::Counted { name, arguments } => CResource::Counted {
             name: name.clone(),
             arguments: arguments
                 .iter()
@@ -1308,6 +1325,20 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
             arguments,
             parameter_types,
         } => CResourceSpec::Token {
+            access: *access,
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
+                .collect(),
+            parameter_types: parameter_types.clone(),
+        },
+        CResourceSpec::Counted {
+            access,
+            name,
+            arguments,
+            parameter_types,
+        } => CResourceSpec::Counted {
             access: *access,
             name: name.clone(),
             arguments: arguments

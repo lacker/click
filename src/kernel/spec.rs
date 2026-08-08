@@ -422,6 +422,18 @@ fn evaluate_spec_resource_at_state(
                 }),
             )
         }
+        SpecResource::Counted { name, arguments } => {
+            let name = name.clone();
+            (
+                arguments.clone(),
+                Box::new(move |arguments| {
+                    Some(CResource::Counted {
+                        name: name.clone(),
+                        arguments,
+                    })
+                }),
+            )
+        }
     };
     Ok(
         evaluate_spec_values_at_state(state, &expressions, loop_entry_state, assumptions, budget)?
