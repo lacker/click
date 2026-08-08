@@ -1,0 +1,912 @@
+use super::*;
+
+pub(in crate::kernel) fn bitvector_same_base_nonzero_const_offset(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> bool {
+    if let Some((left_base, left_addend)) = left.add_const_parts() {
+        if &left_base == right {
+            return left_addend != 0;
+        }
+        if let Some((right_base, right_addend)) = right.add_const_parts() {
+            return left_base == right_base && left_addend != right_addend;
+        }
+    }
+
+    if let Some((right_base, right_addend)) = right.add_const_parts() {
+        return &right_base == left && right_addend != 0;
+    }
+
+    false
+}
+
+pub(in crate::kernel) fn collect_proposition_bitvector_variables(
+    proposition: &Proposition,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match proposition {
+        Proposition::Equal(left, right) => {
+            collect_term_bitvector_variables(left, variables);
+            collect_term_bitvector_variables(right, variables);
+        }
+        Proposition::ConditionIs(condition, _) => {
+            collect_condition_bitvector_variables(condition, variables);
+        }
+        Proposition::Predicate { arguments, .. } => {
+            for argument in arguments {
+                collect_term_bitvector_variables(argument, variables);
+            }
+        }
+        Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome,
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            collect_c_expression_bitvector_variables(expression, variables);
+            collect_c_expression_outcome_bitvector_variables(outcome, variables);
+        }
+        Proposition::CConditionEvaluates {
+            state, condition, ..
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            collect_c_expression_bitvector_variables(condition, variables);
+        }
+        Proposition::CStatementExecutes {
+            state,
+            statement,
+            outcome,
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            collect_c_statement_bitvector_variables(statement, variables);
+            collect_c_statement_outcome_bitvector_variables(outcome, variables);
+        }
+        Proposition::CStatementVerifies {
+            state,
+            statement,
+            outcome,
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            collect_c_statement_bitvector_variables(statement, variables);
+            collect_c_statement_outcome_bitvector_variables(outcome, variables);
+        }
+        Proposition::CFunctionExecutes {
+            state,
+            arguments,
+            function,
+            outcome,
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, variables);
+            }
+            collect_c_function_bitvector_variables(function, variables);
+            collect_c_function_outcome_bitvector_variables(outcome, variables);
+        }
+        Proposition::CFunctionVerifies {
+            state,
+            arguments,
+            function,
+            outcome,
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, variables);
+            }
+            collect_c_function_bitvector_variables(function, variables);
+            collect_c_function_outcome_bitvector_variables(outcome, variables);
+        }
+        Proposition::CFunctionSatisfiesSpecification {
+            function,
+            specification,
+        } => {
+            collect_c_function_bitvector_variables(function, variables);
+            collect_c_function_specification_bitvector_variables(specification, variables);
+        }
+        Proposition::CFunctionPartiallySatisfiesSpecification {
+            function,
+            specification,
+        } => {
+            collect_c_function_bitvector_variables(function, variables);
+            collect_c_function_specification_bitvector_variables(specification, variables);
+        }
+        Proposition::CMemoryLoads {
+            memory,
+            pointer,
+            outcome,
+        } => {
+            collect_memory_bitvector_variables(memory, variables);
+            collect_pointer_bitvector_variables(pointer, variables);
+            collect_c_expression_outcome_bitvector_variables(outcome, variables);
+        }
+        Proposition::CMemoryCanStore {
+            memory, pointer, ..
+        } => {
+            collect_memory_bitvector_variables(memory, variables);
+            collect_pointer_bitvector_variables(pointer, variables);
+        }
+        Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+        } => {
+            collect_memory_bitvector_variables(memory, variables);
+            collect_pointer_bitvector_variables(base, variables);
+            collect_bitvector_variables(bytes, variables);
+        }
+        Proposition::CMemoryDisjoint {
+            left_base,
+            left_start,
+            left_end,
+            right_base,
+            right_start,
+            right_end,
+        } => {
+            collect_pointer_bitvector_variables(left_base, variables);
+            collect_bitvector_variables(left_start, variables);
+            collect_bitvector_variables(left_end, variables);
+            collect_pointer_bitvector_variables(right_base, variables);
+            collect_bitvector_variables(right_start, variables);
+            collect_bitvector_variables(right_end, variables);
+        }
+        Proposition::CResourceSeparate { left, right } => {
+            collect_c_resource_bitvector_variables(left, variables);
+            collect_c_resource_bitvector_variables(right, variables);
+        }
+        Proposition::CResourceContains { parent, child } => {
+            collect_c_resource_bitvector_variables(parent, variables);
+            collect_c_resource_bitvector_variables(child, variables);
+        }
+        Proposition::CMemoryMutatesOnly {
+            before,
+            after,
+            pointers,
+        } => {
+            collect_memory_bitvector_variables(before, variables);
+            collect_memory_bitvector_variables(after, variables);
+            for pointer in pointers {
+                collect_pointer_bitvector_variables(pointer, variables);
+            }
+        }
+        Proposition::CMemoryEffectSummary {
+            before,
+            after,
+            mutable_ranges,
+        } => {
+            collect_memory_bitvector_variables(before, variables);
+            collect_memory_bitvector_variables(after, variables);
+            for range in mutable_ranges {
+                collect_c_memory_range_bitvector_variables(range, variables);
+            }
+        }
+        Proposition::CHeapLifetimeRetired {
+            before,
+            after,
+            allocation_base,
+            bytes,
+        } => {
+            collect_memory_bitvector_variables(before, variables);
+            collect_memory_bitvector_variables(after, variables);
+            collect_pointer_bitvector_variables(allocation_base, variables);
+            collect_bitvector_variables(bytes, variables);
+        }
+        Proposition::CWhileInvariantRule {
+            state,
+            condition,
+            invariant,
+            body,
+            preserved,
+            postcondition,
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            collect_c_expression_bitvector_variables(condition, variables);
+            for proposition in invariant {
+                collect_proposition_bitvector_variables(proposition, variables);
+            }
+            collect_c_statement_bitvector_variables(body, variables);
+            for proposition in preserved {
+                collect_proposition_bitvector_variables(proposition, variables);
+            }
+            collect_proposition_bitvector_variables(postcondition, variables);
+        }
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            collect_proposition_bitvector_variables(left, variables);
+            collect_proposition_bitvector_variables(right, variables);
+        }
+        Proposition::Not(body) => collect_proposition_bitvector_variables(body, variables),
+        Proposition::ForAll { var, body, .. } | Proposition::Exists { var, body, .. } => {
+            collect_proposition_bitvector_variables(body, variables);
+            variables.remove(var);
+        }
+    }
+}
+
+pub(in crate::kernel) fn collect_term_bitvector_variables(
+    term: &Term,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match term {
+        Term::Condition(condition) => collect_condition_bitvector_variables(condition, variables),
+        Term::Bitvector32(bits) => collect_bitvector_variables(bits, variables),
+        Term::PointerOffset(offset) => {
+            collect_pointer_offset_bitvector_variables(offset, variables)
+        }
+        Term::CValue(value) => collect_c_value_bitvector_variables(value, variables),
+        Term::CExpressionOutcome(outcome) => {
+            collect_c_expression_outcome_bitvector_variables(outcome, variables);
+        }
+        Term::CStatementOutcome(outcome) => {
+            collect_c_statement_outcome_bitvector_variables(outcome, variables);
+        }
+        Term::CFunctionOutcome(outcome) => {
+            collect_c_function_outcome_bitvector_variables(outcome, variables);
+        }
+        Term::CMemory(memory) => collect_memory_bitvector_variables(memory, variables),
+        Term::CState(state) => collect_c_state_bitvector_variables(state, variables),
+    }
+}
+
+pub(in crate::kernel) fn collect_c_expression_bitvector_variables(
+    expression: &CExpression,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match expression {
+        CExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
+        CExpression::Variable(_) => {}
+        CExpression::AddressOf(body) | CExpression::Not(body) | CExpression::Load(body) => {
+            collect_c_expression_bitvector_variables(body, variables);
+        }
+        CExpression::PointerOffsetBytes { pointer, .. } => {
+            collect_c_expression_bitvector_variables(pointer, variables);
+        }
+        CExpression::TypedLoad { pointer, .. } => {
+            collect_c_expression_bitvector_variables(pointer, variables);
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            collect_c_expression_bitvector_variables(left, variables);
+            collect_c_expression_bitvector_variables(right, variables);
+        }
+        CExpression::BitwiseNot(expression) => {
+            collect_c_expression_bitvector_variables(expression, variables);
+        }
+    }
+}
+
+pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
+    statement: &CStatement,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match statement {
+        CStatement::Skip | CStatement::Declare { .. } => {}
+        CStatement::Assign { expression, .. }
+        | CStatement::Return(expression)
+        | CStatement::Assert {
+            condition: expression,
+            ..
+        } => {
+            collect_c_expression_bitvector_variables(expression, variables);
+        }
+        CStatement::CallAssign { arguments, .. } => {
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, variables);
+            }
+        }
+        CStatement::Call { arguments, .. } => {
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, variables);
+            }
+        }
+        CStatement::HeapAllocate { .. } => {}
+        CStatement::HeapFree { pointer } => {
+            collect_c_expression_bitvector_variables(pointer, variables);
+        }
+        CStatement::Seq(first, second) => {
+            collect_c_statement_bitvector_variables(first, variables);
+            collect_c_statement_bitvector_variables(second, variables);
+        }
+        CStatement::Store { pointer, value } => {
+            collect_c_expression_bitvector_variables(pointer, variables);
+            collect_c_expression_bitvector_variables(value, variables);
+        }
+        CStatement::TypedStore { pointer, value, .. } => {
+            collect_c_expression_bitvector_variables(pointer, variables);
+            collect_c_expression_bitvector_variables(value, variables);
+        }
+        CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_c_expression_bitvector_variables(condition, variables);
+            collect_c_statement_bitvector_variables(then_branch, variables);
+            collect_c_statement_bitvector_variables(else_branch, variables);
+        }
+        CStatement::While {
+            condition,
+            invariant,
+            invariant_checks,
+            effect_checks,
+            body,
+        } => {
+            collect_c_expression_bitvector_variables(condition, variables);
+            for proposition in invariant {
+                collect_proposition_bitvector_variables(proposition, variables);
+            }
+            for check in invariant_checks {
+                collect_spec_proposition_bitvector_variables(check.proposition(), variables);
+            }
+            for check in effect_checks {
+                collect_loop_effect_bitvector_variables(check.effect(), variables);
+            }
+            collect_c_statement_bitvector_variables(body, variables);
+        }
+    }
+}
+
+pub(in crate::kernel) fn collect_spec_memory_bitvector_variables(
+    memory: &SpecMemory,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match memory {
+        SpecMemory::Current | SpecMemory::FunctionEntry => {}
+        SpecMemory::LoopEntry => {}
+        SpecMemory::Fixed(memory) => collect_memory_bitvector_variables(memory, variables),
+    }
+}
+
+pub(in crate::kernel) fn collect_spec_expression_bitvector_variables(
+    expression: &SpecExpression,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match expression {
+        SpecExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
+        SpecExpression::CExpression(expression) => {
+            collect_c_expression_bitvector_variables(expression, variables);
+        }
+        SpecExpression::Add(left, right)
+        | SpecExpression::Subtract(left, right)
+        | SpecExpression::Multiply(left, right)
+        | SpecExpression::Divide(left, right)
+        | SpecExpression::Remainder(left, right)
+        | SpecExpression::ShiftLeft(left, right)
+        | SpecExpression::ShiftRight(left, right)
+        | SpecExpression::BitwiseAnd(left, right)
+        | SpecExpression::BitwiseOr(left, right)
+        | SpecExpression::BitwiseXor(left, right) => {
+            collect_spec_expression_bitvector_variables(left, variables);
+            collect_spec_expression_bitvector_variables(right, variables);
+        }
+        SpecExpression::BitwiseNot(expression) => {
+            collect_spec_expression_bitvector_variables(expression, variables);
+        }
+        SpecExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_spec_proposition_bitvector_variables(condition, variables);
+            collect_spec_expression_bitvector_variables(then_branch, variables);
+            collect_spec_expression_bitvector_variables(else_branch, variables);
+        }
+        SpecExpression::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator: _,
+            item: _,
+            body,
+        } => {
+            collect_spec_expression_bitvector_variables(start, variables);
+            collect_spec_expression_bitvector_variables(end, variables);
+            collect_spec_expression_bitvector_variables(initial, variables);
+            collect_spec_expression_bitvector_variables(body, variables);
+        }
+        SpecExpression::Let {
+            name: _,
+            value,
+            body,
+        } => {
+            collect_spec_expression_bitvector_variables(value, variables);
+            collect_spec_expression_bitvector_variables(body, variables);
+        }
+        SpecExpression::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                collect_spec_expression_bitvector_variables(argument, variables);
+            }
+        }
+        SpecExpression::LoopEntrySnapshot(expression) => {
+            collect_spec_expression_bitvector_variables(expression, variables);
+        }
+        SpecExpression::PointerOffset {
+            pointer,
+            elements,
+            byte_width: _,
+        } => {
+            collect_spec_expression_bitvector_variables(pointer, variables);
+            collect_spec_expression_bitvector_variables(elements, variables);
+        }
+        SpecExpression::MemoryLoad {
+            memory, pointer, ..
+        } => {
+            collect_spec_memory_bitvector_variables(memory, variables);
+            collect_spec_expression_bitvector_variables(pointer, variables);
+        }
+    }
+}
+
+pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
+    proposition: &SpecProposition,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match proposition {
+        SpecProposition::Comparison { left, right, .. } => {
+            collect_spec_expression_bitvector_variables(left, variables);
+            collect_spec_expression_bitvector_variables(right, variables);
+        }
+        SpecProposition::And(left, right)
+        | SpecProposition::Or(left, right)
+        | SpecProposition::Implies(left, right) => {
+            collect_spec_proposition_bitvector_variables(left, variables);
+            collect_spec_proposition_bitvector_variables(right, variables);
+        }
+        SpecProposition::Not(body) => {
+            collect_spec_proposition_bitvector_variables(body, variables);
+        }
+        SpecProposition::ForAllInt32 { variable, body, .. }
+        | SpecProposition::ExistsInt32 { variable, body, .. } => {
+            collect_spec_proposition_bitvector_variables(body, variables);
+            variables.remove(variable);
+        }
+        SpecProposition::Predicate { arguments, .. } => {
+            for argument in arguments {
+                match argument {
+                    SpecPredicateArgument::Value(expression) => {
+                        collect_spec_expression_bitvector_variables(expression, variables);
+                    }
+                    SpecPredicateArgument::ArrayRef { pointer, .. } => {
+                        collect_spec_expression_bitvector_variables(pointer, variables);
+                    }
+                }
+            }
+        }
+        SpecProposition::ResourceSeparate { left, right }
+        | SpecProposition::ResourceContains {
+            parent: left,
+            child: right,
+        } => {
+            collect_spec_resource_bitvector_variables(left, variables);
+            collect_spec_resource_bitvector_variables(right, variables);
+        }
+        SpecProposition::MemoryLoadable {
+            memory,
+            base,
+            start,
+            end,
+            ..
+        } => {
+            collect_spec_memory_bitvector_variables(memory, variables);
+            collect_spec_expression_bitvector_variables(base, variables);
+            collect_spec_expression_bitvector_variables(start, variables);
+            collect_spec_expression_bitvector_variables(end, variables);
+        }
+        SpecProposition::Defined(expression) => {
+            collect_spec_expression_bitvector_variables(expression, variables);
+        }
+    }
+}
+
+fn collect_spec_resource_bitvector_variables(
+    resource: &SpecResource,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match resource {
+        SpecResource::Memory { base, start, end } => {
+            collect_spec_expression_bitvector_variables(base, variables);
+            collect_spec_expression_bitvector_variables(start, variables);
+            collect_spec_expression_bitvector_variables(end, variables);
+        }
+        SpecResource::Composite { arguments, .. } | SpecResource::Token { arguments, .. } => {
+            for argument in arguments {
+                collect_spec_expression_bitvector_variables(argument, variables);
+            }
+        }
+    }
+}
+
+pub(in crate::kernel) fn collect_loop_effect_bitvector_variables(
+    effect: &CLoopEffect,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match effect {
+        CLoopEffect::Immutable => {}
+        CLoopEffect::Mutable(segments) => {
+            for segment in segments {
+                collect_c_expression_bitvector_variables(&segment.base, variables);
+                collect_c_expression_bitvector_variables(&segment.start, variables);
+                collect_c_expression_bitvector_variables(&segment.end, variables);
+            }
+        }
+    }
+}
+
+pub(in crate::kernel) fn collect_c_expression_outcome_bitvector_variables(
+    outcome: &CExpressionOutcome,
+    variables: &mut BTreeSet<Variable>,
+) {
+    if let CExpressionOutcome::Value(value) = outcome {
+        collect_c_value_bitvector_variables(value, variables);
+    }
+}
+
+pub(in crate::kernel) fn collect_c_statement_outcome_bitvector_variables(
+    outcome: &CStatementOutcome,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match outcome {
+        CStatementOutcome::Normal(state) => collect_c_state_bitvector_variables(state, variables),
+        CStatementOutcome::Return { value, state } => {
+            collect_c_value_bitvector_variables(value, variables);
+            collect_c_state_bitvector_variables(state, variables);
+        }
+        CStatementOutcome::VerificationDiverges
+        | CStatementOutcome::UndefinedBehavior(_)
+        | CStatementOutcome::RuntimeError(_) => {}
+    }
+}
+
+pub(in crate::kernel) fn collect_c_function_outcome_bitvector_variables(
+    outcome: &CFunctionOutcome,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match outcome {
+        CFunctionOutcome::Return { value, state } => {
+            collect_c_value_bitvector_variables(value, variables);
+            collect_c_state_bitvector_variables(state, variables);
+        }
+        CFunctionOutcome::VerificationDiverges
+        | CFunctionOutcome::UndefinedBehavior(_)
+        | CFunctionOutcome::RuntimeError(_) => {}
+    }
+}
+
+pub(in crate::kernel) fn collect_c_state_bitvector_variables(
+    state: &CState,
+    variables: &mut BTreeSet<Variable>,
+) {
+    for binding in state.locals.bindings.values() {
+        match binding {
+            CLocalBinding::Object { value, .. } => {
+                collect_c_value_bitvector_variables(value, variables)
+            }
+            CLocalBinding::UninitializedObject { .. } => {}
+            CLocalBinding::ArrayObject { .. } => {}
+        }
+    }
+    collect_memory_bitvector_variables(&state.memory, variables);
+    collect_resource_context_bitvector_variables(&state.resources, variables);
+}
+
+pub(in crate::kernel) fn collect_resource_context_bitvector_variables(
+    resources: &ResourceContext,
+    variables: &mut BTreeSet<Variable>,
+) {
+    for resource in resources.facts() {
+        collect_resource_bitvector_variables(resource, variables);
+    }
+}
+
+pub(in crate::kernel) fn collect_resource_bitvector_variables(
+    resource: &CResourceFact,
+    variables: &mut BTreeSet<Variable>,
+) {
+    collect_c_resource_bitvector_variables(resource.resource(), variables);
+}
+
+pub(in crate::kernel) fn collect_c_resource_bitvector_variables(
+    resource: &CResource,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match resource {
+        CResource::Memory(range) => collect_c_memory_range_bitvector_variables(range, variables),
+        CResource::Composite { arguments, .. } | CResource::Token { arguments, .. } => {
+            for argument in arguments {
+                collect_c_value_bitvector_variables(argument, variables);
+            }
+        }
+    }
+}
+
+pub(in crate::kernel) fn collect_c_function_bitvector_variables(
+    function: &CFunction,
+    variables: &mut BTreeSet<Variable>,
+) {
+    for resource in function.resource_requires() {
+        collect_resource_spec_bitvector_variables(resource, variables);
+    }
+    for resource in function.resource_ensures() {
+        collect_resource_spec_bitvector_variables(resource, variables);
+    }
+    for proposition in function.contract_requires() {
+        collect_spec_proposition_bitvector_variables(proposition, variables);
+    }
+    for proposition in function.contract_ensures() {
+        collect_spec_proposition_bitvector_variables(proposition, variables);
+    }
+    for segment in function.contract_mutable() {
+        collect_c_expression_bitvector_variables(&segment.base, variables);
+        collect_c_expression_bitvector_variables(&segment.start, variables);
+        collect_c_expression_bitvector_variables(&segment.end, variables);
+        if let Some(guard) = segment.guard() {
+            collect_spec_proposition_bitvector_variables(guard, variables);
+        }
+    }
+    collect_c_statement_bitvector_variables(function.body(), variables);
+}
+
+pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
+    resource: &CResourceSpec,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match resource {
+        CResourceSpec::Read(segment) => {
+            collect_c_expression_bitvector_variables(&segment.base, variables);
+            collect_c_expression_bitvector_variables(&segment.start, variables);
+            collect_c_expression_bitvector_variables(&segment.end, variables);
+            if let Some(guard) = segment.guard() {
+                collect_spec_proposition_bitvector_variables(guard, variables);
+            }
+        }
+        CResourceSpec::Write(segment) => {
+            collect_c_expression_bitvector_variables(&segment.base, variables);
+            collect_c_expression_bitvector_variables(&segment.start, variables);
+            collect_c_expression_bitvector_variables(&segment.end, variables);
+            if let Some(guard) = segment.guard() {
+                collect_spec_proposition_bitvector_variables(guard, variables);
+            }
+        }
+        CResourceSpec::Composite { arguments, .. } | CResourceSpec::Token { arguments, .. } => {
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, variables);
+            }
+        }
+    }
+}
+
+pub(in crate::kernel) fn collect_c_function_specification_bitvector_variables(
+    specification: &CFunctionSpecification,
+    variables: &mut BTreeSet<Variable>,
+) {
+    collect_c_state_bitvector_variables(specification.state(), variables);
+    for argument in specification.arguments() {
+        collect_c_expression_bitvector_variables(argument, variables);
+    }
+    for requirement in specification.requires() {
+        collect_proposition_bitvector_variables(requirement, variables);
+    }
+    collect_c_function_outcome_bitvector_variables(specification.outcome(), variables);
+}
+
+pub(in crate::kernel) fn collect_assumption_variables(
+    assumptions: &Assumptions,
+    variables: &mut BTreeSet<Variable>,
+) {
+    for proposition in assumptions.pure_facts() {
+        collect_proposition_bitvector_variables(&proposition, variables);
+    }
+}
+
+pub(in crate::kernel) fn collect_execution_environment_variables(
+    environment: &CExecutionEnvironment,
+    variables: &mut BTreeSet<Variable>,
+) {
+    for function in environment.functions.values() {
+        collect_c_function_bitvector_variables(function, variables);
+    }
+    for rule in environment.verified_function_rules.values() {
+        collect_c_function_bitvector_variables(&rule.function, variables);
+    }
+    for rule in &environment.verified_loop_rules {
+        collect_c_state_bitvector_variables(&rule.symbolic_entry_state, variables);
+        collect_c_statement_bitvector_variables(&rule.loop_statement, variables);
+        collect_assumption_variables(&rule.required_assumptions, variables);
+        for path in &rule.paths {
+            collect_c_statement_outcome_bitvector_variables(&path.outcome, variables);
+            for fact in &path.facts {
+                collect_proposition_bitvector_variables(fact.proposition(), variables);
+            }
+            for obligation in &path.obligations {
+                collect_proposition_bitvector_variables(obligation.proposition(), variables);
+            }
+        }
+    }
+}
+
+pub(in crate::kernel) fn collect_c_memory_range_bitvector_variables(
+    range: &CMemoryRange,
+    variables: &mut BTreeSet<Variable>,
+) {
+    collect_pointer_bitvector_variables(&range.base, variables);
+    collect_bitvector_variables(&range.start, variables);
+    collect_bitvector_variables(&range.end, variables);
+}
+
+pub(in crate::kernel) fn resource_context_has_read(
+    resources: &ResourceContext,
+    pointer: &Pointer,
+    byte_width: u32,
+    assumptions: &Assumptions,
+) -> bool {
+    resources.permits_memory_read(pointer, byte_width, assumptions)
+}
+
+pub(in crate::kernel) fn resource_context_has_structural_read(
+    resources: &ResourceContext,
+    pointer: &Pointer,
+    byte_width: u32,
+    assumptions: &Assumptions,
+) -> bool {
+    resources.permits_memory_read_structurally(pointer, byte_width, assumptions)
+}
+
+pub(in crate::kernel) fn collect_condition_bitvector_variables(
+    condition: &ConditionTerm,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match condition {
+        ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {}
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            collect_bitvector_variables(left, variables);
+            collect_bitvector_variables(right, variables);
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            collect_pointer_offset_bitvector_variables(left, variables);
+            collect_pointer_offset_bitvector_variables(right, variables);
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            collect_pointer_bitvector_variables(left, variables);
+            collect_pointer_bitvector_variables(right, variables);
+        }
+    }
+}
+
+pub(in crate::kernel) fn collect_bitvector_variables(
+    term: &Bitvector32Term,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match term {
+        Bitvector32Term::Constant(_) => {}
+        Bitvector32Term::Variable(variable) => {
+            variables.insert(*variable);
+        }
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right) => {
+            collect_bitvector_variables(left, variables);
+            collect_bitvector_variables(right, variables);
+        }
+        Bitvector32Term::BitwiseNot(value) => {
+            collect_bitvector_variables(value, variables);
+        }
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => {
+            collect_condition_bitvector_variables(condition, variables);
+            collect_bitvector_variables(then_term, variables);
+            collect_bitvector_variables(else_term, variables);
+        }
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            collect_bitvector_variables(start, variables);
+            collect_bitvector_variables(end, variables);
+            collect_bitvector_variables(initial, variables);
+            collect_bitvector_variables(body, variables);
+            variables.remove(accumulator);
+            variables.remove(item);
+        }
+        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                collect_bitvector_variables(argument, variables);
+            }
+        }
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            collect_memory_bitvector_variables(memory, variables);
+            collect_pointer_bitvector_variables(pointer, variables);
+        }
+    }
+}
+
+pub(in crate::kernel) fn collect_pointer_offset_bitvector_variables(
+    offset: &PointerOffsetTerm,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match offset {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+        PointerOffsetTerm::Add(left, right) => {
+            collect_pointer_offset_bitvector_variables(left, variables);
+            collect_pointer_offset_bitvector_variables(right, variables);
+        }
+        PointerOffsetTerm::Int32Scaled { value, .. } => {
+            collect_bitvector_variables(value, variables);
+        }
+    }
+}
+
+pub(in crate::kernel) fn collect_pointer_bitvector_variables(
+    pointer: &Pointer,
+    variables: &mut BTreeSet<Variable>,
+) {
+    if let PointerBlock::Symbolic(variable) = pointer.block {
+        variables.insert(variable);
+    }
+    collect_pointer_offset_bitvector_variables(&pointer.offset, variables);
+}
+
+pub(in crate::kernel) fn collect_memory_bitvector_variables(
+    memory: &CMemory,
+    variables: &mut BTreeSet<Variable>,
+) {
+    for block in memory.blocks.keys() {
+        if let PointerBlock::Symbolic(variable) = block {
+            variables.insert(*variable);
+        }
+    }
+    for (pointer, value) in &memory.cells {
+        collect_pointer_bitvector_variables(pointer, variables);
+        collect_c_value_bitvector_variables(value, variables);
+    }
+}
+
+pub(in crate::kernel) fn collect_c_value_bitvector_variables(
+    value: &CValue,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match value {
+        CValue::Void => {}
+        CValue::Int32(bits) | CValue::UInt8(bits) => collect_bitvector_variables(bits, variables),
+        CValue::Pointer(pointer) => collect_pointer_bitvector_variables(pointer, variables),
+    }
+}
