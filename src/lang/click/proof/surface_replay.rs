@@ -246,39 +246,35 @@ pub(super) fn checked_surface_comparison_fact_at_point(
     // for example a snapshot fact whose `at(...)` anchor was dropped so its
     // current-state loads are not provably loadable — must not be emitted.
     let strictly_replayable = |surface: &ClickProposition| {
-        replay
-            .surface_propositions
-            .available_kernel(surface, available)
-            .is_some()
-            || lower_point_proposition(
-                surface,
-                available,
-                parameters,
-                arguments,
-                replay.old_reference_state(state),
-                state,
-                None,
-                &replay.program_point_states,
-                predicate_environment,
-                click_function_environment,
-            )
-            .is_ok_and(|premise| {
-                exact_fact_is_available(&premise, available)
-                    || materialization_equivalent_available_fact(&premise, available).is_some()
-            })
+        lower_point_proposition(
+            surface,
+            available,
+            parameters,
+            arguments,
+            replay.old_reference_state(state),
+            state,
+            None,
+            &replay.program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )
+        .is_ok_and(|premise| {
+            exact_fact_is_available(&premise, available)
+                || materialization_equivalent_available_fact(&premise, available).is_some()
+        })
     };
-    // An explicitly snapshot-indexed spelling already paired with this exact
-    // available kernel fact is itself a checked replay certificate. Re-lowering
-    // every such spelling at the end of a long execution is both redundant and
-    // potentially quadratic in the accumulated snapshots; `StepUsing` consults
-    // this same map before lowering its premises. Current-state spellings are
-    // not stable across statements, so they must still be lowered below.
+    // A snapshot-indexed spelling paired with this exact available kernel fact
+    // is replayable through the replay engine's program-point record. Requiring
+    // it to lower again against the current heap would incorrectly demand that
+    // old loads remain loadable now. Current-state spellings do not have that
+    // stable anchor and still go through `strictly_replayable` below.
     let recorded_surfaces = replay
         .surface_propositions
         .surfaces(kernel)
         .collect::<Vec<_>>();
     for surface in recorded_surfaces.into_iter().rev() {
-        if proposition_contains_at_expression(surface)
+        if (proposition_contains_at_expression(surface)
+            || proposition_contains_old_expression(surface))
             && replay
                 .surface_propositions
                 .available_kernel(surface, available)

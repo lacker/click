@@ -1,7 +1,7 @@
-# resource rejects duplicate token clauses
+# Repeated resource clauses require repeated units
 
-This checks that a token resource is not silently duplicated by writing
-the same resource requirement twice.
+Two equal resource clauses denote two units. They are valid together and are
+both consumed by this contract.
 
 ```c filename=use_once.c
 int32 use_once(int32 cb) {
@@ -23,5 +23,5 @@ int32 use_once(int32 cb) {
 ```
 
 ```expect
-fail: duplicate resource fact `can_complete(cb)`
+pass
 ```

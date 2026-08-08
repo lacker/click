@@ -1040,27 +1040,27 @@ fn collect_resource_fact_reads_from_contract_expression(
             Ok(())
         }
         ContractExpression::CBinding(_) => Ok(()),
+        ContractExpression::ResourceWildcard => Err(ClickError::new(format!(
+            "`_` is only valid inside a `count(...)` resource pattern in resource `{resource_name}`"
+        ))),
         ContractExpression::ResourceCount(resource) => {
-            let ResourceClause::Declared {
-                kind: ResourceKind::Counted,
-                arguments,
-                ..
-            } = resource.as_ref()
-            else {
+            let ResourceClause::Declared { arguments, .. } = resource.as_ref() else {
                 return Err(ClickError::new(format!(
-                    "`count(...)` inside resource `{resource_name}` expects a counted resource"
+                    "`count(...)` inside resource `{resource_name}` expects a declared resource"
                 )));
             };
             for argument in arguments {
-                collect_resource_fact_reads_from_contract_expression(
-                    argument,
-                    predicate_definitions,
-                    click_function_definitions,
-                    visited_predicates,
-                    visited_functions,
-                    reads,
-                    resource_name,
-                )?;
+                if !matches!(argument, ContractExpression::ResourceWildcard) {
+                    collect_resource_fact_reads_from_contract_expression(
+                        argument,
+                        predicate_definitions,
+                        click_function_definitions,
+                        visited_predicates,
+                        visited_functions,
+                        reads,
+                        resource_name,
+                    )?;
+                }
             }
             Ok(())
         }

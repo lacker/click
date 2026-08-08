@@ -422,18 +422,6 @@ fn evaluate_spec_resource_at_state(
                 }),
             )
         }
-        SpecResource::Counted { name, arguments } => {
-            let name = name.clone();
-            (
-                arguments.clone(),
-                Box::new(move |arguments| {
-                    Some(CResource::Counted {
-                        name: name.clone(),
-                        arguments,
-                    })
-                }),
-            )
-        }
     };
     Ok(
         evaluate_spec_values_at_state(state, &expressions, loop_entry_state, assumptions, budget)?
@@ -654,7 +642,7 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
     let mut paths = vec![SpecPropositionPath {
         proposition: Proposition::Predicate {
             name: name.to_string(),
-            arguments: Vec::new(),
+            arguments: vec![Term::CState(state.resource_state_snapshot())],
         },
         facts: Vec::new(),
         obligations: Vec::new(),
@@ -744,10 +732,16 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                 .collect()
         }
         SpecExpression::CountedResourceCount { name, arguments } => {
-            let mut argument_paths = vec![(Vec::<CValue>::new(), Vec::new(), Vec::new())];
+            let mut argument_paths = vec![(Vec::<Option<CValue>>::new(), Vec::new(), Vec::new())];
             for argument in arguments {
                 let mut next = Vec::new();
                 for (values, facts, obligations) in argument_paths {
+                    let Some(argument) = argument else {
+                        let mut next_values = values;
+                        next_values.push(None);
+                        next.push((next_values, facts, obligations));
+                        continue;
+                    };
                     let path_assumptions =
                         assumptions_with_path_context(assumptions, &facts, &obligations);
                     for argument_path in evaluate_spec_expression_paths_with_loop_entry(
@@ -769,7 +763,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                             continue;
                         };
                         let mut next_values = values.clone();
-                        next_values.push(argument_path.value);
+                        next_values.push(Some(argument_path.value));
                         next.push((next_values, merged_facts, merged_obligations));
                     }
                 }
@@ -777,15 +771,47 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             }
             argument_paths
                 .into_iter()
-                .filter_map(|(arguments, facts, obligations)| {
-                    state
-                        .counted_population(name, &arguments)
-                        .cloned()
-                        .map(|count| SpecExpressionPath {
-                            value: CValue::Int32(count),
-                            facts,
-                            obligations,
-                        })
+                .map(|(arguments, facts, mut obligations)| {
+                    let path_assumptions =
+                        assumptions_with_path_context(assumptions, &facts, &obligations);
+                    let mut total: Option<Bitvector32Term> = None;
+                    for population in state.counted_populations().iter().filter(|population| {
+                        population.name == *name
+                            && population.arguments.len() == arguments.len()
+                            && population.arguments.iter().zip(&arguments).all(
+                                |(actual, pattern)| {
+                                    pattern.as_ref().is_none_or(|expected| {
+                                        c_values_proven_equal_for_memory_resolution(
+                                            actual,
+                                            expected,
+                                            &path_assumptions,
+                                        )
+                                    })
+                                },
+                            )
+                    }) {
+                        total = Some(if let Some(current) = total {
+                            let overflow = ConditionTerm::signed_add_overflows(
+                                current.clone(),
+                                population.count.clone(),
+                            );
+                            let no_overflow = Proposition::ConditionIs(overflow, false);
+                            if !path_assumptions.proves(&no_overflow) {
+                                obligations.push(
+                                    ProofObligation::verification_condition(no_overflow)
+                                        .with_context("resource pattern count fits in int32"),
+                                );
+                            }
+                            Bitvector32Term::add(current, population.count.clone())
+                        } else {
+                            population.count.clone()
+                        });
+                    }
+                    SpecExpressionPath {
+                        value: CValue::Int32(total.unwrap_or(Bitvector32Term::Constant(0))),
+                        facts,
+                        obligations,
+                    }
                 })
                 .collect()
         }

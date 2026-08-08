@@ -3,9 +3,9 @@
 This project verifies the lifecycle of a heap object whose stored reference
 count agrees with the number of logical `object_ref(obj)` capabilities.
 
-The counted resource body owns the allocation and object memory once for the
-whole population. `count(object_ref(obj))` names the population size, and the
-body fact connects that ghost quantity to `obj->refs`.
+The resource body owns the allocation and object memory once for the whole
+population. `count(object_ref(obj))` names the population size, and the body
+fact connects that ghost quantity to `obj->refs`.
 
 `object_init` packages a fresh allocation into the first reference.
 `object_retain` increments both the stored count and the logical population.

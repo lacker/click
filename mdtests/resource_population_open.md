@@ -1,10 +1,10 @@
-# resource bodies describe the whole population
+# Resource population bodies open without changing their count
 
-The body of a resource is shared by all units with the same arguments.
-`count(...)` names the population size, so a function holding one unit can use
-the relationship between the stored reference count and the logical count.
+A scoped `open` exposes the one body owned by an active population. It does
+not consume a unit, and closing the block requires every body resource to be
+restored.
 
-```c filename=counted_resource_population_body.c
+```c filename=resource_population_open.c
 struct object {
     int32 refs;
 };
@@ -20,7 +20,7 @@ resource object_ref(obj: struct object*) {
     fact obj->refs == count(object_ref(obj));
 }
 
-verifying "counted_resource_population_body.c";
+verifying "resource_population_open.c";
 
 int32 object_refcount(struct object* obj) {
     owns object_ref(obj);

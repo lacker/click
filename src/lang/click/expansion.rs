@@ -212,6 +212,9 @@ fn collect_smart_script_sites(
             });
         }
         match tactic {
+            ProofTactic::Open(open) => {
+                collect_smart_script_sites(claim_label, &open.tactics, source_index + 1, sites);
+            }
             ProofTactic::If(proof_if) => {
                 collect_smart_script_sites(
                     claim_label,
@@ -1661,6 +1664,7 @@ fn source_tactic_is_nested_proof_clause(tactics: &[ProofTactic], wanted: usize) 
                 return Some(false);
             }
             let nested = match tactic {
+                ProofTactic::Open(open) => find(&open.tactics, wanted, source_index + 1),
                 ProofTactic::If(proof_if) => find(&proof_if.then_tactics, wanted, source_index + 1)
                     .or_else(|| {
                         find(
@@ -1735,6 +1739,19 @@ fn collect_tactic_block_spans(
     for (tactic, token_range) in tactics.iter().zip(direct) {
         spans.push(tokens[token_range.start].span.start..tokens[token_range.end - 1].span.end);
         match tactic {
+            ProofTactic::Open(proof_open) => {
+                let body_open = (token_range.start + 1..token_range.end)
+                    .find(|index| tokens[*index].text == "{")
+                    .ok_or_else(|| ClickError::new("source `open` tactic has no body"))?;
+                let body_close = matching_delimiter(tokens, body_open, "{", "}")?;
+                collect_tactic_block_spans(
+                    tokens,
+                    body_open,
+                    body_close,
+                    &proof_open.tactics,
+                    spans,
+                )?;
+            }
             ProofTactic::If(proof_if) => {
                 let (then_open, then_close, else_open, else_close) =
                     find_if_branch_blocks(tokens, &token_range)?;

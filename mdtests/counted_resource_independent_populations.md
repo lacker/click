@@ -1,6 +1,6 @@
-# counted resource populations finalize independently
+# resource populations finalize independently
 
-Ending one counted population must not consume the body resources belonging to
+Ending one resource population must not consume the body resources belonging to
 another population mentioned by the same function.
 
 ```c filename=counted_resource_finish_one.c
@@ -15,7 +15,7 @@ void object_finish_one(struct object* finished, struct object* kept) {
 ```
 
 ```click
-counted resource object_ref(obj: struct object*) {
+resource object_ref(obj: struct object*) {
     contains allocation(obj, sizeof(struct object));
     owns object(obj);
     fact obj->refs == count(object_ref(obj));
@@ -25,7 +25,7 @@ verifying "counted_resource_finish_one.c";
 
 void object_finish_one(struct object* finished, struct object* kept) {
     requires finished != kept;
-    requires finished->refs == 1;
+    requires count(object_ref(finished)) == 1;
     consumes object_ref(finished);
     owns object_ref(kept);
     mutable finished->refs;

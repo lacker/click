@@ -6,6 +6,7 @@ pub(in crate::lang::click) struct KernelPropositionLowerer {
     memory: CMemory,
     predicate_environment: PredicateEnvironment,
     click_function_environment: ClickFunctionEnvironment,
+    resource_state: Option<CState>,
     active_functions: BTreeSet<String>,
     next_variable: u64,
 }
@@ -24,9 +25,15 @@ impl KernelPropositionLowerer {
             memory,
             predicate_environment: predicate_environment.clone(),
             click_function_environment: click_function_environment.clone(),
+            resource_state: None,
             active_functions: BTreeSet::new(),
             next_variable: 2_000_000,
         }
+    }
+
+    pub(in crate::lang::click) fn with_resource_state(mut self, state: CState) -> Self {
+        self.resource_state = Some(state);
+        self
     }
 
     pub(in crate::lang::click) fn with_active_functions(
@@ -258,7 +265,10 @@ impl KernelPropositionLowerer {
                     .predicate_environment
                     .get(name)
                     .ok_or_else(|| ClickError::new(format!("unknown predicate `{name}`")))?;
-                let state = CState::new().with_memory(self.memory.clone());
+                let state = self
+                    .resource_state
+                    .clone()
+                    .unwrap_or_else(|| CState::new().with_memory(self.memory.clone()));
                 let program_point_states = ProgramPointStates::new();
                 let lowered_arguments = lower_predicate_call_arguments_with_environment(
                     definition,
@@ -361,10 +371,6 @@ impl KernelPropositionLowerer {
                         name: name.clone(),
                         arguments: values,
                     },
-                    ResourceKind::Counted => CResource::Counted {
-                        name: name.clone(),
-                        arguments: values,
-                    },
                 })
             }
         }
@@ -383,8 +389,29 @@ impl KernelPropositionLowerer {
             ContractExpression::CBinding(name) => {
                 self.lower_requirement_c_expression(&CExpression::Variable(name.clone()))
             }
-            ContractExpression::ResourceCount(_) => Err(ClickError::new(
-                "`count(...)` requires an active counted resource population",
+            ContractExpression::ResourceCount(resource) => {
+                let ResourceClause::Declared {
+                    name, arguments, ..
+                } = resource.as_ref()
+                else {
+                    return Err(ClickError::new("`count(...)` expects a declared resource"));
+                };
+                let values = arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        ContractExpression::ResourceWildcard => Ok(None),
+                        argument => self.lower_requirement_value(argument).map(Some),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let count = self
+                    .resource_state
+                    .as_ref()
+                    .map(|state| state.counted_population_sum(name, &values, &Assumptions::new()))
+                    .unwrap_or(Bitvector32Term::Constant(0));
+                Ok(CValue::Int32(count))
+            }
+            ContractExpression::ResourceWildcard => Err(ClickError::new(
+                "`_` is only valid inside a `count(...)` resource pattern",
             )),
             ContractExpression::Old(_) => Err(ClickError::new(
                 "`old(...)` is not available in `requires` clauses",

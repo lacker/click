@@ -1,4 +1,4 @@
-# counted resource population initialization and finalization
+# resource population initialization and finalization
 
 The first produced unit packages the population body. Consuming the last unit
 ends the population, allowing its body resources to be returned or destroyed.
@@ -26,7 +26,7 @@ void object_finish(struct object* obj) {
 ```
 
 ```click
-counted resource object_ref(obj: struct object*) {
+resource object_ref(obj: struct object*) {
     contains allocation(obj, sizeof(struct object));
     owns object(obj);
     fact obj->refs == count(object_ref(obj));
@@ -50,7 +50,7 @@ struct object* object_init(struct object* obj) {
 }
 
 void object_finish(struct object* obj) {
-    requires obj->refs == 1;
+    requires count(object_ref(obj)) == 1;
     consumes object_ref(obj);
     mutable obj->refs;
 } by {

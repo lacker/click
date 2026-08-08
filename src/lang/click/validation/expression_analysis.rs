@@ -44,7 +44,9 @@ pub(super) fn c_expression_uses_variable(expression: &CExpression, variable: &st
 pub(in crate::lang::click) fn contains_old_expression(expression: &ContractExpression) -> bool {
     match expression {
         ContractExpression::Old(_) => true,
-        ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => false,
+        ContractExpression::CFragment(_)
+        | ContractExpression::CBinding(_)
+        | ContractExpression::ResourceWildcard => false,
         ContractExpression::ResourceCount(resource) => match resource.as_ref() {
             ResourceClause::Declared { arguments, .. } => {
                 arguments.iter().any(contains_old_expression)
@@ -95,6 +97,99 @@ pub(in crate::lang::click) fn contains_old_expression(expression: &ContractExpre
     }
 }
 
+pub(in crate::lang::click) fn contains_resource_count(expression: &ContractExpression) -> bool {
+    match expression {
+        ContractExpression::ResourceCount(_) => true,
+        ContractExpression::CFragment(_)
+        | ContractExpression::CBinding(_)
+        | ContractExpression::ResourceWildcard => false,
+        ContractExpression::Field { base, .. }
+        | ContractExpression::Old(base)
+        | ContractExpression::At {
+            expression: base, ..
+        }
+        | ContractExpression::BitwiseNot(base) => contains_resource_count(base),
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
+        | ContractExpression::Index(left, right) => {
+            contains_resource_count(left) || contains_resource_count(right)
+        }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            proposition_contains_resource_count(condition)
+                || contains_resource_count(then_branch)
+                || contains_resource_count(else_branch)
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            contains_resource_count(start)
+                || contains_resource_count(end)
+                || contains_resource_count(initial)
+                || contains_resource_count(body)
+        }
+        ContractExpression::Let { value, body, .. } => {
+            contains_resource_count(value) || contains_resource_count(body)
+        }
+        ContractExpression::Call { arguments, .. } => arguments.iter().any(contains_resource_count),
+    }
+}
+
+pub(in crate::lang::click) fn proposition_contains_resource_count(
+    proposition: &ClickProposition,
+) -> bool {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            contains_resource_count(left) || contains_resource_count(right)
+        }
+        ClickProposition::Defined { expression } => contains_resource_count(expression),
+        ClickProposition::At { proposition, .. }
+        | ClickProposition::Not(proposition)
+        | ClickProposition::ForAll {
+            body: proposition, ..
+        }
+        | ClickProposition::Exists {
+            body: proposition, ..
+        } => proposition_contains_resource_count(proposition),
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            proposition_contains_resource_count(left) || proposition_contains_resource_count(right)
+        }
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            contains_resource_count(start)
+                || contains_resource_count(end)
+                || proposition_contains_resource_count(body)
+        }
+        ClickProposition::PredicateCall { arguments, .. } => {
+            arguments.iter().any(contains_resource_count)
+        }
+        ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. } => false,
+    }
+}
+
 fn contract_segment_contains_old_expression(segment: &ContractSegment) -> bool {
     [&segment.base, &segment.start, &segment.end]
         .into_iter()
@@ -112,7 +207,9 @@ fn resource_subject_contains_old_expression(resource: &ResourceSubject) -> bool 
     }
 }
 
-pub(super) fn proposition_contains_old_expression(proposition: &ClickProposition) -> bool {
+pub(in crate::lang::click) fn proposition_contains_old_expression(
+    proposition: &ClickProposition,
+) -> bool {
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
             contains_old_expression(left) || contains_old_expression(right)
@@ -157,7 +254,9 @@ pub(super) fn proposition_contains_old_expression(proposition: &ClickProposition
 pub(in crate::lang::click) fn contains_at_expression(expression: &ContractExpression) -> bool {
     match expression {
         ContractExpression::At { .. } => true,
-        ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => false,
+        ContractExpression::CFragment(_)
+        | ContractExpression::CBinding(_)
+        | ContractExpression::ResourceWildcard => false,
         ContractExpression::ResourceCount(resource) => match resource.as_ref() {
             ResourceClause::Declared { arguments, .. } => {
                 arguments.iter().any(contains_at_expression)
@@ -271,7 +370,9 @@ pub(super) fn collect_click_function_calls(
     calls: &mut BTreeSet<String>,
 ) {
     match expression {
-        ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => {}
+        ContractExpression::CFragment(_)
+        | ContractExpression::CBinding(_)
+        | ContractExpression::ResourceWildcard => {}
         ContractExpression::ResourceCount(resource) => {
             if let ResourceClause::Declared { arguments, .. } = resource.as_ref() {
                 for argument in arguments {
@@ -625,7 +726,9 @@ fn validate_recursive_calls_in_expression(
         )
     };
     match expression {
-        ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => Ok(()),
+        ContractExpression::CFragment(_)
+        | ContractExpression::CBinding(_)
+        | ContractExpression::ResourceWildcard => Ok(()),
         ContractExpression::ResourceCount(resource) => {
             if let ResourceClause::Declared { arguments, .. } = resource.as_ref() {
                 for argument in arguments {

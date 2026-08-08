@@ -72,7 +72,8 @@ use validation::{
     combined_resource_definitions, combined_theorem_definitions,
     combined_theorem_definitions_with_stdlib_ensure_count, contains_at_expression,
     contains_old_expression, describe_c0_type, describe_resource_clause,
-    proposition_contains_at_expression,
+    proposition_contains_at_expression, proposition_contains_old_expression,
+    proposition_contains_resource_count,
 };
 pub(in crate::lang::click) use verification::*;
 pub use verification::{
@@ -166,14 +167,7 @@ pub struct ClickFunctionDefinition {
 pub struct ResourceDefinition {
     name: String,
     parameters: Vec<FunctionParameter>,
-    multiplicity: ResourceMultiplicity,
     composite_body: Option<CompositeResourceBody>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ResourceMultiplicity {
-    Exclusive,
-    Counted,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -334,7 +328,6 @@ pub enum ResourceAccessMode {
 pub enum ResourceKind {
     Composite,
     Token,
-    Counted,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -582,6 +575,9 @@ pub enum ContractExpression {
     /// resource family. This expression is only meaningful while the
     /// family's population body is in scope.
     ResourceCount(Box<ResourceClause>),
+    /// A wildcard argument inside the resource pattern accepted by
+    /// `count(...)`. It is never a standalone contract expression.
+    ResourceWildcard,
     Old(Box<ContractExpression>),
     At {
         selector: VisitSelector,
@@ -865,6 +861,7 @@ pub enum ProofTactic {
         premises: Vec<ClickProposition>,
     },
     Have(ProofHave),
+    Open(ProofOpen),
     If(ProofIf),
     Branch(ProofBranch),
     Loop(StructuralClause),
@@ -959,6 +956,7 @@ pub enum SmartTacticKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlFlowTactic {
     Have,
+    Open,
     If,
     Branch,
     Loop,
@@ -993,6 +991,7 @@ pub struct ProofReplayPlan {
 pub enum CertificatePathSegment {
     Tactic(usize),
     HaveBody,
+    OpenBody,
     ThenBranch,
     ElseBranch,
     LoopInitialize,
@@ -1080,6 +1079,15 @@ fn validate_certificate_tactics(
                 };
                 path.push(CertificatePathSegment::HaveBody);
                 let result = validate_certificate_proof(&proof_have.proof, path);
+                path.pop();
+                result
+            }
+            TacticClass::ControlFlow(ControlFlowTactic::Open) => {
+                let ProofTactic::Open(proof_open) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                path.push(CertificatePathSegment::OpenBody);
+                let result = validate_certificate_tactics(&proof_open.tactics, path);
                 path.pop();
                 result
             }
@@ -1181,6 +1189,15 @@ fn validate_replay_plan_tactics(
                 };
                 path.push(CertificatePathSegment::HaveBody);
                 let result = validate_replay_plan_proof(&proof_have.proof, path);
+                path.pop();
+                result
+            }
+            TacticClass::ControlFlow(ControlFlowTactic::Open) => {
+                let ProofTactic::Open(proof_open) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                path.push(CertificatePathSegment::OpenBody);
+                let result = validate_replay_plan_tactics(&proof_open.tactics, path);
                 path.pop();
                 result
             }
@@ -1381,6 +1398,7 @@ impl ProofTactic {
             Self::SmartFrame(_) => TacticClass::Smart(SmartTacticKind::Frame),
             Self::Simp => TacticClass::Smart(SmartTacticKind::Simp),
             Self::Have(_) => TacticClass::ControlFlow(ControlFlowTactic::Have),
+            Self::Open(_) => TacticClass::ControlFlow(ControlFlowTactic::Open),
             Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),
             Self::Branch(_) => TacticClass::ControlFlow(ControlFlowTactic::Branch),
             Self::Loop(_) => TacticClass::ControlFlow(ControlFlowTactic::Loop),
@@ -1405,6 +1423,12 @@ impl SmartTactic {
 pub struct ProofHave {
     proposition: ClickProposition,
     proof: Proof,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofOpen {
+    resource: ResourceClause,
+    tactics: Vec<ProofTactic>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1739,10 +1763,6 @@ impl ResourceDefinition {
         &self.parameters
     }
 
-    pub fn multiplicity(&self) -> ResourceMultiplicity {
-        self.multiplicity
-    }
-
     pub fn composite_body(&self) -> Option<&CompositeResourceBody> {
         self.composite_body.as_ref()
     }
@@ -2001,13 +2021,11 @@ impl Proof {
     fn unfold_tactic_names(&self) -> Vec<String> {
         match self {
             Self::Default | Self::Tactic(_) => Vec::new(),
-            Self::Script(tactics) => tactics
-                .iter()
-                .filter_map(|tactic| match tactic {
-                    ProofTactic::UnfoldPredicate(name) => Some(name.clone()),
-                    _ => None,
-                })
-                .collect(),
+            Self::Script(tactics) => {
+                let mut names = Vec::new();
+                collect_unfold_tactic_names(tactics, &mut names);
+                names
+            }
         }
     }
 
@@ -2024,6 +2042,29 @@ impl Proof {
             Self::Default => None,
             Self::Tactic(_) => None,
             Self::Script(tactics) => Some(tactics),
+        }
+    }
+}
+
+fn collect_unfold_tactic_names(tactics: &[ProofTactic], names: &mut Vec<String>) {
+    for tactic in tactics {
+        match tactic {
+            ProofTactic::UnfoldPredicate(name) => names.push(name.clone()),
+            ProofTactic::Have(have) => {
+                if let Proof::Script(tactics) = &have.proof {
+                    collect_unfold_tactic_names(tactics, names);
+                }
+            }
+            ProofTactic::Open(open) => collect_unfold_tactic_names(&open.tactics, names),
+            ProofTactic::If(proof_if) => {
+                collect_unfold_tactic_names(&proof_if.then_tactics, names);
+                collect_unfold_tactic_names(&proof_if.else_tactics, names);
+            }
+            ProofTactic::Branch(branch) => {
+                collect_unfold_tactic_names(&branch.then_tactics, names);
+                collect_unfold_tactic_names(&branch.else_tactics, names);
+            }
+            _ => {}
         }
     }
 }

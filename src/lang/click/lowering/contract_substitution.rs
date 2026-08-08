@@ -787,6 +787,7 @@ pub(in crate::lang::click) fn collect_contract_expression_referenced_names(
                 }
             }
         }
+        ContractExpression::ResourceWildcard => {}
         ContractExpression::Old(expression) | ContractExpression::BitwiseNot(expression) => {
             collect_contract_expression_referenced_names(expression, names);
         }
@@ -936,6 +937,7 @@ pub(in crate::lang::click) fn substitute_contract_expression(
 ) -> Result<ContractExpression, String> {
     match expression {
         ContractExpression::CBinding(_) => Ok(expression.clone()),
+        ContractExpression::ResourceWildcard => Ok(expression.clone()),
         ContractExpression::ResourceCount(resource) => {
             let ResourceClause::Declared {
                 access,
@@ -945,7 +947,7 @@ pub(in crate::lang::click) fn substitute_contract_expression(
                 parameter_types,
             } = resource.as_ref()
             else {
-                return Err("`count(...)` expects a declared counted resource".to_string());
+                return Err("`count(...)` expects a declared resource".to_string());
             };
             Ok(ContractExpression::ResourceCount(Box::new(
                 ResourceClause::Declared {
@@ -954,7 +956,10 @@ pub(in crate::lang::click) fn substitute_contract_expression(
                     name: name.clone(),
                     arguments: arguments
                         .iter()
-                        .map(|argument| substitute_contract_expression(argument, substitutions))
+                        .map(|argument| match argument {
+                            ContractExpression::ResourceWildcard => Ok(argument.clone()),
+                            argument => substitute_contract_expression(argument, substitutions),
+                        })
                         .collect::<Result<Vec<_>, _>>()?,
                     parameter_types: parameter_types.clone(),
                 },
@@ -1279,6 +1284,7 @@ pub(in crate::lang::click) fn contract_expression_as_c_fragment(
         ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
         ContractExpression::CBinding(name) => Some(CExpression::Variable(name.clone())),
         ContractExpression::ResourceCount(_) => None,
+        ContractExpression::ResourceWildcard => None,
         ContractExpression::Old(_) => None,
         ContractExpression::At { .. } => None,
         ContractExpression::Add(left, right) => Some(CExpression::Add(
@@ -1356,6 +1362,7 @@ pub(in crate::lang::click) fn contract_expression_to_c_fragment(
         ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
         ContractExpression::CBinding(name) => Some(CExpression::Variable(name.clone())),
         ContractExpression::ResourceCount(_) => None,
+        ContractExpression::ResourceWildcard => None,
         ContractExpression::Old(_) => None,
         ContractExpression::At { .. } => None,
         ContractExpression::Add(left, right) => Some(CExpression::Add(

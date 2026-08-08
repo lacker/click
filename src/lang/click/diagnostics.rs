@@ -560,10 +560,6 @@ pub(super) fn describe_resource_fact(
             | CResource::Token {
                 name,
                 arguments: resource_arguments,
-            }
-            | CResource::Counted {
-                name,
-                arguments: resource_arguments,
             },
             quantity,
         ) => {
@@ -581,10 +577,6 @@ pub(super) fn describe_resource_fact(
                 arguments: resource_arguments,
             }
             | CResource::Token {
-                name,
-                arguments: resource_arguments,
-            }
-            | CResource::Counted {
                 name,
                 arguments: resource_arguments,
             },
@@ -615,10 +607,6 @@ fn describe_c_resource(
             arguments: resource_arguments,
         }
         | CResource::Token {
-            name,
-            arguments: resource_arguments,
-        }
-        | CResource::Counted {
             name,
             arguments: resource_arguments,
         } => format_declared_resource(name, resource_arguments, parameters, arguments),
@@ -948,6 +936,7 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
             format!("{}->{field}", describe_contract_expression(base))
         }
         ContractExpression::CBinding(name) => format!("c({name})"),
+        ContractExpression::ResourceWildcard => "_".to_string(),
         ContractExpression::ResourceCount(resource) => {
             format!("count({})", describe_resource_clause(resource))
         }

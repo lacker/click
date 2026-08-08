@@ -446,22 +446,21 @@ The family defines how resources entail, split, rejoin, transfer, and consume
 each other. This keeps the user-facing memory syntax concrete while sharing the
 same context machinery with non-memory resources.
 
-Click also supports exact-match token resources:
+Click also supports exact-match declared resources:
 
 ```click
 resource open_fd(fd: int32);
 ```
 
 After declaration, `owns open_fd(fd)`, `views open_fd(fd)`, `consumes
-open_fd(fd)`, and `produces open_fd(fd)` use the same resource context. Token
-resource arguments are type checked, and duplicate identical owned resource
-elements in one resource context are rejected.
+open_fd(fd)`, and `produces open_fd(fd)` use the same resource context.
+Arguments are type checked. Repeated equal owned units form a quantity; a
+requirement for two units cannot be satisfied by one.
 
-For a capability which may have several indistinguishable owned units, declare
-a counted resource:
+A declared resource may have a body shared by all equal units:
 
 ```click
-counted resource object_ref(obj: struct object*) {
+resource object_ref(obj: struct object*) {
     owns object(obj);
     fact obj->refs == count(object_ref(obj));
 }
@@ -470,12 +469,13 @@ counted resource object_ref(obj: struct object*) {
 Repeated owned clauses denote a quantity rather than a duplicate-ownership
 error. Each `owns`, `consumes`, or `produces` clause still transfers one unit.
 The optional body belongs to the population as a whole, not once per unit.
-`count(object_ref(obj))` is an `int32` expression naming the population size;
-it is available in that counted resource's body facts and in proofs while the
-population is active. The example above therefore says that all references
-together own the object and that its stored count equals their logical total.
+`count(object_ref(obj))` is an `int32` expression naming the population size.
+The example above therefore says that all references together own the object
+and that its stored count equals their logical total. A wildcard argument sums
+matching exact populations, so `count(pool_object(pool, _))` counts every
+checked-out object belonging to `pool`.
 
-A contract's net counted-resource transfer changes the population count. For
+A contract's net resource transfer changes the population count. For
 example, `owns object_ref(obj); produces object_ref(obj);` is a one-unit
 retain, while `owns object_ref(obj); consumes object_ref(obj);` is a one-unit
 nonfinal release. Returning the new resource context is valid only when the
@@ -483,12 +483,14 @@ population body facts hold in the post-state, so these clauses cannot mint a
 reference without the corresponding concrete counter update.
 
 `fold(object_ref(obj))` initializes a population of one from its body
-resources. `unfold(object_ref(obj))` is the inverse lifetime operation and is
-allowed only after proving that the count is exactly one; it exposes the body
-for a final destructor or `free`. Ordinary retain and release operations do
-not fold or unfold the body. Counted clauses currently transfer one unit at a
-time; symbolic quantities such as `owns n of object_ref(obj)` are not part of
-this slice.
+resources. `open(object_ref(obj)) { ... }` temporarily exposes the one shared
+body and requires it to be restored on exit without changing the population.
+`unfold(object_ref(obj))` is the inverse lifetime operation and is allowed only
+after proving that the count is exactly one; it exposes the body for a final
+destructor or `free`. Ordinary retain and release operations use `open` rather
+than folding or unfolding the body. Contract clauses currently transfer one
+unit at a time; symbolic quantities such as `owns n of object_ref(obj)` are
+not part of this slice.
 
 Composite resources are declared resources with a body:
 

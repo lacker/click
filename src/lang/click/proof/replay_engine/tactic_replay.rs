@@ -754,6 +754,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     click_function_environment,
                     claim_label,
                     tactic_index,
+                    ResourceBodyAccess::Finalize,
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
@@ -1122,7 +1123,10 @@ fn replay_linear_tactics_without_frontier_loops(
                             }
                             _ => recorded.expect("checked recorded truth").clone(),
                         }
-                    } else if let Some(recorded) = recorded {
+                    } else if (proposition_contains_at_expression(surface_premise)
+                        || proposition_contains_old_expression(surface_premise))
+                        && let Some(recorded) = recorded
+                    {
                         recorded.clone()
                     } else {
                         lower_at_current().map_err(|message| {
@@ -2423,7 +2427,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     assumptions = assumptions.assume_proposition(fact);
                 }
             }
-            ProofTactic::If(_) | ProofTactic::Branch(_) => {
+            ProofTactic::If(_) | ProofTactic::Branch(_) | ProofTactic::Open(_) => {
                 unreachable!("structured tactics are represented by internal proof nodes")
             }
             ProofTactic::Loop(_) => {

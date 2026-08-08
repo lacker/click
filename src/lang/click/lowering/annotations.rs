@@ -425,7 +425,7 @@ fn collect_owned_resource_memory_segments_inner(
         } => Ok(()),
         ResourceClause::Declared {
             access: ResourceAccessMode::Own,
-            kind: ResourceKind::Token | ResourceKind::Counted,
+            kind: ResourceKind::Token,
             ..
         } => Ok(()),
         ResourceClause::Declared {
@@ -857,23 +857,26 @@ impl AnnotationLowerer<'_> {
             }
             ContractExpression::ResourceCount(resource) => {
                 let ResourceClause::Declared {
-                    kind: ResourceKind::Counted,
-                    name,
-                    arguments,
-                    ..
+                    name, arguments, ..
                 } = resource.as_ref()
                 else {
-                    return Err("`count(...)` expects a counted resource".to_string());
+                    return Err("`count(...)` expects a declared resource".to_string());
                 };
                 Ok(SpecExpression::CountedResourceCount {
                     name: name.clone(),
                     arguments: arguments
                         .iter()
-                        .map(|argument| {
-                            self.lower_contract_expression_to_spec(argument, environment)
+                        .map(|argument| match argument {
+                            ContractExpression::ResourceWildcard => Ok(None),
+                            argument => self
+                                .lower_contract_expression_to_spec(argument, environment)
+                                .map(Some),
                         })
                         .collect::<Result<Vec<_>, _>>()?,
                 })
+            }
+            ContractExpression::ResourceWildcard => {
+                Err("`_` is only valid inside a `count(...)` resource pattern".to_string())
             }
             ContractExpression::Old(expression) => {
                 let old_environment =
@@ -1084,10 +1087,6 @@ impl AnnotationLowerer<'_> {
                         arguments,
                     },
                     ResourceKind::Token => SpecResource::Token {
-                        name: name.clone(),
-                        arguments,
-                    },
-                    ResourceKind::Counted => SpecResource::Counted {
                         name: name.clone(),
                         arguments,
                     },

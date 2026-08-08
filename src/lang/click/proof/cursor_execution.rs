@@ -188,7 +188,7 @@ pub(super) fn apply_branch_interface(
                     parameters,
                     arguments,
                     &entry_state,
-                    abstract_state.memory().clone(),
+                    &abstract_state,
                     &CValue::Int32(Bitvector32Term::Constant(0)),
                     &mut exported_pure_facts,
                     predicate_environment,

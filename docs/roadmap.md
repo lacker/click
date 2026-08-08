@@ -125,11 +125,10 @@ Likely additions:
   viewed/owned resource context exists for memory ranges, including
   covered subrange transfer for function calls. The implementation now has an
   explicit internal resource-family boundary for the memory family plus
-  exact-match token resources with declared argument types and duplicate-owned-token
-  rejection, plus atomic counted resources whose equal owned units normalize
-  to a quantity and transfer one unit at a time. Counted capabilities are not
-  yet connected to an authoritative concrete reference count, so retain/release
-  protocols remain future work. It also has composite resources with explicit
+  exact-match declared resources whose equal owned units normalize to a
+  quantity and transfer one unit at a time. Exact and wildcard population
+  counts can be related to concrete state; the refcount example uses this for
+  retain/release. It also has composite resources with explicit
   `unfold(resource)` and `fold(resource)` operations for wrappers over built-in
   resources, other declared resources, and resource facts. Fractions, persistent
   token resources, implicit unfold/fold search, custom resource-family algebra,

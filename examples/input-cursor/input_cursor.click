@@ -430,7 +430,7 @@ int32 input_cursor_shared_pipeline(
         right_value == right->data[right->pos];
         right->data[right->pos] == data[0];
     }
-    step();
+    step() using {};
     frame();
     simp();
 }

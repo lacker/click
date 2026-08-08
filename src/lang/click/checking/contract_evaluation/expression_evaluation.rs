@@ -33,35 +33,38 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
             .ok_or_else(|| format!("C binding `{name}` is not in scope")),
         ContractExpression::ResourceCount(resource) => {
             let ResourceClause::Declared {
-                kind: ResourceKind::Counted,
-                name,
-                arguments,
-                ..
+                name, arguments, ..
             } = resource.as_ref()
             else {
-                return Err("`count(...)` expects a counted resource".to_string());
+                return Err("`count(...)` expects a declared resource".to_string());
             };
             let mut values = Vec::with_capacity(arguments.len());
             for argument in arguments {
-                values.push(evaluate_contract_expression_with_environment(
-                    parameter_values,
-                    array_refs,
-                    pre_state,
-                    post_state,
-                    result,
-                    assumptions,
-                    argument,
-                    predicate_environment,
-                    click_function_environment,
-                    program_point_states,
-                    active_functions,
-                )?);
+                values.push(match argument {
+                    ContractExpression::ResourceWildcard => None,
+                    argument => Some(evaluate_contract_expression_with_environment(
+                        parameter_values,
+                        array_refs,
+                        pre_state,
+                        post_state,
+                        result,
+                        assumptions,
+                        argument,
+                        predicate_environment,
+                        click_function_environment,
+                        program_point_states,
+                        active_functions,
+                    )?),
+                });
             }
-            post_state
-                .counted_population(name, &values)
-                .cloned()
-                .map(CValue::Int32)
-                .ok_or_else(|| format!("counted resource population `{name}` is not in scope"))
+            Ok(CValue::Int32(post_state.counted_population_sum(
+                name,
+                &values,
+                assumptions,
+            )))
+        }
+        ContractExpression::ResourceWildcard => {
+            Err("`_` is only valid inside a `count(...)` resource pattern".to_string())
         }
         ContractExpression::Old(expression) => evaluate_contract_expression_with_environment(
             parameter_values,

@@ -989,10 +989,6 @@ fn evaluate_resource_subject_with_environment(
                     name: name.clone(),
                     arguments: values,
                 },
-                ResourceKind::Counted => CResource::Counted {
-                    name: name.clone(),
-                    arguments: values,
-                },
             })
         }
     }

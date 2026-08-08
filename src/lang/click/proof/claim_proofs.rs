@@ -1,4 +1,38 @@
 use super::*;
+use crate::kernel::apply_c_function_contract_resource_transition;
+
+fn apply_checked_contract_resource_transition(
+    outcome: &mut CFunctionOutcome,
+    pre_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    available: &[Proposition],
+    execution_facts: &[ExecutionPureFact],
+    proof_label: &str,
+    path_index: usize,
+) -> Result<(), ClickError> {
+    let mut facts = available.to_vec();
+    facts.extend(
+        execution_facts
+            .iter()
+            .map(|fact| fact.proposition().clone()),
+    );
+    let assumptions = assumptions_from_propositions(&facts);
+    let (transitioned, _obligations) = apply_c_function_contract_resource_transition(
+        pre_state,
+        function,
+        arguments,
+        outcome.clone(),
+        &assumptions,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{proof_label}` path {path_index}: could not apply checked contract resource effect: {message}"
+        ))
+    })?;
+    *outcome = transitioned;
+    Ok(())
+}
 
 pub(in crate::lang::click) fn prove_claim_by_tactics(
     source_path: &str,
@@ -1275,6 +1309,7 @@ pub(super) fn finish_ordered_proof_replay(
                             predicate_environment,
                             click_function_environment,
                             &unfolded_predicates,
+                            ResourceBodyClosure::Initialize,
                         )?;
                         path_requirements = project_outcome_resource_facts(
                             resource_environment,
@@ -1296,6 +1331,37 @@ pub(super) fn finish_ordered_proof_replay(
                             *tactic_index,
                             ProofTactic::FoldResource(resource.clone()),
                         );
+                    }
+                    PostExecutionTactic::CloseOpen(resource) => {
+                        outcome = fold_composite_resources_on_outcome(
+                            resource_environment,
+                            std::slice::from_ref(resource),
+                            &proof_label,
+                            path_index,
+                            path.facts(),
+                            &path_requirements,
+                            &current_outcome_surface_propositions,
+                            parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            outcome,
+                            predicate_environment,
+                            click_function_environment,
+                            &unfolded_predicates,
+                            ResourceBodyClosure::CloseOpen,
+                        )?;
+                        path_requirements = project_outcome_resource_facts(
+                            resource_environment,
+                            parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            &outcome,
+                            &path_requirements,
+                            predicate_environment,
+                            click_function_environment,
+                            &proof_label,
+                            path_index,
+                        )?;
                     }
                     PostExecutionTactic::UnfoldPredicate(name) => {
                         if !unfolded_predicates.contains(name) {
@@ -2165,6 +2231,7 @@ pub(super) fn finish_ordered_proof_replay(
                         }
                     }
                     PostExecutionTactic::Frame => {
+                        let mut closed_effect = false;
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if !matches!(claim, FunctionClaimRef::Effect(_, _)) {
                                 continue;
@@ -2183,6 +2250,19 @@ pub(super) fn finish_ordered_proof_replay(
                                 &outcome,
                             )?;
                             closures[claim_index] = ClaimClosure::by_exact_check();
+                            closed_effect = true;
+                        }
+                        if closed_effect {
+                            apply_checked_contract_resource_transition(
+                                &mut outcome,
+                                pre_state,
+                                function,
+                                arguments,
+                                &path_requirements,
+                                &path.execution_facts(),
+                                &proof_label,
+                                path_index,
+                            )?;
                         }
                         let mut premises = Vec::new();
                         for fact in &path_requirements {
@@ -2230,6 +2310,7 @@ pub(super) fn finish_ordered_proof_replay(
                                 )));
                             }
                         }
+                        let mut closed_effect = false;
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if !matches!(claim, FunctionClaimRef::Effect(_, _)) {
                                 continue;
@@ -2248,6 +2329,19 @@ pub(super) fn finish_ordered_proof_replay(
                                 &outcome,
                             )?;
                             closures[claim_index] = ClaimClosure::by_exact_check();
+                            closed_effect = true;
+                        }
+                        if closed_effect {
+                            apply_checked_contract_resource_transition(
+                                &mut outcome,
+                                pre_state,
+                                function,
+                                arguments,
+                                &path_requirements,
+                                &path.execution_facts(),
+                                &proof_label,
+                                path_index,
+                            )?;
                         }
                         record_post_execution_surface_tactic(
                             &mut path_surface_post_tactics,
@@ -2285,6 +2379,7 @@ pub(super) fn finish_ordered_proof_replay(
                                 path_requirements.push(derivation.conclusion().clone());
                             }
                         }
+                        let mut closed_effect = false;
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if !matches!(claim, FunctionClaimRef::Effect(_, _)) {
                                 continue;
@@ -2303,6 +2398,19 @@ pub(super) fn finish_ordered_proof_replay(
                                 &outcome,
                             )?;
                             closures[claim_index] = ClaimClosure::by_exact_check();
+                            closed_effect = true;
+                        }
+                        if closed_effect {
+                            apply_checked_contract_resource_transition(
+                                &mut outcome,
+                                pre_state,
+                                function,
+                                arguments,
+                                &path_requirements,
+                                &path.execution_facts(),
+                                &proof_label,
+                                path_index,
+                            )?;
                         }
                     }
                     PostExecutionTactic::Simp => {

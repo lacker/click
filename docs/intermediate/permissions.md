@@ -222,35 +222,33 @@ rules. Resource arguments currently support current-state C expressions such as
 parameters, constants, arithmetic, pointer expressions, and indexes. Arguments
 are checked against the types declared in the resource definition.
 
-Token resources are nonduplicable exact-match capabilities. A resource context
-cannot contain the same owned token resource twice: duplicate clauses such as
-two `consumes open_fd(fd);` entries are rejected, and a call cannot satisfy
-two callee resource parameters with the same token.
+Equal declared resources accumulate as an exact quantity. Duplicate clauses
+such as two `consumes open_fd(fd);` entries require two units, and a call cannot
+satisfy that requirement with one unit.
 
-## Counted Resources
+## Resource Quantities
 
-Use `counted resource` when several indistinguishable, independently
-consumable units of the same capability may coexist:
+Every declared resource can have several independently consumable units with
+the same arguments:
 
 ```click
-counted resource object_ref(object: struct object*);
+resource object_ref(object: struct object*);
 ```
 
-Unlike an ordinary token, `object_ref(object)` may appear more than once in a
-resource context. Click stores equal owned units as one canonical fact with a
-quantity. A contract clause transfers one unit: consuming one
+Click stores equal owned units as one canonical fact with a quantity. A
+contract clause transfers one unit: consuming one
 `object_ref(object)` from a quantity of two leaves one unit behind. Viewed
 facts remain idempotent and do not carry a count.
 
-This first counted-resource layer only represents and transfers quantities. It
-does not let a proof mint another unit from one existing unit. In particular,
-declaring a resource counted is not by itself a proof of a C `retain`
-operation. Connecting capability creation and final release to a concrete
-reference-count field requires an additional invariant tying the counted
-capabilities to that authoritative C state.
+`count(object_ref(object))` observes the exact quantity. A resource body may
+relate that count to C state and belongs to the population as a whole, not to
+each unit. `open(object_ref(object)) { ... }` exposes that shared body for a
+scoped proof and requires it to be restored. Declaring a resource does not by
+itself justify minting a unit; retain and release contracts must preserve the
+body invariant while changing both the C state and logical quantity.
 
-Counted declarations are atomic and therefore end in `;`; composite resource
-bodies remain exclusive.
+Inside `count(...)`, `_` is a wildcard over one resource argument. For example,
+`count(pool_object(pool, _))` sums all exact object populations for `pool`.
 
 A function spec may exist only to consume a resource:
 
@@ -532,8 +530,9 @@ Implemented today:
 - an internal memory resource family boundary for entailment, consumption,
   access authorization, splitting, and joining,
 - exact-match token resources declared with `resource name(...)`,
-- counted exact-match resources declared with `counted resource name(...)`,
-  with canonical owned quantities and unit-by-unit contract transfer,
+- exact-match declared resources with canonical owned quantities,
+  unit-by-unit contract transfer, exact and wildcard population counts, and
+  scoped access to shared population bodies,
 - composite resources with explicit `unfold(resource)` and
   `fold(resource)` tactics, including composition over other declared
   resources,

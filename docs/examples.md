@@ -20,7 +20,7 @@ lifetime support with a checked copy helper to verify ordinary
 malloc-copy-install-free growth, including unchanged failure and live-prefix
 preservation on success.
 
-`examples/refcount/` verifies a heap object's counted-resource lifecycle. Its
+`examples/refcount/` verifies a heap object's resource-population lifecycle. Its
 population body owns the allocation and object once, `count(object_ref(obj))`
 tracks the stored reference count, and the project covers initialization,
 retain, nonfinal release, final release, and free across opaque calls.
@@ -241,15 +241,12 @@ sequence:
   permission plus a fact.
 - `mdtests/composite_resource_composes_token.md`: a composite resource can
   bundle another token resource with memory permission and a fact.
-- `mdtests/counted_resource_transfer.md`: two equal counted capabilities
+- `mdtests/counted_resource_transfer.md`: two equal resource capabilities
   normalize to a quantity and are consumed by separate opaque calls one unit
   at a time.
-- `mdtests/counted_resource_rejects_composite_body.md`: counted declarations
-  are atomic rather than silently assigning multiplicity semantics to a
-  composite body.
 - `mdtests/counted_resource_rejects_minting.md`: a contract cannot turn one
-  counted unit into two merely because the resource is counted.
-- `mdtests/counted_resource_rejects_double_spend.md`: one counted unit cannot
+  resource unit into two without preserving its population body.
+- `mdtests/counted_resource_rejects_double_spend.md`: one resource unit cannot
   satisfy two consuming calls.
 - `mdtests/proof_branch_composite_resource_transform.md`: different branch
   token transformations fold and export one composite resource through an
@@ -336,8 +333,8 @@ sequence:
 - `mdtests/composite_resource_rejects_double_call.md`: a composite
   resource owned once cannot satisfy two consuming calls through a call
   summary.
-- `mdtests/composite_resource_rejects_duplicate_contains.md`: composite
-  resources reject duplicate contained resource tokens.
+- `mdtests/composite_resource_rejects_duplicate_contains.md`: repeated
+  contained resource clauses form the corresponding quantity.
 - `mdtests/write_resources_imply_separate.md`: two visible owned-memory
   resources imply a `separate(...)` fact without a separate requirement.
 - `mdtests/write_resources_reject_proven_overlap.md`: provably overlapping

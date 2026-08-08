@@ -175,7 +175,10 @@ fn validate_pure_theorem_tactics(
                 validate_pure_theorem_tactics(theorem_name, &proof_if.then_tactics)?;
                 validate_pure_theorem_tactics(theorem_name, &proof_if.else_tactics)?;
             }
-            ProofTactic::Branch(_) | ProofTactic::Loop(_) | ProofTactic::Mark(_) => {
+            ProofTactic::Branch(_)
+            | ProofTactic::Loop(_)
+            | ProofTactic::Open(_)
+            | ProofTactic::Mark(_) => {
                 return Err(ClickError::new(format!(
                     "execution tactic `{}` is not available in the pure proof for theorem `{theorem_name}`",
                     tactic_name(tactic)
@@ -238,6 +241,7 @@ pub(in crate::lang::click) fn tactic_name(tactic: &ProofTactic) -> &'static str 
         ProofTactic::CloseInduction => "simp",
         ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. } => "apply",
         ProofTactic::Have(_) => "have",
+        ProofTactic::Open(_) => "open",
         ProofTactic::If(_) => "if",
         ProofTactic::Branch(_) => "branch",
         ProofTactic::Loop(_) => "loop",
@@ -266,29 +270,12 @@ pub(in crate::lang::click) fn tactic_name(tactic: &ProofTactic) -> &'static str 
 }
 
 pub(super) fn reject_duplicate_owned_declared_resource_clauses<'a>(
-    resources: impl IntoIterator<Item = &'a ResourceClause>,
-    context: &str,
+    _resources: impl IntoIterator<Item = &'a ResourceClause>,
+    _context: &str,
 ) -> Result<(), ClickError> {
-    let mut seen = Vec::new();
-    for resource in resources {
-        if !matches!(
-            resource,
-            ResourceClause::Declared {
-                access: ResourceAccessMode::Own,
-                kind: ResourceKind::Composite | ResourceKind::Token,
-                ..
-            }
-        ) {
-            continue;
-        }
-        if seen.contains(&resource) {
-            return Err(ClickError::new(format!(
-                "duplicate resource fact `{}` in {context}",
-                describe_resource_clause(resource)
-            )));
-        }
-        seen.push(resource);
-    }
+    // Declared resources are quantitative. Repeated owned clauses require or
+    // provide repeated units; they are not malformed declarations. Raw memory
+    // retains its separate overlap validity rules in the kernel algebra.
     Ok(())
 }
 
@@ -374,6 +361,9 @@ fn infer_contract_expression_type(
         // contract `result`.
         ContractExpression::CBinding(_) => Ok(None),
         ContractExpression::ResourceCount(_) => Ok(Some(C0Type::Int32)),
+        ContractExpression::ResourceWildcard => Err(ClickError::new(
+            "`_` is only valid inside a `count(...)` resource pattern",
+        )),
         ContractExpression::Old(expression) | ContractExpression::At { expression, .. } => {
             infer_contract_expression_type(expression, variables, click_functions, context)
         }
@@ -848,14 +838,17 @@ fn validate_contract_expression_calls(
         ContractExpression::ResourceCount(resource) => match resource.as_ref() {
             ResourceClause::Declared { arguments, .. } => {
                 for argument in arguments {
-                    validate_contract_expression_calls(argument, click_functions, context)?;
+                    if !matches!(argument, ContractExpression::ResourceWildcard) {
+                        validate_contract_expression_calls(argument, click_functions, context)?;
+                    }
                 }
                 Ok(())
             }
-            _ => Err(ClickError::new(
-                "`count(...)` expects a declared counted resource",
-            )),
+            _ => Err(ClickError::new("`count(...)` expects a declared resource")),
         },
+        ContractExpression::ResourceWildcard => Err(ClickError::new(
+            "`_` is only valid inside a `count(...)` resource pattern",
+        )),
         ContractExpression::Field { base, .. } => {
             validate_contract_expression_calls(base, click_functions, context)
         }

@@ -1,8 +1,8 @@
-# resource rejects duplicate token at call site
+# One resource unit cannot satisfy a two-unit call
 
 This checks that a call cannot satisfy two resource parameters with the
-same token. `consume_two` requires separate resources for `first` and `second`;
-calling it as `consume_two(cb, cb)` tries to duplicate `can_complete(cb)`.
+same token. `consume_two(cb, cb)` requires quantity two of
+`can_complete(cb)`, while its caller owns only quantity one.
 
 ```c filename=consume_two.c
 int32 consume_two(int32 first, int32 second) {
@@ -37,5 +37,5 @@ int32 call_same(int32 cb) {
 ```
 
 ```expect
-fail: duplicate resource fact `owns can_complete(cb)`
+fail: missing resource fact `owns can_complete(cb) (quantity 2)`
 ```

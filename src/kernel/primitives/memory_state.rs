@@ -662,6 +662,64 @@ impl CState {
             .map(|population| &population.count)
     }
 
+    pub fn counted_population_proven_equal(
+        &self,
+        name: &str,
+        arguments: &[CValue],
+        assumptions: &Assumptions,
+    ) -> Option<(String, Vec<CValue>, Bitvector32Term)> {
+        self.counted_populations
+            .iter()
+            .find(|population| {
+                population.name == name
+                    && population.arguments.len() == arguments.len()
+                    && population
+                        .arguments
+                        .iter()
+                        .zip(arguments)
+                        .all(|(left, right)| {
+                            c_values_proven_equal_for_memory_resolution(left, right, assumptions)
+                        })
+            })
+            .map(|population| {
+                (
+                    population.name.clone(),
+                    population.arguments.clone(),
+                    population.count.clone(),
+                )
+            })
+    }
+
+    pub fn counted_population_sum(
+        &self,
+        name: &str,
+        arguments: &[Option<CValue>],
+        assumptions: &Assumptions,
+    ) -> Bitvector32Term {
+        self.counted_populations
+            .iter()
+            .filter(|population| {
+                population.name == name
+                    && population.arguments.len() == arguments.len()
+                    && population
+                        .arguments
+                        .iter()
+                        .zip(arguments)
+                        .all(|(actual, expected)| {
+                            expected.as_ref().is_none_or(|expected| {
+                                c_values_proven_equal_for_memory_resolution(
+                                    actual,
+                                    expected,
+                                    assumptions,
+                                )
+                            })
+                        })
+            })
+            .fold(Bitvector32Term::Constant(0), |total, population| {
+                Bitvector32Term::add(total, population.count.clone())
+            })
+    }
+
     pub fn without_counted_population(mut self, name: &str, arguments: &[CValue]) -> Self {
         self.counted_populations
             .retain(|population| population.name != name || population.arguments != arguments);
@@ -670,5 +728,18 @@ impl CState {
 
     pub fn counted_populations(&self) -> &[CCountedPopulation] {
         &self.counted_populations
+    }
+
+    /// The logical resource-state component used to index predicate facts.
+    ///
+    /// Predicate memory arguments retain their existing, explicit snapshot
+    /// representation. Keeping memory and locals out of this value prevents
+    /// an unrelated C step from changing the identity of a predicate merely
+    /// because the predicate language can also observe resource counts.
+    pub fn resource_state_snapshot(&self) -> Self {
+        Self {
+            counted_populations: self.counted_populations.clone(),
+            ..Self::new()
+        }
     }
 }

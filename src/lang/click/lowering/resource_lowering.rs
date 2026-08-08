@@ -195,7 +195,7 @@ pub(in crate::lang::click) fn requirement_propositions(
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    memory: &CMemory,
+    state: &CState,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<Proposition>, ClickError> {
@@ -203,19 +203,19 @@ pub(in crate::lang::click) fn requirement_propositions(
     for requirement in requires {
         let proposition = match requirement.inner() {
             Requirement::LoadableSegment { .. } => {
-                loadable_requirement_prop(requirement, parameters, arguments, memory)?
+                loadable_requirement_prop(requirement, parameters, arguments, state.memory())?
             }
             Requirement::Proposition(proposition) => requirement_proposition_prop(
                 parameters,
                 arguments,
-                memory,
+                state,
                 proposition,
                 predicate_environment,
                 click_function_environment,
             )?,
             Requirement::Resource(resource) => {
                 let Some(proposition) =
-                    resource_clause_loadable_prop(resource, parameters, arguments, memory)?
+                    resource_clause_loadable_prop(resource, parameters, arguments, state.memory())?
                 else {
                     continue;
                 };
@@ -353,10 +353,6 @@ fn lower_resource_clause_with_values(
                     name: name.clone(),
                     arguments: resource_values,
                 },
-                ResourceKind::Counted => CResource::Counted {
-                    name: name.clone(),
-                    arguments: resource_values,
-                },
             };
             Ok(match access {
                 ResourceAccessMode::Own => CResourceFact::own(resource),
@@ -422,6 +418,7 @@ pub(in crate::lang::click) fn resource_argument_to_c_expression(
         )),
         ContractExpression::Old(_)
         | ContractExpression::ResourceCount(_)
+        | ContractExpression::ResourceWildcard
         | ContractExpression::At { .. }
         | ContractExpression::If { .. }
         | ContractExpression::RangeFold { .. }
@@ -756,20 +753,21 @@ pub(in crate::lang::click) fn contract_expression_element_width_from_array_refs(
 pub(in crate::lang::click) fn requirement_proposition_prop(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    memory: &CMemory,
+    state: &CState,
     proposition: &ClickProposition,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, ClickError> {
     let parameter_values = parameter_values(parameters, arguments)?;
-    let array_refs = array_refs_for_parameters(parameters, &parameter_values, memory);
+    let array_refs = array_refs_for_parameters(parameters, &parameter_values, state.memory());
     let mut lowerer = KernelPropositionLowerer::new(
         parameter_values,
         array_refs,
-        memory.clone(),
+        state.memory().clone(),
         predicate_environment,
         click_function_environment,
-    );
+    )
+    .with_resource_state(state.clone());
     lowerer.lower_requirement_proposition(proposition)
 }
 

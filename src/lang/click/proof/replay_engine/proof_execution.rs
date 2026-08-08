@@ -55,6 +55,106 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 arguments,
             )
         }
+        InternalProofNode::Open {
+            index,
+            source_index,
+            resource,
+            body,
+            continuation,
+        } => {
+            let mut opened = context;
+            if opened.replay.is_at_function_exit() {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {index}: `open` must begin before execution reaches function exit"
+                )));
+            }
+            let surface_start = opened.replay.surface_replay.tactics.len();
+            opened.state = unfold_composite_resource(
+                resource_environment,
+                resource,
+                parsed_function.parameters(),
+                arguments,
+                opened.state,
+                &mut opened.pure_facts,
+                &mut opened.replay.surface_propositions,
+                predicate_environment,
+                click_function_environment,
+                claim_label,
+                *index,
+                ResourceBodyAccess::Open,
+            )?;
+            let opened_contexts = execute_internal_proof(
+                body,
+                opened,
+                function_block,
+                parsed_function,
+                claims,
+                claim_label,
+                function_environment,
+                predicate_environment,
+                click_function_environment,
+                resource_environment,
+                theorem_environment,
+                function,
+                arguments,
+            )?;
+            let mut contexts = Vec::new();
+            for mut closed in opened_contexts {
+                if closed.replay.is_at_function_exit() {
+                    closed.replay.defer_post_execution(
+                        *index,
+                        *source_index,
+                        PostExecutionTactic::CloseOpen(resource.clone()),
+                    );
+                } else {
+                    let pre_state = closed.replay.old_reference_state(&closed.state).clone();
+                    closed.state = close_open_resource_at_current_point(
+                        resource_environment,
+                        resource,
+                        claim_label,
+                        *index,
+                        &closed.pure_facts,
+                        parsed_function.parameters(),
+                        arguments,
+                        &pre_state,
+                        closed.state,
+                        predicate_environment,
+                        click_function_environment,
+                        &closed.replay.unfolded_predicates,
+                    )?;
+                }
+                let nested = closed
+                    .replay
+                    .surface_replay
+                    .tactics
+                    .split_off(surface_start);
+                closed
+                    .replay
+                    .surface_replay
+                    .tactics
+                    .push(ProofTactic::Open(ProofOpen {
+                        resource: resource.clone(),
+                        tactics: nested,
+                    }));
+                let mut continued = execute_internal_proof(
+                    continuation,
+                    closed,
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                )?;
+                contexts.append(&mut continued);
+            }
+            Ok(contexts)
+        }
         InternalProofNode::If {
             index,
             condition,

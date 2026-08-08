@@ -1,7 +1,7 @@
-# counted resources cannot be minted by a contract
+# resources cannot be minted by a contract
 
-Declaring a resource counted permits several units to coexist; it does not
-permit one unit to be duplicated without another resource law.
+Several resource units may coexist, but a contract cannot duplicate one unit
+without another resource law.
 
 ```c filename=duplicate_ref.c
 int32 duplicate_ref(int32 object) {
@@ -10,7 +10,7 @@ int32 duplicate_ref(int32 object) {
 ```
 
 ```click
-counted resource object_ref(object: int32);
+resource object_ref(object: int32);
 
 verifying "duplicate_ref.c";
 

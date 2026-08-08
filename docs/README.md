@@ -50,8 +50,8 @@ prove each guarantee. The system is intentionally small but already supports:
   `count` and `permutation`.
 - Memory-qualified, element-typed Click array refs for pure functions and
   predicates, including `old(p)` as an entry-state array argument.
-- Viewed/owned memory resources, exclusive and counted atomic resources,
-  composite resources, and exclusive allocation
+- Viewed/owned memory resources, exact-match declared-resource quantities,
+  composite population bodies, and exclusive allocation
   authority that must be returned or discharged by `free`.
 
 Use these names consistently:

@@ -1,8 +1,8 @@
 # `unfold` rejects a resource without a body
 
 The resource laws (`unfold`, `fold`, `observe`) read the named resource's body.
-Composite and counted resources may provide one. A declared token resource has
-none, so naming one must be reported before any law is applied.
+Composite resources may provide one. A bodyless declared resource has none, so
+naming one must be reported before any law is applied.
 
 ```c filename=use_token.c
 int32 use_token(int32 fd) {

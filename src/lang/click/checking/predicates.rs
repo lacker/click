@@ -221,7 +221,7 @@ pub(in crate::lang::click) fn instantiate_predicate_definition(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
-    let (memory, mut values, array_refs) = decode_predicate_arguments(definition, arguments)?;
+    let (state, mut values, array_refs) = decode_predicate_arguments(definition, arguments)?;
 
     let mut next_variable = 2_500_000;
     let mut active_functions = BTreeSet::new();
@@ -229,7 +229,7 @@ pub(in crate::lang::click) fn instantiate_predicate_definition(
     lower_predicate_body_proposition_with_environment(
         &mut values,
         &array_refs,
-        &memory,
+        &state,
         assumptions,
         definition.body(),
         &mut next_variable,
@@ -243,8 +243,8 @@ pub(in crate::lang::click) fn instantiate_predicate_definition(
 pub(in crate::lang::click) fn decode_predicate_arguments(
     definition: &PredicateDefinition,
     arguments: &[Term],
-) -> Result<(CMemory, BTreeMap<String, CValue>, ClickArrayRefs), String> {
-    let expanded_len = definition
+) -> Result<(CState, BTreeMap<String, CValue>, ClickArrayRefs), String> {
+    let expanded_len = 1 + definition
         .parameters()
         .iter()
         .map(|parameter| {
@@ -257,10 +257,16 @@ pub(in crate::lang::click) fn decode_predicate_arguments(
         .sum::<usize>();
 
     if arguments.len() == expanded_len {
+        let Some(Term::CState(state)) = arguments.first() else {
+            return Err(format!(
+                "predicate `{}` is missing its resource-state snapshot",
+                definition.name()
+            ));
+        };
         let mut values = BTreeMap::new();
         let mut array_refs = BTreeMap::new();
         let mut default_memory = None;
-        let mut index = 0;
+        let mut index = 1;
         for parameter in definition.parameters() {
             if parameter_is_click_array_ref(parameter) {
                 let Some(Term::CMemory(memory)) = arguments.get(index) else {
@@ -311,7 +317,13 @@ pub(in crate::lang::click) fn decode_predicate_arguments(
                 index += 1;
             }
         }
-        return Ok((default_memory.unwrap_or_default(), values, array_refs));
+        return Ok((
+            state
+                .clone()
+                .with_memory(default_memory.unwrap_or_default()),
+            values,
+            array_refs,
+        ));
     }
 
     Err(format!(
@@ -325,7 +337,7 @@ pub(in crate::lang::click) fn decode_predicate_arguments(
 pub(in crate::lang::click) fn lower_predicate_body_proposition_with_environment(
     values: &mut BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
-    memory: &CMemory,
+    state: &CState,
     assumptions: &Assumptions,
     proposition: &ClickProposition,
     next_variable: &mut u64,
@@ -334,6 +346,7 @@ pub(in crate::lang::click) fn lower_predicate_body_proposition_with_environment(
     program_point_states: &ProgramPointStates,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<Proposition, String> {
+    let memory = state;
     match proposition {
         ClickProposition::Comparison {
             left,
@@ -429,17 +442,17 @@ pub(in crate::lang::click) fn lower_predicate_body_proposition_with_environment(
             let element_width =
                 contract_segment_element_width_from_array_refs(array_refs, &segment.source)
                     .unwrap_or(4);
-            loadable_segment_prop(memory, segment, element_width).map_err(|error| error.message)
+            loadable_segment_prop(state.memory(), segment, element_width)
+                .map_err(|error| error.message)
         }
         ClickProposition::Defined { expression } => {
             let expression = contract_expression_to_c_fragment(expression).ok_or_else(|| {
                 "`defined(...)` currently requires an expression without `old`, `at`, folds, lets, or Click function calls".to_string()
             })?;
-            let state = values.iter().fold(
-                CState::new().with_memory(memory.clone()),
-                |state, (name, value)| state.with_local(name.clone(), value.clone()),
-            );
-            c_expression_definedness_proposition(&state, &expression).map_err(|limit| {
+            let expression_state = values.iter().fold(state.clone(), |state, (name, value)| {
+                state.with_local(name.clone(), value.clone())
+            });
+            c_expression_definedness_proposition(&expression_state, &expression).map_err(|limit| {
                 format!("`defined(...)` elaboration hit execution limit {limit:?}")
             })
         }
@@ -800,14 +813,13 @@ pub(in crate::lang::click) fn lower_predicate_body_proposition_with_environment(
             let definition = predicate_environment
                 .get(name)
                 .ok_or_else(|| format!("unknown predicate `{name}`"))?;
-            let state = CState::new().with_memory(memory.clone());
             let lowered_arguments = lower_predicate_call_arguments_with_environment(
                 definition,
                 arguments,
                 values,
                 array_refs,
-                &state,
-                &state,
+                state,
+                state,
                 None,
                 assumptions,
                 predicate_environment,
@@ -826,7 +838,7 @@ pub(in crate::lang::click) fn lower_predicate_body_proposition_with_environment(
 fn evaluate_predicate_contract_segment(
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
-    memory: &CMemory,
+    state: &CState,
     assumptions: &Assumptions,
     segment: &ContractSegment,
     predicate_environment: &PredicateEnvironment,
@@ -834,6 +846,7 @@ fn evaluate_predicate_contract_segment(
     program_point_states: &ProgramPointStates,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<EvaluatedContractSegment, String> {
+    let memory = state;
     if segment.state != ContractSegmentState::Current {
         return Err("`old(...)` is not available in memory resource subjects".to_string());
     }
@@ -891,7 +904,7 @@ fn evaluate_predicate_contract_segment(
 fn evaluate_predicate_resource_subject(
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
-    memory: &CMemory,
+    state: &CState,
     assumptions: &Assumptions,
     resource: &ResourceSubject,
     predicate_environment: &PredicateEnvironment,
@@ -899,6 +912,7 @@ fn evaluate_predicate_resource_subject(
     program_point_states: &ProgramPointStates,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<CResource, String> {
+    let memory = state;
     match resource {
         ResourceSubject::Memory(segment) => {
             let segment = evaluate_predicate_contract_segment(
@@ -961,10 +975,6 @@ fn evaluate_predicate_resource_subject(
                     name: name.clone(),
                     arguments: values_out,
                 },
-                ResourceKind::Counted => CResource::Counted {
-                    name: name.clone(),
-                    arguments: values_out,
-                },
             })
         }
     }
@@ -973,7 +983,7 @@ fn evaluate_predicate_resource_subject(
 pub(in crate::lang::click) fn evaluate_predicate_contract_expression(
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
-    memory: &CMemory,
+    state: &CState,
     assumptions: &Assumptions,
     expression: &ContractExpression,
     predicate_environment: &PredicateEnvironment,
@@ -981,18 +991,48 @@ pub(in crate::lang::click) fn evaluate_predicate_contract_expression(
     program_point_states: &ProgramPointStates,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<CValue, String> {
-    let state = CState::new().with_memory(memory.clone());
+    let memory = state;
     match expression {
         ContractExpression::CFragment(expression)
         | ContractExpression::Field {
             lowered: expression,
             ..
-        } => evaluate_c_contract_expression(values, &state, None, assumptions, expression),
+        } => evaluate_c_contract_expression(values, state, None, assumptions, expression),
         ContractExpression::CBinding(name) => Err(format!(
             "`c({name})` is not available in predicate definitions"
         )),
-        ContractExpression::ResourceCount(_) => {
-            Err("`count(...)` is only available in a counted resource population body".to_string())
+        ContractExpression::ResourceCount(resource) => {
+            let ResourceClause::Declared {
+                name, arguments, ..
+            } = resource.as_ref()
+            else {
+                return Err("`count(...)` expects a declared resource".to_string());
+            };
+            let mut resource_arguments = Vec::with_capacity(arguments.len());
+            for argument in arguments {
+                resource_arguments.push(match argument {
+                    ContractExpression::ResourceWildcard => None,
+                    argument => Some(evaluate_predicate_contract_expression(
+                        values,
+                        array_refs,
+                        state,
+                        assumptions,
+                        argument,
+                        predicate_environment,
+                        click_function_environment,
+                        program_point_states,
+                        active_functions,
+                    )?),
+                });
+            }
+            Ok(CValue::Int32(state.counted_population_sum(
+                name,
+                &resource_arguments,
+                assumptions,
+            )))
+        }
+        ContractExpression::ResourceWildcard => {
+            Err("`_` is only valid inside a `count(...)` resource pattern".to_string())
         }
         ContractExpression::Old(_) => {
             Err("`old(...)` is not available in predicate definitions".to_string())

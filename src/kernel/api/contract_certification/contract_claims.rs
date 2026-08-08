@@ -543,13 +543,23 @@ fn prepare_function_claim_path(
         return Err("the function entry state cannot be reconstructed".to_string());
     };
     let mut budget = ExecutionBudget::default();
-    let Ok(Ok(required_resources)) = evaluate_function_resource_context(
+    let required_resources = match evaluate_function_resource_context(
         &entry_state,
         function.resource_requires(),
         &assumptions,
         &mut budget,
-    ) else {
-        return Err("the required resource context cannot be evaluated".to_string());
+    ) {
+        Ok(Ok(resources)) => resources,
+        Ok(Err(error)) => {
+            return Err(format!(
+                "the required resource context cannot be evaluated: {error:?}"
+            ));
+        }
+        Err(limit) => {
+            return Err(format!(
+                "the required resource context hit execution limit {limit:?}"
+            ));
+        }
     };
     let Some((_, definition_facts)) = expand_all_composite_resource_facts_and_propositions(
         &required_resources,
@@ -640,6 +650,7 @@ fn prepare_function_claim_path(
         .clone()
         .with_memory(return_state.memory().clone());
     post_state.resources = post_resources.clone();
+    post_state.counted_populations = return_state.counted_populations.clone();
     if function.return_type() != CType::Void {
         post_state
             .locals
@@ -768,7 +779,7 @@ fn function_claim_holds_on_prepared_path(
                 return false;
             }
             // Resource clauses describe one jointly returned context. Checking
-            // each clause independently would let one counted unit certify two
+            // each clause independently would let one resource unit certify two
             // identical clauses. The prefix makes every claim account for all
             // units claimed up to and including its own clause.
             let resources = &function.resource_ensures()[..=*index];

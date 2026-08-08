@@ -949,7 +949,6 @@ pub(super) fn c_function_contract_certification_assumptions(
                         }
                         CResource::Composite { name, .. } => format!("composite {name}"),
                         CResource::Token { name, .. } => format!("token {name}"),
-                        CResource::Counted { name, .. } => format!("counted resource {name}"),
                     };
                     format!("{index}: {kind}")
                 })

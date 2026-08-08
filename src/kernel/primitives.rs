@@ -249,7 +249,7 @@ pub enum SpecExpression {
     CExpression(CExpression),
     CountedResourceCount {
         name: String,
-        arguments: Vec<SpecExpression>,
+        arguments: Vec<Option<SpecExpression>>,
     },
     Add(Box<SpecExpression>, Box<SpecExpression>),
     Subtract(Box<SpecExpression>, Box<SpecExpression>),
@@ -361,10 +361,6 @@ pub enum SpecResource {
         arguments: Vec<SpecExpression>,
     },
     Token {
-        name: String,
-        arguments: Vec<SpecExpression>,
-    },
-    Counted {
         name: String,
         arguments: Vec<SpecExpression>,
     },
@@ -1200,10 +1196,6 @@ pub enum CResource {
         name: String,
         arguments: Vec<CValue>,
     },
-    Counted {
-        name: String,
-        arguments: Vec<CValue>,
-    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1273,7 +1265,6 @@ pub(super) trait ResourceFamilyAlgebra {
 
 struct MemoryResourceAlgebra;
 struct TokenResourceAlgebra;
-struct CountedResourceAlgebra;
 /// The kernel algebra for a folded composite fact is exact-match ownership and
 /// viewing. Source-declared body equivalences are applied as fold, unfold, and
 /// observation laws by the Click proof layer.
@@ -1281,7 +1272,6 @@ struct CompositeResourceAlgebra;
 
 static MEMORY_RESOURCE_ALGEBRA: MemoryResourceAlgebra = MemoryResourceAlgebra;
 static TOKEN_RESOURCE_ALGEBRA: TokenResourceAlgebra = TokenResourceAlgebra;
-static COUNTED_RESOURCE_ALGEBRA: CountedResourceAlgebra = CountedResourceAlgebra;
 static COMPOSITE_RESOURCE_ALGEBRA: CompositeResourceAlgebra = CompositeResourceAlgebra;
 
 /// Primitive resource families. Adding a variant also requires registering one
@@ -1291,11 +1281,10 @@ pub enum ResourceFamily {
     Memory,
     Composite,
     Token,
-    Counted,
 }
 
 impl ResourceFamily {
-    const ALL: [Self; 4] = [Self::Memory, Self::Composite, Self::Token, Self::Counted];
+    const ALL: [Self; 3] = [Self::Memory, Self::Composite, Self::Token];
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1315,12 +1304,6 @@ pub enum CResourceSpec {
         parameter_types: Vec<CType>,
     },
     Token {
-        access: CResourceAccessMode,
-        name: String,
-        arguments: Vec<CExpression>,
-        parameter_types: Vec<CType>,
-    },
-    Counted {
         access: CResourceAccessMode,
         name: String,
         arguments: Vec<CExpression>,

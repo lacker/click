@@ -236,13 +236,10 @@ impl Parser {
             } else if self.peek_ident() == Some("theorem") {
                 theorem_definitions.push(self.parse_theorem_definition()?);
             } else if self.peek_ident() == Some("resource") {
-                resource_definitions
-                    .push(self.parse_resource_definition(ResourceMultiplicity::Exclusive)?);
+                resource_definitions.push(self.parse_resource_definition()?);
             } else if self.peek_ident() == Some("counted") {
-                self.position += 1;
-                self.expect_ident_spelling("resource")?;
-                resource_definitions
-                    .push(self.parse_resource_definition(ResourceMultiplicity::Counted)?);
+                return Err(self
+                    .error("`counted resource` has been removed; declare an ordinary `resource`"));
             } else {
                 function_blocks.push(self.parse_function_block()?);
             }
@@ -321,13 +318,8 @@ impl Parser {
         })
     }
 
-    fn parse_resource_definition(
-        &mut self,
-        multiplicity: ResourceMultiplicity,
-    ) -> Result<ResourceDefinition, ClickError> {
-        if multiplicity == ResourceMultiplicity::Exclusive {
-            self.expect_ident_spelling("resource")?;
-        }
+    fn parse_resource_definition(&mut self) -> Result<ResourceDefinition, ClickError> {
+        self.expect_ident_spelling("resource")?;
         let name = self.expect_ident("resource name")?;
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_click_parameters()?;
@@ -355,7 +347,6 @@ impl Parser {
         Ok(ResourceDefinition {
             name,
             parameters: parsed_parameters.parameters,
-            multiplicity,
             composite_body,
         })
     }
@@ -1442,6 +1433,9 @@ impl Parser {
             && self.peek_ident() != Some("old")
             && self.peek_ident() != Some("at")
             && self.peek_ident() != Some("c")
+            && !(self.peek_ident() == Some("count")
+                && matches!(self.tokens.get(self.position + 2), Some(Token::Ident(_)))
+                && self.tokens.get(self.position + 3) == Some(&Token::LParen))
             && !matches!(
                 self.peek_ident(),
                 Some("load_int32" | "load_uint8" | "load_int32_pointer" | "load_uint8_pointer")
@@ -1672,6 +1666,16 @@ impl Parser {
             let mark = self.expect_ident("mark name")?;
             self.expect(Token::Semicolon)?;
             return Ok(ProofTactic::Mark(mark));
+        }
+        if name == "open" {
+            self.expect(Token::LParen)?;
+            let resource = self.parse_declared_resource_call()?;
+            self.expect(Token::RParen)?;
+            let tactics = self.parse_possibly_empty_tactic_block()?;
+            if self.peek() == Some(&Token::Semicolon) {
+                self.position += 1;
+            }
+            return Ok(ProofTactic::Open(ProofOpen { resource, tactics }));
         }
         if name == "if" {
             let condition = self.parse_proposition()?;
@@ -2023,6 +2027,38 @@ impl Parser {
 
     fn parse_declared_resource_call(&mut self) -> Result<ResourceClause, ClickError> {
         self.parse_declared_resource_call_with_access(ResourceAccessMode::Own)
+    }
+
+    fn parse_resource_count_pattern(&mut self) -> Result<ResourceClause, ClickError> {
+        let name = self.expect_ident("resource name")?;
+        self.expect(Token::LParen)?;
+        let mut arguments = Vec::new();
+        if self.peek() != Some(&Token::RParen) {
+            loop {
+                if self.peek_ident() == Some("_") {
+                    self.position += 1;
+                    arguments.push(ContractExpression::ResourceWildcard);
+                } else {
+                    arguments.push(self.parse_contract_expression()?);
+                }
+                match self.peek() {
+                    Some(Token::Comma) => self.position += 1,
+                    Some(Token::RParen) => break,
+                    Some(token) => {
+                        return Err(self.error(format!("expected `,` or `)`, got {token:?}")));
+                    }
+                    None => return Err(self.error("expected `,` or `)`, got end of input")),
+                }
+            }
+        }
+        self.expect(Token::RParen)?;
+        Ok(ResourceClause::Declared {
+            access: ResourceAccessMode::Own,
+            kind: ResourceKind::Token,
+            name,
+            arguments,
+            parameter_types: Vec::new(),
+        })
     }
 
     fn parse_declared_resource_call_with_access(
@@ -2722,17 +2758,16 @@ impl Parser {
             }));
         }
 
-        // `count(resource(args))` is the counted-resource population operator.
+        // `count(resource(args))` is the declared-resource population operator.
         // Keep the existing pure `count(array, lo, hi, value)` function
         // unambiguous by recognizing the operator only when its first token is
         // itself visibly a resource call.
         if self.peek_ident() == Some("count")
             && self.peek_next() == Some(&Token::LParen)
-            && matches!(self.tokens.get(self.position + 2), Some(Token::Ident(_)))
-            && self.tokens.get(self.position + 3) == Some(&Token::LParen)
+            && self.looks_like_resource_count()
         {
             self.position += 2;
-            let resource = self.parse_declared_resource_call()?;
+            let resource = self.parse_resource_count_pattern()?;
             self.expect(Token::RParen)?;
             return Ok(ContractExpression::ResourceCount(Box::new(resource)));
         }
@@ -3074,6 +3109,28 @@ impl Parser {
             Some(Token::Ident(name)) => Some(name),
             _ => None,
         }
+    }
+
+    fn looks_like_resource_count(&self) -> bool {
+        if !matches!(self.tokens.get(self.position + 2), Some(Token::Ident(_)))
+            || self.tokens.get(self.position + 3) != Some(&Token::LParen)
+        {
+            return false;
+        }
+        let mut depth = 0usize;
+        for index in (self.position + 3)..self.tokens.len() {
+            match self.tokens.get(index) {
+                Some(Token::LParen) => depth += 1,
+                Some(Token::RParen) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return self.tokens.get(index + 1) == Some(&Token::RParen);
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     /// The source position of the next unconsumed token, or of the last

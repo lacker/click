@@ -43,9 +43,7 @@ pub(in crate::lang::click) fn expand_declared_resource_clauses(
                         .iter()
                         .map(FunctionParameter::c_type)
                         .collect::<Vec<_>>(),
-                    kind: if definition.multiplicity() == ResourceMultiplicity::Counted {
-                        ResourceKind::Counted
-                    } else if definition.composite_body().is_some() {
+                    kind: if definition.composite_body().is_some() {
                         ResourceKind::Composite
                     } else {
                         ResourceKind::Token
@@ -336,6 +334,14 @@ fn expand_declared_resource_tactic(
             )?,
             proof: expand_declared_resource_proof(have.proof, resource_definitions)?,
         })),
+        ProofTactic::Open(open) => Ok(ProofTactic::Open(ProofOpen {
+            resource: expand_declared_resource_clause(open.resource, resource_definitions)?,
+            tactics: open
+                .tactics
+                .into_iter()
+                .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        })),
         ProofTactic::If(proof_if) => Ok(ProofTactic::If(ProofIf {
             condition: expand_declared_resource_proposition(
                 proof_if.condition,
@@ -577,15 +583,6 @@ fn expand_declared_resource_expression(
     Ok(match expression {
         ContractExpression::ResourceCount(resource) => {
             let resource = expand_declared_resource_clause(*resource, resource_definitions)?;
-            if !matches!(
-                resource,
-                ResourceClause::Declared {
-                    kind: ResourceKind::Counted,
-                    ..
-                }
-            ) {
-                return Err(ClickError::new("`count(...)` expects a counted resource"));
-            }
             ContractExpression::ResourceCount(Box::new(resource))
         }
         ContractExpression::Field {

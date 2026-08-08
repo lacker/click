@@ -178,6 +178,15 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_proof(output, &have.proof, indent);
             output.push('\n');
         }
+        ProofTactic::Open(open) => {
+            line(
+                output,
+                &prefix,
+                &format!("open({}) {{", format_resource_call(&open.resource)),
+            );
+            write_tactics(output, &open.tactics, indent + 1);
+            line(output, &prefix, "}");
+        }
         ProofTactic::If(proof_if) => {
             output.push_str(&prefix);
             output.push_str("if ");

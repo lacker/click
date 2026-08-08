@@ -840,6 +840,13 @@ mod certificate_tests {
                 coordinates.extend(linear_tactic_coordinates(continuation));
                 coordinates
             }
+            InternalProofNode::Open {
+                body, continuation, ..
+            } => {
+                let mut coordinates = linear_tactic_coordinates(body);
+                coordinates.extend(linear_tactic_coordinates(continuation));
+                coordinates
+            }
             InternalProofNode::If {
                 then_branch,
                 else_branch,
@@ -1214,6 +1221,13 @@ enum InternalProofNode {
         tactics: Vec<IndexedTactic>,
         continuation: Box<InternalProofNode>,
     },
+    Open {
+        index: usize,
+        source_index: usize,
+        resource: ResourceClause,
+        body: Box<InternalProofNode>,
+        continuation: Box<InternalProofNode>,
+    },
     If {
         index: usize,
         condition: ClickProposition,
@@ -1285,6 +1299,16 @@ fn set_generated_proof_source_index(node: &mut InternalProofNode, owning_source_
             }
             set_generated_proof_source_index(continuation, owning_source_index);
         }
+        InternalProofNode::Open {
+            source_index,
+            body,
+            continuation,
+            ..
+        } => {
+            *source_index = owning_source_index;
+            set_generated_proof_source_index(body, owning_source_index);
+            set_generated_proof_source_index(continuation, owning_source_index);
+        }
         InternalProofNode::If {
             then_branch,
             else_branch,
@@ -1321,6 +1345,19 @@ fn detach_generated_suffix_from_source_indices(
             }
             detach_generated_suffix_from_source_indices(continuation, first_generated_tactic_index);
         }
+        InternalProofNode::Open {
+            index,
+            source_index,
+            body,
+            continuation,
+            ..
+        } => {
+            if *index >= first_generated_tactic_index {
+                *source_index = usize::MAX;
+            }
+            detach_generated_suffix_from_source_indices(body, first_generated_tactic_index);
+            detach_generated_suffix_from_source_indices(continuation, first_generated_tactic_index);
+        }
         InternalProofNode::If {
             then_branch,
             else_branch,
@@ -1345,11 +1382,12 @@ fn build_internal_proof_at(
     index_offset: usize,
     source_index_offset: usize,
 ) -> Result<InternalProofNode, ClickError> {
-    let Some((control_index, control_tactic)) = tactics
-        .iter()
-        .enumerate()
-        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_) | ProofTactic::Branch(_)))
-    else {
+    let Some((control_index, control_tactic)) = tactics.iter().enumerate().find(|(_, tactic)| {
+        matches!(
+            tactic,
+            ProofTactic::If(_) | ProofTactic::Branch(_) | ProofTactic::Open(_)
+        )
+    }) else {
         if tactics.is_empty() {
             return Ok(InternalProofNode::Done);
         }
@@ -1410,6 +1448,21 @@ fn build_internal_proof_at(
                 )?),
             }
         }
+        ProofTactic::Open(proof_open) => InternalProofNode::Open {
+            index,
+            source_index,
+            resource: proof_open.resource.clone(),
+            body: Box::new(build_internal_proof_at(
+                &proof_open.tactics,
+                index + 1,
+                source_index + 1,
+            )?),
+            continuation: Box::new(build_internal_proof_at(
+                &tactics[control_index + 1..],
+                index + 1,
+                source_index + source_tactic_width(control_tactic),
+            )?),
+        },
         _ => unreachable!("control-tactic search only returns structured tactics"),
     };
 
@@ -1463,6 +1516,7 @@ fn source_tactic_width(tactic: &ProofTactic) -> usize {
             1 + source_tactic_count(&proof_branch.then_tactics)
                 + source_tactic_count(&proof_branch.else_tactics)
         }
+        ProofTactic::Open(proof_open) => 1 + source_tactic_count(&proof_open.tactics),
         ProofTactic::Loop(clause) => {
             1 + clause
                 .initialize_proof()
@@ -1487,6 +1541,12 @@ fn internal_proof_contains_source_index(node: &InternalProofNode, wanted: usize)
             continuation,
         } => {
             tactics.iter().any(|tactic| tactic.source_index == wanted)
+                || internal_proof_contains_source_index(continuation, wanted)
+        }
+        InternalProofNode::Open {
+            body, continuation, ..
+        } => {
+            internal_proof_contains_source_index(body, wanted)
                 || internal_proof_contains_source_index(continuation, wanted)
         }
         InternalProofNode::If {
@@ -1578,11 +1638,23 @@ pub(super) fn initial_claim_context(
 > {
     let (mut state, arguments) =
         initial_call_state(function_block.requires(), parsed_function.parameters())?;
+    let observes_population_counts = function_block.requires().iter().any(|requirement| {
+        let mut requirement = requirement;
+        while let Requirement::Labeled {
+            requirement: nested,
+            ..
+        } = requirement
+        {
+            requirement = nested;
+        }
+        matches!(requirement, Requirement::Proposition(proposition) if proposition_contains_resource_count(proposition))
+    });
     let (population_state, population_facts) = materialize_counted_population_bodies(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
         state,
+        observes_population_counts,
         predicate_environment,
         click_function_environment,
         claim_label,
@@ -1609,7 +1681,7 @@ pub(super) fn initial_claim_context(
                 function_block.requires(),
                 parsed_function.parameters(),
                 &arguments,
-                projection_state.memory(),
+                &projection_state,
                 predicate_environment,
                 click_function_environment,
             )
@@ -1621,7 +1693,7 @@ pub(super) fn initial_claim_context(
             function_block.requires(),
             parsed_function.parameters(),
             &arguments,
-            projection_state.memory(),
+            &projection_state,
             predicate_environment,
             click_function_environment,
         );
@@ -1646,7 +1718,7 @@ pub(super) fn initial_claim_context(
         function_block.requires(),
         parsed_function.parameters(),
         &arguments,
-        state.memory(),
+        &state,
         predicate_environment,
         click_function_environment,
     )?;
@@ -1667,7 +1739,7 @@ pub(super) fn initial_claim_context(
             std::slice::from_ref(requirement),
             parsed_function.parameters(),
             &arguments,
-            state.memory(),
+            &state,
             predicate_environment,
             click_function_environment,
         )?;
@@ -1761,7 +1833,7 @@ fn available_initial_requirement_propositions(
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    memory: &CMemory,
+    state: &CState,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Vec<Proposition> {
@@ -1771,7 +1843,7 @@ fn available_initial_requirement_propositions(
             std::slice::from_ref(requirement),
             parameters,
             arguments,
-            memory,
+            state,
             predicate_environment,
             click_function_environment,
         ) else {

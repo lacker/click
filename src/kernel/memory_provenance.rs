@@ -54,16 +54,6 @@ pub(crate) fn c_resources_directly_match(
                 name: right_name,
                 arguments: right_arguments,
             },
-        )
-        | (
-            CResource::Counted {
-                name: left_name,
-                arguments: left_arguments,
-            },
-            CResource::Counted {
-                name: right_name,
-                arguments: right_arguments,
-            },
         ) => {
             left_name == right_name
                 && left_arguments.len() == right_arguments.len()

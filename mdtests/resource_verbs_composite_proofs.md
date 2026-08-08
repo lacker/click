@@ -52,7 +52,12 @@ int32 set_cell_one(int32 p[]) {
 
 int32 inspect_cell(int32 p[]) {
     views initialized_cell(p);
-    ensures result >= 0 by auto;
+    ensures result >= 0;
+} by {
+    open(initialized_cell(p)) {
+        execute();
+        simp();
+    }
 }
 ```
 

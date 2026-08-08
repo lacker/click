@@ -585,7 +585,12 @@ pub(in crate::lang::click) fn lower_predicate_call_arguments_with_environment(
         ));
     }
 
-    let mut lowered_arguments = Vec::new();
+    // Predicate identity includes the logical resource-state snapshot as well
+    // as any explicit array memories. Otherwise an old predicate fact
+    // containing `count(...)` would silently change meaning after a resource
+    // transition. C memory and locals are deliberately not part of this
+    // hidden argument.
+    let mut lowered_arguments = vec![Term::CState(post_state.resource_state_snapshot())];
     for (parameter, argument) in definition.parameters().iter().zip(arguments) {
         if parameter_is_click_array_ref(parameter) {
             let array_ref = evaluate_contract_array_ref_with_environment(

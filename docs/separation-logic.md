@@ -375,32 +375,35 @@ Read stability is a memory-model promise, not a permission to mutate. A viewed
 memory resource allows code to rely on the current cell value across ordinary
 repeated loads, but it does not allow stores.
 
-## Token And Composite Rules
+## Declared Resource And Population Rules
 
-Plain token resources currently behave as nonduplicable exact-match owned
-capabilities:
+Bodyless resources are exact-match owned capabilities:
 
 - exact-match entailment only,
-- no splitting or joining,
-- duplicate identical owned token resources are invalid,
-- consuming a token resource removes the token,
-- returning the same token resource adds the token back.
+- equal owned units normalize to a quantity,
+- consuming a resource removes one unit,
+- returning the same resource adds one unit, and
+- one unit cannot satisfy a requirement for two.
 
-Composite resources add a definitional layer:
+Resources with bodies add a definitional layer. One body belongs to the whole
+exact-argument population, regardless of its quantity:
 
-- `unfold(resource)` consumes one owned composite resource fact and exposes its
-  immediate body resource facts and pure facts.
-- `fold(resource)` requires the declared pure facts as exact current facts (or
-  context-free truths), consumes one immediate body, and returns the owned
-  composite resource fact. Deriving those facts is a separate tactic.
+- `fold(resource)` initializes a population of one from one body.
+- `unfold(resource)` finalizes a population proved to contain one unit and
+  exposes its body.
+- `open(resource) { ... }` exposes the shared body without changing the
+  population and requires the complete body to be restored when the block
+  closes.
 - `observe(resource)` projects one view step without consuming the resource
   fact. It exposes immediate pure facts and viewed immediate contained resource
   facts, but not owned contained permissions.
+- `count(resource(arguments))` observes the exact population quantity, while
+  `_` arguments sum all matching populations.
 
-In the algebraic model, a composite resource is not a new primitive resource
-family. It is a declared resource whose resource facts have laws connecting the
-owned composite resource fact to a composite body made from other resource facts
-and pure facts. Its core is the viewed composite resource fact.
+In the algebraic model, a composite resource is not a separate multiplicity
+kind. It is a declared resource whose facts have laws connecting its population
+to one body made from other resource facts and pure facts. Its core is the
+viewed resource fact.
 
 ## Implementation Boundary
 

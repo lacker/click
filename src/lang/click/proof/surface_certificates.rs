@@ -2361,7 +2361,7 @@ fn contract_expression_mentions_c_local(
     parameter_names: &BTreeSet<&str>,
 ) -> bool {
     match expression {
-        ContractExpression::CBinding(_) => false,
+        ContractExpression::CBinding(_) | ContractExpression::ResourceWildcard => false,
         ContractExpression::ResourceCount(resource) => match resource.as_ref() {
             ResourceClause::Declared { arguments, .. } => arguments
                 .iter()

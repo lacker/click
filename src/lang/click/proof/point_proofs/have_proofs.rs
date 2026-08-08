@@ -15,6 +15,71 @@ pub(in crate::lang::click::proof) fn fold_composite_resource_at_current_point(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<CState, ClickError> {
+    close_or_initialize_composite_resource_at_current_point(
+        resource_environment,
+        resource,
+        claim_label,
+        tactic_index,
+        available_pure_facts,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        ResourceBodyClosure::Initialize,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn close_open_resource_at_current_point(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    claim_label: &str,
+    tactic_index: usize,
+    available_pure_facts: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<CState, ClickError> {
+    close_or_initialize_composite_resource_at_current_point(
+        resource_environment,
+        resource,
+        claim_label,
+        tactic_index,
+        available_pure_facts,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        ResourceBodyClosure::CloseOpen,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn close_or_initialize_composite_resource_at_current_point(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    claim_label: &str,
+    tactic_index: usize,
+    available_pure_facts: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+    closure: ResourceBodyClosure,
+) -> Result<CState, ClickError> {
     let surface_propositions = SurfacePropositionMap::default();
     let outcome = CFunctionOutcome::Return {
         value: CValue::Int32(Bitvector32Term::Constant(0)),
@@ -35,6 +100,7 @@ pub(in crate::lang::click::proof) fn fold_composite_resource_at_current_point(
         predicate_environment,
         click_function_environment,
         unfolded_predicates,
+        closure,
     )?;
     let CFunctionOutcome::Return { state, .. } = outcome else {
         unreachable!("folding a synthetic return outcome preserves its outcome kind")

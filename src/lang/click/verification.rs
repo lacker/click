@@ -1545,26 +1545,25 @@ pub(in crate::lang::click) fn composite_resource_definitions(
             predicate_environment,
             click_function_environment,
         )?;
-        definitions.push(
-            if definition.multiplicity() == ResourceMultiplicity::Counted {
-                CCompositeResourceDefinition::counted_population(
-                    definition.name(),
-                    parameters,
-                    condition,
-                    contains,
-                    facts,
-                )
-            } else {
-                CCompositeResourceDefinition::new(
-                    definition.name(),
-                    parameters,
-                    condition,
-                    recursive,
-                    contains,
-                    facts,
-                )
-            },
-        );
+        let observes_its_population = body.facts().iter().any(proposition_contains_resource_count);
+        definitions.push(if observes_its_population {
+            CCompositeResourceDefinition::counted_population(
+                definition.name(),
+                parameters,
+                condition,
+                contains,
+                facts,
+            )
+        } else {
+            CCompositeResourceDefinition::new(
+                definition.name(),
+                parameters,
+                condition,
+                recursive,
+                contains,
+                facts,
+            )
+        });
     }
     Ok(definitions)
 }
@@ -1689,12 +1688,6 @@ pub(in crate::lang::click) fn resource_clause_to_resource_spec(
                     parameter_types,
                 },
                 ResourceKind::Token => CResourceSpec::Token {
-                    access,
-                    name: name.clone(),
-                    arguments,
-                    parameter_types,
-                },
-                ResourceKind::Counted => CResourceSpec::Counted {
                     access,
                     name: name.clone(),
                     arguments,

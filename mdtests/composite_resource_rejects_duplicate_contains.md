@@ -1,7 +1,7 @@
-# composite resource rejects duplicate contained token
+# Composite bodies can contain multiple equal units
 
-This checks that a composite resource cannot contain the same token resource
-twice.
+Repeated contained clauses package the corresponding resource quantity rather
+than duplicating one unit.
 
 ```c filename=zero.c
 int32 zero(int32 fd) {
@@ -25,5 +25,5 @@ int32 zero(int32 fd) {
 ```
 
 ```expect
-fail: duplicate resource fact `socket_open(fd)`
+pass
 ```

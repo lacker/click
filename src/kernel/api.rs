@@ -1,3 +1,4 @@
+use super::functions::apply_verified_contract_resource_transition;
 pub(super) use super::memory_provenance::*;
 use super::prelude::*;
 
@@ -648,6 +649,32 @@ pub fn c_function_contract_entry_state(
         Ok(Err(error)) => Err(format!("could not prepare contract resources: {error:?}")),
         Err(limit) => Err(format!(
             "contract resource preparation hit execution limit {limit:?}"
+        )),
+    }
+}
+
+/// Applies a function's already-checked resource effect to a concrete replay
+/// outcome. This changes only the contract-level resource/population state;
+/// the C value and memory come from the supplied body execution.
+pub fn apply_c_function_contract_resource_transition(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    outcome: CFunctionOutcome,
+    assumptions: &Assumptions,
+) -> Result<(CFunctionOutcome, Vec<ProofObligation>), String> {
+    match apply_verified_contract_resource_transition(
+        caller_state,
+        function,
+        arguments,
+        outcome,
+        assumptions,
+        &mut ExecutionBudget::default(),
+    ) {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(error)) => Err(format!("contract resource transition failed: {error:?}")),
+        Err(limit) => Err(format!(
+            "contract resource transition hit execution limit {limit:?}"
         )),
     }
 }
@@ -1593,6 +1620,14 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
         Assumptions::new(),
         &selection_assumptions,
     ) else {
+        if crate::instrumentation::enabled() {
+            crate::instrumentation::emit(crate::instrumentation::VerificationEvent::Diagnostic(
+                format!(
+                    "exact certification could not construct contract assumptions for {}",
+                    function.name()
+                ),
+            ));
+        }
         return CFunctionContractExecution {
             execution: SymbolicCExecution {
                 paths: Vec::new(),
@@ -1603,6 +1638,14 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
     let Some(resource_condition_cases) =
         contract_resource_condition_cases(&state, &function, &arguments, &base_assumptions)
     else {
+        if crate::instrumentation::enabled() {
+            crate::instrumentation::emit(crate::instrumentation::VerificationEvent::Diagnostic(
+                format!(
+                    "exact certification could not enumerate resource guards for {}",
+                    function.name()
+                ),
+            ));
+        }
         return CFunctionContractExecution {
             execution: SymbolicCExecution {
                 paths: Vec::new(),
@@ -1620,6 +1663,14 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
             case_seed,
             &selection_assumptions,
         ) else {
+            if crate::instrumentation::enabled() {
+                crate::instrumentation::emit(
+                    crate::instrumentation::VerificationEvent::Diagnostic(format!(
+                        "exact certification rejected a resource-guard case for {}",
+                        function.name()
+                    )),
+                );
+            }
             return CFunctionContractExecution {
                 execution: SymbolicCExecution {
                     paths: Vec::new(),
@@ -1767,6 +1818,17 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
                 )
             }
         };
+        if crate::instrumentation::enabled()
+            && execution.paths.is_empty()
+            && execution.limit.is_none()
+        {
+            crate::instrumentation::emit(crate::instrumentation::VerificationEvent::Diagnostic(
+                format!(
+                    "exact certification executed a resource-guard case for {} but produced no consistent path",
+                    function.name()
+                ),
+            ));
+        }
         if let Some(limit) = execution.limit {
             return CFunctionContractExecution {
                 execution: SymbolicCExecution {

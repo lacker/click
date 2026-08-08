@@ -342,7 +342,6 @@ fn resource_family_algebra(family: ResourceFamily) -> &'static dyn ResourceFamil
         ResourceFamily::Memory => &MEMORY_RESOURCE_ALGEBRA,
         ResourceFamily::Composite => &COMPOSITE_RESOURCE_ALGEBRA,
         ResourceFamily::Token => &TOKEN_RESOURCE_ALGEBRA,
-        ResourceFamily::Counted => &COUNTED_RESOURCE_ALGEBRA,
     };
     debug_assert_eq!(algebra.family(), family);
     algebra
@@ -448,16 +447,6 @@ fn exact_resources_proven_equal(
                 name: right_name,
                 arguments: right_arguments,
             },
-        )
-        | (
-            CResource::Counted {
-                name: left_name,
-                arguments: left_arguments,
-            },
-            CResource::Counted {
-                name: right_name,
-                arguments: right_arguments,
-            },
         ) => {
             left_name == right_name
                 && left_arguments.len() == right_arguments.len()
@@ -549,23 +538,6 @@ fn access_mode_core(resource: &CResourceFact) -> Option<CResourceFact> {
     }
 }
 
-fn exact_resource_pair_validity_error(
-    left: &CResourceFact,
-    right: &CResourceFact,
-    assumptions: &Assumptions,
-) -> Option<ResourceContextValidityError> {
-    match (left, right) {
-        (CResourceFact::Own(left, _), CResourceFact::Own(right, _))
-            if exact_resources_proven_equal(left, right, assumptions) =>
-        {
-            Some(ResourceContextValidityError::DuplicateOwnedResourceFact(
-                CResourceFact::own(left.clone()),
-            ))
-        }
-        _ => None,
-    }
-}
-
 fn same_family_separate_facts(facts: &[&CResourceFact]) -> Vec<Proposition> {
     let owned = facts
         .iter()
@@ -654,11 +626,11 @@ macro_rules! impl_exact_resource_algebra {
 
             fn pair_validity_error(
                 &self,
-                left: &CResourceFact,
-                right: &CResourceFact,
-                assumptions: &Assumptions,
+                _left: &CResourceFact,
+                _right: &CResourceFact,
+                _assumptions: &Assumptions,
             ) -> Option<ResourceContextValidityError> {
-                exact_resource_pair_validity_error(left, right, assumptions)
+                None
             }
 
             fn entails(
@@ -685,7 +657,17 @@ macro_rules! impl_exact_resource_algebra {
                 right: &CResourceFact,
                 assumptions: &Assumptions,
             ) -> Option<CResourceFact> {
-                combine_exact_resource_facts(left, right, assumptions)
+                match (left, right) {
+                    (
+                        CResourceFact::Own(left, left_quantity),
+                        CResourceFact::Own(right, right_quantity),
+                    ) if exact_resources_proven_equal(left, right, assumptions) => left_quantity
+                        .get()
+                        .checked_add(right_quantity.get())
+                        .and_then(NonZeroU32::new)
+                        .map(|quantity| CResourceFact::Own(left.clone(), quantity)),
+                    _ => combine_exact_resource_facts(left, right, assumptions),
+                }
             }
 
             fn core(&self, fact: &CResourceFact) -> Option<CResourceFact> {
@@ -706,76 +688,10 @@ macro_rules! impl_exact_resource_algebra {
 impl_exact_resource_algebra!(TokenResourceAlgebra, ResourceFamily::Token);
 impl_exact_resource_algebra!(CompositeResourceAlgebra, ResourceFamily::Composite);
 
-impl ResourceFamilyAlgebra for CountedResourceAlgebra {
-    fn family(&self) -> ResourceFamily {
-        ResourceFamily::Counted
-    }
-
-    fn pair_validity_error(
-        &self,
-        _left: &CResourceFact,
-        _right: &CResourceFact,
-        _assumptions: &Assumptions,
-    ) -> Option<ResourceContextValidityError> {
-        None
-    }
-
-    fn entails(
-        &self,
-        available: &CResourceFact,
-        required: &CResourceFact,
-        assumptions: &Assumptions,
-    ) -> bool {
-        exact_resource_fact_entails(available, required, assumptions)
-    }
-
-    fn consume(
-        &self,
-        available: &CResourceFact,
-        required: &CResourceFact,
-        assumptions: &Assumptions,
-    ) -> Option<ResourceFactConsumption> {
-        consume_exact_resource_fact(available, required, assumptions)
-    }
-
-    fn normalize_pair(
-        &self,
-        left: &CResourceFact,
-        right: &CResourceFact,
-        assumptions: &Assumptions,
-    ) -> Option<CResourceFact> {
-        match (left, right) {
-            (
-                CResourceFact::Own(left, left_quantity),
-                CResourceFact::Own(right, right_quantity),
-            ) if exact_resources_proven_equal(left, right, assumptions) => left_quantity
-                .get()
-                .checked_add(right_quantity.get())
-                .and_then(NonZeroU32::new)
-                .map(|quantity| CResourceFact::Own(left.clone(), quantity)),
-            _ => combine_exact_resource_facts(left, right, assumptions),
-        }
-    }
-
-    fn core(&self, fact: &CResourceFact) -> Option<CResourceFact> {
-        access_mode_core(fact)
-    }
-
-    fn observable_facts(
-        &self,
-        facts: &[&CResourceFact],
-        _assumptions: &Assumptions,
-    ) -> Vec<Proposition> {
-        same_family_separate_facts(facts)
-    }
-}
-
 fn resource_fact_read_core_range(resource: &CResourceFact) -> Option<CMemoryRange> {
     match resource.core()? {
         CResourceFact::View(CResource::Memory(range)) => Some(range),
-        CResourceFact::View(
-            CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
-        )
+        CResourceFact::View(CResource::Composite { .. } | CResource::Token { .. })
         | CResourceFact::Own(..) => None,
     }
 }
@@ -811,10 +727,7 @@ fn memory_resource_fact_permits_write(
             range.start(),
             range.end(),
         ),
-        CResourceFact::Own(
-            CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
-            _,
-        )
+        CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. }, _)
         | CResourceFact::View(_) => false,
     }
 }
@@ -1007,13 +920,8 @@ fn memory_resource_fact_range(fact: &CResourceFact) -> Option<&CMemoryRange> {
     match fact {
         CResourceFact::Own(CResource::Memory(range), _)
         | CResourceFact::View(CResource::Memory(range)) => Some(range),
-        CResourceFact::Own(
-            CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
-            _,
-        )
-        | CResourceFact::View(
-            CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
-        ) => None,
+        CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. }, _)
+        | CResourceFact::View(CResource::Composite { .. } | CResource::Token { .. }) => None,
     }
 }
 
@@ -1143,7 +1051,6 @@ impl CResource {
             Self::Memory(_) => ResourceFamily::Memory,
             Self::Composite { .. } => ResourceFamily::Composite,
             Self::Token { .. } => ResourceFamily::Token,
-            Self::Counted { .. } => ResourceFamily::Counted,
         }
     }
 }
@@ -1169,10 +1076,6 @@ impl CResourceFact {
 
     pub fn own_token(name: String, arguments: Vec<CValue>) -> Self {
         Self::own(CResource::Token { name, arguments })
-    }
-
-    pub fn own_counted(name: String, arguments: Vec<CValue>) -> Self {
-        Self::own(CResource::Counted { name, arguments })
     }
 
     pub fn own(resource: CResource) -> Self {
@@ -1206,7 +1109,7 @@ impl CResourceFact {
             CResource::Composite { arguments, .. } => arguments.iter().any(
                 |argument| matches!(argument, CValue::Pointer(pointer) if &pointer.block == block),
             ),
-            CResource::Token { .. } | CResource::Counted { .. } => false,
+            CResource::Token { .. } => false,
         }
     }
 
@@ -1235,10 +1138,6 @@ impl CResourceFact {
         Self::View(CResource::Token { name, arguments })
     }
 
-    pub fn view_counted(name: String, arguments: Vec<CValue>) -> Self {
-        Self::View(CResource::Counted { name, arguments })
-    }
-
     pub fn resource(&self) -> &CResource {
         match self {
             Self::Own(resource, _) | Self::View(resource) => resource,
@@ -1264,21 +1163,18 @@ impl CResourceFact {
     pub fn memory_own_range(&self) -> Option<&CMemoryRange> {
         match self {
             Self::Own(CResource::Memory(range), _) => Some(range),
-            Self::Own(
-                CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
-                _,
-            )
-            | Self::View(_) => None,
+            Self::Own(CResource::Composite { .. } | CResource::Token { .. }, _) | Self::View(_) => {
+                None
+            }
         }
     }
 
     pub fn memory_view_range(&self) -> Option<&CMemoryRange> {
         match self {
             Self::View(CResource::Memory(range)) => Some(range),
-            Self::View(
-                CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
-            )
-            | Self::Own(..) => None,
+            Self::View(CResource::Composite { .. } | CResource::Token { .. }) | Self::Own(..) => {
+                None
+            }
         }
     }
 
@@ -1287,13 +1183,8 @@ impl CResourceFact {
             Self::Own(CResource::Memory(range), _) | Self::View(CResource::Memory(range)) => {
                 Some(range)
             }
-            Self::Own(
-                CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
-                _,
-            )
-            | Self::View(
-                CResource::Composite { .. } | CResource::Token { .. } | CResource::Counted { .. },
-            ) => None,
+            Self::Own(CResource::Composite { .. } | CResource::Token { .. }, _)
+            | Self::View(CResource::Composite { .. } | CResource::Token { .. }) => None,
         }
     }
 

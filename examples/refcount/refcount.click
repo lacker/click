@@ -1,4 +1,4 @@
-counted resource object_ref(obj: struct object*) {
+resource object_ref(obj: struct object*) {
     contains allocation(obj, sizeof(struct object));
     owns object(obj);
     fact obj->refs == count(object_ref(obj));
@@ -28,8 +28,10 @@ void object_retain(struct object* obj) {
     produces object_ref(obj);
     mutable obj->refs;
 } by {
-    execute();
-    frame();
+    open(object_ref(obj)) {
+        execute();
+        frame();
+    }
     simp();
 }
 
@@ -39,8 +41,10 @@ void object_release_nonfinal(struct object* obj) {
     consumes object_ref(obj);
     mutable obj->refs;
 } by {
-    execute();
-    frame();
+    open(object_ref(obj)) {
+        execute();
+        frame();
+    }
     simp();
 }
 

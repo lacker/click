@@ -142,7 +142,7 @@ impl Bitvector32Term {
         }
     }
 
-    pub(in crate::kernel) fn add(left: Self, right: Self) -> Self {
+    pub(crate) fn add(left: Self, right: Self) -> Self {
         match (&left, &right) {
             (Self::Constant(left), Self::Constant(right)) => {
                 Self::Constant(left.wrapping_add(*right))
@@ -517,10 +517,7 @@ impl ConditionTerm {
         }
     }
 
-    pub(in crate::kernel) fn signed_add_overflows(
-        left: Bitvector32Term,
-        right: Bitvector32Term,
-    ) -> Self {
+    pub(crate) fn signed_add_overflows(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         match (left.as_const(), right.as_const()) {
             (Some(left), Some(right)) => {
                 Self::Constant((left as i32).overflowing_add(right as i32).1)

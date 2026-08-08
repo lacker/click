@@ -1,6 +1,6 @@
-# one counted unit cannot satisfy two calls
+# one resource unit cannot satisfy two calls
 
-Each consuming call spends one counted unit. A function which receives only
+Each consuming call spends one resource unit. A function which receives only
 one unit cannot make two such calls.
 
 ```c filename=spend_ref.c
@@ -18,7 +18,7 @@ int32 spend_ref_twice(int32 object) {
 ```
 
 ```click
-counted resource object_ref(object: int32);
+resource object_ref(object: int32);
 
 verifying "spend_ref.c";
 verifying "spend_ref_twice.c";

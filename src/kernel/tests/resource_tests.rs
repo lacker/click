@@ -32,18 +32,16 @@ fn resource_family_cores_are_view_facts() {
 }
 
 #[test]
-fn exact_resource_families_reject_duplicate_owned_facts() {
+fn declared_resource_families_accumulate_equal_owned_units() {
     for fact in [
         CResourceFact::own_token("token".to_string(), vec![int32(0)]),
         CResourceFact::own_composite("box".to_string(), vec![int32(1)]),
     ] {
-        let error = ResourceContext::new()
+        let context = ResourceContext::new()
             .try_compose_with_facts([fact.clone(), fact.clone()], &Assumptions::new())
-            .expect_err("duplicate exact owned resources must be invalid");
-        assert_eq!(
-            error,
-            ResourceContextValidityError::DuplicateOwnedResourceFact(fact)
-        );
+            .expect("equal declared resources should form a quantity");
+        assert_eq!(context.facts().len(), 1);
+        assert_eq!(context.facts()[0].owned_quantity(), Some(2));
     }
 }
 
@@ -68,8 +66,8 @@ fn exact_resource_views_are_preserved_when_satisfied() {
 }
 
 #[test]
-fn counted_resources_normalize_and_consume_one_unit_at_a_time() {
-    let unit = CResourceFact::own_counted("object_ref".to_string(), vec![int32(7)]);
+fn declared_resources_normalize_and_consume_one_unit_at_a_time() {
+    let unit = CResourceFact::own_token("object_ref".to_string(), vec![int32(7)]);
     let context = ResourceContext::new()
         .try_compose_with_facts([unit.clone(), unit.clone()], &Assumptions::new())
         .expect("equal counted facts should compose");
@@ -84,8 +82,8 @@ fn counted_resources_normalize_and_consume_one_unit_at_a_time() {
 }
 
 #[test]
-fn counted_resource_quantities_are_part_of_context_equality() {
-    let unit = CResourceFact::own_counted("object_ref".to_string(), vec![int32(7)]);
+fn declared_resource_quantities_are_part_of_context_equality() {
+    let unit = CResourceFact::own_token("object_ref".to_string(), vec![int32(7)]);
     let one = ResourceContext::new()
         .try_compose_with_fact(unit.clone(), &Assumptions::new())
         .unwrap();
@@ -93,11 +91,11 @@ fn counted_resource_quantities_are_part_of_context_equality() {
         .try_compose_with_facts([unit.clone(), unit], &Assumptions::new())
         .unwrap();
     let two_uncompacted = ResourceContext::new()
-        .unchecked_with_fact(CResourceFact::own_counted(
+        .unchecked_with_fact(CResourceFact::own_token(
             "object_ref".to_string(),
             vec![int32(7)],
         ))
-        .unchecked_with_fact(CResourceFact::own_counted(
+        .unchecked_with_fact(CResourceFact::own_token(
             "object_ref".to_string(),
             vec![int32(7)],
         ));
@@ -259,12 +257,12 @@ fn composite_resource_arguments_respect_proven_pointer_equality() {
         .expect("equal resource arguments should identify the same owned fact");
     assert!(remaining.is_empty());
 
-    assert!(matches!(
-        ResourceContext::new()
-            .unchecked_with_fact(left)
-            .try_compose_with_fact(right, &assumptions),
-        Err(ResourceContextValidityError::DuplicateOwnedResourceFact(_))
-    ));
+    let combined = ResourceContext::new()
+        .unchecked_with_fact(left)
+        .try_compose_with_fact(right, &assumptions)
+        .expect("proved-equal resource arguments should accumulate");
+    assert_eq!(combined.facts().len(), 1);
+    assert_eq!(combined.facts()[0].owned_quantity(), Some(2));
 }
 
 #[test]

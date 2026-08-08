@@ -1,6 +1,6 @@
-# counted resources transfer one unit at a time
+# resources transfer one unit at a time
 
-A counted resource can occur more than once in a resource context. Calls consume
+A resource can occur more than once in a resource context. Calls consume
 one unit per contract clause, leaving the other units available for later calls.
 
 ```c filename=counted_resource_transfer.c
@@ -30,7 +30,7 @@ int32 package_one_ref(int32 object) {
 ```
 
 ```click
-counted resource object_ref(object: int32);
+resource object_ref(object: int32);
 
 resource held_ref(object: int32) {
     contains object_ref(object);

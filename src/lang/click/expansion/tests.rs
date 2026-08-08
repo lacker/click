@@ -141,6 +141,49 @@ int32 identity(int32 x) {
 }
 
 #[test]
+fn source_positions_include_tactics_nested_in_open_blocks() {
+    let c_source = "int32 identity(int32 x) { return x; }";
+    let click_source = r#"
+resource known(x: int32) {
+    fact x == x;
+}
+
+verifying "identity.c";
+
+int32 identity(int32 x) {
+    owns known(x);
+    ensures result == x;
+} by {
+    open(known(x)) {
+        execute();
+    }
+    simp();
+}
+"#;
+    let sources = [("identity.c", c_source)];
+
+    let nested = c0_tactic_source_position(click_source, &sources, "identity.contract", 1)
+        .expect("the tactic inside `open` should have a source position");
+    assert_eq!(
+        nested,
+        SourcePosition {
+            line: 13,
+            column: 9
+        }
+    );
+
+    let continuation = c0_tactic_source_position(click_source, &sources, "identity.contract", 2)
+        .expect("the tactic after `open` should retain its source position");
+    assert_eq!(
+        continuation,
+        SourcePosition {
+            line: 15,
+            column: 5
+        }
+    );
+}
+
+#[test]
 fn expands_common_step_after_frontier_branch() {
     let c_source = r#"
 int32 increment_selected(int32 x) {

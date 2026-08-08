@@ -71,6 +71,15 @@ impl Assumptions {
                 if let Some(value) = self.exact_condition_value(condition) {
                     return Some(value);
                 }
+                if let ConditionTerm::Bitvector32Equal(left, right) = condition
+                    && super::super::super::reasoning::bitvector_terms_proven_equal_for_memory_resolution(
+                        left,
+                        right,
+                        self,
+                    )
+                {
+                    return Some(true);
+                }
                 let simplified = self.simplify_condition_under_assumptions(condition);
                 if simplified != *condition {
                     return match simplified {
