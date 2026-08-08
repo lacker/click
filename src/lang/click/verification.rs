@@ -792,7 +792,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                 Some(crate::kernel::ExecutionLimit::Deadline)
             ) {
                 return Err(ClickError::new(format!(
-                    "verification time limit exceeded inside {}",
+                    "verification budget exhausted inside {}",
                     instrumentation::deadline_context()
                 )));
             }

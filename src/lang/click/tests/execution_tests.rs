@@ -707,7 +707,7 @@ fn expanded_read_step_keeps_named_range_separation_premises() {
     })
     .expect_err("an over-budget deferred tactic should stop verification directly");
     assert!(
-        deadline_error.message().contains("time limit exceeded"),
+        deadline_error.message().contains("real-time limit"),
         "unexpected deferred-tactic failure: {}",
         deadline_error.message()
     );

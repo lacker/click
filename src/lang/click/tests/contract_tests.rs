@@ -53,7 +53,7 @@ fn ordinary_verification_stops_at_the_tactic_deadline() {
         })
     });
     let error = result.expect_err("the first tactic should hit its zero deadline");
-    assert!(error.message().contains("time limit exceeded"), "{error:?}");
+    assert!(error.message().contains("real-time limit"), "{error:?}");
     let started = events
         .iter()
         .filter_map(|event| match event {
@@ -74,7 +74,7 @@ fn ordinary_verification_stops_at_the_tactic_deadline() {
 }
 
 #[test]
-fn smart_frame_reports_its_deterministic_deadline() {
+fn smart_frame_reports_its_real_time_deadline() {
     let c_source = r#"
         int32 write_first(int32* data) {
             data[0] = 1;
@@ -106,7 +106,7 @@ fn smart_frame_reports_its_deterministic_deadline() {
     })
     .expect_err("smart frame should observe its zero tactic deadline");
 
-    assert!(error.message().contains("time limit exceeded"), "{error:?}");
+    assert!(error.message().contains("real-time limit"), "{error:?}");
     assert!(error.message().contains("frame"), "{error:?}");
     assert!(
         error.message().contains("explicit simple tactics"),

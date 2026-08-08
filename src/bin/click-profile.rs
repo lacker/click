@@ -492,9 +492,13 @@ fn profile_target(
         &events,
         thresholds,
         wall_elapsed >= time_limit
-            || verification
-                .as_ref()
-                .is_err_and(|message| message.contains("time limit exceeded")),
+            || events.iter().any(|event| {
+                matches!(
+                    event,
+                    VerificationEvent::DeadlineExceeded(_)
+                        | VerificationEvent::TacticWorkBudgetExceeded { .. }
+                )
+            }),
     )
     .map_err(|message| format!("while profiling `{}`: {message}", project.display()))?;
     finish_time_accounting(&mut profile, wall_elapsed);
@@ -809,9 +813,9 @@ fn profile_from_events(
             VerificationEvent::TacticStarted(tactic) => {
                 TimingEvent::Started(structured_step(tactic, &source_path)?)
             }
-            VerificationEvent::TacticFinished { tactic, elapsed } => {
-                TimingEvent::Finished(structured_step(tactic, &source_path)?, *elapsed)
-            }
+            VerificationEvent::TacticFinished {
+                tactic, elapsed, ..
+            } => TimingEvent::Finished(structured_step(tactic, &source_path)?, *elapsed),
             VerificationEvent::TacticFailed(tactic) => {
                 TimingEvent::Failed(structured_step(tactic, &source_path)?)
             }
@@ -851,6 +855,9 @@ fn profile_from_events(
                 ActiveVerificationWork::Phase(name) => InterruptedWork::Phase(name),
                 ActiveVerificationWork::Driver => InterruptedWork::Driver,
             }),
+            VerificationEvent::TacticWorkBudgetExceeded { tactic, .. } => TimingEvent::Interrupted(
+                InterruptedWork::Tactic(structured_step(tactic, &source_path)?),
+            ),
             VerificationEvent::PhaseStarted(_) | VerificationEvent::Diagnostic(_) => {
                 TimingEvent::Ignored
             }

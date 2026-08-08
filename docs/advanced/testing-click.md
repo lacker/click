@@ -77,23 +77,36 @@ each mdtest gets 30 seconds by default (`MDTEST_TIME_LIMIT`), and each example
 project gets 10 minutes (`CLICK_EXAMPLE_TIME_LIMIT`). Override those variables
 while reducing a slow fixture; neither disables tactic budgets.
 
-Tactic deadlines use exclusive per-thread CPU time on Unix, so scheduler
-contention from parallel Rust tests or independent project workers is not
-charged to a tactic. Whole-project deadlines remain wall-clock limits. On
-platforms without a thread CPU clock, tactic enforcement falls back to
-exclusive wall-clock time; parallel proof execution should remain disabled on
-those platforms.
+Production tactics have two independent bounds. A deterministic work budget
+counts cooperative prover checkpoints, while the existing real-time limit
+keeps the CLI prompt in practice: 500 milliseconds for simple tactics, two
+seconds for smart tactics, and six seconds for control tactics. Exhaustion says
+which kind of bound fired. Completed tactic events report both real CPU time
+and deterministic work, so `click profile` can continue measuring actual user
+latency without making that measurement a correctness oracle.
 
-Rust library unit tests are a semantic correctness gate and do not inherit the
-production tactic-duration defaults. Tests specifically about interruption
-install explicit limits. The mdtest and example integration gates still
-measure every tactic against the production thresholds, but their hard
-in-process cutoff is the fixture's outer deadline. If one successful run
-crosses a tactic threshold, the harness measures that fixture once more and
-fails only when the confirmation also crosses a threshold. This preserves a
-prompt outer bound and performance regression signal without making one noisy
-host-speed sample a correctness failure. The production CLI continues to
-enforce its tactic limits during the proof itself.
+The default correctness budgets are 500,000 checkpoints for simple tactics and
+2,000,000 for smart and control tactics. These are deliberately looser than
+the production time cutoff on a typical development machine: they detect
+runaway or substantially broadened search without turning CPU throughput into
+a pass/fail input. Changing a work budget requires corpus measurements and a
+documented reason; it is not a way to make one difficult proof pass.
+
+Rust library tests enforce deterministic tactic-work budgets but do not
+inherit the production time limits. Tests specifically about real-time
+interruption install explicit time limits. The mdtest and example integration
+gates use the same deterministic work budgets and retain only their larger
+per-fixture wall-clock deadline as a hang backstop. They no longer rerun a
+successful proof to decide whether a noisy timing observation was
+"confirmed": host throughput cannot change the semantic result in the first
+place.
+
+Real-time tactic accounting still uses exclusive per-thread CPU time on Unix,
+so descheduling is not charged to a tactic. On platforms without a thread CPU
+clock it falls back to exclusive wall-clock time. Whole-project deadlines are
+always wall-clock limits. `CLICK_DISABLE_TACTIC_BUDGETS=1` remains a narrow A/B
+diagnostic escape hatch; it must not be used for the ordinary correctness
+gate.
 
 The direct CLI is itself the bounding mechanism: `click verify --time-limit`
 cooperatively interrupts execution, proposition derivation, memory resolution,

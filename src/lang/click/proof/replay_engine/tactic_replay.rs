@@ -404,7 +404,7 @@ fn replay_frontier_local_loop_tactic(
 ) -> Result<ProofReplayContext, ClickError> {
     if crate::instrumentation::deadline_exceeded() {
         return Err(ClickError::new(format!(
-            "tactic time limit exceeded: {}",
+            "tactic budget exhausted: {}",
             crate::instrumentation::deadline_context()
         )));
     }
@@ -485,7 +485,7 @@ fn replay_linear_tactics_without_frontier_loops(
     for indexed_tactic in tactics {
         if crate::instrumentation::deadline_exceeded() {
             return Err(ClickError::new(format!(
-                "tactic time limit exceeded: {}",
+                "tactic budget exhausted: {}",
                 crate::instrumentation::deadline_context()
             )));
         }
@@ -2575,7 +2575,7 @@ fn replay_linear_tactics_without_frontier_loops(
 
     if crate::instrumentation::deadline_exceeded() {
         return Err(ClickError::new(format!(
-            "tactic time limit exceeded: {}",
+            "tactic budget exhausted: {}",
             crate::instrumentation::deadline_context()
         )));
     }

@@ -3,9 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use click::cli::{
-    DISABLE_TACTIC_BUDGETS, MdTestExpectation, confirmed_structured_tactic_budget_violations,
-    duration_from_env, format_duration, read_mdtest, run_parallel,
-    structured_tactic_budget_violations,
+    DISABLE_TACTIC_BUDGETS, MdTestExpectation, duration_from_env, format_duration, read_mdtest,
+    run_parallel,
 };
 use click::instrumentation;
 use click::lang::click::verify_c0_sources;
@@ -68,9 +67,9 @@ fn mdtests() {
     );
 
     let time_limit = mdtest_time_limit();
-    // Wall-clock tactic deadlines must not count scheduler contention as
-    // verifier work. Keep the correctness gate serial until Click has a
-    // contention-independent work budget.
+    // Keep file verification serial to bound peak memory. Tactic correctness
+    // is enforced by deterministic work budgets, not by how much CPU time
+    // happens to be available to this fixture process.
     let failures = run_parallel(&paths, 1, |path| run_mdtest_with_timeout(path, time_limit));
     if failures.is_empty() {
         return;
@@ -93,38 +92,16 @@ fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) -> Result<(), Stri
     std::thread::Builder::new()
         .name("click-mdtest".to_string())
         .stack_size(64 * 1024 * 1024)
-        .spawn(move || {
-            let first = run_mdtest_attempt(&path, time_limit)?;
-            if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_some() {
-                return Ok(());
-            }
-            let first_violations = structured_tactic_budget_violations(&first);
-            if first_violations.is_empty() {
-                return Ok(());
-            }
-            let confirmation = run_mdtest_attempt(&path, time_limit)?;
-            let confirmation_violations =
-                confirmed_structured_tactic_budget_violations(&first, &confirmation);
-            if confirmation_violations.is_empty() {
-                return Ok(());
-            }
-            Err(format!(
-                "passed twice, but the same tactic sites broke time budgets in both measurements (set {DISABLE_TACTIC_BUDGETS}=1 to bypass):\n  {}",
-                confirmation_violations.join("\n    "),
-            ))
-        })
+        .spawn(move || run_mdtest_attempt(&path, time_limit))
         .map_err(|error| format!("failed to start mdtest verifier: {error}"))?
         .join()
         .map_err(|_| "mdtest verifier panicked".to_string())?
 }
 
-fn run_mdtest_attempt(
-    path: &Path,
-    time_limit: Duration,
-) -> Result<Vec<instrumentation::VerificationEvent>, String> {
+fn run_mdtest_attempt(path: &Path, time_limit: Duration) -> Result<(), String> {
     let started = std::time::Instant::now();
-    let operation = || instrumentation::collect(|| run_mdtest(path));
-    let (result, events) = if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_some() {
+    let operation = || run_mdtest(path);
+    let result = if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_some() {
         instrumentation::with_deadline(time_limit, operation)
     } else {
         let fixture_limits = instrumentation::TacticLimits {
@@ -143,7 +120,7 @@ fn run_mdtest_attempt(
             format_duration(time_limit)
         ));
     }
-    Ok(events)
+    Ok(())
 }
 
 fn run_mdtest(path: &Path) -> Result<(), String> {

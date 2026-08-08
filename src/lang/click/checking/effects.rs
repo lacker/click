@@ -70,7 +70,7 @@ pub(in crate::lang::click) fn prove_effect_clause_exact(
 fn check_effect_planning_deadline() -> Result<(), ClickError> {
     if crate::instrumentation::deadline_exceeded() {
         Err(ClickError::new(format!(
-            "verification time limit exceeded inside {}",
+            "verification budget exhausted inside {}",
             crate::instrumentation::deadline_context()
         )))
     } else {

@@ -62,7 +62,7 @@ type NextTopLevelStatement = (CState, CState, CStatement, Option<CStatement>);
 fn check_verification_deadline() -> Result<(), ClickError> {
     if crate::instrumentation::deadline_exceeded() {
         Err(ClickError::new(format!(
-            "verification time limit exceeded inside {}",
+            "verification budget exhausted inside {}",
             crate::instrumentation::deadline_context()
         )))
     } else {
@@ -562,7 +562,7 @@ pub(super) fn check_atomic_derivation_goal(
     });
     if crate::instrumentation::deadline_exceeded() {
         return Err(format!(
-            "tactic time limit exceeded: {}",
+            "tactic budget exhausted: {}",
             crate::instrumentation::deadline_context()
         ));
     }

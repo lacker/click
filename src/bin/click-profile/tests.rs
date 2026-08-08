@@ -40,6 +40,7 @@ fn structured_timeout_attributes_interrupted_phase_and_preserves_completed_work(
         VerificationEvent::TacticFinished {
             tactic: completed,
             elapsed: Duration::from_millis(10),
+            work: 0,
         },
         VerificationEvent::DeadlineExceeded(ActiveVerificationWork::Phase("certification")),
     ];
@@ -63,6 +64,38 @@ fn structured_timeout_attributes_interrupted_phase_and_preserves_completed_work(
         "{report}"
     );
     assert!(!report.contains("HEALTHY VOLUME"), "{report}");
+}
+
+#[test]
+fn structured_work_exhaustion_attributes_the_active_tactic() {
+    let tactic = TacticEvent {
+        claim: "sample.contract".to_string(),
+        tactic_index: 3,
+        tactic_name: "simp".to_string(),
+        class: "smart".to_string(),
+        statement_index: 2,
+        source_index: 3,
+    };
+    let events = vec![
+        VerificationEvent::Source(PathBuf::from("examples/sample.click")),
+        VerificationEvent::TacticStarted(tactic.clone()),
+        VerificationEvent::TacticWorkBudgetExceeded {
+            tactic: tactic.clone(),
+            used: 101,
+            limit: 100,
+        },
+        VerificationEvent::TacticFailed(tactic),
+    ];
+
+    let profile = profile_from_events("sample", &events, Thresholds::default(), true).unwrap();
+    let InterruptedWork::Tactic(interrupted) = profile
+        .interrupted
+        .expect("work exhaustion should identify an interrupted tactic")
+    else {
+        panic!("work exhaustion should not be classified as a phase or driver timeout");
+    };
+    assert_eq!(interrupted.tactic_name, "simp");
+    assert_eq!(interrupted.category, TacticCategory::Smart);
 }
 
 /// The certification timing kinds added on 2026-07-30 share the stderr
@@ -876,6 +909,7 @@ fn structured_events_do_not_require_text_parsing() {
                 source_index: 0,
             },
             elapsed: Duration::from_secs(1),
+            work: 0,
         },
     ];
     let profile = profile_from_events("example", &events, Thresholds::default(), false)

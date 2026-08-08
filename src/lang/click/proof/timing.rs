@@ -155,6 +155,7 @@ impl Drop for TacticTiming {
                 source_index: self.source_index,
             },
             elapsed: self.start.elapsed(),
+            work: 0,
         });
         pop_timing_tactic(&self.context);
     }

@@ -864,7 +864,7 @@ pub(super) fn finish_ordered_proof_replay(
         if let Some(limit) = certified_execution.limit() {
             if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
                 return Err(ClickError::new(format!(
-                    "verification time limit exceeded inside {}",
+                    "verification budget exhausted inside {}",
                     crate::instrumentation::deadline_context()
                 )));
             }
@@ -2551,7 +2551,7 @@ pub(super) fn finish_ordered_proof_replay(
                 }
                 if crate::instrumentation::deadline_exceeded() {
                     return Err(ClickError::new(format!(
-                        "verification time limit exceeded inside {}",
+                        "verification budget exhausted inside {}",
                         crate::instrumentation::deadline_context()
                     )));
                 }

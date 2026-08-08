@@ -47,7 +47,7 @@ pub(in crate::lang::click::proof) fn certified_condition_transitions(
     if let Some(limit) = evaluation.limit() {
         if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
             return Err(ClickError::new(format!(
-                "verification time limit exceeded inside {}",
+                "verification budget exhausted inside {}",
                 crate::instrumentation::deadline_context()
             )));
         }
@@ -469,7 +469,7 @@ fn certified_transitions_from_execution(
     if let Some(limit) = execution.limit() {
         if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
             return Err(ClickError::new(format!(
-                "verification time limit exceeded inside {}",
+                "verification budget exhausted inside {}",
                 crate::instrumentation::deadline_context()
             )));
         }

@@ -127,7 +127,7 @@ impl Drop for VerificationTimingPhase {
 fn check_verification_deadline() -> Result<(), ClickError> {
     if instrumentation::deadline_exceeded() {
         Err(ClickError::new(format!(
-            "verification time limit exceeded inside {}",
+            "verification budget exhausted inside {}",
             instrumentation::deadline_context()
         )))
     } else {

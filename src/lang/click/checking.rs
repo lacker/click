@@ -668,7 +668,7 @@ pub(super) fn lower_ensure_proposition_goal(
     );
     if crate::instrumentation::deadline_exceeded() {
         return Err(format!(
-            "verification time limit exceeded inside {}",
+            "verification budget exhausted inside {}",
             crate::instrumentation::deadline_context()
         ));
     }

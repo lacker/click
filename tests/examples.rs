@@ -3,9 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use click::cli::{
-    DISABLE_TACTIC_BUDGETS, confirmed_structured_tactic_budget_violations, duration_from_env,
-    files_with_extension, format_duration, read_verifying_sources, run_parallel, source_refs,
-    structured_tactic_budget_violations,
+    DISABLE_TACTIC_BUDGETS, duration_from_env, files_with_extension, format_duration,
+    read_verifying_sources, run_parallel, source_refs,
 };
 use click::instrumentation;
 use click::lang::click::verify_c0_sources;
@@ -72,9 +71,9 @@ fn example_projects() {
     );
 
     let time_limit = example_time_limit();
-    // Wall-clock tactic deadlines must not count scheduler contention as
-    // verifier work. Keep the correctness gate serial until Click has a
-    // contention-independent work budget.
+    // Keep project verification serial to bound peak memory. Tactic
+    // correctness is enforced by deterministic work budgets, not by how much
+    // CPU time happens to be available to this fixture process.
     let failures = run_parallel(&projects, 1, |project| {
         run_example_with_timeout(project, time_limit)
     });
@@ -106,38 +105,16 @@ fn run_example_with_timeout(project: &Path, time_limit: Duration) -> Result<(), 
     std::thread::Builder::new()
         .name("click-example".to_string())
         .stack_size(64 * 1024 * 1024)
-        .spawn(move || {
-            let first = run_example_attempt(&project, time_limit)?;
-            if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_some() {
-                return Ok(());
-            }
-            let first_violations = structured_tactic_budget_violations(&first);
-            if first_violations.is_empty() {
-                return Ok(());
-            }
-            let confirmation = run_example_attempt(&project, time_limit)?;
-            let confirmation_violations =
-                confirmed_structured_tactic_budget_violations(&first, &confirmation);
-            if confirmation_violations.is_empty() {
-                return Ok(());
-            }
-            Err(format!(
-                "passed twice, but the same tactic sites broke time budgets in both measurements (set {DISABLE_TACTIC_BUDGETS}=1 to bypass):\n  {}",
-                confirmation_violations.join("\n    "),
-            ))
-        })
+        .spawn(move || run_example_attempt(&project, time_limit))
         .map_err(|error| format!("failed to start example verifier: {error}"))?
         .join()
         .map_err(|_| "example verifier panicked".to_string())?
 }
 
-fn run_example_attempt(
-    project: &Path,
-    time_limit: Duration,
-) -> Result<Vec<instrumentation::VerificationEvent>, String> {
+fn run_example_attempt(project: &Path, time_limit: Duration) -> Result<(), String> {
     let started = std::time::Instant::now();
-    let operation = || instrumentation::collect(|| run_example_project(project));
-    let (result, events) = if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_some() {
+    let operation = || run_example_project(project);
+    let result = if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_some() {
         instrumentation::with_deadline(time_limit, operation)
     } else {
         let fixture_limits = instrumentation::TacticLimits {
@@ -156,7 +133,7 @@ fn run_example_attempt(
             format_duration(time_limit)
         ));
     }
-    Ok(events)
+    Ok(())
 }
 
 fn run_example_project(project: &Path) -> Result<(), String> {

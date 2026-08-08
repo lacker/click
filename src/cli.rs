@@ -178,7 +178,6 @@ fn tactic_budget(class: &str) -> Option<(Duration, &'static str)> {
 
 #[derive(Clone, Debug)]
 struct TacticBudgetViolation {
-    tactic: TacticEvent,
     message: String,
 }
 
@@ -190,7 +189,9 @@ fn structured_tactic_budget_findings(events: &[VerificationEvent]) -> Vec<Tactic
             VerificationEvent::TacticStarted(tactic) => {
                 open.push((tactic.clone(), Duration::ZERO));
             }
-            VerificationEvent::TacticFinished { tactic, elapsed } => {
+            VerificationEvent::TacticFinished {
+                tactic, elapsed, ..
+            } => {
                 let nested = match open.iter().rposition(|(candidate, _)| candidate == tactic) {
                     Some(index) => {
                         let (_, nested) = open.remove(index);
@@ -205,7 +206,6 @@ fn structured_tactic_budget_findings(events: &[VerificationEvent]) -> Vec<Tactic
                 let exclusive = elapsed.saturating_sub(nested);
                 let Some((budget, consequence)) = tactic_budget(&tactic.class) else {
                     violations.push(TacticBudgetViolation {
-                        tactic: tactic.clone(),
                         message: format!(
                             "unrecognized tactic class `{}` (structured timing drift)",
                             tactic.class
@@ -215,7 +215,6 @@ fn structured_tactic_budget_findings(events: &[VerificationEvent]) -> Vec<Tactic
                 };
                 if exclusive > budget {
                     violations.push(TacticBudgetViolation {
-                        tactic: tactic.clone(),
                         message: format!(
                             "{} {} {} class {} statement {} source {}: {:.3} s exclusive, over the {} {} budget — {consequence}",
                             tactic.claim,
@@ -238,33 +237,11 @@ fn structured_tactic_budget_findings(events: &[VerificationEvent]) -> Vec<Tactic
 }
 
 /// Checks structured tactic events against the production class budgets.
-/// CLI and fixture workflows use it without capturing or parsing stderr.
+/// Performance diagnostics and tests use it without parsing stderr.
 pub fn structured_tactic_budget_violations(events: &[VerificationEvent]) -> Vec<String> {
     structured_tactic_budget_findings(events)
         .into_iter()
         .map(|violation| violation.message)
-        .collect()
-}
-
-/// Returns only budget violations repeated at the same proof site in both
-/// measurements. A second slow tactic elsewhere in the project does not
-/// confirm the first timing result.
-pub fn confirmed_structured_tactic_budget_violations(
-    first: &[VerificationEvent],
-    confirmation: &[VerificationEvent],
-) -> Vec<String> {
-    let first = structured_tactic_budget_findings(first);
-    structured_tactic_budget_findings(confirmation)
-        .into_iter()
-        .filter_map(|confirmed| {
-            let original = first
-                .iter()
-                .find(|original| original.tactic == confirmed.tactic)?;
-            Some(format!(
-                "first: {}\n    confirmation: {}",
-                original.message, confirmed.message
-            ))
-        })
         .collect()
 }
 
@@ -694,11 +671,13 @@ mod tests {
             VerificationEvent::TacticFinished {
                 tactic: tactic(0, "step", "simple"),
                 elapsed: Duration::from_millis(700),
+                work: 0,
             },
             VerificationEvent::TacticStarted(tactic(1, "simp", "smart")),
             VerificationEvent::TacticFinished {
                 tactic: tactic(1, "simp", "smart"),
                 elapsed: Duration::from_millis(1_900),
+                work: 0,
             },
         ];
         let violations = structured_tactic_budget_violations(&events);
@@ -717,6 +696,7 @@ mod tests {
             VerificationEvent::TacticFinished {
                 tactic: tactic(0, "execute_until", "smart"),
                 elapsed: Duration::from_millis(2_100),
+                work: 0,
             },
         ];
         let violations = structured_tactic_budget_violations(&events);
@@ -737,10 +717,12 @@ mod tests {
             VerificationEvent::TacticFinished {
                 tactic: tactic(1, "step", "simple"),
                 elapsed: Duration::from_millis(2_400),
+                work: 0,
             },
             VerificationEvent::TacticFinished {
                 tactic: tactic(0, "cases", "smart"),
                 elapsed: Duration::from_millis(2_500),
+                work: 0,
             },
         ];
         let violations = structured_tactic_budget_violations(&events);
@@ -758,6 +740,7 @@ mod tests {
             VerificationEvent::TacticFinished {
                 tactic: tactic(0, "step", "simple"),
                 elapsed: Duration::from_millis(10),
+                work: 0,
             },
         ];
         assert_eq!(
@@ -773,6 +756,7 @@ mod tests {
             VerificationEvent::TacticFinished {
                 tactic: tactic(0, "step", "brandnew"),
                 elapsed: Duration::from_secs(9),
+                work: 0,
             },
         ];
         let violations = structured_tactic_budget_violations(&events);
@@ -781,25 +765,6 @@ mod tests {
             violations[0].contains("unrecognized tactic class"),
             "{violations:?}"
         );
-    }
-
-    #[test]
-    fn budget_confirmation_requires_the_same_tactic_site() {
-        let slow = |site| {
-            vec![
-                VerificationEvent::TacticStarted(tactic(site, "have", "smart")),
-                VerificationEvent::TacticFinished {
-                    tactic: tactic(site, "have", "smart"),
-                    elapsed: Duration::from_millis(2_100),
-                },
-            ]
-        };
-
-        assert!(confirmed_structured_tactic_budget_violations(&slow(1), &slow(2)).is_empty());
-        let confirmed = confirmed_structured_tactic_budget_violations(&slow(1), &slow(1));
-        assert_eq!(confirmed.len(), 1, "{confirmed:?}");
-        assert!(confirmed[0].contains("first:"), "{confirmed:?}");
-        assert!(confirmed[0].contains("confirmation:"), "{confirmed:?}");
     }
 
     #[test]
