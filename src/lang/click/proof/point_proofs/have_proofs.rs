@@ -1,0 +1,1202 @@
+use super::*;
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn fold_composite_resource_at_current_point(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    claim_label: &str,
+    tactic_index: usize,
+    available_pure_facts: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<CState, ClickError> {
+    let surface_propositions = SurfacePropositionMap::default();
+    let outcome = CFunctionOutcome::Return {
+        value: CValue::Int32(Bitvector32Term::Constant(0)),
+        state,
+    };
+    let outcome = fold_composite_resources_on_outcome(
+        resource_environment,
+        std::slice::from_ref(resource),
+        claim_label,
+        tactic_index,
+        &[],
+        available_pure_facts,
+        &surface_propositions,
+        parameters,
+        arguments,
+        pre_state,
+        outcome,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+    )?;
+    let CFunctionOutcome::Return { state, .. } = outcome else {
+        unreachable!("folding a synthetic return outcome preserves its outcome kind")
+    };
+    Ok(state)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn lower_point_proposition(
+    proposition: &ClickProposition,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
+    let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+    lower_point_proposition_with_values(
+        proposition,
+        available,
+        values,
+        &array_refs,
+        pre_state,
+        state,
+        result,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_point_proposition_with_values(
+    proposition: &ClickProposition,
+    available: &[Proposition],
+    mut values: BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
+    let assumptions = assumptions_from_propositions(available);
+    let mut next_variable = 2_000_000;
+    let mut active_functions = BTreeSet::new();
+    lower_outcome_proposition_with_environment(
+        &mut values,
+        array_refs,
+        pre_state,
+        state,
+        result,
+        &assumptions,
+        proposition,
+        &mut next_variable,
+        predicate_environment,
+        click_function_environment,
+        program_point_states,
+        &mut active_functions,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn prove_have_at_current_point(
+    have: &ProofHave,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    outer_tactic_index: usize,
+    outer_available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    surface_propositions: &SurfacePropositionMap,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    original_requirements: &[Requirement],
+) -> Result<Proposition, ClickError> {
+    prove_have_at_point(
+        have,
+        theorem_environment,
+        claim_label,
+        outer_tactic_index,
+        outer_available,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        None,
+        program_point_states,
+        Some(surface_propositions),
+        predicate_environment,
+        click_function_environment,
+        original_requirements,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
+    have: &ProofHave,
+    claim_label: &str,
+    outer_tactic_index: usize,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+    prelowered_goal: Option<&Proposition>,
+) -> Result<(Proposition, ProofReplayPlan), ClickError> {
+    // Plan and replay this proof once. Surface expansion must lower this exact
+    // plan; it must not search for a different proof if lowering is incomplete.
+    // Snapshot transport belongs to the statement transition that changed the
+    // memory and reaches a later `have` as an exact current-state assumption.
+    let direct_lowering_facts = facts_for_smart_have_lowering(available);
+    let fact = match lower_point_proposition(
+        &have.proposition,
+        &direct_lowering_facts,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        None,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+    ) {
+        Ok(fact) => fact,
+        Err(_) if prelowered_goal.is_some() => prelowered_goal.expect("checked above").clone(),
+        Err(message) => match lower_point_proposition(
+            &have.proposition,
+            &facts_for_simple_goal_lowering(available),
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            None,
+            program_point_states,
+            predicate_environment,
+            click_function_environment,
+        ) {
+            Ok(fact) => fact,
+            Err(fallback_message) => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` have proof {outer_tactic_index}: could not lower pure goal: {fallback_message}\n  direct lowering also failed: {message}"
+                )));
+            }
+        },
+    };
+    let available = if unfolded_predicates.is_empty() {
+        available.to_vec()
+    } else {
+        unfold_available_predicate_facts(
+            predicate_environment,
+            click_function_environment,
+            unfolded_predicates,
+            available,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` have proof {outer_tactic_index}: could not unfold available facts: {message}"
+            ))
+        })?
+    };
+    let assumptions = assumptions_from_propositions(&available);
+    let goal = unfold_predicates_in_proposition(
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        &fact,
+        &assumptions,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` have proof {outer_tactic_index}: could not unfold pure goal: {message}"
+        ))
+    })?;
+    if available.contains(&goal) {
+        let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
+            .expect("assumption is a simple replay tactic");
+        return Ok((fact, plan));
+    }
+    if matches!(normalize_proposition(&goal), SimpProposition::True) {
+        let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Normalize])
+            .expect("normalize is a simple replay tactic");
+        return Ok((fact, plan));
+    }
+    if quantified_replay_equivalent_available_fact(&goal, &available).is_some() {
+        let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
+            .expect("assumption is a simple replay tactic");
+        return Ok((fact, plan));
+    }
+    let normalized_fact = normalize_direct_atomic_memory_loads(&goal);
+    if let Some(equivalent) = available
+        .iter()
+        .find(|available| normalize_direct_atomic_memory_loads(available) == normalized_fact)
+        && let Some(derivation) =
+            minimal_proposition_derivation(&goal, std::slice::from_ref(equivalent))?
+    {
+        let plan =
+            ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
+                derivation,
+            )])
+            .expect("a directly normalized derivation is a simple replay tactic");
+        return Ok((fact, plan));
+    }
+    if let Some(derivation) = search_condition_derivation(&goal, &available)? {
+        let plan =
+            ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
+                derivation,
+            )])
+            .expect("a bounded condition derivation is a simple replay tactic");
+        return Ok((fact, plan));
+    }
+
+    let Some(plan) = plan_simp_certificate(&goal, &assumptions) else {
+        if let Ok(dir) = std::env::var("CLICK_HAVE_DUMP_DIR") {
+            let _ = std::fs::write(format!("{dir}/have-goal.txt"), format!("{goal:#?}"));
+            if let Proposition::ForAll { body, .. } = &goal
+                && let Proposition::ConditionIs(
+                    crate::kernel::ConditionTerm::Bitvector32Equal(left, right),
+                    _,
+                ) = body.as_ref()
+            {
+                let canonical_left = crate::kernel::canonicalize_atomic_loads(left);
+                let canonical_right = crate::kernel::canonicalize_atomic_loads(right);
+                eprintln!(
+                    "HAVE PROBE canonical_eq={}",
+                    canonical_left == canonical_right
+                );
+                let _ = std::fs::write(
+                    format!("{dir}/canonical-left.txt"),
+                    format!("{canonical_left:#?}"),
+                );
+                let _ = std::fs::write(
+                    format!("{dir}/canonical-right.txt"),
+                    format!("{canonical_right:#?}"),
+                );
+            }
+        }
+        let mut message = format!(
+            "`{claim_label}` tactic {outer_tactic_index}: `have` failed: {}",
+            describe_missing_pure_fact(
+                &goal,
+                &available,
+                state.resources().facts(),
+                parameters,
+                arguments,
+                &[],
+            )
+        );
+        if matches!(goal, Proposition::ConditionIs(_, _)) {
+            message.push_str("\n  ");
+            message.push_str(&describe_condition_search_miss(
+                &goal, &available, parameters, arguments,
+            ));
+        }
+        return Err(ClickError::new(message));
+    };
+    if !replay_simp_certificate(&goal, &assumptions, &plan) {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {outer_tactic_index}: planned smart `have` certificate did not replay"
+        )));
+    }
+    Ok((fact, plan))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn prove_have_at_point(
+    have: &ProofHave,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    outer_tactic_index: usize,
+    outer_available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    program_point_states: &ProgramPointStates,
+    surface_propositions: Option<&SurfacePropositionMap>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    original_requirements: &[Requirement],
+    path_index: Option<usize>,
+) -> Result<Proposition, ClickError> {
+    prove_pure_proposition_at_point(
+        &have.proposition,
+        None,
+        &have.proof,
+        "have",
+        theorem_environment,
+        claim_label,
+        outer_tactic_index,
+        outer_available,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        result,
+        program_point_states,
+        surface_propositions,
+        predicate_environment,
+        click_function_environment,
+        original_requirements,
+        path_index,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn prove_pure_proposition_at_point(
+    proposition: &ClickProposition,
+    prelowered_goal: Option<&Proposition>,
+    proof: &Proof,
+    proof_name: &str,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    outer_tactic_index: usize,
+    outer_available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    program_point_states: &ProgramPointStates,
+    surface_propositions: Option<&SurfacePropositionMap>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    original_requirements: &[Requirement],
+    path_index: Option<usize>,
+) -> Result<Proposition, ClickError> {
+    let (proof_cases, tactic_simp) = match proof {
+        Proof::Script(tactics) => (expand_proof_if_cases(tactics)?, false),
+        Proof::Default | Proof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => (
+            vec![ExpandedProofCase {
+                tactics: Vec::new(),
+                assumptions: Vec::new(),
+            }],
+            true,
+        ),
+        Proof::Tactic(SmartTactic::Frame) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` {proof_name} proof {outer_tactic_index}: `frame` is not available in a pure proof"
+            )));
+        }
+    };
+    let mut proven_fact = None;
+    for proof_case in proof_cases {
+        let fact = prove_pure_proposition_case_at_point(
+            proposition,
+            prelowered_goal,
+            &proof_case,
+            tactic_simp,
+            proof_name,
+            theorem_environment,
+            claim_label,
+            outer_tactic_index,
+            outer_available,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            result,
+            program_point_states,
+            surface_propositions,
+            predicate_environment,
+            click_function_environment,
+            original_requirements,
+            path_index,
+        )?;
+        if let Some(expected) = &proven_fact
+            && expected != &fact
+        {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {outer_tactic_index}: `have` cases lowered the same surface fact differently"
+            )));
+        }
+        proven_fact = Some(fact);
+    }
+    proven_fact.ok_or_else(|| {
+        ClickError::new(format!(
+            "`{claim_label}` {proof_name} proof {outer_tactic_index} has no proof cases"
+        ))
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
+    proposition: &ClickProposition,
+    prelowered_goal: Option<&Proposition>,
+    proof_case: &ExpandedProofCase,
+    tactic_simp: bool,
+    proof_name: &str,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    outer_tactic_index: usize,
+    outer_available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    program_point_states: &ProgramPointStates,
+    surface_propositions: Option<&SurfacePropositionMap>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    original_requirements: &[Requirement],
+    path_index: Option<usize>,
+) -> Result<Proposition, ClickError> {
+    let mut available = outer_available.to_vec();
+    let mut unfolded_predicates = Vec::new();
+    let mut use_simp = tactic_simp;
+    let parameter_values = parameter_values(parameters, arguments).map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` {proof_name} proof {outer_tactic_index}: {}",
+            error.message
+        ))
+    })?;
+    let array_refs = array_refs_for_parameters(parameters, &parameter_values, state.memory());
+    let (mut values, array_refs) =
+        contract_environment_at_state(&parameter_values, &array_refs, state);
+    let mut fact = None;
+    let mut goal = None;
+    let mut goal_closed = false;
+    let mut next_choice_variable = 3_000_000;
+
+    for (inner_tactic_index, tactic) in proof_case.tactics.iter().enumerate() {
+        add_have_case_assumptions(
+            proof_case,
+            inner_tactic_index,
+            &mut available,
+            claim_label,
+            outer_tactic_index,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            result,
+            program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        if goal_closed {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `{}` follows a goal-closing simple tactic",
+                tactic_name(tactic)
+            )));
+        }
+        match tactic {
+            ProofTactic::UnfoldPredicate(name) => {
+                if predicate_environment.get(name).is_none() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: unknown predicate `{name}`"
+                    )));
+                }
+                if !unfolded_predicates.contains(name) {
+                    unfolded_predicates.push(name.clone());
+                }
+                available = unfold_available_predicate_facts(
+                    predicate_environment,
+                    click_function_environment,
+                    std::slice::from_ref(name),
+                    &available,
+                )
+                .map_err(|message| ClickError::new(format!(
+                    "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: {message}"
+                )))?;
+            }
+            ProofTactic::ApplyTheorem(application) => {
+                let application_context = TheoremApplicationContext {
+                    values: &values,
+                    array_refs: &array_refs,
+                    pre_state,
+                    post_state: state,
+                    result,
+                    program_point_states,
+                };
+                available = apply_theorem_applications_to_available(
+                    theorem_environment,
+                    &[(inner_tactic_index, application.clone())],
+                    claim_label,
+                    path_index,
+                    available,
+                    &application_context,
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                )?;
+            }
+            ProofTactic::ApplyTheoremUsing {
+                application,
+                premises,
+            } => {
+                let explicit_premises = premises
+                    .iter()
+                    .map(|premise| {
+                        lower_point_proposition_with_values(
+                            premise,
+                            &available,
+                            values.clone(),
+                            &array_refs,
+                            pre_state,
+                            state,
+                            result,
+                            program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `apply using` premise: {message}"
+                        ))
+                    })?;
+                for premise in &explicit_premises {
+                    if !exact_fact_is_available(premise, &available) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `apply using` requires an unavailable exact premise: {premise:?}"
+                        )));
+                    }
+                }
+                let application_context = TheoremApplicationContext {
+                    values: &values,
+                    array_refs: &array_refs,
+                    pre_state,
+                    post_state: state,
+                    result,
+                    program_point_states,
+                };
+                let mut applied = apply_theorem_applications_to_available_with_lowering_context(
+                    theorem_environment,
+                    &[(inner_tactic_index, application.clone())],
+                    claim_label,
+                    path_index,
+                    explicit_premises,
+                    Some(&available),
+                    &application_context,
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                )?;
+                for available_fact in available {
+                    if !applied.contains(&available_fact) {
+                        applied.push(available_fact);
+                    }
+                }
+                available = applied;
+            }
+            ProofTactic::Have(inner_have) => {
+                let inner_fact = prove_have_at_point(
+                    inner_have,
+                    theorem_environment,
+                    claim_label,
+                    outer_tactic_index,
+                    &available,
+                    parameters,
+                    arguments,
+                    pre_state,
+                    state,
+                    result,
+                    program_point_states,
+                    surface_propositions,
+                    predicate_environment,
+                    click_function_environment,
+                    original_requirements,
+                    path_index,
+                )?;
+                if !available.contains(&inner_fact) {
+                    available.push(inner_fact);
+                }
+            }
+            ProofTactic::Choose(choice) => {
+                apply_choose_tactic(
+                    choice,
+                    claim_label,
+                    path_index.unwrap_or(0),
+                    inner_tactic_index,
+                    &mut available,
+                    &mut values,
+                    original_requirements,
+                    &mut next_choice_variable,
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                )?;
+            }
+            ProofTactic::Witness(witness) => {
+                if goal.is_none() {
+                    let lowered = if let Some(prelowered_goal) = prelowered_goal {
+                        prelowered_goal.clone()
+                    } else {
+                        lower_point_proposition_with_values(
+                            proposition,
+                            &available,
+                            values.clone(),
+                            &array_refs,
+                            pre_state,
+                            state,
+                            result,
+                            program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
+                            ))
+                        })?
+                    };
+                    fact = Some(lowered.clone());
+                    goal = Some(lowered);
+                }
+                let assumptions = assumptions_from_propositions(&available);
+                let unfolded_goal = unfold_predicates_in_proposition(
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                    goal.as_ref().expect("witness goal should be initialized"),
+                    &assumptions,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not unfold pure goal: {message}"
+                    ))
+                })?;
+                let witness_value = evaluate_witness_tactic_value(
+                    witness,
+                    claim_label,
+                    path_index.unwrap_or(0),
+                    inner_tactic_index,
+                    &values,
+                    &array_refs,
+                    pre_state,
+                    state,
+                    result,
+                    &assumptions,
+                    predicate_environment,
+                    click_function_environment,
+                    program_point_states,
+                )?;
+                goal = Some(apply_witness_tactic(
+                    witness,
+                    witness_value,
+                    unfolded_goal,
+                    claim_label,
+                    path_index.unwrap_or(0),
+                    inner_tactic_index,
+                )?);
+            }
+            ProofTactic::Assumption
+            | ProofTactic::Normalize
+            | ProofTactic::Intro
+            | ProofTactic::Split
+            | ProofTactic::Left
+            | ProofTactic::Right
+            | ProofTactic::Contradiction(_)
+            | ProofTactic::Derive(_)
+            | ProofTactic::Rewrite(_) => {
+                let mut prepared_derivation_lowering_facts = None;
+                let direct_goal_lowering_facts =
+                    matches!(tactic, ProofTactic::Assumption | ProofTactic::Normalize)
+                        .then(|| facts_for_simple_goal_lowering(&available));
+                if let ProofTactic::Derive(derive) = tactic {
+                    let mut lowering_facts = facts_for_direct_derivation_lowering(&available);
+                    let mut unresolved = derive.premises.iter().collect::<Vec<_>>();
+                    while !unresolved.is_empty() {
+                        let mut next = Vec::new();
+                        let prior_fact_count = lowering_facts.len();
+                        for premise in unresolved {
+                            let lowered = surface_propositions
+                                .and_then(|propositions| {
+                                    propositions.available_kernel(premise, &available).cloned()
+                                })
+                                .map(Ok)
+                                .unwrap_or_else(|| {
+                                    lower_point_proposition_with_values(
+                                        premise,
+                                        &lowering_facts,
+                                        values.clone(),
+                                        &array_refs,
+                                        pre_state,
+                                        state,
+                                        result,
+                                        program_point_states,
+                                        predicate_environment,
+                                        click_function_environment,
+                                    )
+                                });
+                            match lowered {
+                                Ok(lowered) => {
+                                    if !lowering_facts.contains(&lowered) {
+                                        lowering_facts.push(lowered);
+                                    }
+                                }
+                                Err(_) => next.push(premise),
+                            }
+                        }
+                        if lowering_facts.len() == prior_fact_count && !next.is_empty() {
+                            let premise = next[0];
+                            let message = lower_point_proposition_with_values(
+                                premise,
+                                &lowering_facts,
+                                values.clone(),
+                                &array_refs,
+                                pre_state,
+                                state,
+                                result,
+                                program_point_states,
+                                predicate_environment,
+                                click_function_environment,
+                            )
+                            .err()
+                            .unwrap_or_else(|| {
+                                "no further premise lowered against the facts already available"
+                                    .to_string()
+                            });
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower `{}` premise `{}`: {message}",
+                                tactic_name(tactic),
+                                describe_click_proposition(premise),
+                            )));
+                        }
+                        unresolved = next;
+                    }
+                    prepared_derivation_lowering_facts = Some(lowering_facts);
+                }
+                if goal.is_none() {
+                    let lowered = if let Some(prelowered_goal) = prelowered_goal {
+                        prelowered_goal.clone()
+                    } else {
+                        lower_point_proposition_with_values(
+                            proposition,
+                            prepared_derivation_lowering_facts
+                                .as_deref()
+                                .or(direct_goal_lowering_facts.as_deref())
+                                .unwrap_or(&available),
+                            values.clone(),
+                            &array_refs,
+                            pre_state,
+                            state,
+                            result,
+                            program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
+                            ))
+                        })?
+                    };
+                    fact = Some(lowered.clone());
+                    goal = Some(lowered);
+                }
+                let unfolded_goal = if unfolded_predicates.is_empty() {
+                    goal.as_ref()
+                        .expect("simple tactic goal should be initialized")
+                        .clone()
+                } else {
+                    let assumptions = assumptions_from_propositions(&available);
+                    unfold_predicates_in_proposition(
+                        predicate_environment,
+                        click_function_environment,
+                        &unfolded_predicates,
+                        goal.as_ref().expect("simple tactic goal should be initialized"),
+                        &assumptions,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not unfold pure goal: {message}"
+                        ))
+                    })?
+                };
+                match tactic {
+                    ProofTactic::Assumption => {
+                        if !available.contains(&unfolded_goal)
+                            && materialization_equivalent_available_fact(&unfolded_goal, &available)
+                                .is_none()
+                            && quantified_replay_equivalent_available_fact(
+                                &unfolded_goal,
+                                &available,
+                            )
+                            .is_none()
+                        {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: `assumption` failed: {}",
+                                describe_missing_pure_fact(
+                                    &unfolded_goal,
+                                    &available,
+                                    state.resources().facts(),
+                                    parameters,
+                                    arguments,
+                                    &[]
+                                )
+                            )));
+                        }
+                        goal_closed = true;
+                    }
+                    ProofTactic::Normalize => {
+                        if !normalizes_context_free(&unfolded_goal) {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: `normalize` failed because the goal did not normalize to true: {unfolded_goal:?}"
+                            )));
+                        }
+                        goal_closed = true;
+                    }
+                    ProofTactic::Intro
+                    | ProofTactic::Split
+                    | ProofTactic::Left
+                    | ProofTactic::Right
+                    | ProofTactic::Contradiction(_) => {
+                        let contradiction_fact = match tactic {
+                            ProofTactic::Contradiction(surface_fact) => Some(
+                                lower_point_proposition_with_values(
+                                    surface_fact,
+                                    &available,
+                                    values.clone(),
+                                    &array_refs,
+                                    pre_state,
+                                    state,
+                                    result,
+                                    program_point_states,
+                                    predicate_environment,
+                                    click_function_environment,
+                                )
+                                .map_err(|message| {
+                                    ClickError::new(format!(
+                                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: `contradiction` could not lower fact: {message}"
+                                    ))
+                                })?,
+                            ),
+                            _ => None,
+                        };
+                        let mut logical_goal = unfolded_goal;
+                        goal_closed = apply_logical_goal_tactic(
+                            tactic,
+                            &mut logical_goal,
+                            &mut available,
+                            contradiction_fact,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: {message}"
+                            ))
+                        })?;
+                        goal = Some(logical_goal);
+                    }
+                    ProofTactic::Derive(derive) => {
+                        let derivation_lowering_facts = prepared_derivation_lowering_facts
+                            .as_ref()
+                            .expect("derive lowering facts should be prepared");
+                        let premises = derive
+                            .premises
+                            .iter()
+                            .map(|premise| {
+                                if let Some(recorded) = surface_propositions.and_then(
+                                    |propositions| {
+                                        propositions.available_kernel(premise, &available)
+                                    },
+                                ) {
+                                    Ok(recorded.clone())
+                                } else {
+                                    lower_point_proposition_with_values(
+                                        premise,
+                                        derivation_lowering_facts,
+                                        values.clone(),
+                                        &array_refs,
+                                        pre_state,
+                                        state,
+                                        result,
+                                        program_point_states,
+                                        predicate_environment,
+                                        click_function_environment,
+                                    )
+                                }
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(|message| {
+                                ClickError::new(format!(
+                                    "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower `{}` premise: {message}",
+                                    tactic_name(tactic)
+                                ))
+                            })?;
+                        check_atomic_derivation_goal(
+                            tactic,
+                            &unfolded_goal,
+                            premises,
+                            &unfolded_goal,
+                            &available,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: {message}"
+                            ))
+                        })?;
+                        goal_closed = true;
+                    }
+                    ProofTactic::Rewrite(surface_equality) => {
+                        let equality = lower_point_proposition_with_values(
+                            surface_equality,
+                            &available,
+                            values.clone(),
+                            &array_refs,
+                            pre_state,
+                            state,
+                            result,
+                            program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: `rewrite` could not lower equality: {message}"
+                            ))
+                        })?;
+                        goal = Some(
+                            rewrite_proposition_by_exact_equality(
+                                &unfolded_goal,
+                                &equality,
+                                &available,
+                            )
+                            .map_err(|message| {
+                                ClickError::new(format!(
+                                    "`{claim_label}` {proof_name} proof {outer_tactic_index}: {message}"
+                                ))
+                            })?,
+                        );
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            ProofTactic::Simp => use_simp = true,
+            ProofTactic::If(_) => unreachable!("proof-level if tactics are expanded before replay"),
+            _ => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `{}` is not available in a pure proof",
+                    tactic_name(tactic)
+                )));
+            }
+        }
+    }
+    add_have_case_assumptions(
+        proof_case,
+        proof_case.tactics.len(),
+        &mut available,
+        claim_label,
+        outer_tactic_index,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        result,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+    )?;
+
+    let fact = match fact {
+        Some(fact) => fact,
+        None => {
+            if let Some(prelowered_goal) = prelowered_goal {
+                prelowered_goal.clone()
+            } else {
+                lower_point_proposition_with_values(
+                    proposition,
+                    &available,
+                    values,
+                    &array_refs,
+                    pre_state,
+                    state,
+                    result,
+                    program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
+                    ))
+                })?
+            }
+        }
+    };
+    if goal_closed {
+        return Ok(fact);
+    }
+    let assumptions = assumptions_from_propositions(&available);
+    let goal = unfold_predicates_in_proposition(
+        predicate_environment,
+        click_function_environment,
+        &unfolded_predicates,
+        goal.as_ref().unwrap_or(&fact),
+        &assumptions,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not unfold pure goal: {message}"
+        ))
+    })?;
+    if pure_fact_is_replay_available(&goal, &available)
+        || (use_simp && matches!(simp_proposition(&goal, &assumptions), SimpProposition::True))
+    {
+        return Ok(fact);
+    }
+    let failure = describe_missing_pure_fact(
+        &goal,
+        &available,
+        state.resources().facts(),
+        parameters,
+        arguments,
+        &[],
+    );
+    if proof_name == "have" {
+        Err(ClickError::new(format!(
+            "`{claim_label}` tactic {outer_tactic_index}: `have` failed: {failure}"
+        )))
+    } else {
+        Err(ClickError::new(format!(
+            "`{claim_label}` {proof_name} proof {outer_tactic_index} failed: {failure}"
+        )))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_have_case_assumptions(
+    proof_case: &ExpandedProofCase,
+    inner_tactic_index: usize,
+    available: &mut Vec<Proposition>,
+    claim_label: &str,
+    outer_tactic_index: usize,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(), ClickError> {
+    for case_assumption in proof_case
+        .assumptions
+        .iter()
+        .filter(|assumption| assumption.tactic_index == inner_tactic_index)
+    {
+        let proposition = lower_point_proposition(
+            &case_assumption.proposition,
+            available,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            result,
+            program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {outer_tactic_index}, `have` tactic {inner_tactic_index}: could not lower `if` condition: {message}"
+            ))
+        })?;
+        available.push(if case_assumption.value {
+            proposition
+        } else {
+            Proposition::Not(Box::new(proposition))
+        });
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
+    contexts: Vec<ProofReplayContext>,
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    require_explicit_closers: bool,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function_environment: &CExecutionEnvironment,
+    function: &CFunction,
+    arguments: &[CExpression],
+    tactics: &[ProofTactic],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let mut verified = Vec::new();
+    let mut certification_cache = Vec::new();
+    let mut captured_paths = Vec::new();
+    for context in contexts {
+        let path_choices = context.replay.deferred_expansion_path_choices.clone();
+        resume_deferred_tactic_expansion_capture(&context.replay)?;
+        match finish_ordered_proof_replay(
+            context,
+            source_path,
+            function_block,
+            parsed_function,
+            claims,
+            require_explicit_closers,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            function_environment,
+            function,
+            arguments,
+            tactics,
+            &mut certification_cache,
+        ) {
+            Ok(theorems) => {
+                for theorem in theorems {
+                    if !verified.contains(&theorem) {
+                        verified.push(theorem);
+                    }
+                }
+            }
+            Err(error) if error.is_expansion_complete() => {
+                let captured = take_path_tactic_expansion_capture()?;
+                captured_paths.push(SurfaceReplay {
+                    tactics: captured,
+                    path_choices,
+                    ..SurfaceReplay::default()
+                });
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if !captured_paths.is_empty() {
+        let tactics = if captured_paths
+            .iter()
+            .all(|path| path.tactics == captured_paths[0].tactics)
+        {
+            captured_paths[0].tactics.clone()
+        } else {
+            synthesize_surface_alternatives(captured_paths).map_err(|message| {
+                ClickError::new(format!(
+                    "could not merge selected deferred tactic across branch contexts: {message}"
+                ))
+            })?
+        };
+        let allow_empty = tactics.is_empty();
+        return Err(finish_tactic_expansion_capture(
+            &SurfaceReplay {
+                tactics,
+                ..SurfaceReplay::default()
+            },
+            allow_empty,
+        ));
+    }
+    Ok(verified)
+}
