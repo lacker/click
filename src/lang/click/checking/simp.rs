@@ -373,52 +373,6 @@ fn normalize_direct_atomic_memory_load_uncached(term: &Bitvector32Term) -> Bitve
     }
 }
 
-#[cfg(test)]
-mod normalization_tests {
-    use super::*;
-
-    #[test]
-    fn direct_load_normalization_canonicalizes_loads_inside_the_address() {
-        let local = Pointer {
-            block: "local:ignored".into(),
-            offset: PointerOffsetTerm::Constant(0),
-        };
-        let before = CMemory::new()
-            .with_block("call-havoc:1", 0)
-            .with_block("local:ignored", 4)
-            .store(local.clone(), CValue::Int32(Bitvector32Term::Constant(1)));
-        let after = CMemory::new()
-            .with_block("call-havoc:1", 0)
-            .with_block("local:ignored", 4)
-            .store(local, CValue::Int32(Bitvector32Term::Constant(2)));
-        let field = Pointer {
-            block: "arg-memory".into(),
-            offset: PointerOffsetTerm::Constant(8),
-        };
-        let dependent_load = |memory: CMemory| {
-            let loaded_pointer = Bitvector32Term::MemoryLoad(
-                crate::kernel::intern_c_memory(memory.clone()),
-                Box::new(field.clone()),
-            );
-            Bitvector32Term::MemoryLoad(
-                crate::kernel::intern_c_memory(memory),
-                Box::new(Pointer {
-                    block: "arg-memory".into(),
-                    offset: PointerOffsetTerm::Int32Scaled {
-                        value: Box::new(loaded_pointer),
-                        byte_width: 4,
-                    },
-                }),
-            )
-        };
-
-        assert_eq!(
-            normalize_direct_atomic_memory_load(&dependent_load(before)),
-            normalize_direct_atomic_memory_load(&dependent_load(after)),
-        );
-    }
-}
-
 pub(in crate::lang::click) fn plan_simp_certificate(
     proposition: &Proposition,
     assumptions: &Assumptions,
@@ -818,5 +772,51 @@ pub(in crate::lang::click) fn simp_bitvector(term: &Bitvector32Term) -> Bitvecto
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone())
         }
+    }
+}
+
+#[cfg(test)]
+mod normalization_tests {
+    use super::*;
+
+    #[test]
+    fn direct_load_normalization_canonicalizes_loads_inside_the_address() {
+        let local = Pointer {
+            block: "local:ignored".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before = CMemory::new()
+            .with_block("call-havoc:1", 0)
+            .with_block("local:ignored", 4)
+            .store(local.clone(), CValue::Int32(Bitvector32Term::Constant(1)));
+        let after = CMemory::new()
+            .with_block("call-havoc:1", 0)
+            .with_block("local:ignored", 4)
+            .store(local, CValue::Int32(Bitvector32Term::Constant(2)));
+        let field = Pointer {
+            block: "arg-memory".into(),
+            offset: PointerOffsetTerm::Constant(8),
+        };
+        let dependent_load = |memory: CMemory| {
+            let loaded_pointer = Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(memory.clone()),
+                Box::new(field.clone()),
+            );
+            Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(memory),
+                Box::new(Pointer {
+                    block: "arg-memory".into(),
+                    offset: PointerOffsetTerm::Int32Scaled {
+                        value: Box::new(loaded_pointer),
+                        byte_width: 4,
+                    },
+                }),
+            )
+        };
+
+        assert_eq!(
+            normalize_direct_atomic_memory_load(&dependent_load(before)),
+            normalize_direct_atomic_memory_load(&dependent_load(after)),
+        );
     }
 }
