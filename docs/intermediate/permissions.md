@@ -29,7 +29,7 @@ current resource context holds. A resource family defines the rules for a
 group of related resources:
 
 - when one resource entails another,
-- whether a resource is copyable or linear,
+- whether an owned resource can be duplicated or discarded,
 - how resources split and rejoin,
 - what gets consumed by a function call or statement,
 - what other resources are invalidated by consumption.
@@ -222,10 +222,10 @@ rules. Resource arguments currently support current-state C expressions such as
 parameters, constants, arithmetic, pointer expressions, and indexes. Arguments
 are checked against the types declared in the resource definition.
 
-Token resources are strict tokens. A resource context cannot contain the
-same token resource twice: duplicate clauses such as two
-`consumes open_fd(fd);` entries are rejected, and a call cannot satisfy two
-callee resource parameters with the same token.
+Token resources are nonduplicable exact-match capabilities. A resource context
+cannot contain the same owned token resource twice: duplicate clauses such as
+two `consumes open_fd(fd);` entries are rejected, and a call cannot satisfy
+two callee resource parameters with the same token.
 
 ## Counted Resources
 

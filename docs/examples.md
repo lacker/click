@@ -329,7 +329,8 @@ sequence:
 - `mdtests/composite_resource_rejects_bad_origin.md`: folding a composite
   resource fails when its fact has not been established.
 - `mdtests/composite_resource_rejects_double_call.md`: a composite
-  token is still consumed linearly through a call summary.
+  resource owned once cannot satisfy two consuming calls through a call
+  summary.
 - `mdtests/composite_resource_rejects_duplicate_contains.md`: composite
   resources reject duplicate contained resource tokens.
 - `mdtests/write_resources_imply_separate.md`: two visible owned-memory

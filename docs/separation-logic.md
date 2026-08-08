@@ -377,7 +377,8 @@ repeated loads, but it does not allow stores.
 
 ## Token And Composite Rules
 
-Plain token resources currently behave as strict linear tokens:
+Plain token resources currently behave as nonduplicable exact-match owned
+capabilities:
 
 - exact-match entailment only,
 - no splitting or joining,
