@@ -58,25 +58,6 @@ void object_release_final(struct object* obj) {
 int32 refcount_pipeline() {
     ensures result == -1 or result == 0;
 } by {
-    step();
-    step();
-    branch {
-        then {
-            step();
-            simp();
-        }
-        else {
-        }
-    }
-    step();
-    step();
-    step();
-    have obj->refs == 1 by {
-        assumption();
-    }
-    step() using {
-        obj->refs == 1;
-    }
-    step();
+    execute();
     simp();
 }

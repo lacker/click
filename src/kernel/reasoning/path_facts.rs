@@ -379,11 +379,15 @@ fn add_condition_path_fact_with_visibility(
     public: bool,
     certified_after_effect: bool,
 ) -> Option<()> {
+    // A fact certified after a memory effect is part of that transition's
+    // public post-state, even when the pre-effect assumptions can derive the
+    // same truth value. Dropping it here loses the exact snapshot fact that a
+    // later statement (and its surface certificate) may require.
     if let Some(known) = assumptions.exact_condition_value(&condition) {
-        if known == value {
+        if known == value && !certified_after_effect {
             return Some(());
         }
-        if !certified_after_effect {
+        if known != value && !certified_after_effect {
             return None;
         }
     }
@@ -393,10 +397,10 @@ fn add_condition_path_fact_with_visibility(
     if !assumptions.should_defer_non_exact_condition_reasoning()
         && let Some(known) = assumptions.decide(&condition)
     {
-        if known == value {
+        if known == value && !certified_after_effect {
             return Some(());
         }
-        if !certified_after_effect {
+        if known != value && !certified_after_effect {
             return None;
         }
     }

@@ -1086,7 +1086,25 @@ fn replay_linear_tactics_without_frontier_loops(
                             click_function_environment,
                         )
                     };
-                    let premise = if recorded_is_constant_truth {
+                    let current_indexed = proposition_contains_at_expression(surface_premise)
+                        .then(|| lower_at_current().ok())
+                        .flatten()
+                        .filter(|current| {
+                            exact_fact_is_available_across_effects(
+                                current,
+                                &all_pure_facts,
+                                &replay.effect_facts,
+                            ) || materialization_equivalent_available_fact(current, &all_pure_facts)
+                                .is_some()
+                        });
+                    // Prefer an explicit program-point lowering when it names
+                    // an exact available fact. Fall back to the checked cache
+                    // when a partial expansion has not replayed that point, or
+                    // when the cache records an equivalent polarity spelling
+                    // such as `not (a < b)` versus `a >= b`.
+                    let premise = if let Some(current) = current_indexed {
+                        current
+                    } else if recorded_is_constant_truth {
                         match lower_at_current() {
                             Ok(current)
                                 if !Assumptions::new().proves(&current)

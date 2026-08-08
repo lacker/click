@@ -523,6 +523,13 @@ impl SurfacePropositionMap {
         lowerings.next().is_none().then_some(kernel)
     }
 
+    pub fn has_distinct_lowering(&self, surface: &ClickProposition, kernel: &Proposition) -> bool {
+        self.by_surface
+            .iter()
+            .find_map(|(recorded, lowerings)| (recorded == surface).then_some(lowerings))
+            .is_some_and(|lowerings| lowerings.iter().any(|lowered| lowered != kernel))
+    }
+
     pub fn checked_surface<F>(
         &self,
         kernel: &Proposition,

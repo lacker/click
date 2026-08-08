@@ -629,7 +629,7 @@ pub(super) fn record_surface_replay_tactic(
                 region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
                 kind: ProgramPointKind::Entry,
             });
-            let premises = Ok::<_, ClickError>({
+            let premises = (|| -> Result<Vec<ClickProposition>, ClickError> {
                 let mut premises = Vec::new();
                 let derivation_context = derivations
                     .iter()
@@ -764,7 +764,7 @@ pub(super) fn record_surface_replay_tactic(
                     // the generated `step() using` certificate is subsequently
                     // replayed by the ordinary executor, which remains the
                     // authority on whether the selected premise is sufficient.
-                    let Ok(surface) = checked_surface_comparison_fact_at_point(
+                    let Ok(mut surface) = checked_surface_comparison_fact_at_point(
                         replay,
                         fact,
                         SurfaceFactMatch::ReplayEquivalent,
@@ -777,12 +777,47 @@ pub(super) fn record_surface_replay_tactic(
                     ) else {
                         continue;
                     };
+                    if !proposition_contains_at_expression(&surface)
+                        && replay
+                            .surface_propositions
+                            .has_distinct_lowering(&surface, fact)
+                    {
+                        let entry_point = ProgramPointRef {
+                            region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
+                            kind: ProgramPointKind::Entry,
+                        };
+                        let indexed = surface_with_source_site(&surface, &entry_point)?;
+                        let lowered = lower_surface_candidate_at_point(
+                            replay,
+                            &indexed,
+                            available,
+                            parameters,
+                            arguments,
+                            state,
+                            predicate_environment,
+                            click_function_environment,
+                        );
+                        if lowered.is_ok_and(|lowered| {
+                            normalize_direct_atomic_memory_loads(&lowered)
+                                == normalize_direct_atomic_memory_loads(fact)
+                                || materialization_equivalent_available_fact(
+                                    fact,
+                                    std::slice::from_ref(&lowered),
+                                )
+                                .is_some()
+                        }) {
+                            surface = indexed;
+                        }
+                    }
+                    replay
+                        .surface_propositions
+                        .record_lowering(&surface, fact)?;
                     if !premises.contains(&surface) {
                         premises.push(surface);
                     }
                 }
-                premises
-            });
+                Ok(premises)
+            })();
             match premises {
                 Ok(premises) if premises.is_empty() => replay
                     .surface_replay
