@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use click::cli::{
-    DISABLE_TACTIC_BUDGETS, MdTestExpectation, duration_from_env, format_duration, read_mdtest,
-    run_parallel, structured_tactic_budget_violations,
+    DISABLE_TACTIC_BUDGETS, MdTestExpectation, confirmed_structured_tactic_budget_violations,
+    duration_from_env, format_duration, read_mdtest, run_parallel,
+    structured_tactic_budget_violations,
 };
 use click::instrumentation;
 use click::lang::click::verify_c0_sources;
@@ -102,13 +103,13 @@ fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) -> Result<(), Stri
                 return Ok(());
             }
             let confirmation = run_mdtest_attempt(&path, time_limit)?;
-            let confirmation_violations = structured_tactic_budget_violations(&confirmation);
+            let confirmation_violations =
+                confirmed_structured_tactic_budget_violations(&first, &confirmation);
             if confirmation_violations.is_empty() {
                 return Ok(());
             }
             Err(format!(
-                "passed twice, but broke tactic time budgets in both measurements (set {DISABLE_TACTIC_BUDGETS}=1 to bypass):\n  first:\n    {}\n  confirmation:\n    {}",
-                first_violations.join("\n    "),
+                "passed twice, but the same tactic sites broke time budgets in both measurements (set {DISABLE_TACTIC_BUDGETS}=1 to bypass):\n  {}",
                 confirmation_violations.join("\n    "),
             ))
         })

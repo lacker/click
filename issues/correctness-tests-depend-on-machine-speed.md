@@ -37,9 +37,17 @@ proof happens to lose the timing race would hide the unstable test boundary.
 Library unit tests no longer inherit production duration limits unless they
 explicitly install limits to test interruption. Integration fixtures measure
 tactic CPU time with the ordinary production thresholds, but use their outer
-fixture deadline as the hard in-process bound and require a second violating
-measurement before failing the performance gate. The production CLI remains
-strictly bounded on its first run.
+fixture deadline as the hard in-process bound and require the same tactic site
+to violate its budget in a second measurement before failing the performance
+gate. A slow tactic elsewhere in the project is not confirmation of the first
+measurement. The production CLI remains strictly bounded on its first run.
+
+This distinction matters in practice. On 2026-08-07, `owned-string` verified
+successfully twice, but the first measurement put
+`owned_string_push.contract` tactic 8 at 2.176 seconds while the confirmation
+put `owned_string_pop_preserves_first.contract` tactic 2 at 2.073 seconds.
+Treating those unrelated sites as mutual confirmation made the correctness
+suite fail after 177 seconds without reproducing either timing finding.
 
 This removes one-sample correctness flakiness while retaining regression
 signal. It does not replace the deterministic-work budget described below, so
