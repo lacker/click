@@ -1,0 +1,634 @@
+use super::*;
+
+pub(super) fn resource_context_has_symbolic_int32_range_read(
+    resources: &ResourceContext,
+    base: &Pointer,
+    bytes: &Bitvector32Term,
+) -> bool {
+    resources.facts().iter().any(|fact| {
+        let Some(range) = fact.memory_range() else {
+            return false;
+        };
+        let range_base = range.base().offset_by_int32_elements(range.start().clone());
+        let range_bytes = Bitvector32Term::multiply(
+            Bitvector32Term::subtract(range.end().clone(), range.start().clone()),
+            Bitvector32Term::Constant(4),
+        );
+        &range_base == base && &range_bytes == bytes
+    })
+}
+
+impl CLocalEnvironment {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with(mut self, name: impl Into<String>, value: CValue) -> Self {
+        self.set(name, value);
+        self
+    }
+
+    pub fn with_typed(mut self, name: impl Into<String>, value: CValue, c_type: CType) -> Self {
+        self.set_typed(name, value, c_type);
+        self
+    }
+
+    pub fn with_int32_array(mut self, name: impl Into<String>, length: u32) -> Self {
+        self.set_int32_array(name, length);
+        self
+    }
+
+    pub fn set(&mut self, name: impl Into<String>, value: CValue) {
+        let c_type = value.c_type();
+        self.set_typed(name, value, c_type);
+    }
+
+    pub fn set_typed(&mut self, name: impl Into<String>, value: CValue, c_type: CType) {
+        self.bindings
+            .insert(name.into(), CLocalBinding::Object { value, c_type });
+    }
+
+    pub(in crate::kernel) fn set_uninitialized(&mut self, name: impl Into<String>, c_type: CType) {
+        self.bindings
+            .insert(name.into(), CLocalBinding::UninitializedObject { c_type });
+    }
+
+    pub fn set_int32_array(&mut self, name: impl Into<String>, length: u32) {
+        self.set_array_object(name, CType::Int32, length);
+    }
+
+    pub fn set_uint8_array(&mut self, name: impl Into<String>, length: u32) {
+        self.set_array_object(name, CType::UInt8, length);
+    }
+
+    pub(in crate::kernel) fn set_array_object(
+        &mut self,
+        name: impl Into<String>,
+        element_type: CType,
+        length: u32,
+    ) {
+        self.bindings.insert(
+            name.into(),
+            CLocalBinding::ArrayObject {
+                element_type,
+                length,
+            },
+        );
+    }
+
+    pub fn get(&self, name: &str) -> Option<&CValue> {
+        match self.bindings.get(name) {
+            Some(CLocalBinding::Object { value, .. }) => Some(value),
+            Some(CLocalBinding::UninitializedObject { .. })
+            | Some(CLocalBinding::ArrayObject { .. })
+            | None => None,
+        }
+    }
+
+    pub fn object_values(&self) -> impl Iterator<Item = (&str, &CValue)> {
+        self.bindings
+            .iter()
+            .filter_map(|(name, binding)| match binding {
+                CLocalBinding::Object { value, .. } => Some((name.as_str(), value)),
+                CLocalBinding::UninitializedObject { .. } | CLocalBinding::ArrayObject { .. } => {
+                    None
+                }
+            })
+    }
+
+    pub fn array_object_values(&self) -> impl Iterator<Item = (&str, CValue, CType)> + '_ {
+        self.bindings
+            .iter()
+            .filter_map(|(name, binding)| match binding {
+                CLocalBinding::ArrayObject { element_type, .. } => Some((
+                    name.as_str(),
+                    CValue::Pointer(CMemory::local_pointer(name)),
+                    *element_type,
+                )),
+                CLocalBinding::Object { .. } | CLocalBinding::UninitializedObject { .. } => None,
+            })
+    }
+
+    pub(in crate::kernel) fn object_type(&self, name: &str) -> Option<CType> {
+        match self.binding(name) {
+            Some(CLocalBinding::Object { c_type, .. }) => Some(*c_type),
+            Some(CLocalBinding::UninitializedObject { c_type }) => Some(*c_type),
+            Some(CLocalBinding::ArrayObject { element_type, .. }) => Some(*element_type),
+            None => None,
+        }
+    }
+
+    pub(in crate::kernel) fn scalar_object_type(&self, name: &str) -> Option<CType> {
+        match self.binding(name) {
+            Some(CLocalBinding::Object { c_type, .. }) => Some(*c_type),
+            Some(CLocalBinding::UninitializedObject { c_type }) => Some(*c_type),
+            Some(CLocalBinding::ArrayObject { .. }) | None => None,
+        }
+    }
+
+    pub(in crate::kernel) fn binding(&self, name: &str) -> Option<&CLocalBinding> {
+        self.bindings.get(name)
+    }
+
+    pub(in crate::kernel) fn is_array_object(&self, name: &str) -> bool {
+        matches!(self.binding(name), Some(CLocalBinding::ArrayObject { .. }))
+    }
+}
+
+impl CBlock {
+    pub fn new(size: u32) -> Self {
+        Self {
+            size: Bitvector32Term::Constant(size),
+        }
+    }
+
+    pub(in crate::kernel) fn with_symbolic_size(size: Bitvector32Term) -> Self {
+        Self { size }
+    }
+
+    pub fn size(&self) -> &Bitvector32Term {
+        &self.size
+    }
+}
+
+fn heap_allocation_may_contain_pointer(base: &Pointer, pointer: &Pointer) -> bool {
+    if base.block != pointer.block {
+        return false;
+    }
+    if base.block != PointerBlock::ExternalArgument {
+        return true;
+    }
+
+    if pointer.offset == base.offset {
+        return true;
+    }
+
+    fn contains_base_offset(term: &PointerOffsetTerm, base: &PointerOffsetTerm) -> bool {
+        match term {
+            PointerOffsetTerm::Add(left, right) => {
+                left.as_ref() == base
+                    || right.as_ref() == base
+                    || contains_base_offset(left, base)
+                    || contains_base_offset(right, base)
+            }
+            PointerOffsetTerm::Constant(_)
+            | PointerOffsetTerm::Variable(_)
+            | PointerOffsetTerm::Int32Scaled { .. } => false,
+        }
+    }
+
+    contains_base_offset(&pointer.offset, &base.offset)
+}
+
+impl CMemory {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn has_same_snapshot_markers(&self, other: &Self) -> bool {
+        self.blocks == other.blocks && self.heap == other.heap
+    }
+
+    pub fn with_block(mut self, block: impl Into<PointerBlock>, size: u32) -> Self {
+        let block = block.into();
+        // Havoc marker blocks mean "the state may have changed", never "a
+        // fresh block appeared"; recording a benign block-declaration edge
+        // for one would launder the havoc (conventions.md's soundness trap,
+        // pinned by `conditions_equal_modulo_proven_snapshots_needs_frame_
+        // evidence`). The havoc producers insert their markers directly,
+        // but tests and any future caller may spell them through this
+        // constructor, so the refusal lives here.
+        if memory_dag_disabled() || block.starts_with("havoc:") || block.starts_with("call-havoc:")
+        {
+            self.blocks.insert(block, CBlock::new(size));
+            return self;
+        }
+        let base = intern_c_memory_ref(&self);
+        self.blocks.insert(block.clone(), CBlock::new(size));
+        record_c_memory_derivation(&self, CMemoryDerivation::BlockDeclared { base, block });
+        self
+    }
+
+    pub(in crate::kernel) fn free_heap_block(
+        mut self,
+        pointer: &Pointer,
+    ) -> Result<Self, CInvalidFree> {
+        if self.heap.retired_allocations.contains_key(pointer) {
+            return Err(CInvalidFree::DoubleFree);
+        }
+        let Some(bytes) = self.heap.live_allocations.remove(pointer) else {
+            return Err(
+                if self
+                    .heap
+                    .live_allocations
+                    .keys()
+                    .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+                {
+                    CInvalidFree::InteriorPointer
+                } else {
+                    CInvalidFree::NonHeapPointer
+                },
+            );
+        };
+        let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        if pointer.block != PointerBlock::ExternalArgument {
+            self.blocks.remove(&pointer.block);
+        }
+        self.heap
+            .retired_allocations
+            .insert(pointer.clone(), bytes.clone());
+        self.heap.uninitialized_allocations.remove(pointer);
+        self.cells
+            .retain(|cell, _| !heap_allocation_may_contain_pointer(pointer, cell));
+        if let Some(base) = base {
+            record_c_memory_derivation(
+                &self,
+                CMemoryDerivation::HeapFreed {
+                    base,
+                    allocation_base: pointer.clone(),
+                    bytes: bytes.clone(),
+                },
+            );
+        }
+        Ok(self)
+    }
+
+    pub(in crate::kernel) fn live_heap_block_size(
+        &self,
+        pointer: &Pointer,
+    ) -> Option<&Bitvector32Term> {
+        self.heap.live_allocations.get(pointer)
+    }
+
+    pub(crate) fn is_live_heap_address(&self, pointer: &Pointer) -> bool {
+        self.heap
+            .live_allocations
+            .keys()
+            .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+    }
+
+    pub(in crate::kernel) fn is_uninitialized_heap_address(&self, pointer: &Pointer) -> bool {
+        self.heap
+            .uninitialized_allocations
+            .iter()
+            .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+    }
+
+    pub(in crate::kernel) fn is_retired_heap_address(&self, pointer: &Pointer) -> bool {
+        self.heap
+            .retired_allocations
+            .keys()
+            .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+    }
+
+    /// Registers the exact base named by an allocation contract. Unlike a
+    /// fresh `malloc`, this does not create a concrete block or imply that its
+    /// existing bytes are uninitialized; access remains governed by the
+    /// accompanying memory resources.
+    pub(in crate::kernel) fn with_heap_allocation_claim(
+        mut self,
+        base: Pointer,
+        bytes: impl Into<Bitvector32Term>,
+    ) -> Option<Self> {
+        let bytes = bytes.into();
+        if bytes.as_const() == Some(0) || self.heap.retired_allocations.contains_key(&base) {
+            return None;
+        }
+        match self.heap.live_allocations.get(&base) {
+            Some(existing) if existing != &bytes => None,
+            Some(_) => Some(self),
+            None => {
+                self.heap.live_allocations.insert(base, bytes);
+                Some(self)
+            }
+        }
+    }
+
+    pub(in crate::kernel) fn with_pending_heap_allocation(
+        mut self,
+        base: Pointer,
+        bytes: Bitvector32Term,
+    ) -> Self {
+        let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        self.heap
+            .pending_allocations
+            .insert(base.clone(), bytes.clone());
+        if let Some(prior) = prior {
+            record_c_memory_derivation(
+                &self,
+                CMemoryDerivation::HeapAllocationPending {
+                    base: prior,
+                    allocation_base: base,
+                    bytes,
+                },
+            );
+        }
+        self
+    }
+
+    pub(in crate::kernel) fn has_pending_heap_allocation(&self) -> bool {
+        !self.heap.pending_allocations.is_empty()
+    }
+
+    pub(in crate::kernel) fn heap_identity_in_use(&self, identity: u64) -> bool {
+        self.blocks.contains_key(&PointerBlock::Heap(identity))
+            || self
+                .heap
+                .retired_allocations
+                .keys()
+                .any(|base| base.block == PointerBlock::Heap(identity))
+            || self
+                .heap
+                .pending_allocations
+                .keys()
+                .any(|base| base.block == PointerBlock::Symbolic(Variable(identity)))
+    }
+
+    pub(in crate::kernel) fn resolve_pending_heap_allocation(
+        mut self,
+        base: &Pointer,
+        succeeds: bool,
+    ) -> Option<(Self, Bitvector32Term, Pointer)> {
+        let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        let bytes = self.heap.pending_allocations.remove(base)?;
+        let resolved_base = if succeeds {
+            let PointerBlock::Symbolic(Variable(identity)) = base.block else {
+                return None;
+            };
+            Pointer {
+                block: PointerBlock::Heap(identity),
+                offset: PointerOffsetTerm::Constant(0),
+            }
+        } else {
+            Pointer::null()
+        };
+        if succeeds {
+            self.blocks.insert(
+                resolved_base.block.clone(),
+                CBlock::with_symbolic_size(bytes.clone()),
+            );
+            self.heap
+                .live_allocations
+                .insert(resolved_base.clone(), bytes.clone());
+            self.heap
+                .uninitialized_allocations
+                .insert(resolved_base.clone());
+            if let Some(prior) = prior {
+                record_c_memory_derivation(
+                    &self,
+                    CMemoryDerivation::HeapAllocated {
+                        base: prior,
+                        block: resolved_base.block.clone(),
+                        bytes: bytes.clone(),
+                    },
+                );
+            }
+        }
+        Some((self, bytes, resolved_base))
+    }
+
+    pub(in crate::kernel) fn with_loop_memory_havoc(
+        mut self,
+        variable: Variable,
+        preserved_blocks: &BTreeSet<PointerBlock>,
+    ) -> Self {
+        // A loop body that may write memory can clobber, through some
+        // pointer, any cell it can reach. Drop concrete cells outside the
+        // preserved (scalar stack local) blocks so loop-head and post-loop
+        // reads do not observe stale pre-loop values; anything that must
+        // survive the loop has to be restated as a loop invariant. The
+        // marker block additionally defeats symbolic cross-loop load
+        // equality for the remaining symbolic memory.
+        let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        self.cells
+            .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
+        self.blocks
+            .insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
+        if let Some(base) = base {
+            record_c_memory_derivation(&self, CMemoryDerivation::LoopHavoc { base, variable });
+        }
+        self
+    }
+
+    pub(in crate::kernel) fn with_call_memory_havoc(
+        mut self,
+        variable: Variable,
+        mutable_ranges: &[CMemoryRange],
+        assumptions: &Assumptions,
+    ) -> Self {
+        let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        self.cells.retain(|pointer, _| {
+            pointer.block.starts_with("local:")
+                || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+        });
+        self.blocks
+            .insert(format!("call-havoc:{}", variable.0).into(), CBlock::new(0));
+        if let Some(base) = base {
+            record_c_memory_derivation(
+                &self,
+                CMemoryDerivation::CallHavoc {
+                    base,
+                    variable,
+                    mutable_ranges: mutable_ranges.to_vec(),
+                },
+            );
+        }
+        self
+    }
+
+    pub fn store(mut self, pointer: Pointer, value: CValue) -> Self {
+        if memory_dag_disabled() {
+            self.cells.insert(pointer, value);
+            return self;
+        }
+        let base = intern_c_memory_ref(&self);
+        self.cells.insert(pointer.clone(), value.clone());
+        record_c_memory_derivation(
+            &self,
+            CMemoryDerivation::Store {
+                base,
+                pointer,
+                value,
+            },
+        );
+        self
+    }
+
+    pub fn load(&self, pointer: &Pointer) -> CExpressionOutcome {
+        match self.cells.get(pointer) {
+            Some(value) => CExpressionOutcome::Value(value.clone()),
+            None => CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+        }
+    }
+
+    pub fn differing_cell_pointers(&self, other: &Self) -> Vec<Pointer> {
+        let mut pointers = self.cells.keys().cloned().collect::<BTreeSet<_>>();
+        pointers.extend(other.cells.keys().cloned());
+        pointers
+            .into_iter()
+            .filter(|pointer| self.cells.get(pointer) != other.cells.get(pointer))
+            .collect()
+    }
+
+    pub(in crate::kernel) fn known_value(&self, pointer: &Pointer) -> Option<CValue> {
+        self.cells.get(pointer).cloned()
+    }
+
+    pub(in crate::kernel) fn without_cell(&self, pointer: &Pointer) -> Self {
+        let mut memory = self.clone();
+        memory.cells.remove(pointer);
+        memory
+    }
+
+    pub(in crate::kernel) fn without_possible_aliasing_cells(
+        &self,
+        pointer: &Pointer,
+        assumptions: &Assumptions,
+    ) -> Self {
+        let normalized_pointer = Pointer {
+            block: pointer.block.clone(),
+            offset: normalize_exact_memory_loads_in_pointer_offset(&pointer.offset, assumptions, 0),
+        };
+        let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(self));
+        let mut memory = self.clone();
+        memory.cells.retain(|cell_pointer, _| {
+            let normalized_cell_pointer = Pointer {
+                block: cell_pointer.block.clone(),
+                offset: normalize_exact_memory_loads_in_pointer_offset(
+                    &cell_pointer.offset,
+                    assumptions,
+                    0,
+                ),
+            };
+            pointers_proven_distinct_for_memory_resolution(
+                &normalized_cell_pointer,
+                &normalized_pointer,
+                assumptions,
+            )
+        });
+        if let Some(base) = base {
+            record_c_memory_derivation(&memory, CMemoryDerivation::CellsForgotten { base });
+        }
+        memory
+    }
+
+    pub(in crate::kernel) fn local_pointer(name: &str) -> Pointer {
+        Pointer {
+            block: format!("local:{name}").into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    pub(crate) fn has_block(&self, block: &PointerBlock) -> bool {
+        self.blocks.contains_key(block)
+    }
+
+    pub(in crate::kernel) fn is_loadable_concretely(
+        &self,
+        pointer: &Pointer,
+        byte_width: u32,
+    ) -> bool {
+        self.cells
+            .get(pointer)
+            .is_some_and(|value| value.byte_width() == byte_width)
+    }
+
+    pub(in crate::kernel) fn can_store_concretely(
+        &self,
+        pointer: &Pointer,
+        value: &CValue,
+    ) -> bool {
+        self.cells.contains_key(pointer) || self.access_in_bounds(pointer, value.byte_width())
+    }
+
+    pub(in crate::kernel) fn access_in_bounds(&self, pointer: &Pointer, byte_width: u32) -> bool {
+        let Some(offset) = pointer.offset.as_const() else {
+            return false;
+        };
+        let Ok(offset) = u32::try_from(offset) else {
+            return false;
+        };
+        let Some(block) = self.blocks.get(&pointer.block) else {
+            return false;
+        };
+        let Some(block_size) = block.size().as_const() else {
+            return false;
+        };
+        offset
+            .checked_add(byte_width)
+            .is_some_and(|end| end <= block_size)
+    }
+
+    pub(in crate::kernel) fn symbolic_int32_load(&self, pointer: &Pointer) -> CValue {
+        int32(Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(self.clone()),
+            Box::new(pointer.clone()),
+        ))
+    }
+
+    pub(in crate::kernel) fn symbolic_uint8_load(&self, pointer: &Pointer) -> CValue {
+        uint8(Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(self.clone()),
+            Box::new(pointer.clone()),
+        ))
+    }
+
+    pub(in crate::kernel) fn symbolic_pointer_load(
+        &self,
+        pointer: &Pointer,
+        pointee_byte_width: u32,
+    ) -> CValue {
+        CValue::Pointer(Pointer {
+            block: pointer.block.clone(),
+            offset: PointerOffsetTerm::scale_int32(
+                Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory(self.clone()),
+                    Box::new(pointer.clone()),
+                ),
+                i64::from(pointee_byte_width),
+            ),
+        })
+    }
+}
+
+impl CState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_local(mut self, name: impl Into<String>, value: CValue) -> Self {
+        self.locals.set(name, value);
+        self
+    }
+
+    pub fn with_int32_array_local(mut self, name: impl Into<String>, length: u32) -> Self {
+        self.locals.set_int32_array(name, length);
+        self
+    }
+
+    pub fn with_memory(mut self, memory: CMemory) -> Self {
+        self.memory = memory;
+        self
+    }
+
+    pub fn with_resource_context(mut self, resources: ResourceContext) -> Self {
+        self.resources = resources;
+        self
+    }
+
+    pub fn locals(&self) -> &CLocalEnvironment {
+        &self.locals
+    }
+
+    pub(crate) fn local_object_type(&self, name: &str) -> Option<CType> {
+        self.locals.object_type(name)
+    }
+
+    pub fn memory(&self) -> &CMemory {
+        &self.memory
+    }
+
+    pub fn resources(&self) -> &ResourceContext {
+        &self.resources
+    }
+}
