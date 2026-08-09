@@ -104,6 +104,98 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                 offset.clone()
             }
         };
+        fn rewrite_term_offset(
+            term: &Bitvector32Term,
+            left: &PointerOffsetTerm,
+            normalized_left: &PointerOffsetTerm,
+            right: &PointerOffsetTerm,
+        ) -> Bitvector32Term {
+            let rewrite_pointer = |pointer: &Pointer| Pointer {
+                block: pointer.block.clone(),
+                offset: if &pointer.offset == left
+                    || &normalize_direct_atomic_pointer_offset_loads(&pointer.offset)
+                        == normalized_left
+                {
+                    right.clone()
+                } else {
+                    pointer.offset.clone()
+                },
+            };
+            let binary = |left_term: &Bitvector32Term, right_term: &Bitvector32Term| {
+                (
+                    Box::new(rewrite_term_offset(left_term, left, normalized_left, right)),
+                    Box::new(rewrite_term_offset(
+                        right_term,
+                        left,
+                        normalized_left,
+                        right,
+                    )),
+                )
+            };
+            match term {
+                Bitvector32Term::Add(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::Add(left, right)
+                }
+                Bitvector32Term::Subtract(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::Subtract(left, right)
+                }
+                Bitvector32Term::Multiply(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::Multiply(left, right)
+                }
+                Bitvector32Term::Divide(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::Divide(left, right)
+                }
+                Bitvector32Term::Remainder(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::Remainder(left, right)
+                }
+                Bitvector32Term::ShiftLeft(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::ShiftLeft(left, right)
+                }
+                Bitvector32Term::ArithmeticShiftRight(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::ArithmeticShiftRight(left, right)
+                }
+                Bitvector32Term::BitwiseAnd(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::BitwiseAnd(left, right)
+                }
+                Bitvector32Term::BitwiseOr(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::BitwiseOr(left, right)
+                }
+                Bitvector32Term::BitwiseXor(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::BitwiseXor(left, right)
+                }
+                Bitvector32Term::BitwiseNot(value) => Bitvector32Term::BitwiseNot(Box::new(
+                    rewrite_term_offset(value, left, normalized_left, right),
+                )),
+                Bitvector32Term::PureFunctionApplication { name, arguments } => {
+                    Bitvector32Term::PureFunctionApplication {
+                        name: name.clone(),
+                        arguments: arguments
+                            .iter()
+                            .map(|argument| {
+                                rewrite_term_offset(argument, left, normalized_left, right)
+                            })
+                            .collect(),
+                    }
+                }
+                Bitvector32Term::MemoryLoad(memory, pointer) => {
+                    Bitvector32Term::MemoryLoad(memory.clone(), Box::new(rewrite_pointer(pointer)))
+                }
+                Bitvector32Term::If { .. }
+                | Bitvector32Term::RangeFold { .. }
+                | Bitvector32Term::Constant(_)
+                | Bitvector32Term::Variable(_) => term.clone(),
+            }
+        }
         let rewritten = match goal {
             Proposition::ConditionIs(
                 ConditionTerm::PointerOffsetEqual(goal_left, goal_right),
@@ -131,9 +223,53 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                     *expected,
                 )
             }
+            Proposition::ConditionIs(condition, expected) => {
+                let rewrite_term = |term: &Bitvector32Term| {
+                    rewrite_term_offset(term, left, &normalized_left, right)
+                };
+                let rewritten = match condition {
+                    ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+                        ConditionTerm::Bitvector32SignedLessThan(
+                            Box::new(rewrite_term(left)),
+                            Box::new(rewrite_term(right)),
+                        )
+                    }
+                    ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+                        ConditionTerm::Bitvector32SignedLessEqual(
+                            Box::new(rewrite_term(left)),
+                            Box::new(rewrite_term(right)),
+                        )
+                    }
+                    ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+                        ConditionTerm::Bitvector32SignedGreaterThan(
+                            Box::new(rewrite_term(left)),
+                            Box::new(rewrite_term(right)),
+                        )
+                    }
+                    ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+                        ConditionTerm::Bitvector32SignedGreaterEqual(
+                            Box::new(rewrite_term(left)),
+                            Box::new(rewrite_term(right)),
+                        )
+                    }
+                    ConditionTerm::Bitvector32Equal(left, right) => {
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(rewrite_term(left)),
+                            Box::new(rewrite_term(right)),
+                        )
+                    }
+                    _ => {
+                        return Err(
+                            "`rewrite` pointer-offset equality does not occur in this goal"
+                                .to_string(),
+                        );
+                    }
+                };
+                Proposition::ConditionIs(rewritten, *expected)
+            }
             _ => {
                 return Err(
-                    "`rewrite` pointer-offset equality expects a pointer equality goal".to_string(),
+                    "`rewrite` pointer-offset equality does not occur in this goal".to_string(),
                 );
             }
         };

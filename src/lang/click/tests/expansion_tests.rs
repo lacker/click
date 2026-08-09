@@ -1174,6 +1174,81 @@ fn restricted_simp_inside_have_expands_to_explicit_equality_rewrites() {
 }
 
 #[test]
+fn restricted_simp_rewrites_pointer_aliases_inside_memory_loads() {
+    let c_source = r#"
+        int32 alias_value(
+            int32 original[],
+            int32 alias[],
+            int32 length,
+            int32 value
+        ) {
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "alias_value.c";
+
+        resource valued_array(data: int32*, length: int32, value: int32) {
+            owns data[0..length];
+            fact 1 <= length;
+            fact data[0] == value;
+        }
+
+        int32 alias_value(
+            int32 original[],
+            int32 alias[],
+            int32 length,
+            int32 value
+        ) {
+            requires alias == original;
+            owns valued_array(original, length, value);
+            ensures alias[0] == value;
+        } by {
+            unfold(valued_array(original, length, value));
+            step();
+            have alias[0] == value by {
+                simp() using {
+                    original[0] == value;
+                    alias == original;
+                }
+            }
+            fold(valued_array(original, length, value));
+            simp();
+        }
+    "#;
+    let offset = click_source.find("have alias[0] == value").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let sources = [("alias_value.c", c_source)];
+
+    let expanded = expand_c0_tactic_source_at(click_source, &sources, line, column)
+        .expect("pointer-alias restricted simp should expand");
+    let expanded_have_start = expanded.find("have alias[0] == value").unwrap();
+    let expanded_have_end = expanded[expanded_have_start..]
+        .find("fold(valued_array")
+        .map(|relative| expanded_have_start + relative)
+        .unwrap();
+    let expanded_have = &expanded[expanded_have_start..expanded_have_end];
+    assert!(
+        expanded_have.contains("rewrite(alias == original);"),
+        "{expanded_have}"
+    );
+    assert!(expanded_have.contains("assumption();"), "{expanded_have}");
+    assert!(!expanded_have.contains("derive using"), "{expanded_have}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("expanded pointer-alias certificate should replay");
+}
+
+#[test]
 fn post_execution_restricted_simp_expands_without_derive() {
     let c_source = r#"
         int32 identity(int32 x, int32 y, int32 z) {

@@ -24,6 +24,14 @@ search and simple surface replay. Do not retain `derive using`, add a redundant
 element-loadability fact to the example, or reshape the example around the
 failure.
 
+A first reduction exposed and fixed one independent surface gap: `rewrite`
+now substitutes pointer-offset equalities when the pointer occurs as a memory
+load address. A current-state mdtest expands that case to
+`rewrite(alias == original); assumption();` and replays. The original
+statement-entry case still fails while lowering the expanded proof because its
+snapshot spelling cannot recover the element loadability from the certified
+array range. Keep the issue open for that snapshot transport failure.
+
 ## Regression
 
 Add a small mdtest with a loadable array reached through an explicitly known
