@@ -896,6 +896,44 @@ fn parses_memory_separate_requirement() {
 }
 
 #[test]
+fn restricted_simp_premises_retain_declared_resource_argument_types() {
+    let source = r#"
+        resource wrapper(owner: int32*) {}
+
+        int32 inspect(int32* owner) {
+            ensures result == 0;
+        } by {
+            have separate(wrapper(owner), memory(owner[0..1])) by {
+                simp() using {
+                    separate(wrapper(owner), memory(owner[0..1]));
+                }
+            }
+        }
+    "#;
+    let file = parse(source).expect("restricted simp resource premise should parse");
+    let Proof::Script(tactics) = file.function_blocks()[0].grouped_proof().unwrap() else {
+        panic!("expected grouped proof script");
+    };
+    let ProofTactic::Have(ProofHave {
+        proof: Proof::Script(have_tactics),
+        ..
+    }) = &tactics[0]
+    else {
+        panic!("expected have proof");
+    };
+    let ProofTactic::SimpUsing(ProofDerive { premises }) = &have_tactics[0] else {
+        panic!("expected restricted simp");
+    };
+    assert!(matches!(
+        &premises[0],
+        ClickProposition::Separate {
+            left: ResourceSubject::Declared { parameter_types, .. },
+            ..
+        } if parameter_types == &[C0Type::Int32Pointer]
+    ));
+}
+
+#[test]
 fn rejects_reversed_constant_loadable_segment() {
     let c_source = r#"
             int32 read_second(int32* p) {

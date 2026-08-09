@@ -89,17 +89,18 @@ and `assumption` steps. Two other source shapes still need principled surface
 certificates before their old `derive using` blocks can be removed:
 
 - `examples/vector-push` proves `1 <= owner->len` after incrementing a
-  nonnegative old length. Ambient `simp()` verifies, but expansion still emits
-  `derive using`; equality rewrites alone cannot express the selected
-  order/arithmetic rule. Add the smallest named simple arithmetic rule (or an
+  nonnegative old length, and `examples/input-cursor` has the analogous
+  `0 <= owner->pos` successor proof. Smart simplification verifies these
+  arithmetic consequences, but equality rewrites alone cannot express the
+  selected order rule. Add the smallest named simple arithmetic rule (or an
   equally explicit theorem application), not a generic arithmetic solver
   relabeled as simple.
-- In `examples/input-cursor`, changing the first post-execution derivation to
-  `simp() using` reaches certificate lowering and reports that resource
-  `input_cursor` has malformed argument type metadata. Its listed context
-  includes `contains(input_cursor(owner), ...)` facts. Reduce why the smart
-  certificate path loses the declared composite argument type metadata; do not
-  remove those facts or reshape the resource to avoid the lowering failure.
+
+The input-cursor attempt also exposed and fixed a separate lowering bug:
+declaration expansion populated resource argument type metadata in `derive`
+premises but omitted `simp() using` premises. A focused syntax regression now
+keeps that metadata; the example reaches the arithmetic-certificate gap above
+instead of failing resource lowering.
 
 Keep both examples unchanged until their focused regressions expand and replay.
 
