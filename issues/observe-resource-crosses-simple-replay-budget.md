@@ -28,11 +28,14 @@ A Boolean-preserving early return for that impossible case made the third
 `observe` fast, but exposed a correctness coupling in `tree_rotate_left`:
 ghost-resource certification then reported structurally different missing and
 extra `views tree(...)` facts. The failed entailment/normalization scan is
-recording implicit equality provenance that later resource representation
-currently depends on. Do not keep the early return in isolation. The focused
-fix must make a failed resource query observationally pure (or retain the
-actually required equality as explicit evidence) before skipping impossible
-ownership normalization.
+warming implicit equality/condition memo state that later resource
+representation currently depends on. Wrapping failed candidates in a
+transactional provenance collector did not change that result; retaining the
+same failed normalization (with discarded provenance) still made the later
+check pass, while skipping it failed. Do not keep the early return in
+isolation. The focused fix must make the later resource-identity check derive
+its equality directly, without relying on an earlier failed query having
+primed a memo, before skipping impossible ownership normalization.
 
 ## Acceptance criteria
 
