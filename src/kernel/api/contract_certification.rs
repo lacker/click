@@ -203,7 +203,7 @@ pub fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -
     else {
         return false;
     };
-    assumptions.prop_facts.iter().any(|fact| {
+    let covered = assumptions.prop_facts.iter().any(|fact| {
         let Proposition::CMemoryLoadable {
             memory: fact_memory,
             base: fact_base,
@@ -275,7 +275,11 @@ pub fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -
                 assumptions
                     .proves_loadable_cell_from_region(fact_base, fact_bytes, base, byte_width)
             })
-    })
+    });
+    if covered {
+        crate::kernel::record_implicit_reasoning_provenance(assumptions, goal);
+    }
+    covered
 }
 
 /// Certifies a universally-quantified loadability side-obligation from

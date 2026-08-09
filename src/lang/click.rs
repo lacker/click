@@ -786,14 +786,10 @@ pub struct CertifiedStatementTransition {
     pub(crate) obligations: Vec<ProofObligation>,
     pub(crate) pure_facts: Vec<Proposition>,
     pub(crate) prerequisite_derivations: Vec<PropositionDerivation>,
-    /// Whether this transition's execution can consult the ambient conditions.
-    ///
-    /// Planning reasons from the whole ambient context, and a condition it used
-    /// leaves no trace in the transition, so a certificate for such a statement
-    /// has to carry the ambient conditions for replay to reach the same
-    /// transition. A statement that only moves a variable or a constant never
-    /// asks, and its certificate carries none of them.
-    pub(crate) consults_conditions: bool,
+    /// Exact entry-state facts consumed while planning this
+    /// transition. Kept outside the kernel theorem so collecting certificate
+    /// provenance cannot perturb execution paths or fresh identities.
+    pub(crate) planning_premises: Vec<Proposition>,
     pub(crate) fact_transports: Vec<CertifiedFactTransport>,
 }
 

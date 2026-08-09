@@ -607,7 +607,16 @@ fn execute_verified_function_rule(
                         &requirement_path.facts,
                         &[],
                     );
-                    if !requirement_assumptions.proves(&guarded) {
+                    let obligation_is_proven =
+                        super::assumptions::capture_implicit_reasoning_provenance(|| {
+                            requirement_assumptions.proves(&guarded)
+                        });
+                    if obligation_is_proven {
+                        super::assumptions::record_reasoning_provenance(
+                            &requirement_assumptions,
+                            &guarded,
+                        );
+                    } else {
                         obligations.push(
                             ProofObligation::verification_condition(guarded.clone())
                                 .with_context(format!("{} precondition", function.name())),
@@ -615,34 +624,54 @@ fn execute_verified_function_rule(
                     }
                     established_requirements.push(guarded);
                 }
-                let requirement_is_proven = match &requirement_path.proposition {
-                    Proposition::ConditionIs(condition, value) => {
-                        path_assumptions.proves_exact(&requirement_path.proposition)
-                            || path_assumptions
-                                .has_matching_condition_fact_for_memory_resolution(
-                                    condition, *value,
-                                )
-                    }
-                    Proposition::CResourceSeparate {
-                        left: CResource::Memory(left),
-                        right: CResource::Memory(right),
-                    } => path_assumptions.proves_exact(&requirement_path.proposition)
-                        || path_assumptions
-                            .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
-                                left, right,
-                            ),
-                    proposition => path_assumptions.proves_exact(proposition),
-                };
+                let requirement_is_proven =
+                    super::assumptions::capture_implicit_reasoning_provenance(|| {
+                        match &requirement_path.proposition {
+                            Proposition::ConditionIs(condition, value) => {
+                                path_assumptions.proves_exact(&requirement_path.proposition)
+                                    || path_assumptions
+                                        .has_matching_condition_fact_for_memory_resolution(
+                                            condition, *value,
+                                        )
+                            }
+                            Proposition::CResourceSeparate {
+                                left: CResource::Memory(left),
+                                right: CResource::Memory(right),
+                            } => path_assumptions.proves_exact(&requirement_path.proposition)
+                                || path_assumptions
+                                    .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+                                        left, right,
+                                    ),
+                            proposition => path_assumptions.proves_exact(proposition),
+                        }
+                    });
+                if requirement_is_proven {
+                    super::assumptions::record_reasoning_provenance(
+                        &path_assumptions,
+                        &requirement_path.proposition,
+                    );
+                }
                 let guarded_requirement = wrap_path_context(
                     requirement_path.proposition,
                     &requirement_path.facts,
                     &requirement_path.obligations,
                 );
-                if !requirement_is_proven && !requirement_assumptions.proves(&guarded_requirement) {
-                    obligations.push(
-                        ProofObligation::verification_condition(guarded_requirement.clone())
-                            .with_context(format!("{} precondition", function.name())),
-                    );
+                if !requirement_is_proven {
+                    let guarded_is_proven =
+                        super::assumptions::capture_implicit_reasoning_provenance(|| {
+                            requirement_assumptions.proves(&guarded_requirement)
+                        });
+                    if guarded_is_proven {
+                        super::assumptions::record_reasoning_provenance(
+                            &requirement_assumptions,
+                            &guarded_requirement,
+                        );
+                    } else {
+                        obligations.push(
+                            ProofObligation::verification_condition(guarded_requirement.clone())
+                                .with_context(format!("{} precondition", function.name())),
+                        );
+                    }
                 }
                 established_requirements.push(guarded_requirement);
             }
@@ -1948,6 +1977,7 @@ pub(super) fn evaluate_guarded_contract_condition(
         _ => assumptions.proves_exact(proposition) || assumptions.proves(proposition),
     };
     if proves_body_condition(&path.proposition) {
+        super::assumptions::record_reasoning_provenance(assumptions, &path.proposition);
         return Some(true);
     }
     let false_proposition = match &path.proposition {
@@ -1957,7 +1987,12 @@ pub(super) fn evaluate_guarded_contract_condition(
         Proposition::Not(body) => body.as_ref().clone(),
         proposition => Proposition::Not(Box::new(proposition.clone())),
     };
-    proves_body_condition(&false_proposition).then_some(false)
+    if proves_body_condition(&false_proposition) {
+        super::assumptions::record_reasoning_provenance(assumptions, &false_proposition);
+        Some(false)
+    } else {
+        None
+    }
 }
 
 fn evaluate_composite_resource_body_condition(

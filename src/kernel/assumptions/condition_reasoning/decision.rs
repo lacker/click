@@ -9,6 +9,17 @@ impl Assumptions {
     /// truncation (fuel, depth guards, cycle cuts — see
     /// [`note_search_truncation`]) is path-dependent and is not cached.
     pub(crate) fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
+        let result = self.decide_unrecorded(condition);
+        if let Some(value) = result {
+            record_implicit_reasoning_provenance(
+                self,
+                &Proposition::ConditionIs(condition.clone(), value),
+            );
+        }
+        result
+    }
+
+    fn decide_unrecorded(&self, condition: &ConditionTerm) -> Option<bool> {
         // Fuel is consumed before the memo so a fueled search keeps its
         // step budget: memoization makes each step cheaper, not the search
         // wider.
@@ -112,10 +123,20 @@ impl Assumptions {
         condition: ConditionTerm,
         value: bool,
     ) -> bool {
-        self.condition_facts.get(&condition) == Some(&value)
-            || self.condition_facts.iter().any(|(fact, fact_value)| {
-                *fact_value == value && self.condition_matches(fact, &condition)
+        let matched = self
+            .condition_facts
+            .iter()
+            .find(|(fact, fact_value)| {
+                **fact_value == value
+                    && (*fact == &condition || self.condition_matches(fact, &condition))
             })
+            .map(|(fact, fact_value)| Proposition::ConditionIs(fact.clone(), *fact_value));
+        if let Some(proposition) = matched {
+            record_implicit_reasoning_provenance(self, &proposition);
+            true
+        } else {
+            false
+        }
     }
 
     pub(in crate::kernel) fn exact_condition_value(

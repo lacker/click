@@ -32,21 +32,24 @@ impl Assumptions {
                     // interval reconstruction. Loop execution commonly has
                     // an exact strict bound on a materialized local even when
                     // that bound is awkward to transport into a full range.
-                    let has_strict_upper_bound =
-                        self.condition_facts.iter().any(|(condition, value)| {
+                    let strict_upper_bound =
+                        self.condition_facts.iter().find_map(|(condition, value)| {
                             match (condition, value) {
                                 (ConditionTerm::Bitvector32SignedLessThan(fact_left, _), true) => {
-                                    fact_left.as_ref() == &left
+                                    (fact_left.as_ref() == &left).then(|| {
+                                        Proposition::ConditionIs(condition.clone(), *value)
+                                    })
                                 }
                                 (
                                     ConditionTerm::Bitvector32SignedGreaterThan(_, fact_left),
                                     true,
-                                ) => fact_left.as_ref() == &left,
-                                _ => false,
+                                ) => (fact_left.as_ref() == &left)
+                                    .then(|| Proposition::ConditionIs(condition.clone(), *value)),
+                                _ => None,
                             }
                         });
-                    let has_direct_nonoverflowing_upper_bound =
-                        self.condition_facts.iter().any(|(condition, value)| {
+                    let direct_nonoverflowing_upper_bound =
+                        self.condition_facts.iter().find_map(|(condition, value)| {
                             matches!(
                                 (condition, value),
                                 (ConditionTerm::Bitvector32SignedLessEqual(fact_left, upper), true)
@@ -54,9 +57,16 @@ impl Assumptions {
                                         && signed_bitvector_constant(upper)
                                             .is_some_and(|upper| upper < i64::from(i32::MAX))
                             )
+                            .then(|| Proposition::ConditionIs(condition.clone(), *value))
                         });
-                    return (has_strict_upper_bound
-                        || has_direct_nonoverflowing_upper_bound
+                    if let Some(provenance) = strict_upper_bound
+                        .as_ref()
+                        .or(direct_nonoverflowing_upper_bound.as_ref())
+                    {
+                        record_implicit_reasoning_provenance(self, provenance);
+                    }
+                    return (strict_upper_bound.is_some()
+                        || direct_nonoverflowing_upper_bound.is_some()
                         || self.has_condition_fact(
                             ConditionTerm::signed_less_than(left.clone(), int_max.clone()),
                             true,

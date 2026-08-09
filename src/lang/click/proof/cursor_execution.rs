@@ -1291,11 +1291,17 @@ pub(super) fn execute_step_from_execution_point(
                         prerequisite_derivations.push(derivation.clone());
                     }
                 }
-                if transition.consults_conditions {
-                    for fact in ambient_condition_facts(available_pure_facts) {
-                        if !exact_premises.contains(&fact) {
-                            exact_premises.push(fact);
-                        }
+                for fact in &transition.planning_premises {
+                    if !exact_premises.contains(fact) {
+                        exact_premises.push(fact.clone());
+                    }
+                }
+                for transport in &transition.fact_transports {
+                    if !transport.statement_local
+                        && exact_fact_is_available(&transport.source, available_pure_facts)
+                        && !exact_premises.contains(&transport.source)
+                    {
+                        exact_premises.push(transport.source.clone());
                     }
                 }
                 for obligation in &transition.obligations {

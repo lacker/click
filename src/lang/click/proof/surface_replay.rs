@@ -454,11 +454,15 @@ pub(super) fn record_surface_replay_tactic(
     }
     match tactic {
         ProofTactic::CertifiedStatementReplay(evidence) => {
-            let mut exact_premises = if evidence.transition.consults_conditions {
-                ambient_condition_facts(available)
-            } else {
-                Vec::new()
-            };
+            let mut exact_premises = evidence.transition.planning_premises.clone();
+            for transport in &evidence.transition.fact_transports {
+                if !transport.statement_local
+                    && exact_fact_is_available(&transport.source, available)
+                    && !exact_premises.contains(&transport.source)
+                {
+                    exact_premises.push(transport.source.clone());
+                }
+            }
             for obligation in &evidence.transition.obligations {
                 if exact_fact_is_available(obligation.proposition(), available)
                     && !exact_premises.contains(obligation.proposition())
@@ -477,13 +481,9 @@ pub(super) fn record_surface_replay_tactic(
                 click_function_environment,
                 &ProofTactic::CertifiedStatementStep {
                     prerequisite_derivations: evidence.transition.prerequisite_derivations.clone(),
-                    // Planning reasons from the whole ambient context, so a
-                    // condition it consulted leaves no trace in the transition
-                    // and cannot be recovered from it afterwards. A statement
-                    // whose execution can consult conditions therefore carries
-                    // them all; one that only moves a variable or a constant,
-                    // in a context that cannot turn a condition into a memory
-                    // conclusion, carries none.
+                    // Planning records the exact entry-state premises consumed
+                    // by successful checks without changing the authoritative
+                    // execution transition.
                     exact_premises,
                 },
                 None,
@@ -760,17 +760,30 @@ pub(super) fn record_surface_replay_tactic(
                     // the generated `step() using` certificate is subsequently
                     // replayed by the ordinary executor, which remains the
                     // authority on whether the selected premise is sufficient.
-                    let Ok(mut surface) = checked_surface_comparison_fact_at_point(
+                    let surface = checked_surface_fact_at_point(
                         replay,
                         fact,
-                        SurfaceFactMatch::ReplayEquivalent,
                         available,
                         parameters,
                         arguments,
                         state,
                         predicate_environment,
                         click_function_environment,
-                    ) else {
+                    )
+                    .or_else(|_| {
+                        checked_surface_comparison_fact_at_point(
+                            replay,
+                            fact,
+                            SurfaceFactMatch::ReplayEquivalent,
+                            available,
+                            parameters,
+                            arguments,
+                            state,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                    });
+                    let Ok(mut surface) = surface else {
                         continue;
                     };
                     if !proposition_contains_at_expression(&surface)

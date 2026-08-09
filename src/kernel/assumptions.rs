@@ -286,6 +286,132 @@ thread_local! {
     static ATOMIC_PREMISE_MINIMIZATION_DEPTH: Cell<usize> = const { Cell::new(0) };
     static CONDITION_DECISIONS_IN_PROGRESS: RefCell<BTreeSet<ConditionTerm>> =
         const { RefCell::new(BTreeSet::new()) };
+    static REASONING_PROVENANCE_STACK: RefCell<Vec<ReasoningProvenanceFrame>> =
+        const { RefCell::new(Vec::new()) };
+    static RECORDING_REASONING_PROVENANCE: Cell<bool> = const { Cell::new(false) };
+    static CAPTURING_IMPLICIT_REASONING_PROVENANCE: Cell<usize> = const { Cell::new(0) };
+}
+
+#[derive(Default)]
+struct ReasoningProvenanceFrame {
+    premises: BTreeSet<Proposition>,
+    queries: BTreeSet<Proposition>,
+}
+
+struct ReasoningProvenanceCollectionGuard {
+    active: bool,
+}
+
+impl ReasoningProvenanceCollectionGuard {
+    fn start() -> Self {
+        REASONING_PROVENANCE_STACK.with(|stack| {
+            stack.borrow_mut().push(ReasoningProvenanceFrame::default());
+        });
+        Self { active: true }
+    }
+
+    fn finish(mut self) -> BTreeSet<Proposition> {
+        let frame = REASONING_PROVENANCE_STACK.with(|stack| {
+            stack
+                .borrow_mut()
+                .pop()
+                .expect("reasoning provenance collection stack")
+        });
+        self.active = false;
+        frame.premises
+    }
+}
+
+impl Drop for ReasoningProvenanceCollectionGuard {
+    fn drop(&mut self) {
+        if self.active {
+            REASONING_PROVENANCE_STACK.with(|stack| {
+                stack.borrow_mut().pop();
+            });
+        }
+    }
+}
+
+struct ReasoningProvenanceRecordingGuard;
+
+impl ReasoningProvenanceRecordingGuard {
+    fn start() -> Self {
+        RECORDING_REASONING_PROVENANCE.with(|recording| recording.set(true));
+        Self
+    }
+}
+
+impl Drop for ReasoningProvenanceRecordingGuard {
+    fn drop(&mut self) {
+        RECORDING_REASONING_PROVENANCE.with(|recording| recording.set(false));
+    }
+}
+
+/// Collects the exact premises consumed by successful reasoning
+/// during `body`. This is certificate-planning metadata only: it does not
+/// enter execution paths, theorems, obligations, or fresh-name budgets.
+pub(crate) fn collect_reasoning_provenance<T>(body: impl FnOnce() -> T) -> (T, Vec<Proposition>) {
+    let guard = ReasoningProvenanceCollectionGuard::start();
+    let result = body();
+    let premises = guard.finish();
+    (result, premises.into_iter().collect())
+}
+
+pub(crate) fn record_reasoning_provenance(assumptions: &Assumptions, proposition: &Proposition) {
+    if RECORDING_REASONING_PROVENANCE.with(Cell::get) {
+        return;
+    }
+    let should_derive = REASONING_PROVENANCE_STACK.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        let Some(active) = stack.last_mut() else {
+            return false;
+        };
+        active.queries.insert(proposition.clone())
+    });
+    if !should_derive {
+        return;
+    }
+    let _recording = ReasoningProvenanceRecordingGuard::start();
+    // Exact facts already identify their own certificate premise. Asking the
+    // general derivation builder for them would conservatively attach its
+    // complete ambient context and defeat precise dependency collection.
+    let premises = if assumptions.proves_exact(proposition) {
+        vec![proposition.clone()]
+    } else {
+        assumptions
+            .derive_proposition(proposition)
+            .map(|derivation| derivation.context_premises())
+            .unwrap_or_default()
+    };
+    REASONING_PROVENANCE_STACK.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        let Some(active) = stack.last_mut() else {
+            return;
+        };
+        active.premises.extend(premises);
+    });
+}
+
+pub(crate) fn capture_implicit_reasoning_provenance<T>(body: impl FnOnce() -> T) -> T {
+    struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            CAPTURING_IMPLICIT_REASONING_PROVENANCE.with(|depth| depth.set(depth.get() - 1));
+        }
+    }
+
+    CAPTURING_IMPLICIT_REASONING_PROVENANCE.with(|depth| depth.set(depth.get() + 1));
+    let _guard = Guard;
+    body()
+}
+
+pub(crate) fn record_implicit_reasoning_provenance(
+    assumptions: &Assumptions,
+    proposition: &Proposition,
+) {
+    if CAPTURING_IMPLICIT_REASONING_PROVENANCE.with(|depth| depth.get() != 0) {
+        record_reasoning_provenance(assumptions, proposition);
+    }
 }
 
 struct AtomicPremiseMinimizationGuard;
@@ -731,7 +857,7 @@ impl Assumptions {
         if solve_builtin_prop(proposition) {
             return true;
         }
-        match proposition {
+        let proved = match proposition {
             Proposition::ConditionIs(condition, value) => {
                 self.condition_facts.get(condition) == Some(value)
             }
@@ -743,7 +869,11 @@ impl Assumptions {
                 _ => self.prop_facts.contains(proposition),
             },
             _ => self.prop_facts.contains(proposition),
+        };
+        if proved {
+            record_implicit_reasoning_provenance(self, proposition);
         }
+        proved
     }
 
     pub fn assume_condition(mut self, condition: ConditionTerm, value: bool) -> Self {

@@ -21,9 +21,20 @@ impl Assumptions {
         // discharge a load extracted at another. Scoping the power here
         // keeps execution pruning and simp planning byte-identical to the
         // pre-arc path (see api.rs).
-        crate::kernel::api::with_extended_dag_bridging(|| {
+        let proved = crate::kernel::api::with_extended_dag_bridging(|| {
             self.proves_memory_loadable_inner(memory, base, bytes)
-        })
+        });
+        if proved {
+            record_implicit_reasoning_provenance(
+                self,
+                &Proposition::CMemoryLoadable {
+                    memory: memory.clone(),
+                    base: base.clone(),
+                    bytes: bytes.clone(),
+                },
+            );
+        }
+        proved
     }
 
     fn proves_memory_loadable_inner(

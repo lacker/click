@@ -258,7 +258,7 @@ pub(in crate::lang::click) fn certified_statement_transitions(
     let mut budget = ExecutionBudget::default()
         .with_next_opaque_call(*next_opaque_call)
         .with_next_verification_variable(*next_verification_variable);
-    let (execution, loop_rule) =
+    let execute = || {
         prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
             state.clone(),
             statement.clone(),
@@ -266,15 +266,45 @@ pub(in crate::lang::click) fn certified_statement_transitions(
             function_environment.clone(),
             execution_semantics,
             &mut budget,
-        );
-    // Certificate generation has to know whether the ambient conditions are
-    // part of what this transition consumed. Planning reasons from the whole
-    // ambient context, so a condition it used leaves no trace in the
-    // transition: the undefined-behaviour path it ruled out is simply absent,
-    // and the segment lookup it bounded simply succeeded.
-    let consults_conditions = !matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
-        || statement_consults_conditions(state, statement)
-        || context_reasons_about_memory(state, &transition_pure_facts);
+        )
+    };
+    let precise_call_provenance =
+        matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
+            && statement_contains_call(statement);
+    let ((execution, loop_rule), mut planning_premises) = if precise_call_provenance {
+        crate::kernel::collect_reasoning_provenance(execute)
+    } else {
+        let planning_premises =
+            (matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
+                && (statement_consults_conditions(state, statement)
+                    || context_reasons_about_memory(state, &transition_pure_facts)))
+            .then(|| ambient_condition_facts(pure_facts))
+            .unwrap_or_default();
+        (execute(), planning_premises)
+    };
+    if precise_call_provenance {
+        planning_premises.retain(|premise| exact_fact_is_available(premise, pure_facts));
+        let mut leaf_premises = Vec::new();
+        for premise in planning_premises {
+            let alternatives = pure_facts
+                .iter()
+                .filter(|available| *available != &premise)
+                .cloned()
+                .collect::<Vec<_>>();
+            if let Some(derivation) = minimal_proposition_derivation(&premise, &alternatives)? {
+                for dependency in derivation.context_premises() {
+                    if exact_fact_is_available(&dependency, pure_facts)
+                        && !leaf_premises.contains(&dependency)
+                    {
+                        leaf_premises.push(dependency);
+                    }
+                }
+            } else if !leaf_premises.contains(&premise) {
+                leaf_premises.push(premise);
+            }
+        }
+        planning_premises = leaf_premises;
+    }
     *next_opaque_call = budget.next_opaque_call();
     *next_verification_variable = budget.next_verification_variable();
     let (mut transitions, loop_rule) = certified_transitions_from_execution(
@@ -288,17 +318,25 @@ pub(in crate::lang::click) fn certified_statement_transitions(
         statement_contains_call(statement),
     )?;
     for transition in &mut transitions {
-        transition.consults_conditions = consults_conditions;
+        transition.planning_premises = planning_premises.clone();
     }
     Ok((transitions, loop_rule))
 }
 
+fn ambient_condition_facts(available: &[Proposition]) -> Vec<Proposition> {
+    let mut conjuncts = Vec::new();
+    for fact in available {
+        atomic_conjuncts(fact, &mut conjuncts);
+    }
+    conjuncts
+        .into_iter()
+        .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
+        .cloned()
+        .collect()
+}
+
 /// Whether anything in this proof context can turn a condition into a memory or
 /// resource conclusion.
-///
-/// Bounds justify segment lookups and sub-range loadability, so a context that
-/// holds memory permissions or resources can consume a condition even where the
-/// statement itself cannot. A context of nothing but conditions cannot.
 fn context_reasons_about_memory(state: &CState, pure_facts: &[Proposition]) -> bool {
     if !state.resources().facts().is_empty() {
         return true;
@@ -312,31 +350,9 @@ fn context_reasons_about_memory(state: &CState, pure_facts: &[Proposition]) -> b
         .any(|fact| !matches!(fact, Proposition::ConditionIs(_, _)))
 }
 
-/// The ambient conditions available at a proof point, as atomic conjuncts.
-pub(in crate::lang::click::proof) fn ambient_condition_facts(
-    available: &[Proposition],
-) -> Vec<Proposition> {
-    let mut conjuncts = Vec::new();
-    for fact in available {
-        atomic_conjuncts(fact, &mut conjuncts);
-    }
-    conjuncts
-        .into_iter()
-        .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
-        .cloned()
-        .collect()
-}
-
-/// Whether executing this statement can consult the ambient condition context.
-///
-/// Planning reasons from the whole ambient context, so a condition it used
-/// leaves no trace in the transition: the undefined-behaviour path it excluded
-/// is simply missing, and the segment lookup it bounded simply succeeded. Only
-/// operations that can be undefined, or that address memory, ever ask; reading a
-/// variable or a constant never does, so a certificate for such a statement owes
-/// the ambient conditions nothing and replays as a bare `step`.
+/// Whether executing this non-call statement can consult ambient conditions.
 fn statement_consults_conditions(state: &CState, statement: &CStatement) -> bool {
-    pub(in crate::lang::click::proof) fn expression_consults(expression: &CExpression) -> bool {
+    fn expression_consults(expression: &CExpression) -> bool {
         !matches!(expression, CExpression::Value(_) | CExpression::Variable(_))
     }
     match statement {
@@ -936,7 +952,7 @@ fn certified_transitions_from_execution(
                     obligations: path.obligations().to_vec(),
                     pure_facts: successor_facts,
                     prerequisite_derivations,
-                    consults_conditions: false,
+                    planning_premises: Vec::new(),
                     fact_transports: transported_facts,
                 });
             }
@@ -953,7 +969,7 @@ fn certified_transitions_from_execution(
                 obligations: path.obligations().to_vec(),
                 pure_facts: successor_facts,
                 prerequisite_derivations,
-                consults_conditions: false,
+                planning_premises: Vec::new(),
                 fact_transports: Vec::new(),
             })
         })

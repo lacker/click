@@ -497,6 +497,101 @@ int32 caller() {
 }
 
 #[test]
+fn opaque_call_expansion_keeps_only_consumed_ambient_conditions() {
+    let positive_c = "int32 positive(int32 x) { return x; }";
+    let caller_c = "int32 caller(int32 x) { int32 result; result = positive(x); return result; }";
+    let click_source = r#"
+verifying "positive.c";
+verifying "caller.c";
+
+int32 positive(int32 x) {
+    requires 0 < x;
+    ensures result == x;
+} by {
+    execute();
+    simp();
+}
+
+int32 caller(int32 x) {
+    requires 0 < x;
+    requires x < 100;
+    requires x != 37;
+    ensures result == x;
+} by {
+    execute();
+    simp();
+}
+"#;
+    let sources = [("positive.c", positive_c), ("caller.c", caller_c)];
+
+    let expanded =
+        expand_top_level_tactic_for_test(click_source, &sources, "caller", CProofClaim::Grouped, 0)
+            .expect("the call should expand with its consumed precondition");
+    let step_using = expanded
+        .split("step() using {")
+        .skip(1)
+        .filter_map(|rest| rest.split_once('}').map(|(block, _)| block))
+        .nth(1)
+        .expect("the opaque call should be the second statement step");
+    assert!(!step_using.is_empty(), "{expanded}");
+    assert!(step_using.contains("0 < x;"), "{expanded}");
+    assert!(!step_using.contains("x < 100;"), "{expanded}");
+    assert!(!step_using.contains("x != 37;"), "{expanded}");
+    verify_c0_sources(&expanded, &sources).expect("the precise call premises should replay");
+}
+
+#[test]
+fn opaque_call_expansion_keeps_memory_condition_safety() {
+    let positive_at_c =
+        "struct box { int32 value; }; int32 positive_at(struct box* p) { return p->value; }";
+    let caller_c = r#"struct box { int32 value; };
+int32 caller(struct box* p, int32 x) {
+    int32 result;
+    result = positive_at(p);
+    return result;
+}"#;
+    let click_source = r#"
+verifying "positive_at.c";
+verifying "caller.c";
+
+int32 positive_at(struct box* p) {
+    views p->value;
+    requires 0 < p->value;
+    ensures result == p->value;
+} by {
+    execute();
+    simp();
+}
+
+int32 caller(struct box* p, int32 x) {
+    views p->value;
+    requires 0 < p->value;
+    requires x < 100;
+    ensures result == p->value;
+} by {
+    execute();
+    simp();
+}
+"#;
+    let sources = [("positive_at.c", positive_at_c), ("caller.c", caller_c)];
+
+    let expanded =
+        expand_top_level_tactic_for_test(click_source, &sources, "caller", CProofClaim::Grouped, 0)
+            .expect("the memory-reading precondition should expand");
+    let step_using = expanded
+        .split("step() using {")
+        .skip(1)
+        .filter_map(|rest| rest.split_once('}').map(|(block, _)| block))
+        .nth(1)
+        .expect("the opaque call should be the second statement step");
+    assert!(step_using.contains("0 < p->value;"), "{expanded}");
+    assert!(!step_using.contains("x < 100;"), "{expanded}");
+    assert!(step_using.contains("loadable("), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the condition and its loadability should replay");
+}
+
+#[test]
 fn expands_public_opaque_call_results_through_later_call_arguments() {
     let zero_c = "int32 zero() { return 0; }";
     let passthrough_c = "int32 passthrough(int32 x) { return x; }";
@@ -847,9 +942,8 @@ int32 inspect(struct box* owner) {
         !step_using.contains("memory(owner->data), memory(owner->data["),
         "{expanded}"
     );
-    // The proof unfolds `terminated_at`, so the premise carries the
-    // unfolded predicate body's canonical spelling, and only the resource
-    // declaration keeps the folded call spelling.
+    // Non-call statement expansion retains its established ambient-condition
+    // behavior; this issue narrows opaque-call dependencies only.
     assert!(
         step_using.contains("owner->data[owner->len] == 0;"),
         "{expanded}"

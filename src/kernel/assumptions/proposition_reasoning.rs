@@ -109,10 +109,14 @@ impl Assumptions {
             }
             _ => self.prop_facts.contains(proposition),
         };
-        direct
+        let proved = direct
             || self.is_inconsistent()
             || self.proves_by_finite_context_split(proposition)
-            || self.proves_by_disjunction_cases(proposition)
+            || self.proves_by_disjunction_cases(proposition);
+        if proved {
+            record_implicit_reasoning_provenance(self, proposition);
+        }
+        proved
     }
 
     /// Search for an explicit proof tree for a contextual consequence.
