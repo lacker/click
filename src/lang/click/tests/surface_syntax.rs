@@ -327,7 +327,7 @@ fn verifies_explicit_structural_logic_tactics() {
             && theorem
                 .proof_tactics
                 .as_ref()
-                .is_some_and(|tactics| TacticCertificate::from_proof_tactics(tactics).is_ok())
+                .is_some_and(|tactics| SimpleProof::from_proof_tactics(tactics).is_ok())
     }));
 }
 
@@ -359,7 +359,7 @@ fn verifies_atomic_derivation_from_explicit_premises() {
         theorem
             .proof_tactics
             .as_ref()
-            .is_some_and(|tactics| TacticCertificate::from_proof_tactics(tactics).is_ok())
+            .is_some_and(|tactics| SimpleProof::from_proof_tactics(tactics).is_ok())
     }));
 }
 

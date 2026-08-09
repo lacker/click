@@ -36,6 +36,13 @@ This is an expansion/replay bug, not permission to retain a smart tactic,
 weaken the post-write claim, discard a relevant call-result fact, or add
 redundant proof facts to the mdtest.
 
+After the `SimpleProof` boundary refactor, the failure is localized to the
+final phase: smart search constructs a well-formed `SimpleProof`, but its
+independent replay rejects the last `step() using` because the direct call
+result equality is unavailable. This is not a `SimpleProof` construction or
+surface-printing failure; the execution planner supplied an incomplete simple
+proof.
+
 ## Acceptance criteria
 
 - The unchanged mdtest verifies and its generated certificate replays.

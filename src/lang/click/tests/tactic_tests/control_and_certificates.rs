@@ -324,7 +324,7 @@ fn parses_and_classifies_simple_and_smart_tactics() {
             exact_premises: Vec::new(),
         }
         .class(),
-        TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
+        TacticClass::Internal(InternalTacticKind::CertifiedStatementTransition)
     ));
     assert!(matches!(
         ProofTactic::CertifiedLoopSummaryStep {
@@ -332,7 +332,7 @@ fn parses_and_classifies_simple_and_smart_tactics() {
             exact_premises: Vec::new(),
         }
         .class(),
-        TacticClass::Simple(SimpleTactic::CertifiedLoopSummaryTransition)
+        TacticClass::Internal(InternalTacticKind::CertifiedLoopSummaryTransition)
     ));
     assert!(matches!(
         ProofTactic::CertifiedAlternatives(Vec::new()).class(),
@@ -379,7 +379,7 @@ fn parses_and_classifies_simple_and_smart_tactics() {
     ));
     assert!(matches!(
         ProofTactic::CertifiedFrame(Vec::new()).class(),
-        TacticClass::Simple(SimpleTactic::CertifiedFrame)
+        TacticClass::Internal(InternalTacticKind::CertifiedFrame)
     ));
     assert!(matches!(
         ProofTactic::SmartStep.class(),
@@ -421,9 +421,9 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
         }),
         ProofTactic::CloseInvariants,
     ];
-    let certificate = TacticCertificate::from_proof_tactics(&tactics)
+    let certificate = SimpleProof::from_proof_tactics(&tactics)
         .expect("test tactics should form a surface certificate");
-    let printed = format_tactic_certificate(&certificate);
+    let printed = format_simple_proof(&certificate);
     let source = format!(
         r#"
             verifying "printer.c";
@@ -441,6 +441,60 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
 }
 
 #[test]
+fn simple_proof_round_trips_nested_surface_steps() {
+    let reflexive = ClickProposition::Comparison {
+        left: current_var("x"),
+        operator: ComparisonOperator::Equal,
+        right: current_var("x"),
+    };
+    let tactics = vec![
+        ProofTactic::Mark("entry".to_string()),
+        ProofTactic::Have(ProofHave {
+            proposition: reflexive.clone(),
+            proof: Proof::Script(vec![ProofTactic::Normalize]),
+        }),
+        ProofTactic::Branch(ProofBranch {
+            ensuring: Some(vec![ProofAssertion::Fact(reflexive)]),
+            then_tactics: vec![ProofTactic::Assumption],
+            else_tactics: vec![ProofTactic::Normalize],
+        }),
+    ];
+
+    let proof = SimpleProof::from_proof_tactics(&tactics)
+        .expect("surface tactics should construct a simple proof");
+
+    assert_eq!(proof.to_proof_tactics(), tactics);
+    assert!(matches!(
+        proof.steps(),
+        [
+            SimpleProofStep::Mark(_),
+            SimpleProofStep::Have { .. },
+            SimpleProofStep::Branch { .. }
+        ]
+    ));
+}
+
+#[test]
+fn simple_proof_has_no_smart_or_internal_step_variant() {
+    let smart = SimpleProof::from_proof_tactics(&[ProofTactic::Simp])
+        .expect_err("smart tactics are not simple proof steps");
+    assert_eq!(
+        smart.tactic_class(),
+        TacticClass::Smart(SmartTacticKind::Simp)
+    );
+
+    let internal = SimpleProof::from_proof_tactics(&[ProofTactic::CertifiedStatementStep {
+        prerequisite_derivations: Vec::new(),
+        exact_premises: Vec::new(),
+    }])
+    .expect_err("internal derivations are not simple proof steps");
+    assert_eq!(
+        internal.tactic_class(),
+        TacticClass::Internal(InternalTacticKind::CertifiedStatementTransition)
+    );
+}
+
+#[test]
 fn tactic_certificate_accepts_only_simple_tactics() {
     let tactics = vec![
         ProofTactic::Rewrite(ClickProposition::Comparison {
@@ -452,14 +506,14 @@ fn tactic_certificate_accepts_only_simple_tactics() {
     ];
 
     let certificate =
-        TacticCertificate::from_proof_tactics(&tactics).expect("simple tactics form a certificate");
+        SimpleProof::from_proof_tactics(&tactics).expect("simple tactics form a certificate");
 
-    assert_eq!(certificate.tactics(), tactics);
+    assert_eq!(certificate.to_proof_tactics(), tactics);
 }
 
 #[test]
 fn tactic_certificate_rejects_a_direct_smart_tactic() {
-    let error = TacticCertificate::from_proof_tactics(&[ProofTactic::Simp])
+    let error = SimpleProof::from_proof_tactics(&[ProofTactic::Simp])
         .expect_err("a smart tactic cannot be a certificate leaf");
 
     assert_eq!(
@@ -471,7 +525,7 @@ fn tactic_certificate_rejects_a_direct_smart_tactic() {
 
 #[test]
 fn tactic_certificate_rejects_internal_replay_evidence() {
-    let error = TacticCertificate::from_proof_tactics(&[ProofTactic::CertifiedStatementStep {
+    let error = SimpleProof::from_proof_tactics(&[ProofTactic::CertifiedStatementStep {
         prerequisite_derivations: Vec::new(),
         exact_premises: Vec::new(),
     }])
@@ -479,7 +533,7 @@ fn tactic_certificate_rejects_internal_replay_evidence() {
 
     assert_eq!(
         error.tactic_class(),
-        TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
+        TacticClass::Internal(InternalTacticKind::CertifiedStatementTransition)
     );
 }
 
@@ -507,7 +561,7 @@ fn tactic_certificate_rejects_smart_tactics_in_nested_control_flow() {
         else_tactics: vec![ProofTactic::Normalize],
     })];
 
-    let error = TacticCertificate::from_proof_tactics(&tactics)
+    let error = SimpleProof::from_proof_tactics(&tactics)
         .expect_err("nested smart tactics cannot be hidden in a certificate");
 
     assert_eq!(
@@ -539,7 +593,7 @@ fn tactic_certificate_treats_an_omitted_nested_proof_as_auto() {
         proof: Proof::Default,
     })];
 
-    let error = TacticCertificate::from_proof_tactics(&tactics)
+    let error = SimpleProof::from_proof_tactics(&tactics)
         .expect_err("an omitted nested proof is smart auto");
 
     assert_eq!(

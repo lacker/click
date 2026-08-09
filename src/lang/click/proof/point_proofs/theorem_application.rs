@@ -714,7 +714,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_theorem_application_at_outcom
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn replay_outcome_apply_certificate(
-    certificate: &TacticCertificate,
+    certificate: &SimpleProof,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
     path_index: usize,
@@ -731,11 +731,11 @@ pub(in crate::lang::click::proof) fn replay_outcome_apply_certificate(
     unfolded_predicates: &[String],
 ) -> Result<Vec<Proposition>, ClickError> {
     let [
-        ProofTactic::ApplyTheoremUsing {
+        SimpleProofStep::ApplyTheoremUsing {
             application,
             premises,
         },
-    ] = certificate.tactics()
+    ] = certificate.steps()
     else {
         return Err(ClickError::new(format!(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: post-execution `apply` produced an unexpected certificate"

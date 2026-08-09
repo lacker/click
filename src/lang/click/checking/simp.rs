@@ -847,19 +847,19 @@ fn normalize_direct_atomic_memory_load_uncached(term: &Bitvector32Term) -> Bitve
 pub(in crate::lang::click) fn plan_simp_certificate(
     proposition: &Proposition,
     assumptions: &Assumptions,
-) -> Option<ProofReplayPlan> {
+) -> Option<InternalProofPlan> {
     let tactic = if matches!(normalize_proposition(proposition), SimpProposition::True) {
         ProofTactic::Normalize
     } else {
         ProofTactic::ExactPropositionDerivation(assumptions.derive_simp_proposition(proposition)?)
     };
-    ProofReplayPlan::from_planned_tactics(&[tactic]).ok()
+    InternalProofPlan::from_planned_tactics(&[tactic]).ok()
 }
 
 pub(in crate::lang::click) fn replay_simp_certificate(
     proposition: &Proposition,
     assumptions: &Assumptions,
-    certificate: &ProofReplayPlan,
+    certificate: &InternalProofPlan,
 ) -> bool {
     match certificate.tactics() {
         [ProofTactic::Normalize] => {

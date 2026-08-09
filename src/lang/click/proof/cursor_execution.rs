@@ -1894,7 +1894,7 @@ pub(super) fn bounded_execute_from_execution_point(
             completed
                 .iter()
                 .map(|frontier| {
-                    ProofReplayPlan::from_planned_tactics(&frontier.replay.planned_tactics)
+                    InternalProofPlan::from_planned_tactics(&frontier.replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `execute` path planned a non-certificate tactic {:?}",

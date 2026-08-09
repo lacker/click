@@ -95,12 +95,14 @@ SIMPLE when its nonempty body is entirely simple, and otherwise CONTROL. That
 inherited source-site class is shared by timing, smart-site inventory, and
 expansion, so a profile can legitimately list `have` under SMART or SIMPLE.
 
-A successful smart tactic must replay through a `TacticCertificate` whose
-leaves are surface-expressible simple tactics. Certificates may retain the
-control structure needed to replay branches and scopes, so expansion is not
-necessarily a flat or nonempty list of simple tactics.
+A successful smart tactic must construct a `SimpleProof`, a structured proof
+whose `SimpleProofStep` leaves are surface-expressible simple tactics. A simple
+proof may retain the control structure needed to replay branches and scopes,
+so expansion is not necessarily a flat or nonempty list of steps. Click prints
+that typed proof as ordinary `.click` syntax and independently replays it
+before accepting the smart success.
 
-An unsuccessful smart tactic has no certificate to expand. Errors created
+An unsuccessful smart tactic has no simple proof to expand. Errors created
 inside tactics retain the originating timing identity, so the profiler can
 distinguish a failed smart attempt from a successful expansion candidate.
 An ordinary bounded failure is a proof-authoring result, not an engine bug.
@@ -113,6 +115,39 @@ deadline that can be overridden explicitly. That one deadline covers source
 discovery, certificate generation, replay verification, and the final output
 gate; the phases do not each receive a fresh allowance. An expired expansion
 reports the interrupted tactic or verifier phase and writes no artifact.
+
+## The simple-proof boundary
+
+The implementation keeps source proofs and expanded proofs distinct:
+
+- `ProofTactic` is the parsed source representation and may contain smart,
+  simple, control, or internal planning operations.
+- `SimpleProof` is the result of a successful smart tactic. It recursively owns
+  `SimpleProofStep` values, so it cannot contain a smart tactic or an internal
+  replay operation.
+- `InternalProofPlan` is private search machinery used while constructing that
+  result. It is not printed, profiled as an independent source tactic, or
+  accepted as evidence that expansion succeeded.
+
+`SimpleProofBuilder` stores typed simple steps while internal search evidence is
+lowered. Once construction succeeds, Click structurally prints the same
+`SimpleProof` as ordinary `.click` syntax and independently replays it. There
+is no second tactic-selection phase between construction and printing.
+
+This boundary gives expansion failures four distinct meanings:
+
+1. Search did not find an internal proof route. This can be ordinary bounded
+   smart-search incompleteness.
+2. Search found a route, but Click could not construct a `SimpleProof`; the
+   diagnostic identifies missing simple-proof evidence or surface support.
+3. A `SimpleProof` was constructed, but its independent replay failed; the
+   planner emitted an incomplete or incorrect simple proof.
+4. Replay succeeded but the rewrite failed to parse, verify, or reach an audit
+   fixed point; this is expansion-tool integration failure.
+
+Do not collapse these categories into a generic certificate failure. In
+particular, category 3 is not repaired by adding replay fallback search: the
+smart planner must put every fact and rule it used into the `SimpleProof`.
 
 ## What is enforced today
 
@@ -208,8 +243,8 @@ rewritten artifact before deciding that expansion improved performance.
 
 ## Settled correctness invariants
 
-- `TacticCertificate` is the smart/simple boundary; a smart success is accepted
-  only after deterministic certificate replay.
+- `SimpleProof` is the smart/simple boundary; a smart success is accepted only
+  after its deterministic steps have been printed and independently replayed.
 - Smart tactics are best-effort conveniences, not proof-language primitives:
   failure within a stated bound is allowed, while the required proof must
   remain expressible as smaller or simple steps.

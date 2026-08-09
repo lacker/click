@@ -83,8 +83,8 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
 }
 
 pub fn format_proof_tactics(tactics: &[ProofTactic]) -> Result<String, CertificateError> {
-    let certificate = TacticCertificate::from_proof_tactics(tactics)?;
-    Ok(format_tactic_certificate(&certificate))
+    let certificate = SimpleProof::from_proof_tactics(tactics)?;
+    Ok(format_simple_proof(&certificate))
 }
 
 pub(super) fn format_partial_tactic_sequence(tactics: &[ProofTactic]) -> String {
@@ -94,9 +94,9 @@ pub(super) fn format_partial_tactic_sequence(tactics: &[ProofTactic]) -> String 
     output
 }
 
-pub fn format_tactic_certificate(certificate: &TacticCertificate) -> String {
+pub fn format_simple_proof(certificate: &SimpleProof) -> String {
     let mut output = String::from("by {\n");
-    write_tactics(&mut output, certificate.tactics(), 1);
+    write_tactics(&mut output, &certificate.to_proof_tactics(), 1);
     output.push('}');
     output
 }

@@ -1846,7 +1846,7 @@ pub(in crate::lang::click) fn validate_region_proof_clauses(
                     && !matches!(
                         item.proof(),
                         Proof::Script(tactics)
-                            if TacticCertificate::from_proof_tactics(tactics).is_ok()
+                            if SimpleProof::from_proof_tactics(tactics).is_ok()
                     )
                 {
                     return Err(ClickError::new(

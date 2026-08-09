@@ -1,3 +1,5 @@
+//! Construction and independent replay of typed simple proofs.
+
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
@@ -16,7 +18,7 @@ pub(in crate::lang::click::proof) fn replay_internal_plan(
     arguments: &[CExpression],
     tactic_index: usize,
     source_index: usize,
-    certificate: &ProofReplayPlan,
+    certificate: &InternalProofPlan,
 ) -> Result<ProofReplayContext, ClickError> {
     let tactics = certificate
         .tactics()
@@ -45,7 +47,7 @@ pub(in crate::lang::click::proof) fn replay_internal_plan(
     )
 }
 
-fn lower_internal_plan_to_surface_certificate(
+fn build_simple_proof_from_internal_plan(
     context: &ProofReplayContext,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -60,16 +62,16 @@ fn lower_internal_plan_to_surface_certificate(
     arguments: &[CExpression],
     tactic_index: usize,
     source_index: usize,
-    plan: &ProofReplayPlan,
-) -> Result<(TacticCertificate, ProofReplayContext), ClickError> {
+    plan: &InternalProofPlan,
+) -> Result<(SimpleProof, ProofReplayContext), ClickError> {
     let mut lowering_context = context.clone();
-    let tactics = matches!(plan.tactics(), [ProofTactic::CertifiedFrame(_)])
-        .then(|| surface_branch_skeleton(&context.replay.surface_replay.tactics))
+    let steps = matches!(plan.tactics(), [ProofTactic::CertifiedFrame(_)])
+        .then(|| surface_branch_skeleton(&context.replay.simple_proof_builder.steps))
         .unwrap_or_default();
-    lowering_context.replay.surface_replay = SurfaceReplay {
-        tactics,
-        last_step_entry: context.replay.surface_replay.last_step_entry.clone(),
-        ..SurfaceReplay::default()
+    lowering_context.replay.simple_proof_builder = SimpleProofBuilder {
+        steps,
+        last_step_entry: context.replay.simple_proof_builder.last_step_entry.clone(),
+        ..SimpleProofBuilder::default()
     };
     let lowered = replay_internal_plan(
         lowering_context,
@@ -88,31 +90,22 @@ fn lower_internal_plan_to_surface_certificate(
         source_index,
         plan,
     )?;
-    if let Some(blocker) = &lowered.replay.surface_replay.blocker {
+    if let Some(blocker) = &lowered.replay.simple_proof_builder.blocker {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: smart tactic could not produce a surface certificate: {blocker}"
+            "`{claim_label}` tactic {tactic_index}: smart search found an internal plan, but `SimpleProof` construction failed: {blocker}"
         )));
     }
-    if lowered.replay.surface_replay.tactics.is_empty() {
+    if lowered.replay.simple_proof_builder.steps.is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: smart tactic produced an empty surface certificate"
+            "`{claim_label}` tactic {tactic_index}: smart search found an internal plan, but `SimpleProof` construction produced no steps"
         )));
     }
-    let certificate =
-        TacticCertificate::from_proof_tactics(&lowered.replay.surface_replay.tactics).map_err(
-            |error| {
-            ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: smart tactic produced a non-surface certificate at {:?}: {:?}",
-                error.path(),
-                error.tactic_class()
-            ))
-            },
-        )?;
+    let certificate = SimpleProof::from_steps(lowered.replay.simple_proof_builder.steps.clone());
     Ok((certificate, lowered))
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn verify_surface_certificate(
+pub(in crate::lang::click::proof) fn replay_simple_proof(
     context: ProofReplayContext,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -127,12 +120,12 @@ pub(in crate::lang::click::proof) fn verify_surface_certificate(
     arguments: &[CExpression],
     tactic_index: usize,
     source_index: usize,
-    certificate: &TacticCertificate,
+    proof: &SimpleProof,
 ) -> Result<ProofReplayContext, ClickError> {
     let enclosing_branch_path = context.branch_path.clone();
     let enclosing_case_assumptions = context.replay.case_assumptions.clone();
     let program =
-        build_generated_certificate_proof(certificate.tactics(), claim_label, source_index)?;
+        build_generated_certificate_proof(&proof.to_proof_tactics(), claim_label, source_index)?;
     let completed = SUPPRESS_TACTIC_EXPANSION_CAPTURE.with(|suppressed| {
         let previous = suppressed.replace(true);
         let result = execute_internal_proof(
@@ -177,7 +170,7 @@ fn merge_surface_certificate_contexts(
 ) -> Result<ProofReplayContext, ClickError> {
     if completed.is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: surface certificate at source tactic {source_index} produced no replay contexts"
+            "`{claim_label}` tactic {tactic_index}: `SimpleProof` at source tactic {source_index} produced no replay contexts"
         )));
     }
     if completed.len() == 1 {
@@ -188,7 +181,7 @@ fn merge_surface_certificate_contexts(
         .any(|context| !context.replay.is_at_function_exit())
     {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: branched surface certificate at source tactic {source_index} did not finish every branch at function exit"
+            "`{claim_label}` tactic {tactic_index}: branched `SimpleProof` at source tactic {source_index} did not finish every branch at function exit"
         )));
     }
     let execution_start_state = completed[0]
@@ -198,7 +191,7 @@ fn merge_surface_certificate_contexts(
         .clone()
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: branched surface certificate has no execution start state"
+                "`{claim_label}` tactic {tactic_index}: branched `SimpleProof` has no execution start state"
             ))
         })?;
     let mut common_pure_facts = completed[0].pure_facts.clone();
@@ -259,7 +252,7 @@ fn merge_surface_certificate_contexts(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn replay_smart_plan(
+pub(in crate::lang::click::proof) fn complete_smart_tactic(
     context: ProofReplayContext,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -274,10 +267,10 @@ pub(in crate::lang::click::proof) fn replay_smart_plan(
     arguments: &[CExpression],
     tactic_index: usize,
     source_index: usize,
-    plan: &ProofReplayPlan,
+    plan: &InternalProofPlan,
 ) -> Result<ProofReplayContext, ClickError> {
-    let outer_surface_replay = context.replay.surface_replay.clone();
-    let (certificate, mut internal_result) = lower_internal_plan_to_surface_certificate(
+    let outer_simple_proof = context.replay.simple_proof_builder.clone();
+    let (proof, mut internal_result) = build_simple_proof_from_internal_plan(
         &context,
         function_block,
         parsed_function,
@@ -294,7 +287,7 @@ pub(in crate::lang::click::proof) fn replay_smart_plan(
         source_index,
         plan,
     )?;
-    let mut verified_result = verify_surface_certificate(
+    let mut verified_result = replay_simple_proof(
         context.clone(),
         function_block,
         parsed_function,
@@ -309,53 +302,56 @@ pub(in crate::lang::click::proof) fn replay_smart_plan(
         arguments,
         tactic_index,
         source_index,
-        &certificate,
+        &proof,
     )
     .map_err(|error| {
         ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: generated surface certificate failed replay:\n{}\n{}",
-            format_tactic_certificate(&certificate),
+            "`{claim_label}` tactic {tactic_index}: constructed `SimpleProof` failed independent replay:\n{}\n{}",
+            format_simple_proof(&proof),
             error.message()
         ))
     })?;
     let last_step_entry = internal_result
         .replay
-        .surface_replay
+        .simple_proof_builder
         .last_step_entry
         .clone();
-    internal_result.replay.surface_replay = outer_surface_replay;
+    internal_result.replay.simple_proof_builder = outer_simple_proof;
     let replaces_existing_branch = matches!(plan.tactics(), [ProofTactic::CertifiedFrame(_)])
-        && matches!(certificate.tactics(), [ProofTactic::If(_)])
+        && matches!(proof.steps(), [SimpleProofStep::If { .. }])
         && internal_result
             .replay
-            .surface_replay
-            .tactics
+            .simple_proof_builder
+            .steps
             .iter()
-            .any(|tactic| matches!(tactic, ProofTactic::If(_)));
+            .any(|step| matches!(step, SimpleProofStep::If { .. }));
     if replaces_existing_branch {
         let branch_index = internal_result
             .replay
-            .surface_replay
-            .tactics
+            .simple_proof_builder
+            .steps
             .iter()
-            .rposition(|tactic| matches!(tactic, ProofTactic::If(_)))
+            .rposition(|step| matches!(step, SimpleProofStep::If { .. }))
             .expect("an existing surface branch was checked above");
         internal_result
             .replay
-            .surface_replay
-            .tactics
+            .simple_proof_builder
+            .steps
             .truncate(branch_index);
         internal_result
             .replay
-            .surface_replay
-            .tactics
-            .extend(certificate.tactics().iter().cloned());
+            .simple_proof_builder
+            .steps
+            .extend(proof.steps().iter().cloned());
     } else {
-        for tactic in certificate.tactics() {
-            internal_result.replay.surface_replay.push(tactic.clone());
+        for step in proof.steps() {
+            internal_result
+                .replay
+                .simple_proof_builder
+                .push_step(step.clone());
         }
     }
-    internal_result.replay.surface_replay.last_step_entry = last_step_entry;
-    verified_result.replay.surface_replay = internal_result.replay.surface_replay;
+    internal_result.replay.simple_proof_builder.last_step_entry = last_step_entry;
+    verified_result.replay.simple_proof_builder = internal_result.replay.simple_proof_builder;
     Ok(verified_result)
 }

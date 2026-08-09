@@ -65,7 +65,7 @@ pub use expansion::{
 use expansion::{ProofSite, VerificationTarget, verification_target_at};
 use lowering::*;
 use parser::ContractLetBinding;
-pub use printing::{format_proof_tactics, format_tactic_certificate};
+pub use printing::{format_proof_tactics, format_simple_proof};
 use proof::*;
 use validation::{
     combined_click_function_definitions, combined_predicate_definitions,
@@ -898,7 +898,7 @@ pub enum ProofTactic {
         theorem: Theorem,
     },
     CertifiedFrame(Vec<Vec<PropositionDerivation>>),
-    CertifiedAlternatives(Vec<ProofReplayPlan>),
+    CertifiedAlternatives(Vec<InternalProofPlan>),
     Simp,
     SimpUsing(ProofDerive),
 }
@@ -907,8 +907,6 @@ pub enum ProofTactic {
 pub enum SimpleTactic {
     Mark,
     StatementTransition,
-    CertifiedStatementTransition,
-    CertifiedLoopSummaryTransition,
     UnfoldPredicate,
     UnfoldResource,
     ObserveResource,
@@ -929,13 +927,19 @@ pub enum SimpleTactic {
     CloseInvariants,
     Rewrite,
     FactTransport,
+    FoldResource,
+    Frame,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InternalTacticKind {
+    CertifiedStatementTransition,
+    CertifiedLoopSummaryTransition,
     ExactPropositionDerivation,
     CertifiedFactTransport,
     CertifiedFactTransportFinish,
     CertifiedPathAssumption,
     CertifiedFrame,
-    FoldResource,
-    Frame,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -965,22 +969,111 @@ pub enum TacticClass {
     Simple(SimpleTactic),
     Smart(SmartTacticKind),
     ControlFlow(ControlFlowTactic),
+    Internal(InternalTacticKind),
 }
 
-/// A validated proof artifact containing no smart tactics.
+/// A structured proof containing only surface-expressible simple tactics.
 ///
-/// Control-flow tactics remain in the existing proof AST, but validation walks
-/// every nested proof scope. Constructing a certificate therefore establishes
-/// that replay reaches only simple tactics and control flow.
+/// Unlike [`ProofTactic`], this type cannot contain smart tactics or
+/// replay-only implementation operations. Smart tactics should ultimately
+/// return this type directly; printing it is then a structural conversion
+/// back to ordinary `.click` syntax.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TacticCertificate {
-    tactics: Vec<ProofTactic>,
+pub struct SimpleProof {
+    steps: Vec<SimpleProofStep>,
 }
 
-/// Internal evidence selected by a smart tactic before it is lowered to a
-/// surface-expressible [`TacticCertificate`].
+/// One surface-expressible step in a [`SimpleProof`]. Structured tactics own
+/// recursively simple child proofs, so simplicity is enforced by the Rust
+/// type rather than recovered later from [`ProofTactic::class`].
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProofReplayPlan {
+pub enum SimpleProofStep {
+    Mark(String),
+    Step,
+    StepUsing(Vec<ClickProposition>),
+    UnfoldPredicate(String),
+    UnfoldResource(ResourceClause),
+    FoldResource(ResourceClause),
+    Induct {
+        parameter: String,
+        hypothesis: String,
+    },
+    ApplyInduction {
+        hypothesis: String,
+        argument: ContractExpression,
+    },
+    CloseInduction,
+    ApplyTheoremUsing {
+        application: TheoremApplication,
+        premises: Vec<ClickProposition>,
+    },
+    ObserveResource(ResourceClause),
+    Witness(ProofWitness),
+    Choose(ProofChoice),
+    Assumption,
+    Normalize,
+    Intro,
+    Split,
+    Left,
+    Right,
+    Contradiction(ClickProposition),
+    Derive(ProofDerive),
+    CloseInvariants,
+    Rewrite(ClickProposition),
+    TransportUsing {
+        source: ClickProposition,
+        target: ClickProposition,
+        premises: Vec<ClickProposition>,
+    },
+    FrameUsing {
+        region: Option<CodeRegionRef>,
+        premises: Vec<ClickProposition>,
+    },
+    Have {
+        proposition: ClickProposition,
+        proof: Box<SimpleProof>,
+    },
+    Open {
+        resource: ResourceClause,
+        proof: Box<SimpleProof>,
+    },
+    If {
+        condition: ClickProposition,
+        then_proof: Box<SimpleProof>,
+        else_proof: Box<SimpleProof>,
+    },
+    Branch {
+        ensuring: Option<Vec<ProofAssertion>>,
+        then_proof: Box<SimpleProof>,
+        else_proof: Box<SimpleProof>,
+    },
+    Loop(SimpleStructuralClause),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SimpleStructuralClause {
+    region: CodeRegion,
+    label: Option<String>,
+    decreases: Option<ContractExpression>,
+    items: Vec<SimpleStructuralItem>,
+    initialize_proof: Option<Box<SimpleProof>>,
+    preserve_proof: Option<Box<SimpleProof>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SimpleStructuralItem {
+    kind: StructuralItemKind,
+    claim: StructuralItemClaim,
+    /// Invariants are declarations whose initialize/preserve proofs live on
+    /// the enclosing loop. Effect items contain their own simple proof.
+    effect_proof: Option<Box<SimpleProof>>,
+}
+
+/// Private search machinery used while constructing a [`SimpleProof`]. This
+/// is not a smart-tactic result and cannot cross the smart/simple boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[doc(hidden)]
+pub struct InternalProofPlan {
     tactics: Vec<ProofTactic>,
 }
 
@@ -1003,27 +1096,302 @@ pub struct CertificateError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ReplayPlanError {
+struct InternalPlanError {
     smart_tactic: SmartTacticKind,
     path: Vec<CertificatePathSegment>,
 }
 
-impl ReplayPlanError {
+impl InternalPlanError {
     fn smart_tactic(&self) -> SmartTacticKind {
         self.smart_tactic
     }
 }
 
-impl TacticCertificate {
+impl SimpleProof {
     pub fn from_proof_tactics(tactics: &[ProofTactic]) -> Result<Self, CertificateError> {
         validate_certificate_tactics(tactics, &mut Vec::new())?;
         Ok(Self {
-            tactics: tactics.to_vec(),
+            steps: tactics
+                .iter()
+                .map(SimpleProofStep::from_validated_tactic)
+                .collect(),
         })
     }
 
-    pub fn tactics(&self) -> &[ProofTactic] {
-        &self.tactics
+    pub fn steps(&self) -> &[SimpleProofStep] {
+        &self.steps
+    }
+
+    pub(crate) fn from_steps(steps: Vec<SimpleProofStep>) -> Self {
+        Self { steps }
+    }
+
+    pub fn to_proof_tactics(&self) -> Vec<ProofTactic> {
+        self.steps
+            .iter()
+            .map(SimpleProofStep::to_proof_tactic)
+            .collect()
+    }
+
+    fn from_validated_proof(proof: &Proof) -> Self {
+        let Proof::Script(tactics) = proof else {
+            unreachable!("validated simple proof must be an explicit script")
+        };
+        Self {
+            steps: tactics
+                .iter()
+                .map(SimpleProofStep::from_validated_tactic)
+                .collect(),
+        }
+    }
+
+    fn to_source_proof(&self) -> Proof {
+        Proof::Script(self.to_proof_tactics())
+    }
+}
+
+impl SimpleProofStep {
+    fn from_validated_tactic(tactic: &ProofTactic) -> Self {
+        match tactic {
+            ProofTactic::Mark(name) => Self::Mark(name.clone()),
+            ProofTactic::Step => Self::Step,
+            ProofTactic::StepUsing(premises) => Self::StepUsing(premises.clone()),
+            ProofTactic::UnfoldPredicate(name) => Self::UnfoldPredicate(name.clone()),
+            ProofTactic::UnfoldResource(resource) => Self::UnfoldResource(resource.clone()),
+            ProofTactic::FoldResource(resource) => Self::FoldResource(resource.clone()),
+            ProofTactic::Induct {
+                parameter,
+                hypothesis,
+            } => Self::Induct {
+                parameter: parameter.clone(),
+                hypothesis: hypothesis.clone(),
+            },
+            ProofTactic::ApplyInduction {
+                hypothesis,
+                argument,
+            } => Self::ApplyInduction {
+                hypothesis: hypothesis.clone(),
+                argument: argument.clone(),
+            },
+            ProofTactic::CloseInduction => Self::CloseInduction,
+            ProofTactic::ApplyTheoremUsing {
+                application,
+                premises,
+            } => Self::ApplyTheoremUsing {
+                application: application.clone(),
+                premises: premises.clone(),
+            },
+            ProofTactic::ObserveResource(resource) => Self::ObserveResource(resource.clone()),
+            ProofTactic::Witness(witness) => Self::Witness(witness.clone()),
+            ProofTactic::Choose(choice) => Self::Choose(choice.clone()),
+            ProofTactic::Assumption => Self::Assumption,
+            ProofTactic::Normalize => Self::Normalize,
+            ProofTactic::Intro => Self::Intro,
+            ProofTactic::Split => Self::Split,
+            ProofTactic::Left => Self::Left,
+            ProofTactic::Right => Self::Right,
+            ProofTactic::Contradiction(proposition) => Self::Contradiction(proposition.clone()),
+            ProofTactic::Derive(derive) => Self::Derive(derive.clone()),
+            ProofTactic::CloseInvariants => Self::CloseInvariants,
+            ProofTactic::Rewrite(proposition) => Self::Rewrite(proposition.clone()),
+            ProofTactic::TransportUsing {
+                source,
+                target,
+                premises,
+            } => Self::TransportUsing {
+                source: source.clone(),
+                target: target.clone(),
+                premises: premises.clone(),
+            },
+            ProofTactic::FrameUsing { region, premises } => Self::FrameUsing {
+                region: region.clone(),
+                premises: premises.clone(),
+            },
+            ProofTactic::Have(proof_have) => Self::Have {
+                proposition: proof_have.proposition.clone(),
+                proof: Box::new(SimpleProof::from_validated_proof(&proof_have.proof)),
+            },
+            ProofTactic::Open(proof_open) => Self::Open {
+                resource: proof_open.resource.clone(),
+                proof: Box::new(SimpleProof {
+                    steps: proof_open
+                        .tactics
+                        .iter()
+                        .map(Self::from_validated_tactic)
+                        .collect(),
+                }),
+            },
+            ProofTactic::If(proof_if) => Self::If {
+                condition: proof_if.condition.clone(),
+                then_proof: Box::new(SimpleProof {
+                    steps: proof_if
+                        .then_tactics
+                        .iter()
+                        .map(Self::from_validated_tactic)
+                        .collect(),
+                }),
+                else_proof: Box::new(SimpleProof {
+                    steps: proof_if
+                        .else_tactics
+                        .iter()
+                        .map(Self::from_validated_tactic)
+                        .collect(),
+                }),
+            },
+            ProofTactic::Branch(proof_branch) => Self::Branch {
+                ensuring: proof_branch.ensuring.clone(),
+                then_proof: Box::new(SimpleProof {
+                    steps: proof_branch
+                        .then_tactics
+                        .iter()
+                        .map(Self::from_validated_tactic)
+                        .collect(),
+                }),
+                else_proof: Box::new(SimpleProof {
+                    steps: proof_branch
+                        .else_tactics
+                        .iter()
+                        .map(Self::from_validated_tactic)
+                        .collect(),
+                }),
+            },
+            ProofTactic::Loop(clause) => Self::Loop(SimpleStructuralClause {
+                region: clause.region,
+                label: clause.label.clone(),
+                decreases: clause.decreases.clone(),
+                items: clause
+                    .items
+                    .iter()
+                    .map(|item| SimpleStructuralItem {
+                        kind: item.kind,
+                        claim: item.claim.clone(),
+                        effect_proof: item
+                            .is_effect_kind()
+                            .then(|| Box::new(SimpleProof::from_validated_proof(&item.proof))),
+                    })
+                    .collect(),
+                initialize_proof: clause
+                    .initialize_proof
+                    .as_ref()
+                    .map(|proof| Box::new(SimpleProof::from_validated_proof(proof))),
+                preserve_proof: clause
+                    .preserve_proof
+                    .as_ref()
+                    .map(|proof| Box::new(SimpleProof::from_validated_proof(proof))),
+            }),
+            _ => unreachable!("certificate validation admitted a non-surface tactic"),
+        }
+    }
+
+    fn to_proof_tactic(&self) -> ProofTactic {
+        match self {
+            Self::Mark(name) => ProofTactic::Mark(name.clone()),
+            Self::Step => ProofTactic::Step,
+            Self::StepUsing(premises) => ProofTactic::StepUsing(premises.clone()),
+            Self::UnfoldPredicate(name) => ProofTactic::UnfoldPredicate(name.clone()),
+            Self::UnfoldResource(resource) => ProofTactic::UnfoldResource(resource.clone()),
+            Self::FoldResource(resource) => ProofTactic::FoldResource(resource.clone()),
+            Self::Induct {
+                parameter,
+                hypothesis,
+            } => ProofTactic::Induct {
+                parameter: parameter.clone(),
+                hypothesis: hypothesis.clone(),
+            },
+            Self::ApplyInduction {
+                hypothesis,
+                argument,
+            } => ProofTactic::ApplyInduction {
+                hypothesis: hypothesis.clone(),
+                argument: argument.clone(),
+            },
+            Self::CloseInduction => ProofTactic::CloseInduction,
+            Self::ApplyTheoremUsing {
+                application,
+                premises,
+            } => ProofTactic::ApplyTheoremUsing {
+                application: application.clone(),
+                premises: premises.clone(),
+            },
+            Self::ObserveResource(resource) => ProofTactic::ObserveResource(resource.clone()),
+            Self::Witness(witness) => ProofTactic::Witness(witness.clone()),
+            Self::Choose(choice) => ProofTactic::Choose(choice.clone()),
+            Self::Assumption => ProofTactic::Assumption,
+            Self::Normalize => ProofTactic::Normalize,
+            Self::Intro => ProofTactic::Intro,
+            Self::Split => ProofTactic::Split,
+            Self::Left => ProofTactic::Left,
+            Self::Right => ProofTactic::Right,
+            Self::Contradiction(proposition) => ProofTactic::Contradiction(proposition.clone()),
+            Self::Derive(derive) => ProofTactic::Derive(derive.clone()),
+            Self::CloseInvariants => ProofTactic::CloseInvariants,
+            Self::Rewrite(proposition) => ProofTactic::Rewrite(proposition.clone()),
+            Self::TransportUsing {
+                source,
+                target,
+                premises,
+            } => ProofTactic::TransportUsing {
+                source: source.clone(),
+                target: target.clone(),
+                premises: premises.clone(),
+            },
+            Self::FrameUsing { region, premises } => ProofTactic::FrameUsing {
+                region: region.clone(),
+                premises: premises.clone(),
+            },
+            Self::Have { proposition, proof } => ProofTactic::Have(ProofHave {
+                proposition: proposition.clone(),
+                proof: proof.to_source_proof(),
+            }),
+            Self::Open { resource, proof } => ProofTactic::Open(ProofOpen {
+                resource: resource.clone(),
+                tactics: proof.to_proof_tactics(),
+            }),
+            Self::If {
+                condition,
+                then_proof,
+                else_proof,
+            } => ProofTactic::If(ProofIf {
+                condition: condition.clone(),
+                then_tactics: then_proof.to_proof_tactics(),
+                else_tactics: else_proof.to_proof_tactics(),
+            }),
+            Self::Branch {
+                ensuring,
+                then_proof,
+                else_proof,
+            } => ProofTactic::Branch(ProofBranch {
+                ensuring: ensuring.clone(),
+                then_tactics: then_proof.to_proof_tactics(),
+                else_tactics: else_proof.to_proof_tactics(),
+            }),
+            Self::Loop(clause) => ProofTactic::Loop(StructuralClause {
+                region: clause.region,
+                label: clause.label.clone(),
+                decreases: clause.decreases.clone(),
+                items: clause
+                    .items
+                    .iter()
+                    .map(|item| StructuralItem {
+                        kind: item.kind,
+                        claim: item.claim.clone(),
+                        proof: item
+                            .effect_proof
+                            .as_ref()
+                            .map(|proof| proof.to_source_proof())
+                            .unwrap_or(Proof::Tactic(SmartTactic::Auto)),
+                    })
+                    .collect(),
+                initialize_proof: clause
+                    .initialize_proof
+                    .as_ref()
+                    .map(|proof| proof.to_source_proof()),
+                preserve_proof: clause
+                    .preserve_proof
+                    .as_ref()
+                    .map(|proof| proof.to_source_proof()),
+            }),
+        }
     }
 }
 
@@ -1037,9 +1405,9 @@ impl CertificateError {
     }
 }
 
-impl ProofReplayPlan {
-    fn from_planned_tactics(tactics: &[ProofTactic]) -> Result<Self, ReplayPlanError> {
-        validate_replay_plan_tactics(tactics, &mut Vec::new())?;
+impl InternalProofPlan {
+    fn from_planned_tactics(tactics: &[ProofTactic]) -> Result<Self, InternalPlanError> {
+        validate_internal_plan_tactics(tactics, &mut Vec::new())?;
         Ok(Self {
             tactics: tactics.to_vec(),
         })
@@ -1057,8 +1425,8 @@ fn validate_certificate_tactics(
     for (index, tactic) in tactics.iter().enumerate() {
         path.push(CertificatePathSegment::Tactic(index));
         let result = match tactic.class() {
-            TacticClass::Simple(simple) if simple.is_surface_expressible() => Ok(()),
-            tactic_class @ (TacticClass::Simple(_) | TacticClass::Smart(_)) => {
+            TacticClass::Simple(_) => Ok(()),
+            tactic_class @ (TacticClass::Internal(_) | TacticClass::Smart(_)) => {
                 Err(CertificateError {
                     tactic_class,
                     path: path.clone(),
@@ -1168,15 +1536,15 @@ fn validate_certificate_tactics(
     Ok(())
 }
 
-fn validate_replay_plan_tactics(
+fn validate_internal_plan_tactics(
     tactics: &[ProofTactic],
     path: &mut Vec<CertificatePathSegment>,
-) -> Result<(), ReplayPlanError> {
+) -> Result<(), InternalPlanError> {
     for (index, tactic) in tactics.iter().enumerate() {
         path.push(CertificatePathSegment::Tactic(index));
         let result = match tactic.class() {
-            TacticClass::Simple(_) => Ok(()),
-            TacticClass::Smart(smart_tactic) => Err(ReplayPlanError {
+            TacticClass::Simple(_) | TacticClass::Internal(_) => Ok(()),
+            TacticClass::Smart(smart_tactic) => Err(InternalPlanError {
                 smart_tactic,
                 path: path.clone(),
             }),
@@ -1185,7 +1553,7 @@ fn validate_replay_plan_tactics(
                     unreachable!("tactic class and variant must agree")
                 };
                 path.push(CertificatePathSegment::HaveBody);
-                let result = validate_replay_plan_proof(&proof_have.proof, path);
+                let result = validate_internal_plan_proof(&proof_have.proof, path);
                 path.pop();
                 result
             }
@@ -1194,7 +1562,7 @@ fn validate_replay_plan_tactics(
                     unreachable!("tactic class and variant must agree")
                 };
                 path.push(CertificatePathSegment::OpenBody);
-                let result = validate_replay_plan_tactics(&proof_open.tactics, path);
+                let result = validate_internal_plan_tactics(&proof_open.tactics, path);
                 path.pop();
                 result
             }
@@ -1203,13 +1571,13 @@ fn validate_replay_plan_tactics(
                     unreachable!("tactic class and variant must agree")
                 };
                 path.push(CertificatePathSegment::ThenBranch);
-                let then_result = validate_replay_plan_tactics(&proof_if.then_tactics, path);
+                let then_result = validate_internal_plan_tactics(&proof_if.then_tactics, path);
                 path.pop();
                 if then_result.is_err() {
                     then_result
                 } else {
                     path.push(CertificatePathSegment::ElseBranch);
-                    let else_result = validate_replay_plan_tactics(&proof_if.else_tactics, path);
+                    let else_result = validate_internal_plan_tactics(&proof_if.else_tactics, path);
                     path.pop();
                     else_result
                 }
@@ -1219,14 +1587,14 @@ fn validate_replay_plan_tactics(
                     unreachable!("tactic class and variant must agree")
                 };
                 path.push(CertificatePathSegment::ThenBranch);
-                let then_result = validate_replay_plan_tactics(&proof_branch.then_tactics, path);
+                let then_result = validate_internal_plan_tactics(&proof_branch.then_tactics, path);
                 path.pop();
                 if then_result.is_err() {
                     then_result
                 } else {
                     path.push(CertificatePathSegment::ElseBranch);
                     let else_result =
-                        validate_replay_plan_tactics(&proof_branch.else_tactics, path);
+                        validate_internal_plan_tactics(&proof_branch.else_tactics, path);
                     path.pop();
                     else_result
                 }
@@ -1237,9 +1605,9 @@ fn validate_replay_plan_tactics(
                 };
                 path.push(CertificatePathSegment::LoopInitialize);
                 match loop_clause.initialize_proof() {
-                    Some(proof) => validate_replay_plan_proof(proof, path)?,
+                    Some(proof) => validate_internal_plan_proof(proof, path)?,
                     None => {
-                        return Err(ReplayPlanError {
+                        return Err(InternalPlanError {
                             smart_tactic: SmartTacticKind::Auto,
                             path: path.clone(),
                         });
@@ -1248,9 +1616,9 @@ fn validate_replay_plan_tactics(
                 path.pop();
                 path.push(CertificatePathSegment::LoopPreserve);
                 match loop_clause.preserve_proof() {
-                    Some(proof) => validate_replay_plan_proof(proof, path)?,
+                    Some(proof) => validate_internal_plan_proof(proof, path)?,
                     None => {
-                        return Err(ReplayPlanError {
+                        return Err(InternalPlanError {
                             smart_tactic: SmartTacticKind::Auto,
                             path: path.clone(),
                         });
@@ -1262,7 +1630,7 @@ fn validate_replay_plan_tactics(
                         continue;
                     }
                     path.push(CertificatePathSegment::LoopItem(item_index));
-                    validate_replay_plan_proof(item.proof(), path)?;
+                    validate_internal_plan_proof(item.proof(), path)?;
                     path.pop();
                 }
                 Ok(())
@@ -1272,7 +1640,7 @@ fn validate_replay_plan_tactics(
                     unreachable!("tactic class and variant must agree")
                 };
                 for alternative in alternatives {
-                    validate_replay_plan_tactics(alternative.tactics(), path)?;
+                    validate_internal_plan_tactics(alternative.tactics(), path)?;
                 }
                 Ok(())
             }
@@ -1283,20 +1651,20 @@ fn validate_replay_plan_tactics(
     Ok(())
 }
 
-fn validate_replay_plan_proof(
+fn validate_internal_plan_proof(
     proof: &Proof,
     path: &mut Vec<CertificatePathSegment>,
-) -> Result<(), ReplayPlanError> {
+) -> Result<(), InternalPlanError> {
     match proof {
-        Proof::Default => Err(ReplayPlanError {
+        Proof::Default => Err(InternalPlanError {
             smart_tactic: SmartTacticKind::Auto,
             path: path.clone(),
         }),
-        Proof::Tactic(smart_tactic) => Err(ReplayPlanError {
+        Proof::Tactic(smart_tactic) => Err(InternalPlanError {
             smart_tactic: smart_tactic.kind(),
             path: path.clone(),
         }),
-        Proof::Script(tactics) => validate_replay_plan_tactics(tactics, path),
+        Proof::Script(tactics) => validate_internal_plan_tactics(tactics, path),
     }
 }
 
@@ -1317,21 +1685,6 @@ fn validate_certificate_proof(
     }
 }
 
-impl SimpleTactic {
-    fn is_surface_expressible(self) -> bool {
-        !matches!(
-            self,
-            Self::CertifiedStatementTransition
-                | Self::CertifiedLoopSummaryTransition
-                | Self::ExactPropositionDerivation
-                | Self::CertifiedFactTransport
-                | Self::CertifiedFactTransportFinish
-                | Self::CertifiedPathAssumption
-                | Self::CertifiedFrame
-        )
-    }
-}
-
 impl ProofTactic {
     pub fn class(&self) -> TacticClass {
         match self {
@@ -1339,16 +1692,16 @@ impl ProofTactic {
             Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
             Self::StepUsing(_) => TacticClass::Simple(SimpleTactic::StatementTransition),
             Self::CertifiedStatementStep { .. } => {
-                TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
+                TacticClass::Internal(InternalTacticKind::CertifiedStatementTransition)
             }
             Self::CertifiedStatementReplay(_) => {
-                TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
+                TacticClass::Internal(InternalTacticKind::CertifiedStatementTransition)
             }
             Self::CertifiedLoopSummaryReplay(_) => {
-                TacticClass::Simple(SimpleTactic::CertifiedLoopSummaryTransition)
+                TacticClass::Internal(InternalTacticKind::CertifiedLoopSummaryTransition)
             }
             Self::CertifiedLoopSummaryStep { .. } => {
-                TacticClass::Simple(SimpleTactic::CertifiedLoopSummaryTransition)
+                TacticClass::Internal(InternalTacticKind::CertifiedLoopSummaryTransition)
             }
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
@@ -1373,18 +1726,18 @@ impl ProofTactic {
             Self::Transport { .. } => TacticClass::Smart(SmartTacticKind::FactTransport),
             Self::TransportUsing { .. } => TacticClass::Simple(SimpleTactic::FactTransport),
             Self::ExactPropositionDerivation(_) => {
-                TacticClass::Simple(SimpleTactic::ExactPropositionDerivation)
+                TacticClass::Internal(InternalTacticKind::ExactPropositionDerivation)
             }
             Self::CertifiedFactTransport { .. } => {
-                TacticClass::Simple(SimpleTactic::CertifiedFactTransport)
+                TacticClass::Internal(InternalTacticKind::CertifiedFactTransport)
             }
             Self::FinishCertifiedFactTransports(_) => {
-                TacticClass::Simple(SimpleTactic::CertifiedFactTransportFinish)
+                TacticClass::Internal(InternalTacticKind::CertifiedFactTransportFinish)
             }
             Self::CertifiedPathAssumption { .. } => {
-                TacticClass::Simple(SimpleTactic::CertifiedPathAssumption)
+                TacticClass::Internal(InternalTacticKind::CertifiedPathAssumption)
             }
-            Self::CertifiedFrame(_) => TacticClass::Simple(SimpleTactic::CertifiedFrame),
+            Self::CertifiedFrame(_) => TacticClass::Internal(InternalTacticKind::CertifiedFrame),
             Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
             Self::FrameUsing { .. } => TacticClass::Simple(SimpleTactic::Frame),
             Self::SmartStep => TacticClass::Smart(SmartTacticKind::SmartStep),
@@ -2084,7 +2437,7 @@ impl VerifiedCTheorem {
         self.expansion_blocker.as_deref()
     }
 
-    pub fn expanded_proof_certificate(&self) -> Result<TacticCertificate, ClickError> {
+    pub fn expanded_proof_certificate(&self) -> Result<SimpleProof, ClickError> {
         let tactics = self.expanded_proof_tactics.as_deref().ok_or_else(|| {
             ClickError::new(format!(
                 "proof expansion is unavailable for `{}`: {}",
@@ -2094,7 +2447,7 @@ impl VerifiedCTheorem {
                     .unwrap_or("verification did not record a surface expansion")
             ))
         })?;
-        TacticCertificate::from_proof_tactics(tactics).map_err(|error| {
+        SimpleProof::from_proof_tactics(tactics).map_err(|error| {
             ClickError::new(format!(
                 "recorded proof expansion for `{}` is not a surface certificate: {error:?}",
                 self.function_block.signature().name()
@@ -2103,9 +2456,7 @@ impl VerifiedCTheorem {
     }
 
     pub fn expanded_proof_source(&self) -> Result<String, ClickError> {
-        Ok(format_tactic_certificate(
-            &self.expanded_proof_certificate()?,
-        ))
+        Ok(format_simple_proof(&self.expanded_proof_certificate()?))
     }
 
     pub fn ensure_clause(&self) -> Option<&EnsureClause> {
@@ -2124,7 +2475,7 @@ impl VerifiedCTheorem {
 }
 
 impl VerifiedPureTheorem {
-    pub fn proof_certificate(&self) -> Result<TacticCertificate, ClickError> {
+    pub fn proof_certificate(&self) -> Result<SimpleProof, ClickError> {
         let tactics = self.proof_tactics.as_deref().ok_or_else(|| {
             ClickError::new(format!(
                 "pure theorem `{}` ensure {} has no surface certificate",
@@ -2132,7 +2483,7 @@ impl VerifiedPureTheorem {
                 self.ensure_index
             ))
         })?;
-        TacticCertificate::from_proof_tactics(tactics).map_err(|error| {
+        SimpleProof::from_proof_tactics(tactics).map_err(|error| {
             ClickError::new(format!(
                 "pure theorem `{}` ensure {} recorded an invalid surface certificate: {error:?}",
                 self.theorem_definition.name(),
@@ -2142,7 +2493,7 @@ impl VerifiedPureTheorem {
     }
 
     pub fn expanded_proof_source(&self) -> Result<String, ClickError> {
-        Ok(format_tactic_certificate(&self.proof_certificate()?))
+        Ok(format_simple_proof(&self.proof_certificate()?))
     }
 }
 

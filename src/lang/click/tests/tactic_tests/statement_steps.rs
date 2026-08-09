@@ -319,7 +319,7 @@ fn execute_step_records_a_point_checked_surface_expansion() {
     assert_eq!(premises.len(), 1);
     assert_eq!(expanded[1], ProofTactic::Normalize);
     assert_eq!(verified[0].expansion_blocker(), None);
-    TacticCertificate::from_proof_tactics(expanded)
+    SimpleProof::from_proof_tactics(expanded)
         .expect("the recorded expansion should be a surface certificate");
     let source = verified[0]
         .expanded_proof_source()
@@ -439,7 +439,7 @@ fn execute_step_omits_materialization_only_transport() {
             .any(|tactic| matches!(tactic, ProofTactic::TransportUsing { .. })),
         "{expanded:#?}"
     );
-    TacticCertificate::from_proof_tactics(expanded)
+    SimpleProof::from_proof_tactics(expanded)
         .expect("the materialization-free expansion should be a surface certificate");
     let execute_offset = click_source
         .find("step()")
@@ -506,7 +506,7 @@ fn execute_step_omits_materialized_mixed_snapshot_transport() {
             .any(|tactic| matches!(tactic, ProofTactic::TransportUsing { .. })),
         "{expanded:#?}"
     );
-    TacticCertificate::from_proof_tactics(expanded)
+    SimpleProof::from_proof_tactics(expanded)
         .expect("the mixed-snapshot expansion should be a surface certificate");
     let execute_offset = click_source
         .find("step()")
@@ -579,7 +579,7 @@ fn execute_step_omits_materialization_transport_across_statements() {
         0,
         "{expanded:#?}"
     );
-    TacticCertificate::from_proof_tactics(expanded)
+    SimpleProof::from_proof_tactics(expanded)
         .expect("the multi-statement expansion should be a surface certificate");
     let execute_offset = click_source
         .find("step()")

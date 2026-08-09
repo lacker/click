@@ -340,14 +340,14 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_auto(
         click_function_environment,
         resource_environment,
         theorem_environment,
-        certificate.tactics(),
+        &certificate.to_proof_tactics(),
         ProofTacticSource::GeneratedBy { source_index: 0 },
     )
     .map_err(|error| {
         ClickError::new(format!(
             "`auto` surface certificate failed complete replay for `{}.contract`:\n{}\n{}",
             function_block.signature().name(),
-            format_tactic_certificate(&certificate),
+            format_simple_proof(&certificate),
             error.message()
         ))
     })?;
@@ -367,7 +367,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_auto(
 /// before acceptance.
 ///
 /// Mid-execution the invariant is already structural — a smart step can only
-/// continue from the replay context `replay_smart_plan` returns, and there is
+/// continue from the replay context `complete_smart_tactic` returns, and there is
 /// no other way to obtain one, so "accepted without a certificate" is not
 /// spellable. At function exit the per-claim drain used to spell it easily:
 /// closure was `closed_claims[i] = true`, a bool any site could set, with the
@@ -462,13 +462,13 @@ mod exit_claim {
 
         /// Close a claim with the certificate a smart exit `simp` generated
         /// for it. Private to this module, and inside it reachable only from
-        /// `discharge_exit_simp_claim`: the `TacticCertificate` is the
+        /// `discharge_exit_simp_claim`: the `SimpleProof` is the
         /// evidence, and it exists only once the generator replayed the
         /// tactics through the replay judgment and got the claim's kernel
         /// goal back.
-        fn by_replayed_certificate(certificate: &TacticCertificate) -> Self {
+        fn by_replayed_certificate(certificate: &SimpleProof) -> Self {
             Self::Closed(ClosedClaim {
-                certificate: ClaimCertificate::Claim(certificate.tactics().to_vec()),
+                certificate: ClaimCertificate::Claim(certificate.to_proof_tactics().to_vec()),
             })
         }
 
@@ -476,7 +476,7 @@ mod exit_claim {
         /// certificate. Taking the certificate is the point: the only way to
         /// hold one is to have run `certify_grouped_outcome_simp_transition`,
         /// which builds every claim's `have` and replays it.
-        pub(super) fn by_grouped_transition(_certificate: &TacticCertificate) -> Self {
+        pub(super) fn by_grouped_transition(_certificate: &SimpleProof) -> Self {
             Self::Closed(ClosedClaim {
                 certificate: ClaimCertificate::GroupedTransition,
             })
@@ -614,8 +614,8 @@ mod exit_claim {
     ) -> Result<ExitSimpClosure, ClickError> {
         let outcome = context.outcome;
         if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
-            let certificate = TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize])
-                .map_err(|error| {
+            let certificate =
+                SimpleProof::from_proof_tactics(&[ProofTactic::Normalize]).map_err(|error| {
                     context.certificate_failure(
                         claim_label,
                         &format!("divergence produced an invalid normalize certificate: {error:?}"),
@@ -744,7 +744,7 @@ mod exit_claim {
                     .map_err(|error| error.message().to_string())
                 }),
             (None, Ensure::Resource(_), _) => {
-                TacticCertificate::from_proof_tactics(&[ProofTactic::Assumption]).map_err(|error| {
+                SimpleProof::from_proof_tactics(&[ProofTactic::Assumption]).map_err(|error| {
                     format!("resource `simp` produced an invalid surface certificate: {error:?}")
                 })
             }
@@ -1423,10 +1423,9 @@ pub(super) fn finish_ordered_proof_replay(
                             application: application.clone(),
                             premises,
                         };
-                        let certificate = TacticCertificate::from_proof_tactics(
-                            std::slice::from_ref(&surface_tactic),
-                        )
-                        .expect("post-execution smart apply must lower to a simple tactic");
+                        let certificate =
+                            SimpleProof::from_proof_tactics(std::slice::from_ref(&surface_tactic))
+                                .expect("post-execution smart apply must lower to a simple tactic");
                         let requirements_before = path_requirements.clone();
                         path_requirements = replay_outcome_apply_certificate(
                             &certificate,
@@ -1456,7 +1455,7 @@ pub(super) fn finish_ordered_proof_replay(
                             &path_requirements,
                             &mut surface_certificate_facts,
                         );
-                        for tactic in certificate.tactics() {
+                        for tactic in certificate.to_proof_tactics() {
                             record_post_execution_surface_tactic(
                                 &mut path_surface_post_tactics,
                                 &mut path_deferred_capture_tactics,
@@ -1786,13 +1785,13 @@ pub(super) fn finish_ordered_proof_replay(
                                     ) else {
                                         let failed_tactic = ProofTactic::Have(surface_have);
                                         let failed_certificate =
-                                            TacticCertificate::from_proof_tactics(
+                                            SimpleProof::from_proof_tactics(
                                                 std::slice::from_ref(&failed_tactic),
                                             )
                                             .expect("post-execution smart have must lower to a simple tactic");
                                         return Err(ClickError::new(format!(
                                             "`{proof_label}` path {path_index}, tactic {tactic_index}: post-execution smart `have` certificate failed replay:\n{}\n{}",
-                                            format_tactic_certificate(&failed_certificate),
+                                            format_simple_proof(&failed_certificate),
                                             initial_error.message(),
                                         )));
                                     };
@@ -1801,13 +1800,13 @@ pub(super) fn finish_ordered_proof_replay(
                                         Err(fallback_error) => {
                                             let failed_tactic = ProofTactic::Have(fallback);
                                             let failed_certificate =
-                                                TacticCertificate::from_proof_tactics(
+                                                SimpleProof::from_proof_tactics(
                                                     std::slice::from_ref(&failed_tactic),
                                                 )
                                                 .expect("post-execution smart have fallback must be a simple tactic");
                                             return Err(ClickError::new(format!(
                                                 "`{proof_label}` path {path_index}, tactic {tactic_index}: post-execution smart `have` fallback certificate failed replay:\n{}\n{}",
-                                                format_tactic_certificate(&failed_certificate),
+                                                format_simple_proof(&failed_certificate),
                                                 fallback_error.message(),
                                             )));
                                         }
@@ -1881,7 +1880,7 @@ pub(super) fn finish_ordered_proof_replay(
                                 }
                             };
                             let mut surface_tactic = ProofTactic::Have(have.clone());
-                            if let Err(error) = TacticCertificate::from_proof_tactics(
+                            if let Err(error) = SimpleProof::from_proof_tactics(
                                 std::slice::from_ref(&surface_tactic),
                             ) {
                                 match lower_smart_simp_suffix_have(
@@ -1982,10 +1981,8 @@ pub(super) fn finish_ordered_proof_replay(
                                     "smart post-execution transport must emit explicit premises"
                                 )
                             };
-                            TacticCertificate::from_proof_tactics(std::slice::from_ref(
-                                &surface_tactic,
-                            ))
-                            .expect("explicit fact transport must be a simple certificate");
+                            SimpleProof::from_proof_tactics(std::slice::from_ref(&surface_tactic))
+                                .expect("explicit fact transport must be a simple certificate");
                             replay_fact_transport_at_outcome(
                                 source,
                                 target,
@@ -2717,10 +2714,10 @@ pub(super) fn finish_ordered_proof_replay(
                                 closures[claim_index] =
                                     ClaimClosure::by_grouped_transition(&certificate);
                             }
-                            path_grouped_surface_closers.extend_from_slice(certificate.tactics());
+                            path_grouped_surface_closers.extend(certificate.to_proof_tactics());
                             if capturing_this_tactic {
                                 path_deferred_capture_tactics
-                                    .extend_from_slice(certificate.tactics());
+                                    .extend(certificate.to_proof_tactics());
                             }
                         } else if capturing_this_tactic {
                             for claim_index in newly_closed {
@@ -2925,12 +2922,13 @@ pub(super) fn finish_ordered_proof_replay(
                     claim: claim.verified_claim(),
                     proof_kind: ProofKind::TacticScript,
                     proof_tactics: Some(certificate_tactics.to_vec()),
-                    expanded_proof_tactics: replay
-                        .surface_replay
-                        .blocker
-                        .is_none()
-                        .then(|| replay.surface_replay.tactics.clone()),
-                    expansion_blocker: replay.surface_replay.blocker.clone(),
+                    expanded_proof_tactics: replay.simple_proof_builder.blocker.is_none().then(
+                        || {
+                            SimpleProof::from_steps(replay.simple_proof_builder.steps.clone())
+                                .to_proof_tactics()
+                        },
+                    ),
+                    expansion_blocker: replay.simple_proof_builder.blocker.clone(),
                     specification: specification.clone(),
                     theorem: theorem.clone(),
                     concrete_loop_execution: replay.concrete_loop_execution,
@@ -2956,12 +2954,12 @@ pub(super) fn finish_ordered_proof_replay(
             deferred_capture_branches_by_path.push(deferred_capture_branch_path);
         }
         if replay.grouped_contract {
-            let mut expanded = replay.surface_replay.clone();
+            let mut expanded = replay.simple_proof_builder.clone();
             if surface_post_tactics_by_path
                 .iter()
                 .any(|tactics| !tactics.is_empty())
                 && let Err(message) = append_surface_tactics_by_leaf(
-                    &mut expanded.tactics,
+                    &mut expanded.steps,
                     &surface_post_tactics_by_path,
                 )
             {
@@ -2971,25 +2969,27 @@ pub(super) fn finish_ordered_proof_replay(
                 .iter()
                 .any(|tactics| !tactics.is_empty())
                 && let Err(message) = append_surface_tactics_by_leaf(
-                    &mut expanded.tactics,
+                    &mut expanded.steps,
                     &surface_grouped_closers_by_path,
                 )
             {
                 expanded.block(message);
             }
             for theorem in &mut verified {
-                theorem.expanded_proof_tactics =
-                    expanded.blocker.is_none().then(|| expanded.tactics.clone());
+                theorem.expanded_proof_tactics = expanded
+                    .blocker
+                    .is_none()
+                    .then(|| SimpleProof::from_steps(expanded.steps.clone()).to_proof_tactics());
                 theorem.expansion_blocker = expanded.blocker.clone();
             }
         } else {
             for (claim_index, claim) in claims.iter().enumerate() {
-                let mut expanded = replay.surface_replay.clone();
+                let mut expanded = replay.simple_proof_builder.clone();
                 if surface_post_tactics_by_path
                     .iter()
                     .any(|tactics| !tactics.is_empty())
                     && let Err(message) = append_surface_tactics_by_leaf(
-                        &mut expanded.tactics,
+                        &mut expanded.steps,
                         &surface_post_tactics_by_path,
                     )
                 {
@@ -2999,7 +2999,7 @@ pub(super) fn finish_ordered_proof_replay(
                     .iter()
                     .any(|tactics| !tactics.is_empty())
                     && let Err(message) = append_surface_tactics_by_leaf(
-                        &mut expanded.tactics,
+                        &mut expanded.steps,
                         &surface_closers_by_claim[claim_index],
                     )
                 {
@@ -3008,8 +3008,9 @@ pub(super) fn finish_ordered_proof_replay(
                 let verified_claim = claim.verified_claim();
                 for theorem in &mut verified {
                     if theorem.claim == verified_claim {
-                        theorem.expanded_proof_tactics =
-                            expanded.blocker.is_none().then(|| expanded.tactics.clone());
+                        theorem.expanded_proof_tactics = expanded.blocker.is_none().then(|| {
+                            SimpleProof::from_steps(expanded.steps.clone()).to_proof_tactics()
+                        });
                         theorem.expansion_blocker = expanded.blocker.clone();
                     }
                 }
@@ -3038,20 +3039,28 @@ pub(super) fn finish_ordered_proof_replay(
             let contributes_no_tactics = deferred_capture_tactics_by_path
                 .iter()
                 .all(|tactics| tactics.is_empty());
-            let mut capture = SurfaceReplay::default();
+            let mut capture = SimpleProofBuilder::default();
             if !contributes_no_tactics {
-                capture.tactics = deferred.branch_skeleton.clone();
+                let mut capture_tactics = deferred.branch_skeleton.clone();
                 for (branch_path, path_tactics) in deferred_capture_branches_by_path
                     .iter()
                     .zip(&deferred_capture_tactics_by_path)
                 {
                     if let Err(message) = append_surface_tactics_at_branch_path(
-                        &mut capture.tactics,
+                        &mut capture_tactics,
                         branch_path,
                         path_tactics,
                     ) {
                         capture.block(message);
                         break;
+                    }
+                }
+                if capture.blocker.is_none() {
+                    match SimpleProof::from_proof_tactics(&capture_tactics) {
+                        Ok(proof) => capture.steps = proof.steps().to_vec(),
+                        Err(error) => capture.block(format!(
+                            "deferred expansion produced a non-simple proof: {error:?}"
+                        )),
                     }
                 }
             }

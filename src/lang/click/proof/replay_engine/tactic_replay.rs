@@ -216,14 +216,14 @@ fn execute_frontier_local_loop(
         certificates
             .initialize
             .as_ref()
-            .map(|certificate| certificate.tactics().to_vec())
+            .map(|certificate| certificate.to_proof_tactics().to_vec())
             .unwrap_or_else(|| vec![ProofTactic::Assumption]),
     ));
     expanded_loop.preserve_proof = Some(Proof::Script(
         certificates
             .preserve
             .as_ref()
-            .map(|certificate| certificate.tactics().to_vec())
+            .map(|certificate| certificate.to_proof_tactics().to_vec())
             .unwrap_or_else(|| vec![ProofTactic::Assumption]),
     ));
     for (item_index, item) in expanded_loop.items.iter_mut().enumerate() {
@@ -231,7 +231,7 @@ fn execute_frontier_local_loop(
             continue;
         }
         if let Some(certificate) = certificates.effects.get(&item_index) {
-            item.proof = Proof::Script(certificate.tactics().to_vec());
+            item.proof = Proof::Script(certificate.to_proof_tactics().to_vec());
         }
     }
     let local_function_environment = function_environment.clone().with_verified_loop_rules(
@@ -312,7 +312,9 @@ fn execute_frontier_local_loop(
         .frontier_loop_clauses
         .push(loop_template.bound_to_loop(loop_index));
     replay.frontier_loop_rules.push(loop_rule);
-    replay.surface_replay.push(ProofTactic::Loop(expanded_loop));
+    replay
+        .simple_proof_builder
+        .push_source_tactic(ProofTactic::Loop(expanded_loop));
     Ok(())
 }
 
@@ -446,7 +448,7 @@ fn replay_frontier_local_loop_tactic(
     )?;
     if capture_this_tactic {
         return Err(finish_tactic_expansion_capture(
-            &replay.surface_replay,
+            &replay.simple_proof_builder,
             false,
         ));
     }
@@ -510,7 +512,7 @@ fn replay_linear_tactics_without_frontier_loops(
             });
         }
         if !deferred_post_execution {
-            record_surface_replay_tactic(
+            append_simple_proof_step_for_internal_tactic(
                 &mut replay,
                 &state,
                 &requirement_pure_facts,
@@ -620,13 +622,13 @@ fn replay_linear_tactics_without_frontier_loops(
                     )
                 ))
             })?;
-            let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::TransportUsing {
+            let plan = InternalProofPlan::from_planned_tactics(&[ProofTactic::TransportUsing {
                 source: surface_source.clone(),
                 target: surface_target.clone(),
                 premises,
             }])
             .expect("explicit fact transport is a simple tactic");
-            let result = replay_smart_plan(
+            let result = complete_smart_tactic(
                 ProofReplayContext {
                     state,
                     pure_facts: requirement_pure_facts,
@@ -655,7 +657,7 @@ fn replay_linear_tactics_without_frontier_loops(
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
             if capture_this_tactic {
                 return Err(finish_tactic_expansion_capture(
-                    &replay.surface_replay,
+                    &replay.simple_proof_builder,
                     false,
                 ));
             }
@@ -683,12 +685,12 @@ fn replay_linear_tactics_without_frontier_loops(
                 predicate_environment,
                 click_function_environment,
             )?;
-            let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::ApplyTheoremUsing {
+            let plan = InternalProofPlan::from_planned_tactics(&[ProofTactic::ApplyTheoremUsing {
                 application: application.clone(),
                 premises,
             }])
             .expect("explicit theorem application is a simple tactic");
-            let result = replay_smart_plan(
+            let result = complete_smart_tactic(
                 ProofReplayContext {
                     state,
                     pure_facts: requirement_pure_facts,
@@ -717,7 +719,7 @@ fn replay_linear_tactics_without_frontier_loops(
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
             if capture_this_tactic {
                 return Err(finish_tactic_expansion_capture(
-                    &replay.surface_replay,
+                    &replay.simple_proof_builder,
                     false,
                 ));
             }
@@ -1009,18 +1011,24 @@ fn replay_linear_tactics_without_frontier_loops(
                         click_function_environment,
                     ) {
                         Ok(premises) => {
-                            replay.surface_replay.push(ProofTactic::TransportUsing {
-                                source: surface_source.clone(),
-                                target: surface_target.clone(),
-                                premises,
-                            });
+                            replay.simple_proof_builder.push_step(
+                                SimpleProofStep::TransportUsing {
+                                    source: surface_source.clone(),
+                                    target: surface_target.clone(),
+                                    premises,
+                                },
+                            );
                         }
-                        Err(error) => replay.surface_replay.block(fact_transport_planning_failure(
-                            surface_source,
-                            surface_target,
-                            &replay.unfolded_predicates,
-                            &error,
-                        )),
+                        Err(error) => {
+                            replay
+                                .simple_proof_builder
+                                .block(fact_transport_planning_failure(
+                                    surface_source,
+                                    surface_target,
+                                    &replay.unfolded_predicates,
+                                    &error,
+                                ))
+                        }
                     }
                 }
                 let transport_assumptions = transition_facts
@@ -1357,7 +1365,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::CertifiedAlternatives(alternatives) => {
-                let outer_surface_replay = replay.surface_replay.clone();
+                let outer_simple_proof = replay.simple_proof_builder.clone();
                 let base = ProofReplayContext {
                     state: state.clone(),
                     pure_facts: requirement_pure_facts.clone(),
@@ -1368,7 +1376,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 let mut surface_paths = Vec::new();
                 for alternative in alternatives {
                     let mut alternative_base = base.clone();
-                    alternative_base.replay.surface_replay = SurfaceReplay::default();
+                    alternative_base.replay.simple_proof_builder = SimpleProofBuilder::default();
                     let result = replay_internal_plan(
                         alternative_base,
                         function_block,
@@ -1386,7 +1394,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         source_index,
                         alternative,
                     )?;
-                    surface_paths.push(result.replay.surface_replay.clone());
+                    surface_paths.push(result.replay.simple_proof_builder.clone());
                     completed.push(BoundedProofFrontier {
                         replay: result.replay,
                         state: result.state,
@@ -1403,14 +1411,14 @@ fn replay_linear_tactics_without_frontier_loops(
                     claim_label,
                     tactic_index,
                 )?;
-                replay.surface_replay = outer_surface_replay;
+                replay.simple_proof_builder = outer_simple_proof;
                 match synthesize_surface_alternatives(surface_paths) {
-                    Ok(tactics) => {
-                        for tactic in tactics {
-                            replay.surface_replay.push(tactic);
+                    Ok(steps) => {
+                        for step in steps {
+                            replay.simple_proof_builder.push_step(step);
                         }
                     }
-                    Err(message) => replay.surface_replay.block(format!(
+                    Err(message) => replay.simple_proof_builder.block(format!(
                         "could not lower certified branch alternatives: {message}"
                     )),
                 }
@@ -1441,14 +1449,14 @@ fn replay_linear_tactics_without_frontier_loops(
                     LoopStepPolicy::EnterBody,
                 )?;
                 let certificate =
-                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
+                    InternalProofPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `step` planned a non-certificate tactic {:?}",
                                 error.smart_tactic()
                             ))
                         })?;
-                let result = replay_smart_plan(
+                let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,
                         pure_facts: requirement_pure_facts,
@@ -1516,14 +1524,14 @@ fn replay_linear_tactics_without_frontier_loops(
                     )?;
                 }
                 let certificate =
-                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
+                    InternalProofPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `execute` planned a non-certificate tactic {:?}",
                                 error.smart_tactic()
                             ))
                         })?;
-                let result = replay_smart_plan(
+                let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,
                         pure_facts: requirement_pure_facts,
@@ -1578,14 +1586,14 @@ fn replay_linear_tactics_without_frontier_loops(
                     StatementPrerequisitePolicy::Planning,
                 )?;
                 let certificate =
-                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
+                    InternalProofPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `execute_until` planned a non-certificate tactic {:?}",
                                 error.smart_tactic()
                             ))
                         })?;
-                let result = replay_smart_plan(
+                let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,
                         pure_facts: requirement_pure_facts,
@@ -1616,12 +1624,12 @@ fn replay_linear_tactics_without_frontier_loops(
             ProofTactic::SmartFrame(region_ref) => {
                 if region_ref.is_some() {
                     let certificate =
-                        ProofReplayPlan::from_planned_tactics(&[ProofTactic::FrameUsing {
+                        InternalProofPlan::from_planned_tactics(&[ProofTactic::FrameUsing {
                             region: region_ref.clone(),
                             premises: Vec::new(),
                         }])
                         .expect("exact frame is a simple tactic");
-                    let result = replay_smart_plan(
+                    let result = complete_smart_tactic(
                         ProofReplayContext {
                             state,
                             pure_facts: requirement_pure_facts,
@@ -1746,11 +1754,11 @@ fn replay_linear_tactics_without_frontier_loops(
                     )?);
                 }
                 let certificate =
-                    ProofReplayPlan::from_planned_tactics(&[ProofTactic::CertifiedFrame(
+                    InternalProofPlan::from_planned_tactics(&[ProofTactic::CertifiedFrame(
                         path_derivations,
                     )])
                     .expect("certified frame is a simple tactic");
-                let result = replay_smart_plan(
+                let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,
                         pure_facts: requirement_pure_facts,
@@ -2095,12 +2103,14 @@ fn replay_linear_tactics_without_frontier_loops(
                         click_function_environment,
                     ) {
                         Ok(premises) => {
-                            replay.surface_replay.push(ProofTactic::ApplyTheoremUsing {
-                                application: application.clone(),
-                                premises,
-                            });
+                            replay.simple_proof_builder.push_step(
+                                SimpleProofStep::ApplyTheoremUsing {
+                                    application: application.clone(),
+                                    premises,
+                                },
+                            );
                         }
-                        Err(error) => replay.surface_replay.block(format!(
+                        Err(error) => replay.simple_proof_builder.block(format!(
                             "could not make theorem application premises explicit: {}",
                             error.message()
                         )),
@@ -2352,8 +2362,8 @@ fn replay_linear_tactics_without_frontier_loops(
                     )?
                 };
                 if let Some(mut certificate) = surface_certificate {
-                    let replay_certificate = |certificate: &TacticCertificate| {
-                        verify_surface_certificate(
+                    let replay_certificate = |certificate: &SimpleProof| {
+                        replay_simple_proof(
                             ProofReplayContext {
                                 state: state.clone(),
                                 // Replay from the same certified context
@@ -2382,7 +2392,7 @@ fn replay_linear_tactics_without_frontier_loops(
                             certificate,
                         )
                     };
-                    let initial_replay = pure_goal_certificate_gateway(
+                    let initial_replay = pure_goal_simple_proof_gateway(
                         claim_label,
                         || Ok(certificate.clone()),
                         replay_certificate,
@@ -2403,7 +2413,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         let Some(fallback) = fallback else {
                             return Err(initial_error);
                         };
-                        pure_goal_certificate_gateway(
+                        pure_goal_simple_proof_gateway(
                             claim_label,
                             || Ok(fallback.clone()),
                             replay_certificate,
@@ -2411,9 +2421,9 @@ fn replay_linear_tactics_without_frontier_loops(
                         certificate = fallback;
                     }
                     replay
-                        .surface_replay
-                        .tactics
-                        .extend_from_slice(certificate.tactics());
+                        .simple_proof_builder
+                        .steps
+                        .extend(certificate.steps().iter().cloned());
                 }
                 // Do not teach certificate replay the search-time lowering of
                 // this goal until the generated surface certificate has
@@ -2591,7 +2601,7 @@ fn replay_linear_tactics_without_frontier_loops(
         }
         if capture_this_tactic && !deferred_post_execution && !deferred_region_simp {
             return Err(finish_tactic_expansion_capture(
-                &replay.surface_replay,
+                &replay.simple_proof_builder,
                 false,
             ));
         }

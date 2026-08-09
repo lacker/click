@@ -180,7 +180,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                                     .cloned()
                                     .collect::<Vec<_>>();
                                 let first_generated_tactic_index = tactics.len();
-                                tactics.extend(body_certificate.tactics().iter().cloned());
+                                tactics.extend(body_certificate.to_proof_tactics().iter().cloned());
                                 tactics.push(ProofTactic::Simp);
                                 (tactics, first_generated_tactic_index)
                             };
@@ -267,7 +267,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                         record_proof_site_tactic_expansion(
                             &site,
                             selected,
-                            initialization_certificate.tactics(),
+                            &initialization_certificate.to_proof_tactics(),
                         );
                     }
                 } else {
@@ -285,7 +285,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                         record_proof_site_tactic_expansion(
                             &site,
                             source_index,
-                            initialization_certificate.tactics(),
+                            &initialization_certificate.to_proof_tactics(),
                         );
                     }
                     finish_proof_site_expansion_capture(&site, &initialization_certificate)?;
@@ -465,7 +465,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     surface_propositions: &SurfacePropositionMap,
     prelowered_goal: Option<&Proposition>,
     theorem_environment: &TheoremEnvironment,
-) -> Result<(Proposition, TacticCertificate), ClickError> {
+) -> Result<(Proposition, SimpleProof), ClickError> {
     let applied_theorem_script;
     let lowered_applied_theorem_script = matches!(proof, Proof::Script(tactics)
     if tactics.iter().any(|tactic| matches!(
@@ -522,11 +522,11 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         proof
     };
     if let Proof::Script(tactics) = proof
-        && let Ok(certificate) = TacticCertificate::from_proof_tactics(tactics)
+        && let Ok(certificate) = SimpleProof::from_proof_tactics(tactics)
     {
         if lowered_applied_theorem_script
             && let Some(source_index) = selected_tactic_index_for_site(proof_site)
-            && let Some(tactic) = certificate.tactics().get(source_index)
+            && let Some(tactic) = certificate.to_proof_tactics().get(source_index)
         {
             record_proof_site_tactic_expansion(
                 proof_site,
@@ -582,21 +582,21 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         &unfolded_predicates,
         prelowered_goal,
     )?;
-    let mut surface_replay = TacticReplayState {
+    let mut simple_proof_builder = TacticReplayState {
         surface_propositions: surface_propositions.clone(),
         program_point_states: program_point_states.clone(),
         ..TacticReplayState::default()
     };
-    surface_replay
+    simple_proof_builder
         .surface_propositions
         .record_lowering(proposition, &fact)?;
     if !unfolded_predicates.is_empty() {
         let assumptions = assumptions_from_propositions(available);
-        let recorded_unfoldings = surface_replay
+        let recorded_unfoldings = simple_proof_builder
             .surface_propositions
             .kernel_facts()
             .flat_map(|kernel| {
-                surface_replay
+                simple_proof_builder
                     .surface_propositions
                     .surfaces(kernel)
                     .filter_map(|surface| {
@@ -637,7 +637,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             })
             .collect::<Vec<_>>();
         for (surface, kernel) in recorded_unfoldings {
-            surface_replay
+            simple_proof_builder
                 .surface_propositions
                 .record_lowering(&surface, &kernel)?;
         }
@@ -655,12 +655,12 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             &assumptions,
         )
         .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
-        surface_replay
+        simple_proof_builder
             .surface_propositions
             .record_lowering(&unfolded_surface, &unfolded_fact)?;
     }
     let surface_proof = surface_simp_plan_proof(
-        &mut surface_replay,
+        &mut simple_proof_builder,
         state,
         available,
         parameters,
@@ -676,7 +676,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             "`{claim_label}` did not lower to an explicit proof script"
         )));
     };
-    let certificate = TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+    let certificate = SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` produced an invalid point-pure certificate: {error:?}"
         ))
@@ -693,12 +693,12 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         });
         if let Some(source_index) = source_index
             && matches!(source_tactics.get(source_index), Some(ProofTactic::Simp))
-            && source_index <= certificate.tactics().len()
+            && source_index <= certificate.to_proof_tactics().len()
         {
             record_proof_site_tactic_expansion(
                 proof_site,
                 source_index,
-                &certificate.tactics()[source_index..],
+                &certificate.to_proof_tactics()[source_index..],
             );
         }
     }

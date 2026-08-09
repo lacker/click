@@ -78,7 +78,7 @@ pub(super) struct TacticReplayState {
     pub(super) execution_abstraction: bool,
     pub(super) planned_tactics: Vec<ProofTactic>,
     pub(super) surface_propositions: SurfacePropositionMap,
-    pub(super) surface_replay: SurfaceReplay,
+    pub(super) simple_proof_builder: SimpleProofBuilder,
     pub(super) deferred_tactic_capture: Option<DeferredTacticCapture>,
     /// C branch choices enclosing a selected tactic in their common
     /// continuation. Deferred post-execution expansion is finalized after
@@ -104,8 +104,8 @@ pub(super) struct ReplayCaseAssumption {
 }
 
 #[derive(Clone, Default)]
-pub(super) struct SurfaceReplay {
-    pub(super) tactics: Vec<ProofTactic>,
+pub(super) struct SimpleProofBuilder {
+    pub(super) steps: Vec<SimpleProofStep>,
     pub(super) blocker: Option<String>,
     pub(super) last_step_entry: Option<ProgramPointRef>,
     pub(super) path_choices: Vec<SurfacePathChoice>,
@@ -249,7 +249,7 @@ pub(in crate::lang::click) fn capture_c0_proof_site_expansion(
 
 pub(super) fn finish_proof_site_expansion_capture(
     site: &ProofSite,
-    certificate: &TacticCertificate,
+    certificate: &SimpleProof,
 ) -> Result<(), ClickError> {
     let captured = TACTIC_EXPANSION_PROBE.with(|probe| {
         let mut slot = probe.borrow_mut();
@@ -260,7 +260,7 @@ pub(super) fn finish_proof_site_expansion_capture(
             return false;
         }
         probe.active = true;
-        probe.result = Some(Ok(certificate.tactics().to_vec()));
+        probe.result = Some(Ok(certificate.to_proof_tactics().to_vec()));
         true
     });
     if captured {
@@ -354,13 +354,13 @@ pub(super) fn begin_tactic_expansion_capture(
             return None;
         }
         probe.active = true;
-        let branch_skeleton = surface_branch_skeleton(&replay.surface_replay.tactics);
-        let last_step_entry = replay.surface_replay.last_step_entry.clone();
-        replay.surface_replay = SurfaceReplay {
+        let branch_skeleton = surface_branch_skeleton(&replay.simple_proof_builder.steps);
+        let last_step_entry = replay.simple_proof_builder.last_step_entry.clone();
+        replay.simple_proof_builder = SimpleProofBuilder {
             last_step_entry,
-            ..SurfaceReplay::default()
+            ..SimpleProofBuilder::default()
         };
-        Some(branch_skeleton)
+        Some(SimpleProof::from_steps(branch_skeleton).to_proof_tactics())
     })
 }
 
@@ -369,7 +369,7 @@ pub(super) fn begin_tactic_expansion_capture(
 /// rewrite removes it. Every other caller keeps the empty guard — for them an
 /// empty capture means the lowering lost the tactics, not that none exist.
 pub(super) fn finish_tactic_expansion_capture(
-    surface_replay: &SurfaceReplay,
+    simple_proof_builder: &SimpleProofBuilder,
     allow_empty: bool,
 ) -> ClickError {
     let captured = TACTIC_EXPANSION_PROBE.with(|probe| {
@@ -377,12 +377,14 @@ pub(super) fn finish_tactic_expansion_capture(
         let Some(probe) = slot.as_mut() else {
             return false;
         };
-        probe.result = Some(match &surface_replay.blocker {
+        probe.result = Some(match &simple_proof_builder.blocker {
             Some(blocker) => Err(format!("could not expand selected tactic: {blocker}")),
-            None if surface_replay.tactics.is_empty() && !allow_empty => {
+            None if simple_proof_builder.steps.is_empty() && !allow_empty => {
                 Err("selected tactic produced no standalone surface expansion".to_string())
             }
-            None => Ok(surface_replay.tactics.clone()),
+            None => {
+                Ok(SimpleProof::from_steps(simple_proof_builder.steps.clone()).to_proof_tactics())
+            }
         });
         true
     });
@@ -462,17 +464,54 @@ pub(super) struct SurfacePathChoice {
     pub(super) tactic_offset: usize,
 }
 
-impl SurfaceReplay {
-    pub(super) fn push(&mut self, tactic: ProofTactic) {
+impl SimpleProofBuilder {
+    pub(super) fn push_step(&mut self, step: SimpleProofStep) {
         if self.blocker.is_none() {
-            append_surface_tactic_to_leaves(&mut self.tactics, tactic);
+            append_surface_step_to_leaves(&mut self.steps, step);
+        }
+    }
+
+    pub(super) fn push_source_tactic(&mut self, tactic: ProofTactic) {
+        if self.blocker.is_some() {
+            return;
+        }
+        match SimpleProof::from_proof_tactics(std::slice::from_ref(&tactic)) {
+            Ok(proof) => {
+                let [step] = proof.steps.as_slice() else {
+                    unreachable!("one surface tactic must produce one simple proof step")
+                };
+                self.push_step(step.clone());
+            }
+            Err(error) => self.block(format!(
+                "attempted to record a non-simple surface proof step at {:?}: {:?}",
+                error.path(),
+                error.tactic_class()
+            )),
+        }
+    }
+
+    pub(super) fn push_have(&mut self, proposition: ClickProposition, proof: Proof) {
+        let Proof::Script(tactics) = proof else {
+            self.block("generated `have` proof was not an explicit simple script");
+            return;
+        };
+        match SimpleProof::from_proof_tactics(&tactics) {
+            Ok(proof) => self.push_step(SimpleProofStep::Have {
+                proposition,
+                proof: Box::new(proof),
+            }),
+            Err(error) => self.block(format!(
+                "generated `have` body was not a simple proof at {:?}: {:?}",
+                error.path(),
+                error.tactic_class()
+            )),
         }
     }
 
     pub(super) fn block(&mut self, message: impl Into<String>) {
         if self.blocker.is_none() {
             self.blocker = Some(message.into());
-            self.tactics.clear();
+            self.steps.clear();
             self.path_choices.clear();
         }
     }
@@ -494,53 +533,74 @@ pub(super) fn record_post_execution_surface_tactic(
     path_tactics.push(tactic);
 }
 
-pub(super) fn append_surface_tactic_to_leaves(tactics: &mut Vec<ProofTactic>, tactic: ProofTactic) {
-    if let Some(ProofTactic::If(proof_if)) = tactics.last_mut() {
-        append_surface_tactic_to_leaves(&mut proof_if.then_tactics, tactic.clone());
-        append_surface_tactic_to_leaves(&mut proof_if.else_tactics, tactic);
+pub(super) fn append_surface_step_to_leaves(
+    steps: &mut Vec<SimpleProofStep>,
+    step: SimpleProofStep,
+) {
+    if let Some(SimpleProofStep::If {
+        then_proof,
+        else_proof,
+        ..
+    }) = steps.last_mut()
+    {
+        append_surface_step_to_leaves(&mut then_proof.steps, step.clone());
+        append_surface_step_to_leaves(&mut else_proof.steps, step);
     } else {
-        tactics.push(tactic);
+        steps.push(step);
     }
 }
 
 pub(super) fn append_surface_tactics_by_leaf(
-    tactics: &mut Vec<ProofTactic>,
+    steps: &mut Vec<SimpleProofStep>,
     path_tactics: &[Vec<ProofTactic>],
 ) -> Result<(), String> {
+    let path_steps = path_tactics
+        .iter()
+        .map(|tactics| {
+            SimpleProof::from_proof_tactics(tactics)
+                .map(|proof| proof.steps)
+                .map_err(|error| format!("path contained a non-simple tactic: {error:?}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     // Distinct C execution paths do not necessarily correspond to distinct
     // surface proof branches.  When every path produced the same certificate,
     // it is path-independent and belongs on every existing surface leaf.
-    if let Some(common) = path_tactics.first()
-        && path_tactics.iter().all(|path| path == common)
+    if let Some(common) = path_steps.first()
+        && path_steps.iter().all(|path| path == common)
     {
-        for tactic in common {
-            append_surface_tactic_to_leaves(tactics, tactic.clone());
+        for step in common {
+            append_surface_step_to_leaves(steps, step.clone());
         }
         return Ok(());
     }
 
     pub(super) fn append(
-        tactics: &mut Vec<ProofTactic>,
-        path_tactics: &[Vec<ProofTactic>],
+        steps: &mut Vec<SimpleProofStep>,
+        path_steps: &[Vec<SimpleProofStep>],
         next_path: &mut usize,
     ) {
-        if let Some(ProofTactic::If(proof_if)) = tactics.last_mut() {
-            append(&mut proof_if.then_tactics, path_tactics, next_path);
-            append(&mut proof_if.else_tactics, path_tactics, next_path);
-        } else if let Some(suffix) = path_tactics.get(*next_path) {
-            tactics.extend(suffix.iter().cloned());
+        if let Some(SimpleProofStep::If {
+            then_proof,
+            else_proof,
+            ..
+        }) = steps.last_mut()
+        {
+            append(&mut then_proof.steps, path_steps, next_path);
+            append(&mut else_proof.steps, path_steps, next_path);
+        } else if let Some(suffix) = path_steps.get(*next_path) {
+            steps.extend(suffix.iter().cloned());
             *next_path += 1;
         }
     }
 
     let mut next_path = 0;
-    append(tactics, path_tactics, &mut next_path);
-    if next_path == path_tactics.len() {
+    append(steps, &path_steps, &mut next_path);
+    if next_path == path_steps.len() {
         Ok(())
     } else {
         Err(format!(
             "surface/certificate path coverage diverged at p{next_path}: surface has {next_path} paths but frame certificate has {}",
-            path_tactics.len()
+            path_steps.len()
         ))
     }
 }
@@ -656,23 +716,33 @@ pub(super) fn surface_branch_path_for_outcome(
     }
 }
 
-pub(super) fn surface_branch_skeleton(tactics: &[ProofTactic]) -> Vec<ProofTactic> {
-    let Some(proof_if) = tactics.iter().rev().find_map(|tactic| match tactic {
-        ProofTactic::If(proof_if) => Some(proof_if),
-        _ => None,
-    }) else {
+pub(super) fn surface_branch_skeleton(steps: &[SimpleProofStep]) -> Vec<SimpleProofStep> {
+    let Some((condition, then_proof, else_proof)) =
+        steps.iter().rev().find_map(|step| match step {
+            SimpleProofStep::If {
+                condition,
+                then_proof,
+                else_proof,
+            } => Some((condition, then_proof, else_proof)),
+            _ => None,
+        })
+    else {
         return Vec::new();
     };
-    vec![ProofTactic::If(ProofIf {
-        condition: proof_if.condition.clone(),
-        then_tactics: surface_branch_skeleton(&proof_if.then_tactics),
-        else_tactics: surface_branch_skeleton(&proof_if.else_tactics),
-    })]
+    vec![SimpleProofStep::If {
+        condition: condition.clone(),
+        then_proof: Box::new(SimpleProof::from_steps(surface_branch_skeleton(
+            then_proof.steps(),
+        ))),
+        else_proof: Box::new(SimpleProof::from_steps(surface_branch_skeleton(
+            else_proof.steps(),
+        ))),
+    }]
 }
 
 pub(super) fn synthesize_surface_alternatives(
-    paths: Vec<SurfaceReplay>,
-) -> Result<Vec<ProofTactic>, String> {
+    paths: Vec<SimpleProofBuilder>,
+) -> Result<Vec<SimpleProofStep>, String> {
     if paths.is_empty() {
         return Err("certified alternatives contained no paths".to_string());
     }
@@ -683,10 +753,10 @@ pub(super) fn synthesize_surface_alternatives(
 }
 
 pub(super) fn synthesize_surface_paths(
-    paths: Vec<SurfaceReplay>,
-) -> Result<Vec<ProofTactic>, String> {
+    paths: Vec<SimpleProofBuilder>,
+) -> Result<Vec<SimpleProofStep>, String> {
     if paths.len() == 1 {
-        return Ok(paths.into_iter().next().unwrap().tactics);
+        return Ok(paths.into_iter().next().unwrap().steps);
     }
     let first_choice = paths
         .first()
@@ -694,7 +764,7 @@ pub(super) fn synthesize_surface_paths(
         .ok_or_else(|| "distinct certified paths have no surface branch condition".to_string())?
         .clone();
     let prefix = paths[0]
-        .tactics
+        .steps
         .get(..first_choice.tactic_offset)
         .ok_or_else(|| "surface branch offset exceeds its tactic trace".to_string())?
         .to_vec();
@@ -710,11 +780,11 @@ pub(super) fn synthesize_surface_paths(
         if choice.occurrence != first_choice.occurrence
             || choice.condition != first_choice.condition
             || choice.tactic_offset != first_choice.tactic_offset
-            || path.tactics.get(..choice.tactic_offset) != Some(prefix.as_slice())
+            || path.steps.get(..choice.tactic_offset) != Some(prefix.as_slice())
         {
             return Err("certified paths do not share one branch prefix".to_string());
         }
-        path.tactics.drain(..choice.tactic_offset);
+        path.steps.drain(..choice.tactic_offset);
         path.path_choices.remove(0);
         for remaining in &mut path.path_choices {
             remaining.tactic_offset -= choice.tactic_offset;
@@ -737,13 +807,17 @@ pub(super) fn synthesize_surface_paths(
         return Ok(tactics);
     }
 
-    let mut tactics = prefix;
-    tactics.push(ProofTactic::If(ProofIf {
+    let mut steps = prefix;
+    steps.push(SimpleProofStep::If {
         condition: first_choice.condition,
-        then_tactics: synthesize_surface_paths(then_paths)?,
-        else_tactics: synthesize_surface_paths(else_paths)?,
-    }));
-    Ok(tactics)
+        then_proof: Box::new(SimpleProof::from_steps(synthesize_surface_paths(
+            then_paths,
+        )?)),
+        else_proof: Box::new(SimpleProof::from_steps(synthesize_surface_paths(
+            else_paths,
+        )?)),
+    });
+    Ok(steps)
 }
 
 #[derive(Clone)]

@@ -1836,7 +1836,7 @@ fn certify_outcome_simp_have(
         proof,
     };
     let surface_tactic = ProofTactic::Have(surface_have.clone());
-    let certificate = TacticCertificate::from_proof_tactics(std::slice::from_ref(&surface_tactic))
+    let certificate = SimpleProof::from_proof_tactics(std::slice::from_ref(&surface_tactic))
         .map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` produced an invalid certificate: {error:?}"
@@ -1877,7 +1877,7 @@ fn certify_outcome_simp_have(
     .map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` certificate failed replay:\n{}\n{}",
-            format_tactic_certificate(&certificate),
+            format_simple_proof(&certificate),
             error.message(),
         ))
     })?;
@@ -1920,7 +1920,7 @@ pub(super) fn certify_outcome_simp(
     claim_label: &str,
     tactic_index: usize,
     path_index: usize,
-) -> Result<TacticCertificate, ClickError> {
+) -> Result<SimpleProof, ClickError> {
     let mut surface_tactics = certify_outcome_simp_have(
         replay,
         surface_goal,
@@ -1940,7 +1940,7 @@ pub(super) fn certify_outcome_simp(
         path_index,
     )?;
     surface_tactics.push(ProofTactic::Assumption);
-    let certificate = TacticCertificate::from_proof_tactics(&surface_tactics).map_err(|error| {
+    let certificate = SimpleProof::from_proof_tactics(&surface_tactics).map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` produced an invalid certificate: {error:?}"
         ))
@@ -1981,7 +1981,7 @@ pub(super) fn certify_outcome_existential_simp(
     claim_label: &str,
     tactic_index: usize,
     path_index: usize,
-) -> Result<TacticCertificate, ClickError> {
+) -> Result<SimpleProof, ClickError> {
     // Replay may frame loads across recorded effects; a fresh replay
     // recomputes the same effect facts from execution, so including them
     // keeps in-place and standalone replays aligned.
@@ -2022,7 +2022,7 @@ pub(super) fn certify_outcome_existential_simp(
             derivation_premises.push(surface);
         }
     }
-    let try_closer = |closer: ProofTactic| -> Result<TacticCertificate, String> {
+    let try_closer = |closer: ProofTactic| -> Result<SimpleProof, String> {
         let mut tactics = unfolds
             .iter()
             .cloned()
@@ -2038,7 +2038,7 @@ pub(super) fn certify_outcome_existential_simp(
             ProofTactic::Have(surface_have.clone()),
             ProofTactic::Assumption,
         ];
-        let certificate = TacticCertificate::from_proof_tactics(&surface_tactics)
+        let certificate = SimpleProof::from_proof_tactics(&surface_tactics)
             .map_err(|error| format!("produced an invalid certificate: {error:?}"))?;
         let replayed_goal = prove_have_at_point(
             &surface_have,
@@ -2147,7 +2147,7 @@ pub(super) fn certify_grouped_outcome_simp_transition(
     proof_label: &str,
     tactic_index: usize,
     path_index: usize,
-) -> Result<TacticCertificate, ClickError> {
+) -> Result<SimpleProof, ClickError> {
     let mut replay = replay.clone();
     let mut available = available.to_vec();
     let mut pending = goals;
@@ -2217,7 +2217,7 @@ pub(super) fn certify_grouped_outcome_simp_transition(
         ProofTactic::Assumption,
         newly_closed_claim_count,
     ));
-    TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+    SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
         ClickError::new(format!(
             "`{proof_label}` path {path_index}, tactic {tactic_index}: grouped `simp` produced an invalid transition certificate: {error:?}"
         ))

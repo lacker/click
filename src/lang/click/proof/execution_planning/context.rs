@@ -154,9 +154,9 @@ pub(in crate::lang::click::proof) struct ExecutionProofEnvironment<'a> {
 
 #[derive(Clone, Default)]
 pub(in crate::lang::click::proof) struct LoopProofCertificates {
-    pub(in crate::lang::click::proof) initialize: Option<TacticCertificate>,
-    pub(in crate::lang::click::proof) preserve: Option<TacticCertificate>,
-    pub(in crate::lang::click::proof) effects: BTreeMap<usize, TacticCertificate>,
+    pub(in crate::lang::click::proof) initialize: Option<SimpleProof>,
+    pub(in crate::lang::click::proof) preserve: Option<SimpleProof>,
+    pub(in crate::lang::click::proof) effects: BTreeMap<usize, SimpleProof>,
 }
 
 #[derive(Clone)]
@@ -231,17 +231,17 @@ pub(in crate::lang::click::proof) struct ProofCaseChoice {
 #[derive(Clone)]
 pub(in crate::lang::click::proof) struct PathCertificate {
     pub(in crate::lang::click::proof) case_path: Vec<ProofCaseChoice>,
-    pub(in crate::lang::click::proof) certificate: TacticCertificate,
+    pub(in crate::lang::click::proof) certificate: SimpleProof,
 }
 
 pub(in crate::lang::click::proof) fn merge_path_aligned_certificates(
     claim_label: &str,
     paths: Vec<PathCertificate>,
-) -> Result<TacticCertificate, ClickError> {
+) -> Result<SimpleProof, ClickError> {
     pub(in crate::lang::click::proof) fn merge(
         claim_label: &str,
         mut paths: Vec<PathCertificate>,
-    ) -> Result<TacticCertificate, ClickError> {
+    ) -> Result<SimpleProof, ClickError> {
         let first = paths.first().ok_or_else(|| {
             ClickError::new(format!(
                 "`{claim_label}` path-aligned certificate has no paths"
@@ -295,10 +295,10 @@ pub(in crate::lang::click::proof) fn merge_path_aligned_certificates(
         }
         let then_certificate = merge(claim_label, then_paths)?;
         let else_certificate = merge(claim_label, else_paths)?;
-        TacticCertificate::from_proof_tactics(&[ProofTactic::If(ProofIf {
+        SimpleProof::from_proof_tactics(&[ProofTactic::If(ProofIf {
             condition,
-            then_tactics: then_certificate.tactics().to_vec(),
-            else_tactics: else_certificate.tactics().to_vec(),
+            then_tactics: then_certificate.to_proof_tactics().to_vec(),
+            else_tactics: else_certificate.to_proof_tactics().to_vec(),
         })])
         .map_err(|error| {
             ClickError::new(format!(
@@ -329,7 +329,7 @@ pub(in crate::lang::click::proof) fn certificate_leaf_for_case_path(
     claim_label: &str,
     tactics: &[ProofTactic],
     case_path: &[ProofCaseChoice],
-) -> Result<TacticCertificate, ClickError> {
+) -> Result<SimpleProof, ClickError> {
     pub(in crate::lang::click::proof) fn select(
         claim_label: &str,
         tactics: &[ProofTactic],
@@ -377,7 +377,7 @@ pub(in crate::lang::click::proof) fn certificate_leaf_for_case_path(
         &mut next_case,
         &mut selected,
     )?;
-    TacticCertificate::from_proof_tactics(&selected).map_err(|error| {
+    SimpleProof::from_proof_tactics(&selected).map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` selected a non-surface certificate leaf: {error:?}"
         ))

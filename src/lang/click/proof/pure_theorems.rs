@@ -320,7 +320,7 @@ fn lower_pure_simp_certificate(
     theorem: &TheoremDefinition,
     context: &PureTheoremContext,
     goal: &Proposition,
-    certificate: &ProofReplayPlan,
+    certificate: &InternalProofPlan,
 ) -> Option<Vec<ProofTactic>> {
     let tactic = match certificate.tactics() {
         [ProofTactic::Normalize] => ProofTactic::Normalize,
@@ -357,7 +357,7 @@ fn lower_pure_simp_certificate(
         }
         _ => return None,
     };
-    TacticCertificate::from_proof_tactics(std::slice::from_ref(&tactic)).ok()?;
+    SimpleProof::from_proof_tactics(std::slice::from_ref(&tactic)).ok()?;
     Some(vec![tactic])
 }
 
@@ -453,7 +453,7 @@ fn verify_theorem_ensure(
         }
     };
 
-    let (certificate, ()) = pure_goal_certificate_gateway(
+    let (certificate, ()) = pure_goal_simple_proof_gateway(
         claim_label,
         || {
             pure_theorem_surface_certificate(
@@ -485,7 +485,7 @@ fn verify_theorem_ensure(
         ensure_index,
         ensure_clause: ensure_clause.clone(),
         proof_kind,
-        proof_tactics: Some(certificate.tactics().to_vec()),
+        proof_tactics: Some(certificate.to_proof_tactics().to_vec()),
         requires: context.requires.clone(),
         conclusion: goal,
     })
@@ -499,17 +499,17 @@ fn pure_theorem_surface_certificate(
     source_tactics: Option<&[ProofTactic]>,
     predicate_environment: &PredicateEnvironment,
     induction_setup: Option<&PureInductionSetup>,
-) -> Result<TacticCertificate, ClickError> {
+) -> Result<SimpleProof, ClickError> {
     if let (Some(tactics), Some(setup)) = (source_tactics, induction_setup) {
         let lowered = lower_pure_induction_tactics(&setup.surface_requires, tactics, setup)?;
-        return TacticCertificate::from_proof_tactics(&lowered).map_err(|error| {
+        return SimpleProof::from_proof_tactics(&lowered).map_err(|error| {
             ClickError::new(format!(
                 "induction proof for `{claim_label}` produced an invalid surface certificate: {error:?}"
             ))
         });
     }
     if let Some(tactics) = source_tactics
-        && let Ok(certificate) = TacticCertificate::from_proof_tactics(tactics)
+        && let Ok(certificate) = SimpleProof::from_proof_tactics(tactics)
     {
         return Ok(certificate);
     }
@@ -518,7 +518,7 @@ fn pure_theorem_surface_certificate(
         || materialization_equivalent_available_fact(goal, &context.requires).is_some()
         || quantified_replay_equivalent_available_fact(goal, &context.requires).is_some()
     {
-        return TacticCertificate::from_proof_tactics(&[ProofTactic::Assumption]).map_err(
+        return SimpleProof::from_proof_tactics(&[ProofTactic::Assumption]).map_err(
             |error| {
                 ClickError::new(format!(
                     "smart proof for `{claim_label}` produced an invalid assumption certificate: {error:?}"
@@ -527,7 +527,7 @@ fn pure_theorem_surface_certificate(
         );
     }
     if matches!(normalize_proposition(goal), SimpProposition::True) {
-        return TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize]).map_err(
+        return SimpleProof::from_proof_tactics(&[ProofTactic::Normalize]).map_err(
             |error| {
                 ClickError::new(format!(
                     "smart proof for `{claim_label}` produced an invalid normalization certificate: {error:?}"
@@ -566,7 +566,7 @@ fn pure_theorem_surface_certificate(
                     "smart `simp() using` for `{claim_label}` has no surface certificate"
                 ))
             })?;
-        return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+        return SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "smart `simp() using` for `{claim_label}` produced an invalid surface certificate: {error:?}"
             ))
@@ -576,7 +576,7 @@ fn pure_theorem_surface_certificate(
     if let Some(plan) = plan_simp_certificate(goal, &assumptions)
         && let Some(tactics) = lower_pure_simp_certificate(theorem, context, goal, &plan)
     {
-        return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+        return SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "smart proof for `{claim_label}` produced an invalid surface certificate: {error:?}"
             ))
@@ -616,7 +616,7 @@ fn pure_theorem_surface_certificate(
                 other => other.clone(),
             })
             .collect::<Vec<_>>();
-        return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+        return SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "smart proof for `{claim_label}` produced an invalid application certificate: {error:?}"
             ))
@@ -641,7 +641,7 @@ fn pure_theorem_surface_certificate(
                 }
             })
             .collect::<Vec<_>>();
-        return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+        return SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "smart proof for `{claim_label}` produced an invalid rewrite certificate: {error:?}"
             ))
@@ -692,7 +692,7 @@ fn pure_theorem_surface_certificate(
             .map(ProofTactic::UnfoldPredicate)
             .collect::<Vec<_>>();
         tactics.push(ProofTactic::Derive(ProofDerive { premises }));
-        return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+        return SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "smart proof for `{claim_label}` produced an invalid unfolded certificate: {error:?}"
             ))
@@ -711,7 +711,7 @@ fn pure_theorem_surface_certificate(
             .cloned()
             .collect::<Vec<_>>();
         if let Some(tactics) = lower_pure_branching_tactics(&premise_pool, tactics) {
-            return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            return SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
                 ClickError::new(format!(
                     "smart proof for `{claim_label}` produced an invalid branching certificate: {error:?}"
                 ))
@@ -828,7 +828,7 @@ pub(super) fn replay_pure_theorem_certificate(
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
     context: &PureTheoremContext,
-    certificate: &TacticCertificate,
+    certificate: &SimpleProof,
     induction_setup: Option<&PureInductionSetup>,
 ) -> Result<(), ClickError> {
     prove_pure_theorem_script(
@@ -839,7 +839,7 @@ pub(super) fn replay_pure_theorem_certificate(
         click_function_environment,
         theorem_environment,
         context,
-        certificate.tactics(),
+        &certificate.to_proof_tactics(),
         induction_setup,
     )
 }

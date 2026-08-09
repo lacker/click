@@ -8,7 +8,7 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
     context: &ExecutionProofContext,
     invariant_checks: &[CLoopInvariantCheck],
     environment: &ExecutionProofEnvironment<'_>,
-) -> Result<TacticCertificate, ClickError> {
+) -> Result<SimpleProof, ClickError> {
     let legacy_site = ProofSite::LoopPhase {
         function_name: environment.function_block.signature().name().to_string(),
         loop_index,
@@ -99,10 +99,10 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                     )
                 });
         (prefix_is_explicit && invariants_match)
-            .then(|| TacticCertificate::from_proof_tactics(tactics).ok())
+            .then(|| SimpleProof::from_proof_tactics(tactics).ok())
             .flatten()
     });
-    let (certificate, available) = pure_goal_certificate_gateway(
+    let (certificate, available) = pure_goal_simple_proof_gateway(
         &claim_label,
         || {
             if let Some(certificate) = source_certificate {
@@ -193,29 +193,29 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                     .record_lowering(proposition, &planned_fact)?;
                 tactics.push(ProofTactic::Have(ProofHave {
                     proposition: proposition.clone(),
-                    proof: Proof::Script(planned_certificate.tactics().to_vec()),
+                    proof: Proof::Script(planned_certificate.to_proof_tactics().to_vec()),
                 }));
                 if !planning_available.contains(&planned_fact) {
                     planning_available.push(planned_fact);
                 }
             }
-            TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
                 ClickError::new(format!(
                     "`{claim_label}` produced an invalid initialization certificate: {error:?}"
                 ))
             })
         },
         |certificate| {
-            if certificate.tactics().len() < invariant_items.len() {
+            if certificate.to_proof_tactics().len() < invariant_items.len() {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` certificate has only {} steps for {} invariants",
-                    certificate.tactics().len(),
+                    certificate.to_proof_tactics().len(),
                     invariant_items.len()
                 )));
             }
             let mut replay_available = context.pure_facts.clone();
-            let invariant_start = certificate.tactics().len() - invariant_items.len();
-            for (certificate_index, tactic) in certificate.tactics().iter().enumerate() {
+            let invariant_start = certificate.to_proof_tactics().len() - invariant_items.len();
+            for (certificate_index, tactic) in certificate.to_proof_tactics().iter().enumerate() {
                 // Certificate replay for the initialize phase never reaches
                 // `replay_linear_tactics`, so time each step here in the same
                 // format and let `source_tactic_class` classify it.
@@ -312,7 +312,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
     pure_facts: &[Proposition],
     body: &CStatement,
     environment: &ExecutionProofEnvironment<'_>,
-) -> Result<TacticCertificate, ClickError> {
+) -> Result<SimpleProof, ClickError> {
     let claim_label = environment.frontier_loop_source.map_or_else(
         || {
             format!(
@@ -451,7 +451,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
     }
     let mut paths = Vec::new();
     for context in completed {
-        if let Some(blocker) = &context.replay.surface_replay.blocker {
+        if let Some(blocker) = &context.replay.simple_proof_builder.blocker {
             return Err(ClickError::new(format!(
                 "`{claim_label}` automatic preservation could not lower a body step: {blocker}"
             )));
@@ -465,11 +465,11 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
                 value: choice.value,
             })
             .collect::<Vec<_>>();
-        let certificate = certificate_leaf_for_case_path(
-            &claim_label,
-            &context.replay.surface_replay.tactics,
-            &case_path,
-        )?;
+        let surface_tactics =
+            SimpleProof::from_steps(context.replay.simple_proof_builder.steps.clone())
+                .to_proof_tactics();
+        let certificate =
+            certificate_leaf_for_case_path(&claim_label, &surface_tactics, &case_path)?;
         paths.push(PathCertificate {
             case_path,
             certificate,
@@ -487,7 +487,7 @@ fn verify_structural_effect_proof(
     before_state: &CState,
     context: &ProofReplayContext,
     environment: &ExecutionProofEnvironment<'_>,
-) -> Result<TacticCertificate, ClickError> {
+) -> Result<SimpleProof, ClickError> {
     let legacy_site = ProofSite::StructuralItem {
         function_name: environment.function_block.signature().name().to_string(),
         region: CodeRegion::Loop(loop_index),
@@ -513,12 +513,12 @@ fn verify_structural_effect_proof(
         .unwrap_or_else(|| (legacy_site.clone(), legacy_site.description(), 0));
     let certificate = match item.proof() {
         Proof::Default | Proof::Tactic(SmartTactic::Auto) | Proof::Tactic(SmartTactic::Frame) => {
-            TacticCertificate::from_proof_tactics(&[ProofTactic::FrameUsing {
+            SimpleProof::from_proof_tactics(&[ProofTactic::FrameUsing {
                 region: None,
                 premises: Vec::new(),
             }])
         }
-        Proof::Script(tactics) => TacticCertificate::from_proof_tactics(tactics),
+        Proof::Script(tactics) => SimpleProof::from_proof_tactics(tactics),
         Proof::Tactic(SmartTactic::Simp) => {
             return Err(ClickError::new(format!(
                 "`{claim_label}` must use `auto`, `frame`, or a simple proof script"
@@ -533,10 +533,16 @@ fn verify_structural_effect_proof(
     if environment.frontier_loop_source.is_some()
         && selected_tactic_index_for_site(&site) == Some(effect_source_index)
     {
-        record_proof_site_tactic_expansion(&site, effect_source_index, certificate.tactics());
+        record_proof_site_tactic_expansion(
+            &site,
+            effect_source_index,
+            &certificate.to_proof_tactics(),
+        );
     }
-    let program =
-        build_internal_proof_from_source_index(certificate.tactics(), effect_source_index)?;
+    let program = build_internal_proof_from_source_index(
+        &certificate.to_proof_tactics(),
+        effect_source_index,
+    )?;
     let mut replay = context.replay.clone();
     replay.proof_site = Some(site);
     replay.loop_effect_goal = Some(LoopEffectReplayGoal {
@@ -544,7 +550,7 @@ fn verify_structural_effect_proof(
         check: check.clone(),
         closed: false,
     });
-    replay.surface_replay = SurfaceReplay::default();
+    replay.simple_proof_builder = SimpleProofBuilder::default();
     let replayed = execute_internal_proof(
         &program,
         ProofReplayContext {
@@ -568,7 +574,7 @@ fn verify_structural_effect_proof(
     .map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` structural-effect certificate failed ordinary replay:\n{}\n{}",
-            format_tactic_certificate(&certificate),
+            format_simple_proof(&certificate),
             error.message()
         ))
     })?;
@@ -583,7 +589,7 @@ fn verify_structural_effect_proof(
     {
         return Err(ClickError::new(format!(
             "`{claim_label}` structural-effect certificate did not close every replay path:\n{}\n  replay paths: {}\n  closed paths: {}",
-            format_tactic_certificate(&certificate),
+            format_simple_proof(&certificate),
             replayed.len(),
             replayed
                 .iter()
@@ -599,8 +605,8 @@ fn verify_structural_effect_proof(
 }
 
 pub(in crate::lang::click::proof) struct LoopPreservationProofResult {
-    pub(in crate::lang::click::proof) certificate: TacticCertificate,
-    pub(in crate::lang::click::proof) effect_certificates: Vec<(usize, TacticCertificate)>,
+    pub(in crate::lang::click::proof) certificate: SimpleProof,
+    pub(in crate::lang::click::proof) effect_certificates: Vec<(usize, SimpleProof)>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -813,32 +819,33 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                 tactic_expansion_capture_matches(context.replay.proof_site.as_ref(), source_index)
             })
         {
-            let capture = SurfaceReplay {
-                tactics: closer_tactics.clone(),
-                ..SurfaceReplay::default()
+            let capture = SimpleProofBuilder {
+                steps: SimpleProof::from_proof_tactics(&closer_tactics)
+                    .expect("the loop closer is a simple proof")
+                    .steps()
+                    .to_vec(),
+                ..SimpleProofBuilder::default()
             };
             return Err(finish_tactic_expansion_capture(&capture, false));
         }
-        let prefix = certificate_leaf_for_case_path(
-            &claim_label,
-            &context.replay.surface_replay.tactics,
-            &case_path,
-        )?;
-        let mut leaf_tactics = prefix.tactics().to_vec();
+        let surface_tactics =
+            SimpleProof::from_steps(context.replay.simple_proof_builder.steps.clone())
+                .to_proof_tactics();
+        let prefix = certificate_leaf_for_case_path(&claim_label, &surface_tactics, &case_path)?;
+        let mut leaf_tactics = prefix.to_proof_tactics().to_vec();
         leaf_tactics.extend(closer_tactics);
-        let certificate =
-            TacticCertificate::from_proof_tactics(&leaf_tactics).map_err(|error| {
-                ClickError::new(format!(
-                    "`{claim_label}` produced an invalid preservation leaf certificate: {error:?}"
-                ))
-            })?;
+        let certificate = SimpleProof::from_proof_tactics(&leaf_tactics).map_err(|error| {
+            ClickError::new(format!(
+                "`{claim_label}` produced an invalid preservation leaf certificate: {error:?}"
+            ))
+        })?;
         certificate_paths.push(PathCertificate {
             case_path,
             certificate,
         });
     }
     let certificate = merge_path_aligned_certificates(&claim_label, certificate_paths)?;
-    let certificate_program = build_internal_proof(certificate.tactics(), &claim_label)?;
+    let certificate_program = build_internal_proof(&certificate.to_proof_tactics(), &claim_label)?;
     // This is a detached, deterministic replay of the certificate just
     // produced above. Its local tactic indices start at zero and are not
     // source occurrences in the enclosing proof. Letting the expansion probe
@@ -873,7 +880,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         .map_err(|error| {
             ClickError::new(format!(
                 "`{claim_label}` preservation certificate failed ordinary replay:\n{}\n{}",
-                format_tactic_certificate(&certificate),
+                format_simple_proof(&certificate),
                 error.message()
             ))
         })?;

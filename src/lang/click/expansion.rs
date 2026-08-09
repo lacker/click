@@ -396,24 +396,21 @@ pub fn expand_c0_tactic_source_at(
         ),
         TacticSourceEdit::PartialProofClause(span) => {
             let certificate =
-                TacticCertificate::from_proof_tactics(&replacement_tactics).map_err(|error| {
+                SimpleProof::from_proof_tactics(&replacement_tactics).map_err(|error| {
                     ClickError::new(format!(
                         "selected tactic did not produce a surface certificate: {error:?}"
                     ))
                 })?;
-            (
-                span,
-                super::printing::format_tactic_certificate(&certificate),
-            )
+            (span, super::printing::format_simple_proof(&certificate))
         }
         TacticSourceEdit::WholeProof(edit) => {
             let certificate =
-                TacticCertificate::from_proof_tactics(&replacement_tactics).map_err(|error| {
+                SimpleProof::from_proof_tactics(&replacement_tactics).map_err(|error| {
                     ClickError::new(format!(
                         "selected tactic did not produce a surface certificate: {error:?}"
                     ))
                 })?;
-            let replacement = super::printing::format_tactic_certificate(&certificate);
+            let replacement = super::printing::format_simple_proof(&certificate);
             let span = edit.span().clone();
             let replacement = match edit {
                 ProofSourceEdit::Explicit(_) => replacement,

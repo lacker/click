@@ -16,6 +16,7 @@ pub(in crate::lang::click) enum SourceTacticClass {
     Simple,
     Smart,
     Control,
+    Internal,
 }
 
 impl SourceTacticClass {
@@ -24,6 +25,7 @@ impl SourceTacticClass {
             Self::Simple => "simple",
             Self::Smart => "smart",
             Self::Control => "control",
+            Self::Internal => "internal",
         }
     }
 }
@@ -59,6 +61,7 @@ pub(in crate::lang::click) fn source_tactic_class(tactic: &ProofTactic) -> Sourc
         TacticClass::Simple(_) => SourceTacticClass::Simple,
         TacticClass::Smart(_) => SourceTacticClass::Smart,
         TacticClass::ControlFlow(_) => SourceTacticClass::Control,
+        TacticClass::Internal(_) => SourceTacticClass::Internal,
     }
 }
 
@@ -68,7 +71,8 @@ pub(super) fn has_independent_source_timing(tactic: &ProofTactic) -> bool {
     // replaying and lowering it is part of the owning smart tactic. Starting
     // a nested control timer here would hide the expensive part of `execute`
     // from `click profile` and subject `click expand` to the control budget.
-    !matches!(tactic, ProofTactic::CertifiedAlternatives(_))
+    !matches!(tactic.class(), TacticClass::Internal(_))
+        && !matches!(tactic, ProofTactic::CertifiedAlternatives(_))
 }
 
 impl TacticTiming {
@@ -79,6 +83,9 @@ impl TacticTiming {
         tactic: &ProofTactic,
         statement_index: usize,
     ) -> Option<Self> {
+        if !has_independent_source_timing(tactic) {
+            return None;
+        }
         Self::named_for_tactic(
             claim_label,
             tactic_name(tactic),
@@ -101,7 +108,7 @@ impl TacticTiming {
         source_index: usize,
         statement_index: usize,
     ) -> Option<Self> {
-        if source_index == usize::MAX {
+        if source_index == usize::MAX || matches!(tactic.class(), TacticClass::Internal(_)) {
             return None;
         }
         crate::instrumentation::enabled().then(|| {

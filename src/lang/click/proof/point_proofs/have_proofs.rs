@@ -225,7 +225,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
     prelowered_goal: Option<&Proposition>,
-) -> Result<(Proposition, ProofReplayPlan), ClickError> {
+) -> Result<(Proposition, InternalProofPlan), ClickError> {
     // Plan and replay this proof once. Surface expansion must lower this exact
     // plan; it must not search for a different proof if lowering is incomplete.
     // Snapshot transport belongs to the statement transition that changed the
@@ -361,17 +361,17 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     };
     let assumptions = assumptions_from_propositions(&reasoning_available);
     if reasoning_available.contains(&goal) {
-        let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
+        let plan = InternalProofPlan::from_planned_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple replay tactic");
         return Ok((fact, plan));
     }
     if matches!(normalize_proposition(&goal), SimpProposition::True) {
-        let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Normalize])
+        let plan = InternalProofPlan::from_planned_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a simple replay tactic");
         return Ok((fact, plan));
     }
     if quantified_replay_equivalent_available_fact(&goal, &reasoning_available).is_some() {
-        let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
+        let plan = InternalProofPlan::from_planned_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple replay tactic");
         return Ok((fact, plan));
     }
@@ -383,7 +383,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
             minimal_proposition_derivation(&goal, std::slice::from_ref(equivalent))?
     {
         let plan =
-            ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
+            InternalProofPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
                 derivation,
             )])
             .expect("a directly normalized derivation is a simple replay tactic");
@@ -391,7 +391,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     }
     if let Some(derivation) = search_condition_derivation(&goal, &reasoning_available)? {
         let plan =
-            ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
+            InternalProofPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
                 derivation,
             )])
             .expect("a bounded condition derivation is a simple replay tactic");
@@ -1355,10 +1355,17 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
             }
             Err(error) if error.is_expansion_complete() => {
                 let captured = take_path_tactic_expansion_capture()?;
-                captured_paths.push(SurfaceReplay {
-                    tactics: captured,
+                captured_paths.push(SimpleProofBuilder {
+                    steps: SimpleProof::from_proof_tactics(&captured)
+                        .map_err(|error| {
+                            ClickError::new(format!(
+                                "captured branch expansion was not a simple proof: {error:?}"
+                            ))
+                        })?
+                        .steps()
+                        .to_vec(),
                     path_choices,
-                    ..SurfaceReplay::default()
+                    ..SimpleProofBuilder::default()
                 });
             }
             Err(error) => return Err(error),
@@ -1367,9 +1374,9 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
     if !captured_paths.is_empty() {
         let tactics = if captured_paths
             .iter()
-            .all(|path| path.tactics == captured_paths[0].tactics)
+            .all(|path| path.steps == captured_paths[0].steps)
         {
-            captured_paths[0].tactics.clone()
+            captured_paths[0].steps.clone()
         } else {
             synthesize_surface_alternatives(captured_paths).map_err(|message| {
                 ClickError::new(format!(
@@ -1379,9 +1386,9 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
         };
         let allow_empty = tactics.is_empty();
         return Err(finish_tactic_expansion_capture(
-            &SurfaceReplay {
-                tactics,
-                ..SurfaceReplay::default()
+            &SimpleProofBuilder {
+                steps: tactics,
+                ..SimpleProofBuilder::default()
             },
             allow_empty,
         ));

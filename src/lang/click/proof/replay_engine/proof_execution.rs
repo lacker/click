@@ -68,7 +68,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     "`{claim_label}` tactic {index}: `open` must begin before execution reaches function exit"
                 )));
             }
-            let surface_start = opened.replay.surface_replay.tactics.len();
+            let surface_start = opened.replay.simple_proof_builder.steps.len();
             let unfolded = unfold_composite_resource(
                 resource_environment,
                 resource,
@@ -131,17 +131,17 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 }
                 let nested = closed
                     .replay
-                    .surface_replay
-                    .tactics
+                    .simple_proof_builder
+                    .steps
                     .split_off(surface_start);
                 closed
                     .replay
-                    .surface_replay
-                    .tactics
-                    .push(ProofTactic::Open(ProofOpen {
+                    .simple_proof_builder
+                    .steps
+                    .push(SimpleProofStep::Open {
                         resource: resource.clone(),
-                        tactics: nested,
-                    }));
+                        proof: Box::new(SimpleProof::from_steps(nested)),
+                    });
                 let mut continued = execute_internal_proof(
                     continuation,
                     closed,

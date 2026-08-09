@@ -646,13 +646,13 @@ fn normalizes_context_free(goal: &Proposition) -> bool {
             .is_some()
 }
 
-fn pure_goal_certificate_gateway<T>(
+fn pure_goal_simple_proof_gateway<T>(
     claim_label: &str,
-    planner: impl FnOnce() -> Result<TacticCertificate, ClickError>,
-    replay: impl FnOnce(&TacticCertificate) -> Result<T, ClickError>,
-) -> Result<(TacticCertificate, T), ClickError> {
+    planner: impl FnOnce() -> Result<SimpleProof, ClickError>,
+    replay: impl FnOnce(&SimpleProof) -> Result<T, ClickError>,
+) -> Result<(SimpleProof, T), ClickError> {
     let certificate = planner()?;
-    TacticCertificate::from_proof_tactics(certificate.tactics()).map_err(|error| {
+    SimpleProof::from_proof_tactics(&certificate.to_proof_tactics()).map_err(|error| {
         ClickError::new(format!(
             "pure goal `{claim_label}` planner returned a non-surface certificate: {error:?}"
         ))
@@ -660,7 +660,7 @@ fn pure_goal_certificate_gateway<T>(
     let replayed = replay(&certificate).map_err(|error| {
         ClickError::new(format!(
             "pure goal `{claim_label}` certificate failed ordinary replay:\n{}\n{}",
-            format_tactic_certificate(&certificate),
+            format_simple_proof(&certificate),
             error.message()
         ))
     })?;
@@ -1059,12 +1059,12 @@ mod certificate_tests {
             &click_function_environment,
         )
         .expect("goal should lower");
-        let failing = TacticCertificate::from_proof_tactics(&[ProofTactic::Assumption])
+        let failing = SimpleProof::from_proof_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple tactic");
-        let succeeding = TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize])
+        let succeeding = SimpleProof::from_proof_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a simple tactic");
 
-        let error = pure_goal_certificate_gateway(
+        let error = pure_goal_simple_proof_gateway(
             "reflexive.ensures_0",
             || Ok(failing.clone()),
             |certificate| {
@@ -1110,9 +1110,9 @@ mod certificate_tests {
             operator: ComparisonOperator::Equal,
             right: ContractExpression::CFragment(CExpression::Value(int32(0))),
         };
-        let assumption = TacticCertificate::from_proof_tactics(&[ProofTactic::Assumption])
+        let assumption = SimpleProof::from_proof_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a certificate");
-        let normalize = TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize])
+        let normalize = SimpleProof::from_proof_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a certificate");
 
         let merged = merge_path_aligned_certificates(
@@ -1136,12 +1136,19 @@ mod certificate_tests {
         )
         .expect("opposite path certificates should merge");
 
-        let [ProofTactic::If(proof_if)] = merged.tactics() else {
+        let [
+            SimpleProofStep::If {
+                condition: merged_condition,
+                then_proof,
+                else_proof,
+            },
+        ] = merged.steps()
+        else {
             panic!("different path certificates should produce one proof branch");
         };
-        assert_eq!(proof_if.condition, condition);
-        assert_eq!(proof_if.then_tactics, vec![ProofTactic::Assumption]);
-        assert_eq!(proof_if.else_tactics, vec![ProofTactic::Normalize]);
+        assert_eq!(merged_condition, &condition);
+        assert_eq!(then_proof.to_proof_tactics(), vec![ProofTactic::Assumption]);
+        assert_eq!(else_proof.to_proof_tactics(), vec![ProofTactic::Normalize]);
     }
 
     #[test]
@@ -1156,9 +1163,9 @@ mod certificate_tests {
             operator: ComparisonOperator::Equal,
             right: ContractExpression::CFragment(CExpression::Value(int32(0))),
         };
-        let assumption = TacticCertificate::from_proof_tactics(&[ProofTactic::Assumption])
+        let assumption = SimpleProof::from_proof_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a certificate");
-        let normalize = TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize])
+        let normalize = SimpleProof::from_proof_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a certificate");
 
         let error = merge_path_aligned_certificates(
@@ -2072,13 +2079,13 @@ fn certify_auto_claim_result(
         click_function_environment,
         resource_environment,
         theorem_environment,
-        certificate.tactics(),
+        &certificate.to_proof_tactics(),
         ProofTacticSource::GeneratedBy { source_index: 0 },
     )
     .map_err(|error| {
         ClickError::new(format!(
             "`auto` surface certificate failed complete replay for `{claim_label}`:\n{}\n{}",
-            format_tactic_certificate(&certificate),
+            format_simple_proof(&certificate),
             error.message()
         ))
     })?;
