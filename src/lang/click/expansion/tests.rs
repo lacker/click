@@ -856,6 +856,7 @@ int32 increment_and_return_old(int32 p[1]) {
     .expect("grouped simp should capture frame-dependent claims");
 
     assert!(!expanded.contains("simp();"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &sources)
         .expect("the grouped frame transition certificate should re-verify");
 }
