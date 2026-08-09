@@ -1332,7 +1332,10 @@ pub(super) fn finish_ordered_proof_replay(
                             ProofTactic::FoldResource(resource.clone()),
                         );
                     }
-                    PostExecutionTactic::CloseOpen(resource) => {
+                    PostExecutionTactic::CloseOpen {
+                        resource,
+                        preserve_exposed_body,
+                    } => {
                         outcome = fold_composite_resources_on_outcome(
                             resource_environment,
                             std::slice::from_ref(resource),
@@ -1348,7 +1351,9 @@ pub(super) fn finish_ordered_proof_replay(
                             predicate_environment,
                             click_function_environment,
                             &unfolded_predicates,
-                            ResourceBodyClosure::CloseOpen,
+                            ResourceBodyClosure::CloseOpen {
+                                preserve_exposed_body: *preserve_exposed_body,
+                            },
                         )?;
                         path_requirements = project_outcome_resource_facts(
                             resource_environment,

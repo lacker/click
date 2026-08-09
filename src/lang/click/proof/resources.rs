@@ -9,7 +9,12 @@ pub(super) enum ResourceBodyAccess {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ResourceBodyClosure {
     Initialize,
-    CloseOpen,
+    CloseOpen { preserve_exposed_body: bool },
+}
+
+pub(super) struct UnfoldedCompositeResource {
+    pub(super) state: CState,
+    pub(super) body_was_already_exposed: bool,
 }
 
 pub(super) fn materialize_counted_population_bodies(
@@ -1298,7 +1303,7 @@ pub(super) fn unfold_composite_resource(
     claim_label: &str,
     tactic_index: usize,
     access: ResourceBodyAccess,
-) -> Result<CState, ClickError> {
+) -> Result<UnfoldedCompositeResource, ClickError> {
     let definition = composite_resource_law_definition(
         resource_environment,
         resource,
@@ -1528,13 +1533,19 @@ pub(super) fn unfold_composite_resource(
         })?;
     }
 
+    let body_was_already_exposed = composite_body.condition().is_none()
+        && composite_body.facts().is_empty()
+        && unfolded_facts
+            .iter()
+            .all(|fact| state.resources().satisfies_fact(fact, &assumptions));
+
     // Validate the projected ownership before assuming facts supplied by the
     // same definition. A body may legitimately state separation that is
     // needed to normalize symbolic children, but it must not use a
     // contradictory separation claim to conceal a concretely overlapping
     // pair. This is one validity pass over the complete projection, not one
     // normalization per child.
-    if !already_unfolded {
+    if !already_unfolded && !body_was_already_exposed {
         let ownership_assumptions = assumptions.clone().without_explicit_separation_facts();
         let projected = state
             .resources()
@@ -1591,7 +1602,7 @@ pub(super) fn unfold_composite_resource(
     // history rather than the size of the resource body. The definition's
     // pure facts are simultaneous consequences of the same composite law, so
     // make them available while canonicalizing its children.
-    if !already_unfolded {
+    if !already_unfolded && !body_was_already_exposed {
         let composition_assumptions = assumptions_from_propositions(available_pure_facts);
         let resources = state
             .resources()
@@ -1631,7 +1642,10 @@ pub(super) fn unfold_composite_resource(
     // eventual resource effect can replay that transition exactly.
     let _ = (population_name, population_arguments);
 
-    Ok(state)
+    Ok(UnfoldedCompositeResource {
+        state,
+        body_was_already_exposed,
+    })
 }
 
 /// Applies the reverse composite definition law after proving the body's pure
@@ -1874,6 +1888,12 @@ pub(super) fn fold_composite_resources_on_outcome(
         let assumptions = assumptions_from_propositions(&fold_facts);
         let _assumptions_id_scope = crate::kernel::AssumptionsIdScope::enter(&assumptions);
         let mut lowered_contained = Vec::new();
+        let preserve_exposed_body = matches!(
+            closure,
+            ResourceBodyClosure::CloseOpen {
+                preserve_exposed_body: true
+            }
+        );
         for contained in contained_clauses {
             let contained =
                 instantiate_resource_clause(contained, &substitutions).map_err(|message| {
@@ -1889,7 +1909,12 @@ pub(super) fn fold_composite_resources_on_outcome(
                 &post_state,
                 &value,
             )?;
-            if closing_view {
+            if preserve_exposed_body {
+                // This body belonged to the active population before `open`.
+                // The scope used it in place, so closing must leave that one
+                // authoritative representation intact.
+                continue;
+            } else if closing_view {
                 // A folded view already projects these duplicable view
                 // cores. Opening the body makes its facts available but does
                 // not create a linear representation that must be consumed
@@ -1945,7 +1970,7 @@ pub(super) fn fold_composite_resources_on_outcome(
                     ResourceBodyClosure::Initialize => {
                         format!("`fold({})`", describe_resource_clause(resource))
                     }
-                    ResourceBodyClosure::CloseOpen => {
+                    ResourceBodyClosure::CloseOpen { .. } => {
                         format!("closing `open({})`", describe_resource_clause(resource))
                     }
                 };

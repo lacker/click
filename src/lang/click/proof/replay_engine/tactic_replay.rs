@@ -755,7 +755,8 @@ fn replay_linear_tactics_without_frontier_loops(
                     claim_label,
                     tactic_index,
                     ResourceBodyAccess::Finalize,
-                )?;
+                )?
+                .state;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::ObserveResource(resource) => {

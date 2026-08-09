@@ -46,6 +46,7 @@ pub(in crate::lang::click::proof) fn close_open_resource_at_current_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
+    preserve_exposed_body: bool,
 ) -> Result<CState, ClickError> {
     close_or_initialize_composite_resource_at_current_point(
         resource_environment,
@@ -60,7 +61,9 @@ pub(in crate::lang::click::proof) fn close_open_resource_at_current_point(
         predicate_environment,
         click_function_environment,
         unfolded_predicates,
-        ResourceBodyClosure::CloseOpen,
+        ResourceBodyClosure::CloseOpen {
+            preserve_exposed_body,
+        },
     )
 }
 

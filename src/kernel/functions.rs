@@ -760,6 +760,7 @@ fn execute_verified_function_rule(
             &effective_assumptions,
             &mut population_obligations,
             true,
+            true,
             budget,
         )? {
             Ok(transition) => transition,
@@ -836,6 +837,8 @@ fn execute_verified_function_rule(
             }
         };
         facts.extend(lifetime_effects);
+        let return_resources =
+            activate_population_body_resources(return_resources, &population_transition);
         post_state.memory = memory;
         post_state.resources = return_resources.clone();
         let post_contract_state =
@@ -1142,12 +1145,13 @@ pub(super) fn bind_c_function_arguments(
     Some(callee_state)
 }
 
-fn evaluate_counted_population_body_resources(
+fn evaluate_resource_population_body_resources(
     required_resources: &ResourceContext,
     callee_state: &CState,
     definitions: &[CCompositeResourceDefinition],
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
+    include_ordinary: bool,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     let mut body_resources = ResourceContext::new();
     let evaluation_assumptions = assumptions
@@ -1167,7 +1171,7 @@ fn evaluate_counted_population_body_resources(
         else {
             continue;
         };
-        if !definition.is_counted_population() {
+        if !include_ordinary && !definition.is_counted_population() {
             continue;
         }
         if definition.parameters().len() != arguments.len() {
@@ -1260,12 +1264,13 @@ fn prepare_function_resource_transfer(
         callee_state.memory(),
         assumptions,
     );
-    let population_body_resources = match evaluate_counted_population_body_resources(
+    let population_body_resources = match evaluate_resource_population_body_resources(
         &required_resources,
         callee_state,
         function.composite_resource_definitions(),
         assumptions,
         budget,
+        false,
     )? {
         Ok(resources) => resources,
         Err(error) => return Ok(Err(error)),
@@ -1364,12 +1369,13 @@ fn prepare_function_resource_transfer(
                 })
         {
             let singleton = ResourceContext::new().unchecked_with_fact(resource.clone());
-            let body = match evaluate_counted_population_body_resources(
+            let body = match evaluate_resource_population_body_resources(
                 &singleton,
                 callee_state,
                 function.composite_resource_definitions(),
                 assumptions,
                 budget,
+                false,
             )? {
                 Ok(resources) => resources,
                 Err(error) => return Ok(Err(error)),
@@ -1464,6 +1470,7 @@ fn counted_population_quantities(
     definitions: &[CCompositeResourceDefinition],
     tracked_state: &CState,
     assumptions: &Assumptions,
+    track_ordinary_populations: bool,
 ) -> BTreeMap<(String, Vec<CValue>), u32> {
     let mut quantities = BTreeMap::new();
     for fact in resources.facts() {
@@ -1476,17 +1483,22 @@ fn counted_population_quantities(
         if name == CResourceFact::ALLOCATION_RESOURCE_NAME {
             continue;
         }
-        // Ordinary resource counts are derived directly from the held
-        // resource context. Only definitions whose bodies mention their
-        // population count need a persistent cross-call ledger and a
-        // contract transition here.
-        let has_declared_population_invariant = definitions
-            .iter()
-            .any(|definition| definition.is_counted_population() && definition.name() == name);
+        // Every declared composite denotes a population. Most singleton
+        // resources never expose their count at the surface, but their body
+        // still has one population-wide owner whose lifetime follows the
+        // first produced and last consumed unit.
+        let has_declared_body = definitions.iter().any(|definition| {
+            definition.name() == name
+                && (definition.is_counted_population()
+                    || (track_ordinary_populations
+                        && !definition.is_recursive()
+                        && definition.condition().is_none()
+                        && definition.facts().is_empty()))
+        });
         let population_is_observed = tracked_state
             .counted_population_proven_equal(name, arguments, assumptions)
             .is_some();
-        if !has_declared_population_invariant && !population_is_observed {
+        if !has_declared_body && !population_is_observed {
             continue;
         }
         let quantity = fact.owned_quantity().unwrap_or(0);
@@ -1503,6 +1515,7 @@ fn counted_population_quantities(
 
 #[derive(Default)]
 struct CCountedPopulationTransition {
+    activated_body_resources: Vec<CResourceFact>,
     finalized_body_resources: Vec<CResourceFact>,
     population_facts: Vec<Proposition>,
 }
@@ -1529,6 +1542,21 @@ fn apply_counted_population_transition_resources(
     Ok(resources)
 }
 
+fn activate_population_body_resources(
+    mut resources: ResourceContext,
+    transition: &CCountedPopulationTransition,
+) -> ResourceContext {
+    for resource in &transition.activated_body_resources {
+        if !resources.facts().contains(resource) {
+            // The folded units and this body are two parts of one declared
+            // population representation. The body is installed once when
+            // that population becomes nonempty; it is not another unit.
+            resources = resources.unchecked_with_fact(resource.clone());
+        }
+    }
+    resources
+}
+
 fn apply_counted_population_transitions(
     caller_state: &CState,
     post_state: &mut CState,
@@ -1537,6 +1565,7 @@ fn apply_counted_population_transitions(
     assumptions: &Assumptions,
     obligations: &mut Vec<ProofObligation>,
     reestablish_invariants: bool,
+    track_ordinary_populations: bool,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CCountedPopulationTransition, CRuntimeError>> {
     let Some(entry_state) = bind_c_function_arguments(caller_state, function, argument_values)
@@ -1567,18 +1596,21 @@ fn apply_counted_population_transitions(
         function.composite_resource_definitions(),
         caller_state,
         assumptions,
+        track_ordinary_populations,
     );
     let ensured_quantities = counted_population_quantities(
         &ensured,
         function.composite_resource_definitions(),
         caller_state,
         assumptions,
+        track_ordinary_populations,
     );
     let caller_quantities = counted_population_quantities(
         caller_state.resources(),
         function.composite_resource_definitions(),
         caller_state,
         assumptions,
+        track_ordinary_populations,
     );
     let keys = required_quantities
         .keys()
@@ -1597,6 +1629,55 @@ fn apply_counted_population_transitions(
             .copied()
             .unwrap_or(0);
         if required_quantity == ensured_quantity {
+            let refreshes_ordinary_population = track_ordinary_populations
+                && required_quantity > 0
+                && caller_state.counted_population(&name, &arguments).is_some()
+                && function
+                    .composite_resource_definitions()
+                    .iter()
+                    .any(|definition| {
+                        definition.name() == name
+                            && !definition.is_counted_population()
+                            && !definition.is_recursive()
+                            && definition.condition().is_none()
+                            && definition.facts().is_empty()
+                    });
+            if refreshes_ordinary_population {
+                let singleton = ResourceContext::new().unchecked_with_fact(CResourceFact::own(
+                    CResource::Composite {
+                        name: name.clone(),
+                        arguments: arguments.clone(),
+                    },
+                ));
+                let finalized = match evaluate_resource_population_body_resources(
+                    &singleton,
+                    &entry_state,
+                    function.composite_resource_definitions(),
+                    assumptions,
+                    budget,
+                    true,
+                )? {
+                    Ok(resources) => resources,
+                    Err(error) => return Ok(Err(error)),
+                };
+                let activated = match evaluate_resource_population_body_resources(
+                    &singleton,
+                    post_state,
+                    function.composite_resource_definitions(),
+                    assumptions,
+                    budget,
+                    true,
+                )? {
+                    Ok(resources) => resources,
+                    Err(error) => return Ok(Err(error)),
+                };
+                transition
+                    .finalized_body_resources
+                    .extend(finalized.facts().iter().cloned());
+                transition
+                    .activated_body_resources
+                    .extend(activated.facts().iter().cloned());
+            }
             // A resource-neutral contract preserves this exact population.
             // Do not ask general arithmetic reasoning to rediscover
             // `old_count + 0 != 0`; on large proof contexts that turns a
@@ -1695,12 +1776,13 @@ fn apply_counted_population_transitions(
                     arguments: arguments.clone(),
                 },
             ));
-            let finalized = match evaluate_counted_population_body_resources(
+            let finalized = match evaluate_resource_population_body_resources(
                 &singleton,
                 &entry_state,
                 function.composite_resource_definitions(),
                 assumptions,
                 budget,
+                true,
             )? {
                 Ok(resources) => resources,
                 Err(error) => return Ok(Err(error)),
@@ -1714,6 +1796,39 @@ fn apply_counted_population_transitions(
                 arguments.clone(),
                 new_count.clone(),
             );
+            let activates_ordinary_population = track_ordinary_populations
+                && function
+                    .composite_resource_definitions()
+                    .iter()
+                    .any(|definition| {
+                        definition.name() == name
+                            && !definition.is_counted_population()
+                            && !definition.is_recursive()
+                            && definition.condition().is_none()
+                            && definition.facts().is_empty()
+                    });
+            if !population_was_initialized && activates_ordinary_population {
+                let singleton = ResourceContext::new().unchecked_with_fact(CResourceFact::own(
+                    CResource::Composite {
+                        name: name.clone(),
+                        arguments: arguments.clone(),
+                    },
+                ));
+                let activated = match evaluate_resource_population_body_resources(
+                    &singleton,
+                    post_state,
+                    function.composite_resource_definitions(),
+                    assumptions,
+                    budget,
+                    true,
+                )? {
+                    Ok(resources) => resources,
+                    Err(error) => return Ok(Err(error)),
+                };
+                transition
+                    .activated_body_resources
+                    .extend(activated.facts().iter().cloned());
+            }
             // A visible ensured unit witnesses nonemptiness. The transition
             // preserves the population cardinality invariant algebraically:
             // entry count >= required units, then both sides change by the
@@ -3020,12 +3135,13 @@ fn unreturned_allocation_obligation(
         ));
     };
     let mut budget = ExecutionBudget::default();
-    let population_bodies = match evaluate_counted_population_body_resources(
+    let population_bodies = match evaluate_resource_population_body_resources(
         returned_resources,
         actual_state,
         function.composite_resource_definitions(),
         assumptions,
         &mut budget,
+        false,
     ) {
         Ok(Ok(resources)) => resources,
         Ok(Err(error)) => return Err(error),
@@ -3182,6 +3298,7 @@ fn function_outcome_from_body_with_population_transition(
         assumptions,
         &mut obligations,
         true,
+        false,
         budget,
     )? {
         return Ok((CFunctionOutcome::RuntimeError(error), obligations));
@@ -3243,6 +3360,7 @@ fn function_outcome_from_body_with_resource_transfer(
         assumptions,
         &mut obligations,
         reestablish_population_invariants,
+        false,
         budget,
     )? {
         Ok(transition) => transition,

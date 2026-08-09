@@ -69,7 +69,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 )));
             }
             let surface_start = opened.replay.surface_replay.tactics.len();
-            opened.state = unfold_composite_resource(
+            let unfolded = unfold_composite_resource(
                 resource_environment,
                 resource,
                 parsed_function.parameters(),
@@ -83,6 +83,8 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 *index,
                 ResourceBodyAccess::Open,
             )?;
+            opened.state = unfolded.state;
+            let preserve_exposed_body = unfolded.body_was_already_exposed;
             let opened_contexts = execute_internal_proof(
                 body,
                 opened,
@@ -104,7 +106,10 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     closed.replay.defer_post_execution(
                         *index,
                         *source_index,
-                        PostExecutionTactic::CloseOpen(resource.clone()),
+                        PostExecutionTactic::CloseOpen {
+                            resource: resource.clone(),
+                            preserve_exposed_body,
+                        },
                     );
                 } else {
                     let pre_state = closed.replay.old_reference_state(&closed.state).clone();
@@ -121,6 +126,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                         predicate_environment,
                         click_function_environment,
                         &closed.replay.unfolded_predicates,
+                        preserve_exposed_body,
                     )?;
                 }
                 let nested = closed
