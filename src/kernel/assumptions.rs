@@ -718,6 +718,15 @@ impl Assumptions {
         self.prefer_symbolic_external_loads
     }
 
+    pub(crate) fn force_symbolic_external_loads(mut self) -> Self {
+        self.force_symbolic_external_loads = true;
+        self
+    }
+
+    pub(super) fn should_force_symbolic_external_loads(&self) -> bool {
+        self.force_symbolic_external_loads
+    }
+
     pub(crate) fn proves_exact(&self, proposition: &Proposition) -> bool {
         if solve_builtin_prop(proposition) {
             return true;

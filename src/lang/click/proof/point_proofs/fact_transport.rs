@@ -240,14 +240,42 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
         }
     }
 
-    let source = recorded_or_lowered(surface_source, available, surface_propositions).map_err(
-        |error| {
+    let ordinary_source = recorded_or_lowered(surface_source, available, surface_propositions)
+        .map_err(|error| {
             ClickError::new(format!(
                 "`{claim_label}` path {path_index}, tactic {tactic_index}: could not lower `transport` source: {}",
                 error.message()
             ))
-        },
-    )?;
+        })?;
+    let concrete_source =
+        lower(surface_source, available).unwrap_or_else(|_| ordinary_source.clone());
+    let source = if proposition_contains_at_expression(surface_source) {
+        lower_outcome_proposition_symbolically_with_program_points(
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            available,
+            surface_source,
+            predicate_environment,
+            click_function_environment,
+            &replay.program_point_states,
+        )
+        .unwrap_or_else(|_| ordinary_source.clone())
+    } else {
+        ordinary_source.clone()
+    };
+    if matches!(
+        normalize_proposition(&concrete_source),
+        SimpProposition::True
+    ) && !available.contains(&source)
+    {
+        // The selected snapshot materialized this load to a concrete value.
+        // Keep the equivalent symbolic spelling as a checked fact so frame
+        // transport can retain its memory identity.
+        available.push(source.clone());
+    }
     surface_propositions.record_lowering(surface_source, &source)?;
     let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
     let selected_assumptions = if surface_premises.is_some() {

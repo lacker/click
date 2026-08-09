@@ -553,6 +553,91 @@ fn source_expansion_preserves_proof_marks() {
 }
 
 #[test]
+fn marked_constant_store_transport_retains_load_identity() {
+    let touch_c = r#"
+        struct cell { int32 value; int32 other; };
+
+        void touch_other(struct cell* owner) {
+            owner->other = 0;
+        }
+    "#;
+    let pipeline_c = r#"
+        struct cell { int32 value; int32 other; };
+
+        int32 pipeline(struct cell* owner) {
+            owner->value = 11;
+            touch_other(owner);
+            return owner->value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "touch_other.c";
+        verifying "pipeline.c";
+
+        void touch_other(struct cell* owner) {
+            owns object(owner);
+            mutable owner->other;
+            ensures owner->other == 0;
+        } by {
+            execute();
+            frame();
+            simp();
+        }
+
+        int32 pipeline(struct cell* owner) {
+            owns object(owner);
+            mutable object(owner);
+            ensures result == 11;
+        } by {
+            step();
+            mark after_write;
+            execute();
+            transport(
+                at(after_write, owner->value == 11),
+                owner->value == 11
+            );
+            frame() using {};
+            simp();
+        }
+    "#;
+    let sources = [("touch_other.c", touch_c), ("pipeline.c", pipeline_c)];
+
+    verify_c0_sources(click_source, &sources)
+        .expect("the smart marked transport should verify before expansion");
+    let selected = click_source.find("transport(").unwrap();
+    let position = expansion::position_at_offset(click_source, selected);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("the marked transport should expand and replay");
+    assert!(
+        expanded
+            .contains("transport(at(after_write, owner->value == 11), owner->value == 11) using {")
+    );
+    verify_c0_sources(&expanded, &sources).expect("the expanded marked transport should replay");
+
+    let mutating_c = touch_c.replace("owner->other = 0;", "owner->value = 0;");
+    let mutating_click = click_source.replace(
+        "mutable owner->other;\n            ensures owner->other == 0;",
+        "mutable owner->value;\n            ensures owner->value == 0;",
+    );
+    let error = verify_c0_sources(
+        &mutating_click,
+        &[
+            ("touch_other.c", mutating_c.as_str()),
+            ("pipeline.c", pipeline_c),
+        ],
+    )
+    .expect_err("transport across mutation of the marked field must fail");
+    assert!(
+        error
+            .message()
+            .contains("post-execution fact transport has no explicit surface-premise certificate"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn statement_snapshots_support_complete_loadability_propositions() {
     let c_source = r#"
             int32 store_second_return_first(int32 p[2]) {

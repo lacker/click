@@ -96,6 +96,25 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     has_external_read_resource: bool,
     alias_cache: &mut MemoryLoadAliasCache,
 ) -> Vec<CExpressionPath> {
+    // Provenance-sensitive lowering asks for the load identity even when this
+    // snapshot has already materialized the cell's concrete value. Checking
+    // `known_value` first would collapse `at(mark, field == 11)` to `true` and
+    // erase the address needed for later frame transport.
+    if has_external_read_resource && assumptions.should_force_symbolic_external_loads() {
+        let Some(value) = symbolic_load_value(memory, &pointer, value_type) else {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            }];
+        };
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(value),
+            facts,
+            obligations,
+        }];
+    }
+
     // A pointer-typed load of a materialized int32 cell that is not a bare
     // load term (for example a call-havoc variable standing for the framed
     // field) cannot be reinterpreted as a stable pointer spelling. When the

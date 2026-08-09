@@ -94,6 +94,48 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_program_points(
     )
 }
 
+/// Lowers a proposition while retaining symbolic external-memory loads even
+/// when the selected snapshot already materializes their values.
+///
+/// Fact transport needs this spelling for propositions such as
+/// `at(mark, field == 11)`: reducing the marked load to `11 == 11` proves the
+/// source but erases the memory identity needed to frame it to a later state.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click) fn lower_outcome_proposition_symbolically_with_program_points(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    available_pure_facts: &[Proposition],
+    proposition: &ClickProposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    program_point_states: &ProgramPointStates,
+) -> Result<Proposition, String> {
+    let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
+    let assumptions = assumptions_from_propositions(available_pure_facts)
+        .allow_symbolic_contract_loads()
+        .force_symbolic_external_loads();
+    let mut next_variable = 2_000_000;
+    let mut active_functions = BTreeSet::new();
+    lower_outcome_proposition_with_environment(
+        &mut values,
+        &array_refs,
+        pre_state,
+        post_state,
+        Some(result),
+        &assumptions,
+        proposition,
+        &mut next_variable,
+        predicate_environment,
+        click_function_environment,
+        program_point_states,
+        &mut active_functions,
+    )
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::lang::click) struct LoweredOutcomeProposition {
     pub(in crate::lang::click) proposition: Proposition,

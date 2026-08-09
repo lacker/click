@@ -1524,6 +1524,7 @@ pub struct Assumptions {
     pub(super) defer_non_exact_loadability_obligations: bool,
     pub(super) defer_non_exact_condition_reasoning: bool,
     pub(super) prefer_symbolic_external_loads: bool,
+    pub(super) force_symbolic_external_loads: bool,
     pub(super) allow_symbolic_contract_loads: bool,
 }
 
