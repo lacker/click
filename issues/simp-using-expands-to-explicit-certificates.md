@@ -81,6 +81,28 @@ certificate chosen by `simp() using`, while preserving the existing C source
 and the strength of every claim. Verification work should depend on that
 certificate, not on the amount of irrelevant earlier snapshot history.
 
+## Remaining migration blockers
+
+The first completed source migration is `examples/binary-tree`: its int32,
+pointer, and pointer-offset equality chains now expand to explicit `rewrite`
+and `assumption` steps. Two other source shapes still need principled surface
+certificates before their old `derive using` blocks can be removed:
+
+- `examples/vector-push` proves `1 <= owner->len` after incrementing a
+  nonnegative old length. Ambient `simp()` verifies, but expansion still emits
+  `derive using`; equality rewrites alone cannot express the selected
+  order/arithmetic rule. Add the smallest named simple arithmetic rule (or an
+  equally explicit theorem application), not a generic arithmetic solver
+  relabeled as simple.
+- In `examples/input-cursor`, changing the first post-execution derivation to
+  `simp() using` reaches certificate lowering and reports that resource
+  `input_cursor` has malformed argument type metadata. Its listed context
+  includes `contains(input_cursor(owner), ...)` facts. Reduce why the smart
+  certificate path loses the declared composite argument type metadata; do not
+  remove those facts or reshape the resource to avoid the lowering failure.
+
+Keep both examples unchanged until their focused regressions expand and replay.
+
 ## Implementation order
 
 1. Add `simp() using { ... }` with an exact listed-fact planning context and
