@@ -900,6 +900,7 @@ pub enum ProofTactic {
     CertifiedFrame(Vec<Vec<PropositionDerivation>>),
     CertifiedAlternatives(Vec<ProofReplayPlan>),
     Simp,
+    SimpUsing(ProofDerive),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1393,6 +1394,7 @@ impl ProofTactic {
             Self::ExecuteUntil(_) => TacticClass::Smart(SmartTacticKind::ExecuteUntil),
             Self::SmartFrame(_) => TacticClass::Smart(SmartTacticKind::Frame),
             Self::Simp => TacticClass::Smart(SmartTacticKind::Simp),
+            Self::SimpUsing(_) => TacticClass::Smart(SmartTacticKind::Simp),
             Self::Have(_) => TacticClass::ControlFlow(ControlFlowTactic::Have),
             Self::Open(_) => TacticClass::ControlFlow(ControlFlowTactic::Open),
             Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),

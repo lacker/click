@@ -1809,7 +1809,10 @@ pub(super) fn statement_step_permission_needs_surface_premise(
 fn have_proof_is_smart_simp(proof: &Proof) -> bool {
     match proof {
         Proof::Default | Proof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
-        Proof::Script(tactics) => matches!(tactics.as_slice(), [ProofTactic::Simp]),
+        Proof::Script(tactics) => matches!(
+            tactics.as_slice(),
+            [ProofTactic::Simp] | [ProofTactic::SimpUsing(_)]
+        ),
         Proof::Tactic(SmartTactic::Frame) => false,
     }
 }
@@ -1822,7 +1825,7 @@ pub(super) fn smart_simp_unfold_prefix(proof: &Proof) -> Option<Vec<String>> {
         return None;
     };
     let (last, prefix) = tactics.split_last()?;
-    if !matches!(last, ProofTactic::Simp) {
+    if !matches!(last, ProofTactic::Simp | ProofTactic::SimpUsing(_)) {
         return None;
     }
     prefix
@@ -2003,10 +2006,34 @@ pub(super) fn surface_smart_have_certificate(
     plan: &ProofReplayPlan,
     unfolded_predicates: &[String],
 ) -> Result<TacticCertificate, ClickError> {
-    let proof = surface_simp_plan_proof(
+    let restricted_available = match &have.proof {
+        Proof::Script(tactics) => tactics.last().and_then(|tactic| match tactic {
+            ProofTactic::SimpUsing(simp) => Some(
+                simp.premises
+                    .iter()
+                    .map(|surface| {
+                        replay
+                            .surface_propositions
+                            .available_kernel(surface, available)
+                            .cloned()
+                            .ok_or_else(|| {
+                                ClickError::new(
+                                    "could not retain an exact `simp() using` premise while lowering its certificate",
+                                )
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>(),
+            ),
+            _ => None,
+        }),
+        _ => None,
+    }
+    .transpose()?;
+    let certificate_available = restricted_available.as_deref().unwrap_or(available);
+    let mut proof = surface_simp_plan_proof(
         replay,
         state,
-        available,
+        certificate_available,
         parameters,
         arguments,
         predicate_environment,
@@ -2015,6 +2042,34 @@ pub(super) fn surface_smart_have_certificate(
         plan,
         unfolded_predicates,
     )?;
+    if unfolded_predicates.is_empty()
+        && let (Some(exact), Proof::Script(source_tactics)) =
+            (restricted_available.as_ref(), &have.proof)
+        && let Some(ProofTactic::SimpUsing(simp)) = source_tactics.last()
+    {
+        let lowering_facts = facts_for_direct_surface_lowering(available);
+        if let Ok(explicit_goal) = lower_point_proposition(
+            &have.proposition,
+            &lowering_facts,
+            parameters,
+            arguments,
+            replay.old_reference_state(state),
+            state,
+            None,
+            &replay.program_point_states,
+            predicate_environment,
+            click_function_environment,
+        ) {
+            let pairs = exact
+                .iter()
+                .cloned()
+                .zip(simp.premises.iter().cloned())
+                .collect::<Vec<_>>();
+            if let Some(tactics) = plan_explicit_equality_rewrites(&explicit_goal, &pairs, exact) {
+                proof = Proof::Script(tactics);
+            }
+        }
+    }
     let tactic = ProofTactic::Have(ProofHave {
         proposition: have.proposition.clone(),
         proof,

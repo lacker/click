@@ -1980,6 +1980,18 @@ impl Parser {
             }
             "simp" => {
                 self.expect_empty_tactic_args(&name)?;
+                if self.peek_ident() == Some("using") {
+                    let premises = self.parse_exact_premises()?;
+                    if premises.is_empty() {
+                        return Err(self.error(
+                            "`simp() using` requires at least one explicit premise; use `simp()` for ambient simplification",
+                        ));
+                    }
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.position += 1;
+                    }
+                    return Ok(ProofTactic::SimpUsing(ProofDerive { premises }));
+                }
                 ProofTactic::Simp
             }
             "fold" => {

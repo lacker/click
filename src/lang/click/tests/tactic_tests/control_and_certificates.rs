@@ -256,6 +256,13 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Smart(SmartTacticKind::Simp)
     ));
     assert!(matches!(
+        ProofTactic::SimpUsing(ProofDerive {
+            premises: Vec::new(),
+        })
+        .class(),
+        TacticClass::Smart(SmartTacticKind::Simp)
+    ));
+    assert!(matches!(
         ProofTactic::SmartStep.class(),
         TacticClass::Smart(SmartTacticKind::SmartStep)
     ));

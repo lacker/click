@@ -326,6 +326,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             line(output, &prefix, "normalize();")
         }
         ProofTactic::Derive(derive) => write_derivation(output, "derive", derive, indent),
+        ProofTactic::SimpUsing(simp) => write_derivation(output, "simp()", simp, indent),
         ProofTactic::CloseInvariants => line(output, &prefix, "close_invariants();"),
         ProofTactic::Rewrite(equality) => line(
             output,

@@ -230,7 +230,20 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     // plan; it must not search for a different proof if lowering is incomplete.
     // Snapshot transport belongs to the statement transition that changed the
     // memory and reaches a later `have` as an exact current-state assumption.
-    let direct_lowering_facts = facts_for_smart_have_lowering(available);
+    let restricted_simp = matches!(
+        &have.proof,
+        Proof::Script(tactics)
+            if matches!(tactics.last(), Some(ProofTactic::SimpUsing(_)))
+    );
+    // Restricted simplification must reason from its named equalities; goal
+    // lowering must not silently apply those (or other ambient equalities)
+    // before the smart plan is recorded, or expansion loses a required proof
+    // step. Keep only the facts needed to spell direct program values.
+    let direct_lowering_facts = if restricted_simp {
+        facts_for_direct_surface_lowering(available)
+    } else {
+        facts_for_smart_have_lowering(available)
+    };
     let fact = match lower_point_proposition(
         &have.proposition,
         &direct_lowering_facts,
@@ -293,7 +306,51 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
             "`{claim_label}` have proof {outer_tactic_index}: could not unfold pure goal: {message}"
         ))
     })?;
-    if available.contains(&goal) {
+    let restricted_surfaces = match &have.proof {
+        Proof::Script(tactics) => tactics.last().and_then(|tactic| match tactic {
+            ProofTactic::SimpUsing(simp) => Some(&simp.premises),
+            _ => None,
+        }),
+        _ => None,
+    };
+    let reasoning_available = if let Some(surfaces) = restricted_surfaces {
+        let lowering_facts = facts_for_direct_surface_lowering(&available);
+        let mut exact = Vec::new();
+        for surface in surfaces {
+            let lowered = lower_point_proposition(
+                surface,
+                &lowering_facts,
+                parameters,
+                arguments,
+                pre_state,
+                state,
+                None,
+                program_point_states,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` have proof {outer_tactic_index}: could not lower `simp` premise: {message}"
+                ))
+            })?;
+            if !available
+                .iter()
+                .any(|fact| fact == &lowered || condition_polarity_equivalent(fact, &lowered))
+            {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` have proof {outer_tactic_index}: `simp` is missing an exact listed premise: {}",
+                    describe_pure_fact(&lowered, parameters, arguments)
+                )));
+            }
+            exact.push(lowered);
+        }
+        exact
+    } else {
+        available.clone()
+    };
+    let assumptions = assumptions_from_propositions(&reasoning_available);
+    if reasoning_available.contains(&goal) {
         let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple replay tactic");
         return Ok((fact, plan));
@@ -303,13 +360,13 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
             .expect("normalize is a simple replay tactic");
         return Ok((fact, plan));
     }
-    if quantified_replay_equivalent_available_fact(&goal, &available).is_some() {
+    if quantified_replay_equivalent_available_fact(&goal, &reasoning_available).is_some() {
         let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple replay tactic");
         return Ok((fact, plan));
     }
     let normalized_fact = normalize_direct_atomic_memory_loads(&goal);
-    if let Some(equivalent) = available
+    if let Some(equivalent) = reasoning_available
         .iter()
         .find(|available| normalize_direct_atomic_memory_loads(available) == normalized_fact)
         && let Some(derivation) =
@@ -322,7 +379,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
             .expect("a directly normalized derivation is a simple replay tactic");
         return Ok((fact, plan));
     }
-    if let Some(derivation) = search_condition_derivation(&goal, &available)? {
+    if let Some(derivation) = search_condition_derivation(&goal, &reasoning_available)? {
         let plan =
             ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
                 derivation,
@@ -360,7 +417,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
             "`{claim_label}` tactic {outer_tactic_index}: `have` failed: {}",
             describe_missing_pure_fact(
                 &goal,
-                &available,
+                &reasoning_available,
                 state.resources().facts(),
                 parameters,
                 arguments,
@@ -370,7 +427,10 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
         if matches!(goal, Proposition::ConditionIs(_, _)) {
             message.push_str("\n  ");
             message.push_str(&describe_condition_search_miss(
-                &goal, &available, parameters, arguments,
+                &goal,
+                &reasoning_available,
+                parameters,
+                arguments,
             ));
         }
         return Err(ClickError::new(message));
@@ -774,12 +834,13 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
             | ProofTactic::Right
             | ProofTactic::Contradiction(_)
             | ProofTactic::Derive(_)
+            | ProofTactic::SimpUsing(_)
             | ProofTactic::Rewrite(_) => {
                 let mut prepared_derivation_lowering_facts = None;
                 let direct_goal_lowering_facts =
                     matches!(tactic, ProofTactic::Assumption | ProofTactic::Normalize)
                         .then(|| facts_for_simple_goal_lowering(&available));
-                if let ProofTactic::Derive(derive) = tactic {
+                if let ProofTactic::Derive(derive) | ProofTactic::SimpUsing(derive) = tactic {
                     let mut lowering_facts = facts_for_direct_derivation_lowering(&available);
                     let mut unresolved = derive.premises.iter().collect::<Vec<_>>();
                     while !unresolved.is_empty() {
@@ -1002,6 +1063,54 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             })?;
                         check_atomic_derivation_goal(
                             tactic,
+                            &unfolded_goal,
+                            premises,
+                            &unfolded_goal,
+                            &available,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: {message}"
+                            ))
+                        })?;
+                        goal_closed = true;
+                    }
+                    ProofTactic::SimpUsing(simp) => {
+                        let derivation_lowering_facts = prepared_derivation_lowering_facts
+                            .as_ref()
+                            .expect("simp using lowering facts should be prepared");
+                        let premises = simp
+                            .premises
+                            .iter()
+                            .map(|premise| {
+                                if let Some(recorded) = surface_propositions.and_then(
+                                    |propositions| {
+                                        propositions.available_kernel(premise, &available)
+                                    },
+                                ) {
+                                    Ok(recorded.clone())
+                                } else {
+                                    lower_point_proposition_with_values(
+                                        premise,
+                                        derivation_lowering_facts,
+                                        values.clone(),
+                                        &array_refs,
+                                        pre_state,
+                                        state,
+                                        result,
+                                        program_point_states,
+                                        predicate_environment,
+                                        click_function_environment,
+                                    )
+                                }
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(|message| {
+                                ClickError::new(format!(
+                                    "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower `simp` premise: {message}"
+                                ))
+                            })?;
+                        plan_restricted_simp_goal(
                             &unfolded_goal,
                             premises,
                             &unfolded_goal,

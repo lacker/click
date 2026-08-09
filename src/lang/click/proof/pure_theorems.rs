@@ -319,12 +319,13 @@ fn theorem_claim_label(
 fn lower_pure_simp_certificate(
     theorem: &TheoremDefinition,
     context: &PureTheoremContext,
+    goal: &Proposition,
     certificate: &ProofReplayPlan,
 ) -> Option<Vec<ProofTactic>> {
     let tactic = match certificate.tactics() {
         [ProofTactic::Normalize] => ProofTactic::Normalize,
         [ProofTactic::ExactPropositionDerivation(derivation)] => {
-            let premises = derivation
+            let premise_pairs = derivation
                 .context_premises()
                 .iter()
                 .map(|premise| {
@@ -335,12 +336,22 @@ fn lower_pure_simp_certificate(
                         .and_then(|index| theorem.requires().get(index))
                         .and_then(Requirement::proposition)
                         .cloned()
+                        .map(|surface| (premise.clone(), surface))
                 })
                 .collect::<Option<Vec<_>>>()?;
-            if premises.is_empty() {
+            if premise_pairs.is_empty() {
                 ProofTactic::Normalize
+            } else if let Some(tactics) =
+                plan_explicit_equality_rewrites(goal, &premise_pairs, &context.requires)
+            {
+                return Some(tactics);
             } else {
-                let derivation = ProofDerive { premises };
+                let derivation = ProofDerive {
+                    premises: premise_pairs
+                        .into_iter()
+                        .map(|(_, surface)| surface)
+                        .collect(),
+                };
                 ProofTactic::Derive(derivation)
             }
         }
@@ -524,9 +535,46 @@ fn pure_theorem_surface_certificate(
             },
         );
     }
+    if let Some([ProofTactic::SimpUsing(simp)]) = source_tactics {
+        let exact = simp
+            .premises
+            .iter()
+            .map(|surface| {
+                theorem
+                    .requires()
+                    .iter()
+                    .position(|required| required.proposition() == Some(surface))
+                    .and_then(|index| context.requires.get(index))
+                    .cloned()
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "smart `simp() using` for `{claim_label}` lost an exact listed premise during certificate generation"
+                ))
+            })?;
+        let plan = plan_simp_certificate(goal, &assumptions_from_propositions(&exact)).ok_or_else(
+            || {
+                ClickError::new(format!(
+                    "smart `simp() using` for `{claim_label}` did not reproduce its verified plan"
+                ))
+            },
+        )?;
+        let tactics =
+            lower_pure_simp_certificate(theorem, context, goal, &plan).ok_or_else(|| {
+                ClickError::new(format!(
+                    "smart `simp() using` for `{claim_label}` has no surface certificate"
+                ))
+            })?;
+        return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "smart `simp() using` for `{claim_label}` produced an invalid surface certificate: {error:?}"
+            ))
+        });
+    }
     let assumptions = assumptions_from_propositions(&context.requires);
     if let Some(plan) = plan_simp_certificate(goal, &assumptions)
-        && let Some(tactics) = lower_pure_simp_certificate(theorem, context, &plan)
+        && let Some(tactics) = lower_pure_simp_certificate(theorem, context, goal, &plan)
     {
         return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
@@ -1489,6 +1537,35 @@ fn prove_pure_theorem_tactics(
                     .map_err(|message| {
                         ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
                     })?;
+                closed = true;
+            }
+            ProofTactic::SimpUsing(simp) => {
+                let target = goal.clone();
+                let premises = simp
+                    .premises
+                    .iter()
+                    .map(|premise| {
+                        lower_pure_theorem_proposition(
+                            claim_label,
+                            premise,
+                            &context.values,
+                            &context.array_refs,
+                            &context.memory,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: could not lower `simp` premise: {message}"
+                        ))
+                    })?;
+                plan_restricted_simp_goal(&target, premises, &goal, &available).map_err(
+                    |message| {
+                        ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
+                    },
+                )?;
                 closed = true;
             }
             ProofTactic::Rewrite(surface_equality) => {

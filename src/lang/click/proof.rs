@@ -583,6 +583,61 @@ pub(super) fn check_atomic_derivation_goal(
     Ok(())
 }
 
+/// Plan `simp() using` against only the propositions named by the user.
+///
+/// Availability is checked against the ambient proof state, but ambient facts
+/// are deliberately not included in the simplifier context. The returned
+/// derivation is a smart-tactic plan; expansion must lower it to simple rules
+/// before it can become a certificate.
+pub(super) fn plan_restricted_simp_goal(
+    target: &Proposition,
+    premises: Vec<Proposition>,
+    goal: &Proposition,
+    available: &[Proposition],
+) -> Result<PropositionDerivation, String> {
+    if target != goal
+        && quantified_replay_equivalent_available_fact(goal, std::slice::from_ref(target)).is_none()
+    {
+        return Err(format!(
+            "`simp` target does not match the current goal\n  target: {}\n  goal: {}",
+            describe_pure_fact(target, &[], &[]),
+            describe_pure_fact(goal, &[], &[]),
+        ));
+    }
+    let premise_part_available = |part: &Proposition| {
+        let normalized = normalize_direct_atomic_memory_loads(part);
+        available.iter().any(|available| {
+            let mut conjuncts = Vec::new();
+            atomic_conjuncts(available, &mut conjuncts);
+            conjuncts.into_iter().any(|available| {
+                let available = normalize_direct_atomic_memory_loads(available);
+                available == normalized || condition_polarity_equivalent(&available, &normalized)
+            })
+        })
+    };
+    if let Some(missing) = premises.iter().find(|premise| {
+        let mut parts = Vec::new();
+        atomic_conjuncts(premise, &mut parts);
+        !parts.into_iter().all(premise_part_available)
+    }) {
+        return Err(format!(
+            "`simp` is missing an exact listed premise: {}",
+            describe_pure_fact(missing, &[], &[]),
+        ));
+    }
+    let assumptions = assumptions_from_propositions(&premises);
+    let Some(derivation) = assumptions.derive_simp_proposition(target) else {
+        return Err(format!(
+            "`simp() using` could not prove the current goal from only its listed premises\n  goal: {}",
+            describe_pure_fact(target, &[], &[]),
+        ));
+    };
+    derivation
+        .replay(&assumptions)
+        .then_some(derivation)
+        .ok_or_else(|| "`simp() using` planned a derivation that did not replay".to_string())
+}
+
 fn normalizes_context_free(goal: &Proposition) -> bool {
     matches!(normalize_proposition(goal), SimpProposition::True)
         || Assumptions::new()

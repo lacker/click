@@ -906,6 +906,113 @@ pub(super) fn lower_outcome_simp_tactic(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn lower_outcome_simp_tactics(
+    replay: &TacticReplayState,
+    surface_goal: &ClickProposition,
+    goal: &Proposition,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<ProofTactic>, ClickError> {
+    let tactic = lower_outcome_simp_tactic(
+        replay,
+        surface_goal,
+        goal,
+        available,
+        parameters,
+        arguments,
+        pre_state,
+        post_state,
+        result,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let ProofTactic::Derive(derive) = &tactic else {
+        return Ok(vec![tactic]);
+    };
+    let premise_pairs = derive
+        .premises
+        .iter()
+        .map(|surface| {
+            replay
+                .surface_propositions
+                .available_kernel(surface, available)
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    lower_outcome_proposition_with_program_points(
+                        parameters,
+                        arguments,
+                        pre_state,
+                        post_state,
+                        result,
+                        available,
+                        surface,
+                        predicate_environment,
+                        click_function_environment,
+                        &replay.program_point_states,
+                    )
+                })
+                .map(|kernel| (kernel, surface.clone()))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(ClickError::new)?;
+
+    fn search(
+        current: Proposition,
+        premises: &[(Proposition, ClickProposition)],
+        available: &[Proposition],
+        used: &mut [bool],
+        tactics: &mut Vec<ProofTactic>,
+    ) -> bool {
+        if pure_fact_is_replay_available(&current, available) {
+            tactics.push(ProofTactic::Assumption);
+            return true;
+        }
+        if normalizes_context_free(&current) {
+            tactics.push(ProofTactic::Normalize);
+            return true;
+        }
+        for (index, (kernel, surface)) in premises.iter().enumerate() {
+            if used[index] {
+                continue;
+            }
+            let Ok(rewritten) = rewrite_proposition_by_exact_equality(&current, kernel, available)
+            else {
+                continue;
+            };
+            used[index] = true;
+            tactics.push(ProofTactic::Rewrite(surface.clone()));
+            if search(rewritten, premises, available, used, tactics) {
+                return true;
+            }
+            tactics.pop();
+            used[index] = false;
+        }
+        false
+    }
+
+    let mut used = vec![false; premise_pairs.len()];
+    let mut explicit = Vec::new();
+    if search(
+        goal.clone(),
+        &premise_pairs,
+        available,
+        &mut used,
+        &mut explicit,
+    ) {
+        Ok(explicit)
+    } else {
+        Ok(vec![tactic])
+    }
+}
+
 fn collect_definable_predicate_names(
     proposition: &Proposition,
     predicate_environment: &PredicateEnvironment,
@@ -1106,7 +1213,7 @@ fn lower_outcome_simp_proof_direct(
             ProofTactic::Split,
         ]));
     }
-    Ok(Proof::Script(vec![lower_outcome_simp_tactic(
+    Ok(Proof::Script(lower_outcome_simp_tactics(
         replay,
         surface_goal,
         goal,
@@ -1118,7 +1225,7 @@ fn lower_outcome_simp_proof_direct(
         result,
         predicate_environment,
         click_function_environment,
-    )?]))
+    )?))
 }
 
 #[allow(clippy::too_many_arguments)]

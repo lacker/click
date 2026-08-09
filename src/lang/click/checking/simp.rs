@@ -110,6 +110,52 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
     Ok(rewritten)
 }
 
+/// Plan a surface proof made only of explicit equality substitutions followed
+/// by an exact assumption or context-free normalization.
+pub(in crate::lang::click) fn plan_explicit_equality_rewrites(
+    goal: &Proposition,
+    premises: &[(Proposition, ClickProposition)],
+    available: &[Proposition],
+) -> Option<Vec<ProofTactic>> {
+    fn search(
+        current: Proposition,
+        premises: &[(Proposition, ClickProposition)],
+        available: &[Proposition],
+        used: &mut [bool],
+        tactics: &mut Vec<ProofTactic>,
+    ) -> bool {
+        if available.contains(&current) {
+            tactics.push(ProofTactic::Assumption);
+            return true;
+        }
+        if matches!(normalize_proposition(&current), SimpProposition::True) {
+            tactics.push(ProofTactic::Normalize);
+            return true;
+        }
+        for (index, (kernel, surface)) in premises.iter().enumerate() {
+            if used[index] {
+                continue;
+            }
+            let Ok(rewritten) = rewrite_proposition_by_exact_equality(&current, kernel, available)
+            else {
+                continue;
+            };
+            used[index] = true;
+            tactics.push(ProofTactic::Rewrite(surface.clone()));
+            if search(rewritten, premises, available, used, tactics) {
+                return true;
+            }
+            tactics.pop();
+            used[index] = false;
+        }
+        false
+    }
+
+    let mut used = vec![false; premises.len()];
+    let mut tactics = Vec::new();
+    search(goal.clone(), premises, available, &mut used, &mut tactics).then_some(tactics)
+}
+
 pub(in crate::lang::click) fn normalize_direct_atomic_memory_loads(
     proposition: &Proposition,
 ) -> Proposition {

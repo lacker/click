@@ -170,7 +170,8 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Derive(_)
             | ProofTactic::Rewrite(_)
             | ProofTactic::ExactPropositionDerivation(_)
-            | ProofTactic::Simp => {}
+            | ProofTactic::Simp
+            | ProofTactic::SimpUsing(_) => {}
             ProofTactic::If(proof_if) => {
                 validate_pure_theorem_tactics(theorem_name, &proof_if.then_tactics)?;
                 validate_pure_theorem_tactics(theorem_name, &proof_if.else_tactics)?;
@@ -266,6 +267,7 @@ pub(in crate::lang::click) fn tactic_name(tactic: &ProofTactic) -> &'static str 
         ProofTactic::CertifiedFrame(_) => "frame",
         ProofTactic::CertifiedAlternatives(_) => "execute",
         ProofTactic::Simp => "simp",
+        ProofTactic::SimpUsing(_) => "simp",
     }
 }
 

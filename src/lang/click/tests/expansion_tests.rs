@@ -3,14 +3,14 @@ use super::*;
 #[test]
 fn smart_simp_expansion_replays_as_surface_click() {
     let c_source = r#"
-            int32 identity(int32 x) {
+            int32 identity(int32 x, int32 y, int32 z) {
                 return x;
             }
         "#;
     let click_source = r#"
             verifying "identity.c";
 
-            int32 identity(int32 x) {
+            int32 identity(int32 x, int32 y, int32 z) {
                 ensures result == x by { execute(); simp(); }
             }
         "#;
@@ -1077,6 +1077,100 @@ fn source_expander_lowers_smart_simp_inside_have() {
     assert!(!expanded_have.contains("simp();"), "{expanded_have}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
         .expect("the expanded smart have should replay");
+}
+
+#[test]
+fn restricted_simp_expands_to_explicit_equality_rewrites() {
+    let click_source = r#"
+            theorem equality_transitive(x: int32, y: int32, z: int32) {
+                requires x == y;
+                requires y == z;
+                ensures x == z by {
+                    simp() using {
+                        x == y;
+                        y == z;
+                    }
+                }
+            }
+        "#;
+    let offset = click_source
+        .find("simp() using")
+        .expect("proof should contain restricted simp");
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("restricted simp should expand");
+    assert!(expanded.contains("rewrite(x == y);"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[]).expect("explicit equality certificate should replay");
+}
+
+#[test]
+fn restricted_simp_inside_have_expands_to_explicit_equality_rewrites() {
+    let c_source = r#"
+            int32 identity(int32 x, int32 y, int32 z) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x, int32 y, int32 z) {
+                requires x == y;
+                requires y == z;
+                ensures result == x;
+            } by {
+                have x == z by {
+                    simp() using {
+                        x == y;
+                        y == z;
+                    }
+                }
+                execute();
+                simp();
+            }
+        "#;
+    let offset = click_source
+        .find("have x == z")
+        .expect("proof should contain restricted simp have");
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("identity.c", c_source)], line, column)
+            .expect("restricted simp have should expand");
+    let expanded_have =
+        &expanded[expanded.find("have x == z").unwrap()..expanded.find("execute();").unwrap()];
+    assert!(
+        expanded_have.contains("rewrite(x == y);"),
+        "{expanded_have}"
+    );
+    assert!(expanded_have.contains("assumption();"), "{expanded_have}");
+    assert!(!expanded_have.contains("simp() using"), "{expanded_have}");
+    assert!(!expanded_have.contains("derive using"), "{expanded_have}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("explicit equality have certificate should replay");
 }
 
 #[test]
