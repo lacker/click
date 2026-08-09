@@ -183,6 +183,18 @@ impl ResourceContext {
         if fact.family() != ResourceFamily::Memory {
             return false;
         }
+        // Normalization can only merge facts within one access mode. A
+        // viewed context cannot acquire ownership by normalizing, so avoid
+        // scanning unrelated composite views for an impossible owned-memory
+        // query.
+        if fact.is_own()
+            && !self
+                .facts
+                .iter()
+                .any(|available| available.is_own() && available.family() == fact.family())
+        {
+            return false;
+        }
         let normalized = self.clone().normalized(assumptions);
         normalized.facts.len() < self.facts.len()
             && normalized

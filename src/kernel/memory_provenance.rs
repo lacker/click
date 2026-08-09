@@ -24,7 +24,7 @@ pub(crate) fn c_resources_directly_match(
             bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
         }
         (CValue::Pointer(left), CValue::Pointer(right)) => {
-            pointers_proven_equal_for_memory_resolution(left, right, assumptions)
+            pointers_match_for_resource_replay(left, right, assumptions)
         }
         _ => false,
     };

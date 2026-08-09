@@ -274,6 +274,35 @@ fn direct_resource_match_uses_exact_field_load_equalities() {
 }
 
 #[test]
+fn direct_composite_resource_match_replays_pointer_load_across_block_declaration() {
+    if skip_without_memory_dag() {
+        return;
+    }
+    let entry = CMemory::new().with_block("arg-memory", 32);
+    let field = arc_pointer(16);
+    let later = entry.clone().with_block("local:pivot", 4);
+    let resource_at = |memory: CMemory| CResource::Composite {
+        name: "tree".to_string(),
+        arguments: vec![CValue::Pointer(Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::scale_int32(
+                Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory(memory),
+                    Box::new(field.clone()),
+                ),
+                4,
+            ),
+        })],
+    };
+
+    assert!(c_resources_directly_match(
+        &resource_at(entry),
+        &resource_at(later),
+        &Assumptions::new(),
+    ));
+}
+
+#[test]
 fn equivalent_memory_load_order_facts_can_be_inconsistent() {
     let old_memory = CMemory::new();
     let stack_memory = CMemory::new()

@@ -133,6 +133,24 @@ fn missing_composite_query_ignores_ambient_memory_splits() {
 }
 
 #[test]
+fn owned_memory_query_without_owned_memory_is_rejected_structurally() {
+    let context = ResourceContext::new().unchecked_with_fact(CResourceFact::view_composite(
+        "tree".to_string(),
+        vec![int32(0)],
+    ));
+    let required = CResourceFact::own_memory(memory_range(
+        Pointer {
+            block: "p".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        0,
+        1,
+    ));
+
+    assert!(!context.satisfies_fact(&required, &Assumptions::new()));
+}
+
+#[test]
 fn batch_resource_consumption_splits_without_repeated_normalization() {
     let base = Pointer {
         block: "p".into(),
