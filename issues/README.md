@@ -39,6 +39,15 @@ replayable certificate, behaves unstably, or exposes something the simple
 proof language cannot express. Do not retune shared heuristics solely to make
 one large smart tactic pass.
 
+Classify tactics by whether they select a proof rule, not by whether the user
+listed their input facts. A tactic that receives hints and chooses among
+normalization, rewriting, arithmetic, transport, framing, or other theories is
+smart and must expand. A simple tactic checks one named rule from explicit
+evidence with work proportional to that certificate. Simple replay must not
+fall through alternate strategies or reconstruct a proof from ambient history;
+if expansion cannot express the selected rule, that is a certificate-language
+issue.
+
 Use the [proof-failure triage guide](../docs/advanced/proof-failure-triage.md)
 before filing an issue. It is the canonical distinction among ordinary proof
 development, documented limitations, ergonomic automation problems, missing
