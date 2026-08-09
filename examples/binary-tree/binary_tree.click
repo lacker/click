@@ -102,7 +102,7 @@ int32 tree_leaf_pipeline(struct node* node, int32 value) {
     execute();
     frame();
     have result == value by {
-        derive using {
+        simp() using {
             at(statement(10).entry, observed) == at(statement(10).entry, node->value);
             at(statement(10).entry, node->value) == at(statement(10).entry, value);
         }
@@ -111,14 +111,14 @@ int32 tree_leaf_pipeline(struct node* node, int32 value) {
         assumption();
     }
     have node->left == 0 by {
-        derive using {
+        simp() using {
             node->left == at(statement(8).entry, node->right);
             at(statement(8).entry, node->right) == at(statement(8).entry, right);
             at(statement(10).entry, right) == at(statement(10).entry, 0);
         }
     }
     have node->right == 0 by {
-        derive using {
+        simp() using {
             node->right == at(statement(8).entry, node->left);
             at(statement(8).entry, node->left) == at(statement(8).entry, left);
             at(statement(10).entry, left) == at(statement(10).entry, 0);

@@ -1622,19 +1622,91 @@ pub(super) fn finish_ordered_proof_replay(
                             certificate_replay.deferred_tactic_capture = None;
                             certificate_replay.surface_propositions =
                                 outcome_surface_propositions.clone();
-                            let proof_tactic = lower_outcome_simp_tactic(
-                                &certificate_replay,
-                                &surface_goal,
-                                &unfolded_goal,
-                                &planning_available,
-                                parsed_function.parameters(),
-                                arguments,
-                                pre_state,
-                                post_state,
-                                result,
-                                predicate_environment,
-                                click_function_environment,
-                            )
+                            let restricted_simp_surfaces = match &have.proof {
+                                Proof::Script(tactics) => {
+                                    tactics.last().and_then(|tactic| match tactic {
+                                        ProofTactic::SimpUsing(simp) => Some(&simp.premises),
+                                        _ => None,
+                                    })
+                                }
+                                _ => None,
+                            };
+                            let restricted_simp_pairs = restricted_simp_surfaces
+                                .map(|surfaces| {
+                                    surfaces
+                                        .iter()
+                                        .map(|surface| {
+                                        certificate_replay
+                                            .surface_propositions
+                                            .available_kernel(surface, &certificate_available)
+                                            .cloned()
+                                            .map(Ok::<_, String>)
+                                            .unwrap_or_else(|| {
+                                                    lower_outcome_proposition_with_program_points(
+                                                    parsed_function.parameters(),
+                                                    arguments,
+                                                    pre_state,
+                                                    post_state,
+                                                    result,
+                                                    &certificate_available,
+                                                    surface,
+                                                    predicate_environment,
+                                                    click_function_environment,
+                                                    &replay.program_point_states,
+                                                )
+                                            })
+                                            .and_then(|kernel| {
+                                                certificate_available
+                                                    .iter()
+                                                    .any(|available| {
+                                                        available == &kernel
+                                                            || condition_polarity_equivalent(
+                                                                available, &kernel,
+                                                            )
+                                                    })
+                                                    .then_some((kernel, surface.clone()))
+                                                    .ok_or_else(|| {
+                                                        format!(
+                                                            "post-execution `simp() using` premise is not in the certified proof context: {}",
+                                                            describe_click_proposition(surface)
+                                                        )
+                                                    })
+                                            })
+                                        })
+                                        .collect::<Result<Vec<_>, String>>()
+                                })
+                            .transpose()
+                            .map_err(|message| {
+                                ClickError::new(format!(
+                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: {message}"
+                                ))
+                                })?;
+                            let certificate_planning_available = restricted_simp_pairs
+                                .as_ref()
+                                .map(|pairs| {
+                                    pairs
+                                        .iter()
+                                        .map(|(kernel, _)| kernel.clone())
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_else(|| planning_available.clone());
+                            let closing_tactics = if let Some(pairs) = &restricted_simp_pairs {
+                                lower_outcome_restricted_simp_tactics(&unfolded_goal, pairs)
+                            } else {
+                                lower_outcome_simp_tactics(
+                                    &certificate_replay,
+                                    &surface_goal,
+                                    &unfolded_goal,
+                                    &certificate_planning_available,
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    post_state,
+                                    result,
+                                    predicate_environment,
+                                    click_function_environment,
+                                )
+                            }
                             .map_err(|error| {
                                 ClickError::new(format!(
                                     "`{proof_label}` path {path_index}, tactic {tactic_index}: `have` failed: {}",
@@ -1646,14 +1718,14 @@ pub(super) fn finish_ordered_proof_replay(
                                 .cloned()
                                 .map(ProofTactic::UnfoldPredicate)
                                 .collect::<Vec<_>>();
-                            proof_tactics.push(proof_tactic.clone());
+                            proof_tactics.extend(closing_tactics.iter().cloned());
                             let surface_have = ProofHave {
                                 proposition: have.proposition.clone(),
                                 proof: Proof::Script(proof_tactics),
                             };
                             let uses_store_spelling = matches!(
-                                &proof_tactic,
-                                ProofTactic::Derive(derive)
+                                closing_tactics.as_slice(),
+                                [ProofTactic::Derive(derive)]
                                     if derive.premises.iter().any(|premise| matches!(
                                         premise,
                                         ClickProposition::Comparison {

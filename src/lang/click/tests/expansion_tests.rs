@@ -1174,6 +1174,51 @@ fn restricted_simp_inside_have_expands_to_explicit_equality_rewrites() {
 }
 
 #[test]
+fn post_execution_restricted_simp_expands_without_derive() {
+    let c_source = r#"
+        int32 identity(int32 x, int32 y, int32 z) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "identity.c";
+
+        int32 identity(int32 x, int32 y, int32 z) {
+            requires x + 1 == y;
+            requires y == z;
+            ensures result + 1 == z;
+        } by {
+            execute();
+            have x + 1 == z by {
+                simp() using {
+                    x + 1 == y;
+                    y == z;
+                }
+            }
+            simp();
+        }
+    "#;
+    let offset = click_source.find("have x + 1 == z").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let sources = [("identity.c", c_source)];
+    let expanded = expand_c0_tactic_source_at(click_source, &sources, line, column).unwrap();
+    let selected = &expanded[offset..expanded.find("assumption();").unwrap()];
+    assert!(selected.contains("rewrite((x + 1) == y);"), "{selected}");
+    assert!(!selected.contains("derive using"), "{selected}");
+    verify_c0_sources(&expanded, &sources).expect("explicit post-execution proof should replay");
+}
+
+#[test]
 fn source_expander_lowers_smart_apply_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {

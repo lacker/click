@@ -907,7 +907,7 @@ pub(super) fn lower_outcome_simp_tactic(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lower_outcome_simp_tactics(
+pub(super) fn lower_outcome_simp_tactics(
     replay: &TacticReplayState,
     surface_goal: &ClickProposition,
     goal: &Proposition,
@@ -1011,6 +1011,42 @@ fn lower_outcome_simp_tactics(
     } else {
         Ok(vec![tactic])
     }
+}
+
+pub(super) fn lower_outcome_restricted_simp_tactics(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Result<Vec<ProofTactic>, ClickError> {
+    let available = premise_pairs
+        .iter()
+        .map(|(kernel, _)| kernel.clone())
+        .collect::<Vec<_>>();
+    let assumptions = assumptions_from_propositions(&available);
+    let Some(plan) = plan_simp_certificate(goal, &assumptions) else {
+        return Err(ClickError::new(
+            "`simp() using` did not reproduce its verified plan from the listed premises",
+        ));
+    };
+    if !replay_simp_certificate(goal, &assumptions, &plan) {
+        return Err(ClickError::new(
+            "`simp() using` planned a certificate that did not replay",
+        ));
+    }
+    plan_explicit_equality_rewrites(goal, premise_pairs, &available).ok_or_else(|| {
+        let initial_rewrites = premise_pairs
+            .iter()
+            .map(|(kernel, surface)| {
+                let outcome = rewrite_proposition_by_exact_equality(goal, kernel, &available)
+                    .map(|_| "applies to the initial goal".to_string())
+                    .unwrap_or_else(|error| error);
+                format!("{}: {outcome}", describe_click_proposition(surface))
+            })
+            .collect::<Vec<_>>()
+            .join("\n    ");
+        ClickError::new(format!(
+            "`simp() using` has no explicit simple certificate for its listed premises\n    {initial_rewrites}"
+        ))
+    })
 }
 
 fn collect_definable_predicate_names(

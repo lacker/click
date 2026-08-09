@@ -80,6 +80,110 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
     equality: &Proposition,
     available: &[Proposition],
 ) -> Result<Proposition, String> {
+    if let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) = equality
+    {
+        let reverse = Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(
+                Box::new(right.as_ref().clone()),
+                Box::new(left.as_ref().clone()),
+            ),
+            true,
+        );
+        if !available.contains(equality) && !available.contains(&reverse) {
+            return Err(format!(
+                "`rewrite` requires an exact available equality, missing {equality:?}"
+            ));
+        }
+        let normalized_left = normalize_direct_atomic_pointer_offset_loads(left);
+        let rewrite_offset = |offset: &PointerOffsetTerm| {
+            if offset == left.as_ref()
+                || normalize_direct_atomic_pointer_offset_loads(offset) == normalized_left
+            {
+                right.as_ref().clone()
+            } else {
+                offset.clone()
+            }
+        };
+        let rewritten = match goal {
+            Proposition::ConditionIs(
+                ConditionTerm::PointerOffsetEqual(goal_left, goal_right),
+                expected,
+            ) => Proposition::ConditionIs(
+                ConditionTerm::PointerOffsetEqual(
+                    Box::new(rewrite_offset(goal_left)),
+                    Box::new(rewrite_offset(goal_right)),
+                ),
+                *expected,
+            ),
+            Proposition::ConditionIs(
+                ConditionTerm::PointerEqual(goal_left, goal_right),
+                expected,
+            ) => {
+                let rewrite_pointer = |pointer: &Pointer| Pointer {
+                    block: pointer.block.clone(),
+                    offset: rewrite_offset(&pointer.offset),
+                };
+                Proposition::ConditionIs(
+                    ConditionTerm::PointerEqual(
+                        Box::new(rewrite_pointer(goal_left)),
+                        Box::new(rewrite_pointer(goal_right)),
+                    ),
+                    *expected,
+                )
+            }
+            _ => {
+                return Err(
+                    "`rewrite` pointer-offset equality expects a pointer equality goal".to_string(),
+                );
+            }
+        };
+        if &rewritten == goal {
+            return Err("`rewrite` equality does not occur in the current goal".to_string());
+        }
+        return Ok(rewritten);
+    }
+    if let Proposition::ConditionIs(ConditionTerm::PointerEqual(left, right), true) = equality {
+        let reverse = Proposition::ConditionIs(
+            ConditionTerm::PointerEqual(
+                Box::new(right.as_ref().clone()),
+                Box::new(left.as_ref().clone()),
+            ),
+            true,
+        );
+        if !available.contains(equality) && !available.contains(&reverse) {
+            return Err(format!(
+                "`rewrite` requires an exact available equality, missing {equality:?}"
+            ));
+        }
+        let Proposition::ConditionIs(ConditionTerm::PointerEqual(goal_left, goal_right), expected) =
+            goal
+        else {
+            return Err("`rewrite` pointer equality expects a pointer equality goal".to_string());
+        };
+        let normalized = |pointer: &Pointer| Pointer {
+            block: pointer.block.clone(),
+            offset: normalize_direct_atomic_pointer_offset_loads(&pointer.offset),
+        };
+        let normalized_left = normalized(left);
+        let rewrite_pointer = |pointer: &Pointer| {
+            if pointer == left.as_ref() || normalized(pointer) == normalized_left {
+                right.as_ref().clone()
+            } else {
+                pointer.clone()
+            }
+        };
+        let rewritten = Proposition::ConditionIs(
+            ConditionTerm::PointerEqual(
+                Box::new(rewrite_pointer(goal_left)),
+                Box::new(rewrite_pointer(goal_right)),
+            ),
+            *expected,
+        );
+        if &rewritten == goal {
+            return Err("`rewrite` equality does not occur in the current goal".to_string());
+        }
+        return Ok(rewritten);
+    }
     let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = equality
     else {
         return Err("`rewrite` currently expects an int32 equality".to_string());
@@ -96,14 +200,122 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
             "`rewrite` requires an exact available equality, missing {equality:?}"
         ));
     }
-    let Bitvector32Term::Variable(variable) = left.as_ref() else {
-        return Err(
-            "`rewrite` currently requires the equality's left side to be an int32 variable"
-                .to_string(),
-        );
+    fn rewrite_term(
+        term: &Bitvector32Term,
+        from: &Bitvector32Term,
+        to: &Bitvector32Term,
+    ) -> Bitvector32Term {
+        if term == from
+            || normalize_direct_atomic_memory_load(term)
+                == normalize_direct_atomic_memory_load(from)
+        {
+            return to.clone();
+        }
+        let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+            (
+                Box::new(rewrite_term(left, from, to)),
+                Box::new(rewrite_term(right, from, to)),
+            )
+        };
+        match term {
+            Bitvector32Term::Add(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::Add(left, right)
+            }
+            Bitvector32Term::Subtract(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::Subtract(left, right)
+            }
+            Bitvector32Term::Multiply(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::Multiply(left, right)
+            }
+            Bitvector32Term::Divide(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::Divide(left, right)
+            }
+            Bitvector32Term::Remainder(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::Remainder(left, right)
+            }
+            Bitvector32Term::ShiftLeft(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::ShiftLeft(left, right)
+            }
+            Bitvector32Term::ArithmeticShiftRight(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::ArithmeticShiftRight(left, right)
+            }
+            Bitvector32Term::BitwiseAnd(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::BitwiseAnd(left, right)
+            }
+            Bitvector32Term::BitwiseOr(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::BitwiseOr(left, right)
+            }
+            Bitvector32Term::BitwiseXor(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::BitwiseXor(left, right)
+            }
+            Bitvector32Term::BitwiseNot(value) => {
+                Bitvector32Term::BitwiseNot(Box::new(rewrite_term(value, from, to)))
+            }
+            Bitvector32Term::PureFunctionApplication { name, arguments } => {
+                Bitvector32Term::PureFunctionApplication {
+                    name: name.clone(),
+                    arguments: arguments
+                        .iter()
+                        .map(|argument| rewrite_term(argument, from, to))
+                        .collect(),
+                }
+            }
+            // Rewriting a whole load is useful and sound; descending into a
+            // snapshot or address would instead rewrite the representation
+            // of the state in which the equality was established.
+            Bitvector32Term::MemoryLoad(_, _)
+            | Bitvector32Term::If { .. }
+            | Bitvector32Term::RangeFold { .. }
+            | Bitvector32Term::Constant(_)
+            | Bitvector32Term::Variable(_) => term.clone(),
+        }
+    }
+
+    let Proposition::ConditionIs(condition, expected) = goal else {
+        return Err("`rewrite` currently expects an atomic condition goal".to_string());
     };
-    let rewritten =
-        substitute_int32_variable_in_proposition(goal, *variable, right.as_ref().clone());
+    let rewritten_condition = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(goal_left, goal_right) => {
+            ConditionTerm::Bitvector32SignedLessThan(
+                Box::new(rewrite_term(goal_left, left, right)),
+                Box::new(rewrite_term(goal_right, left, right)),
+            )
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(goal_left, goal_right) => {
+            ConditionTerm::Bitvector32SignedLessEqual(
+                Box::new(rewrite_term(goal_left, left, right)),
+                Box::new(rewrite_term(goal_right, left, right)),
+            )
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(goal_left, goal_right) => {
+            ConditionTerm::Bitvector32SignedGreaterThan(
+                Box::new(rewrite_term(goal_left, left, right)),
+                Box::new(rewrite_term(goal_right, left, right)),
+            )
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(goal_left, goal_right) => {
+            ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(rewrite_term(goal_left, left, right)),
+                Box::new(rewrite_term(goal_right, left, right)),
+            )
+        }
+        ConditionTerm::Bitvector32Equal(goal_left, goal_right) => ConditionTerm::Bitvector32Equal(
+            Box::new(rewrite_term(goal_left, left, right)),
+            Box::new(rewrite_term(goal_right, left, right)),
+        ),
+        _ => return Err("`rewrite` currently expects an int32 comparison goal".to_string()),
+    };
+    let rewritten = Proposition::ConditionIs(rewritten_condition, *expected);
     if &rewritten == goal {
         return Err("`rewrite` equality does not occur in the current goal".to_string());
     }
@@ -444,6 +656,49 @@ pub(in crate::lang::click) fn replay_simp_certificate(
             derivation.conclusion() == proposition && derivation.replay(assumptions)
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrite_uses_pointer_offset_equalities_inside_pointer_goals() {
+        let left = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(41))),
+            byte_width: 4,
+        };
+        let right = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(42))),
+            byte_width: 4,
+        };
+        let equality = Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(Box::new(left.clone()), Box::new(right.clone())),
+            true,
+        );
+        let pointer = |offset| Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset,
+        };
+        let null = Pointer {
+            block: "null".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(pointer(left), null.clone()),
+            true,
+        );
+
+        assert_eq!(
+            rewrite_proposition_by_exact_equality(
+                &goal,
+                &equality,
+                std::slice::from_ref(&equality),
+            )
+            .unwrap(),
+            Proposition::ConditionIs(ConditionTerm::pointer_equal(pointer(right), null), true,),
+        );
     }
 }
 
