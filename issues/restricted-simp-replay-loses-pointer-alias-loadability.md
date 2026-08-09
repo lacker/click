@@ -31,6 +31,9 @@ load address. A current-state mdtest expands that case to
 statement-entry case still fails while lowering the expanded proof because its
 snapshot spelling cannot recover the element loadability from the certified
 array range. Keep the issue open for that snapshot transport failure.
+The final `right->data[right->pos] == data[0]` derivation in
+`examples/input-cursor` reproduces the same missing `data[0]` loadability when
+migrated, so the gap is not specific to owned-segmented-buffer.
 
 ## Regression
 

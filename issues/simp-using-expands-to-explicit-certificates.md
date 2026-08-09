@@ -95,6 +95,16 @@ certificates before their old `derive using` blocks can be removed:
   selected order rule. Add the smallest named simple arithmetic rule (or an
   equally explicit theorem application), not a generic arithmetic solver
   relabeled as simple.
+- Equality chains that load through a pointer alias now have an explicit
+  `rewrite` rule in the current state, and a focused current-state expansion
+  regression passes. Statement-entry spellings in owned-segmented-buffer and
+  the corresponding input-cursor proof still lose element loadability during
+  simple replay. This is tracked independently in
+  `restricted-simp-replay-loses-pointer-alias-loadability.md`.
+- The unchanged owned-string project currently misses normal verification
+  budgets before a scalar equality migration can be assessed. Fix
+  `owned-string-baseline-misses-verification-budgets.md` before using that
+  project as a migration gate.
 
 The input-cursor attempt also exposed and fixed a separate lowering bug:
 declaration expansion populated resource argument type metadata in `derive`
@@ -102,7 +112,9 @@ premises but omitted `simp() using` premises. A focused syntax regression now
 keeps that metadata; the example reaches the arithmetic-certificate gap above
 instead of failing resource lowering.
 
-Keep both examples unchanged until their focused regressions expand and replay.
+Keep affected proof sites unchanged until their focused regressions expand and
+replay. Do not count retaining `derive using` as a workaround for either
+replay or performance failures.
 
 ## Implementation order
 
