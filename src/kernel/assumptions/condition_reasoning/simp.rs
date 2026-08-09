@@ -65,6 +65,39 @@ impl Assumptions {
             {
                 Some(true)
             }
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+                if right.as_ref() == &Bitvector32Term::Constant(0)
+                    && left.as_ref().subtract_one_base().is_some_and(|base| {
+                        self.exact_condition_value(&ConditionTerm::signed_greater_than(
+                            base,
+                            Bitvector32Term::Constant(0),
+                        )) == Some(true)
+                    }) =>
+            {
+                Some(true)
+            }
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
+                if left.as_ref() == &Bitvector32Term::Constant(0)
+                    && right.as_ref().subtract_one_base().is_some_and(|base| {
+                        self.exact_condition_value(&ConditionTerm::signed_greater_than(
+                            base,
+                            Bitvector32Term::Constant(0),
+                        )) == Some(true)
+                    }) =>
+            {
+                Some(true)
+            }
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+                if left.as_ref().subtract_one_base().is_some_and(|base| {
+                    &base == right.as_ref()
+                        && self.exact_condition_value(&ConditionTerm::signed_greater_than(
+                            base,
+                            Bitvector32Term::Constant(0),
+                        )) == Some(true)
+                }) =>
+            {
+                Some(true)
+            }
             _ => {
                 if self.proves_condition_from_facts_for_simp(condition, true) {
                     return Some(true);

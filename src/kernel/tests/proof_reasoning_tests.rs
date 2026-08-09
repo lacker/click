@@ -1815,6 +1815,28 @@ fn countdown_loop_body_preserves_nonnegative_invariant_symbolically() {
 }
 
 #[test]
+fn equality_rewrites_through_matching_decrement() {
+    let left = Bitvector32Term::Variable(Variable(66_001));
+    let right = Bitvector32Term::Variable(Variable(66_002));
+    let equality =
+        Proposition::ConditionIs(ConditionTerm::equal(left.clone(), right.clone()), true);
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::subtract(left, Bitvector32Term::Constant(1)),
+            Bitvector32Term::subtract(right, Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+
+    assert!(
+        Assumptions::new()
+            .assume_proposition(equality)
+            .derive_simp_proposition(&goal)
+            .is_some()
+    );
+}
+
+#[test]
 fn symbolic_max_lt_branch_is_native_theorem() {
     let a = Variable(10);
     let b = Variable(11);

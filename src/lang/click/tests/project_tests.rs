@@ -739,12 +739,31 @@ fn unrelated_non_comparison_conditions_are_not_polarity_equivalent() {
     );
     let greater_equal = Proposition::ConditionIs(
         ConditionTerm::Bitvector32SignedGreaterEqual(
-            Box::new(Bitvector32Term::Variable(Variable(2))),
             Box::new(Bitvector32Term::Variable(Variable(1))),
+            Box::new(Bitvector32Term::Variable(Variable(2))),
         ),
         false,
     );
     assert!(condition_polarity_equivalent(&less_than, &greater_equal));
+
+    let greater_equal_true = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedGreaterEqual(
+            Box::new(Bitvector32Term::Variable(Variable(2))),
+            Box::new(Bitvector32Term::Variable(Variable(1))),
+        ),
+        true,
+    );
+    let reversed_less_equal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessEqual(
+            Box::new(Bitvector32Term::Variable(Variable(1))),
+            Box::new(Bitvector32Term::Variable(Variable(2))),
+        ),
+        true,
+    );
+    assert!(condition_polarity_equivalent(
+        &greater_equal_true,
+        &reversed_less_equal
+    ));
 }
 
 #[test]

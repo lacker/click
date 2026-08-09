@@ -208,19 +208,23 @@ fn canonical_order_condition(
 ) -> Option<(Bitvector32Term, Bitvector32Term, bool)> {
     match (condition, value) {
         (ConditionTerm::Bitvector32SignedLessThan(left, right), true)
-        | (ConditionTerm::Bitvector32SignedGreaterEqual(right, left), false) => {
+        | (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), false) => {
             Some((left.as_ref().clone(), right.as_ref().clone(), true))
         }
-        (ConditionTerm::Bitvector32SignedLessThan(left, right), false)
-        | (ConditionTerm::Bitvector32SignedGreaterEqual(right, left), true) => {
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), false) => {
+            Some((right.as_ref().clone(), left.as_ref().clone(), false))
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), true) => {
             Some((right.as_ref().clone(), left.as_ref().clone(), false))
         }
         (ConditionTerm::Bitvector32SignedLessEqual(left, right), true)
-        | (ConditionTerm::Bitvector32SignedGreaterThan(right, left), false) => {
+        | (ConditionTerm::Bitvector32SignedGreaterThan(left, right), false) => {
             Some((left.as_ref().clone(), right.as_ref().clone(), false))
         }
-        (ConditionTerm::Bitvector32SignedLessEqual(left, right), false)
-        | (ConditionTerm::Bitvector32SignedGreaterThan(right, left), true) => {
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), false) => {
+            Some((right.as_ref().clone(), left.as_ref().clone(), true))
+        }
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), true) => {
             Some((right.as_ref().clone(), left.as_ref().clone(), true))
         }
         _ => None,

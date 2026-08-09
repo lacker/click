@@ -17,12 +17,12 @@ impl Assumptions {
                     ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
                     true,
                 );
-                let positive_minus_one = right == Bitvector32Term::Constant(1)
+                let nonnegative_minus_one = right == Bitvector32Term::Constant(1)
                     && (self.has_condition_fact(
-                        ConditionTerm::signed_greater_than(left.clone(), zero.clone()),
+                        ConditionTerm::signed_greater_equal(left.clone(), zero.clone()),
                         true,
-                    ) || self.has_lower_bound_above(&left, &zero));
-                (ordered_nonnegative || positive_minus_one).then_some(false)
+                    ) || self.has_lower_bound_at_or_above(&left, &zero));
+                (ordered_nonnegative || nonnegative_minus_one).then_some(false)
             }
             ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
                 if right.as_ref() == &Bitvector32Term::Constant(1) {
@@ -157,6 +157,32 @@ impl Assumptions {
                     true,
                 ) || self.has_lower_bound_above(&left_before_sub, &zero))
                 .then_some(true)
+            }
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
+                if left.as_ref() == &Bitvector32Term::Constant(0)
+                    && right.as_ref().is_subtract_one() =>
+            {
+                let right_before_sub = right.as_ref().subtract_one_base()?;
+                let zero = Bitvector32Term::Constant(0);
+                (self.has_condition_fact(
+                    ConditionTerm::signed_greater_than(right_before_sub.clone(), zero.clone()),
+                    true,
+                ) || self.has_lower_bound_above(&right_before_sub, &zero))
+                .then_some(true)
+            }
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+                if left.as_ref().subtract_one_base().is_some_and(|base| {
+                    &base == right.as_ref()
+                        && (self.has_condition_fact(
+                            ConditionTerm::signed_greater_than(
+                                base.clone(),
+                                Bitvector32Term::Constant(0),
+                            ),
+                            true,
+                        ) || self.has_lower_bound_above(&base, &Bitvector32Term::Constant(0)))
+                }) =>
+            {
+                Some(true)
             }
             _ => None,
         }

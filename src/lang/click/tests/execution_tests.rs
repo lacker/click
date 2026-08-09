@@ -722,3 +722,30 @@ fn expanded_read_step_keeps_named_range_separation_premises() {
     })
     .expect("the expanded read certificate should verify as a complete proof");
 }
+
+#[test]
+fn decrement_contract_replays_nonnegative_and_equality_certificates() {
+    let c_source = r#"
+        int32 decrement(int32 value, int32 count) {
+            return value - 1;
+        }
+    "#;
+    let click_source = r#"
+        verifying "decrement.c";
+
+        int32 decrement(int32 value, int32 count) {
+            requires 0 < value;
+            requires value == count;
+            ensures result == value - 1;
+        } by {
+            have 0 <= value - 1 by simp;
+            have value - 1 < value by simp;
+            have value - 1 == count - 1 by simp;
+            execute();
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("decrement.c", c_source)])
+        .expect("decrement arithmetic should search and replay consistently");
+}

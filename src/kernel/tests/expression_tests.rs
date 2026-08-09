@@ -1065,6 +1065,23 @@ fn strict_positive_bound_rules_out_decrement_overflow() {
 }
 
 #[test]
+fn nonnegative_bound_rules_out_decrement_overflow() {
+    let value = Bitvector32Term::Variable(Variable(72_002));
+    let assumptions = Assumptions::new().assume_condition(
+        ConditionTerm::signed_greater_equal(value.clone(), Bitvector32Term::Constant(0)),
+        true,
+    );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_subtract_overflows(
+            value,
+            Bitvector32Term::Constant(1),
+        )),
+        Some(false)
+    );
+}
+
+#[test]
 fn interval_arithmetic_uses_lower_bound_for_incremented_values() {
     let i = Variable(73);
     let i_bits = Bitvector32Term::Variable(i);
