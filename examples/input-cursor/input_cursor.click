@@ -420,7 +420,7 @@ int32 input_cursor_shared_pipeline(
     have right->data == data by simp;
     have right_value == right->data[right->pos] by simp;
     have right->data[right->pos] == data[0] by {
-        derive using {
+        simp() using {
             right->pos == 0;
             right->data == data;
         }

@@ -846,6 +846,34 @@ pub(super) fn facts_for_direct_derivation_lowering(
     facts
 }
 
+/// Facts that may establish that a restricted simplifier's surface goal and
+/// premises are defined without performing an equality step on its behalf.
+/// Array bounds are part of expression lowering; equalities remain available
+/// only through the explicitly listed `simp() using` premises.
+pub(super) fn facts_for_restricted_simp_lowering(propositions: &[Proposition]) -> Vec<Proposition> {
+    let mut facts = facts_for_direct_surface_lowering(propositions);
+    for proposition in propositions {
+        let mut conjuncts = Vec::new();
+        atomic_conjuncts(proposition, &mut conjuncts);
+        for proposition in conjuncts {
+            if matches!(
+                proposition,
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(_, _)
+                        | ConditionTerm::Bitvector32SignedLessEqual(_, _)
+                        | ConditionTerm::Bitvector32SignedGreaterThan(_, _)
+                        | ConditionTerm::Bitvector32SignedGreaterEqual(_, _),
+                    _,
+                )
+            ) && !facts.contains(proposition)
+            {
+                facts.push(proposition.clone());
+            }
+        }
+    }
+    facts
+}
+
 pub(super) fn facts_for_smart_have_lowering(propositions: &[Proposition]) -> Vec<Proposition> {
     let mut facts = facts_for_direct_derivation_lowering(propositions);
     for proposition in propositions {

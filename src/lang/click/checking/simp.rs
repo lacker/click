@@ -95,15 +95,25 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
             ));
         }
         let normalized_left = normalize_direct_atomic_pointer_offset_loads(left);
-        let rewrite_offset = |offset: &PointerOffsetTerm| {
-            if offset == left.as_ref()
-                || normalize_direct_atomic_pointer_offset_loads(offset) == normalized_left
+        fn rewrite_offset(
+            offset: &PointerOffsetTerm,
+            left: &PointerOffsetTerm,
+            normalized_left: &PointerOffsetTerm,
+            right: &PointerOffsetTerm,
+        ) -> PointerOffsetTerm {
+            if offset == left
+                || normalize_direct_atomic_pointer_offset_loads(offset) == *normalized_left
             {
-                right.as_ref().clone()
-            } else {
-                offset.clone()
+                return right.clone();
             }
-        };
+            match offset {
+                PointerOffsetTerm::Add(first, second) => PointerOffsetTerm::add(
+                    rewrite_offset(first, left, normalized_left, right),
+                    rewrite_offset(second, left, normalized_left, right),
+                ),
+                _ => offset.clone(),
+            }
+        }
         fn rewrite_term_offset(
             term: &Bitvector32Term,
             left: &PointerOffsetTerm,
@@ -112,14 +122,7 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
         ) -> Bitvector32Term {
             let rewrite_pointer = |pointer: &Pointer| Pointer {
                 block: pointer.block.clone(),
-                offset: if &pointer.offset == left
-                    || &normalize_direct_atomic_pointer_offset_loads(&pointer.offset)
-                        == normalized_left
-                {
-                    right.clone()
-                } else {
-                    pointer.offset.clone()
-                },
+                offset: rewrite_offset(&pointer.offset, left, normalized_left, right),
             };
             let binary = |left_term: &Bitvector32Term, right_term: &Bitvector32Term| {
                 (
@@ -202,8 +205,8 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                 expected,
             ) => Proposition::ConditionIs(
                 ConditionTerm::PointerOffsetEqual(
-                    Box::new(rewrite_offset(goal_left)),
-                    Box::new(rewrite_offset(goal_right)),
+                    Box::new(rewrite_offset(goal_left, left, &normalized_left, right)),
+                    Box::new(rewrite_offset(goal_right, left, &normalized_left, right)),
                 ),
                 *expected,
             ),
@@ -213,7 +216,7 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
             ) => {
                 let rewrite_pointer = |pointer: &Pointer| Pointer {
                     block: pointer.block.clone(),
-                    offset: rewrite_offset(&pointer.offset),
+                    offset: rewrite_offset(&pointer.offset, left, &normalized_left, right),
                 };
                 Proposition::ConditionIs(
                     ConditionTerm::PointerEqual(
@@ -341,6 +344,22 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
         from: &Bitvector32Term,
         to: &Bitvector32Term,
     ) -> Bitvector32Term {
+        fn rewrite_offset(
+            offset: &PointerOffsetTerm,
+            from: &Bitvector32Term,
+            to: &Bitvector32Term,
+        ) -> PointerOffsetTerm {
+            match offset {
+                PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
+                    rewrite_offset(left, from, to),
+                    rewrite_offset(right, from, to),
+                ),
+                PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                    PointerOffsetTerm::scale_int32(rewrite_term(value, from, to), *byte_width)
+                }
+                PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
+            }
+        }
         if term == from
             || normalize_direct_atomic_memory_load(term)
                 == normalize_direct_atomic_memory_load(from)
@@ -406,11 +425,16 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                         .collect(),
                 }
             }
-            // Rewriting a whole load is useful and sound; descending into a
-            // snapshot or address would instead rewrite the representation
-            // of the state in which the equality was established.
-            Bitvector32Term::MemoryLoad(_, _)
-            | Bitvector32Term::If { .. }
+            // The memory snapshot is fixed, but its address is an ordinary
+            // expression: exact equality substitution is congruent there too.
+            Bitvector32Term::MemoryLoad(memory, pointer) => Bitvector32Term::MemoryLoad(
+                memory.clone(),
+                Box::new(Pointer {
+                    block: pointer.block.clone(),
+                    offset: rewrite_offset(&pointer.offset, from, to),
+                }),
+            ),
+            Bitvector32Term::If { .. }
             | Bitvector32Term::RangeFold { .. }
             | Bitvector32Term::Constant(_)
             | Bitvector32Term::Variable(_) => term.clone(),
@@ -465,6 +489,49 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites(
     premises: &[(Proposition, ClickProposition)],
     available: &[Proposition],
 ) -> Option<Vec<ProofTactic>> {
+    fn reverse_equality(
+        kernel: &Proposition,
+        surface: &ClickProposition,
+    ) -> Option<(Proposition, ClickProposition)> {
+        let kernel = match kernel {
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(right.clone(), left.clone()),
+                    true,
+                )
+            }
+            Proposition::ConditionIs(ConditionTerm::PointerEqual(left, right), true) => {
+                Proposition::ConditionIs(
+                    ConditionTerm::PointerEqual(right.clone(), left.clone()),
+                    true,
+                )
+            }
+            Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) => {
+                Proposition::ConditionIs(
+                    ConditionTerm::PointerOffsetEqual(right.clone(), left.clone()),
+                    true,
+                )
+            }
+            _ => return None,
+        };
+        let ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::Equal,
+            right,
+        } = surface
+        else {
+            return None;
+        };
+        Some((
+            kernel,
+            ClickProposition::Comparison {
+                left: right.clone(),
+                operator: ComparisonOperator::Equal,
+                right: left.clone(),
+            },
+        ))
+    }
+
     fn search(
         current: Proposition,
         premises: &[(Proposition, ClickProposition)],
@@ -472,7 +539,10 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites(
         used: &mut [bool],
         tactics: &mut Vec<ProofTactic>,
     ) -> bool {
-        if available.contains(&current) {
+        let normalized_current = normalize_direct_atomic_memory_loads(&current);
+        if available.iter().any(|fact| {
+            fact == &current || normalize_direct_atomic_memory_loads(fact) == normalized_current
+        }) {
             tactics.push(ProofTactic::Assumption);
             return true;
         }
@@ -484,17 +554,24 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites(
             if used[index] {
                 continue;
             }
-            let Ok(rewritten) = rewrite_proposition_by_exact_equality(&current, kernel, available)
-            else {
-                continue;
-            };
-            used[index] = true;
-            tactics.push(ProofTactic::Rewrite(surface.clone()));
-            if search(rewritten, premises, available, used, tactics) {
-                return true;
+            let mut orientations = vec![(kernel.clone(), surface.clone())];
+            if let Some(reverse) = reverse_equality(kernel, surface) {
+                orientations.push(reverse);
             }
-            tactics.pop();
-            used[index] = false;
+            for (oriented_kernel, oriented_surface) in orientations {
+                let Ok(rewritten) =
+                    rewrite_proposition_by_exact_equality(&current, &oriented_kernel, available)
+                else {
+                    continue;
+                };
+                used[index] = true;
+                tactics.push(ProofTactic::Rewrite(oriented_surface));
+                if search(rewritten, premises, available, used, tactics) {
+                    return true;
+                }
+                tactics.pop();
+                used[index] = false;
+            }
         }
         false
     }
@@ -835,6 +912,50 @@ mod tests {
             .unwrap(),
             Proposition::ConditionIs(ConditionTerm::pointer_equal(pointer(right), null), true,),
         );
+    }
+
+    #[test]
+    fn rewrite_substitutes_index_and_base_equalities_inside_load_addresses() {
+        let memory = crate::kernel::intern_c_memory(CMemory::new());
+        let data = Bitvector32Term::Variable(Variable(51));
+        let alias = Bitvector32Term::Variable(Variable(52));
+        let index = Bitvector32Term::Variable(Variable(53));
+        let pointer = |offset| Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset,
+        };
+        let load = |offset| Bitvector32Term::MemoryLoad(memory.clone(), Box::new(pointer(offset)));
+        let data_offset = PointerOffsetTerm::scale_int32(data.clone(), 4);
+        let alias_offset = PointerOffsetTerm::scale_int32(alias.clone(), 4);
+        let indexed_offset = PointerOffsetTerm::add(
+            data_offset.clone(),
+            PointerOffsetTerm::scale_int32(index.clone(), 4),
+        );
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(load(indexed_offset)),
+                Box::new(load(alias_offset.clone())),
+            ),
+            true,
+        );
+        let index_is_zero = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(index),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let data_is_alias = Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(Box::new(data_offset), Box::new(alias_offset)),
+            true,
+        );
+        let available = [index_is_zero.clone(), data_is_alias.clone()];
+
+        let indexed =
+            rewrite_proposition_by_exact_equality(&goal, &index_is_zero, &available).unwrap();
+        let aliased =
+            rewrite_proposition_by_exact_equality(&indexed, &data_is_alias, &available).unwrap();
+        assert_eq!(normalize_proposition(&aliased), SimpProposition::True);
     }
 }
 

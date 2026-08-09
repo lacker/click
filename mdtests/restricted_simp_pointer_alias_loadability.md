@@ -10,6 +10,7 @@ element-loadability premise.
 int32 alias_value(
     int32 original[],
     int32 alias[],
+    int32 index,
     int32 length,
     int32 value
 ) {
@@ -29,19 +30,22 @@ resource valued_array(data: int32*, length: int32, value: int32) {
 int32 alias_value(
     int32 original[],
     int32 alias[],
+    int32 index,
     int32 length,
     int32 value
 ) {
+    requires index == 0;
     requires alias == original;
     owns valued_array(original, length, value);
-    ensures alias[0] == value;
+    ensures alias[index] == value;
 } by {
     unfold(valued_array(original, length, value));
     step();
-    have alias[0] == value by {
+    have alias[index] == value by {
         simp() using {
             original[0] == value;
             alias == original;
+            index == 0;
         }
     }
     fold(valued_array(original, length, value));

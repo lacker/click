@@ -449,7 +449,7 @@ impl PointerOffsetTerm {
         }
     }
 
-    pub(in crate::kernel) fn add(left: Self, right: Self) -> Self {
+    pub(crate) fn add(left: Self, right: Self) -> Self {
         match (left.as_const(), right.as_const()) {
             (Some(left), Some(right)) => Self::Constant(left + right),
             (Some(0), _) => right,
@@ -458,7 +458,7 @@ impl PointerOffsetTerm {
         }
     }
 
-    pub(in crate::kernel) fn scale_int32(value: Bitvector32Term, byte_width: i64) -> Self {
+    pub(crate) fn scale_int32(value: Bitvector32Term, byte_width: i64) -> Self {
         match value.as_const() {
             Some(value) => Self::Constant((value as i32 as i64) * byte_width),
             None => Self::Int32Scaled {

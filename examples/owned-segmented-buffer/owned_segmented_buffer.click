@@ -236,7 +236,7 @@ int32 owned_segmented_buffer_pipeline(
     have owner->first_data == first_data by simp;
     have owner->second_data == second_data by simp;
     have at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value) by {
-        derive using {
+        simp() using {
             at(statement(4).entry, owner->first_data[0]) == at(statement(4).entry, first_value);
             at(statement(4).entry, owner->first_data) == at(statement(4).entry, first_data);
         }
@@ -299,7 +299,7 @@ int32 owned_segmented_buffer_pipeline(
     have owner->first_data == first_data by simp;
     have owner->second_data == second_data by simp;
     have at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value) by {
-        derive using {
+        simp() using {
             at(statement(5).entry, owner->second_data[0]) == at(statement(5).entry, second_value);
             at(statement(5).entry, owner->second_data) == at(statement(5).entry, second_data);
         }
@@ -317,7 +317,7 @@ int32 owned_segmented_buffer_pipeline(
         first_data[0] == first_value;
     }
     have c(result) == first_data[0] by {
-        derive using {
+        simp() using {
             at(statement(6).entry, c(result)) == at(statement(6).entry, owner->first_data[0]);
             owner->first_data == first_data;
         }

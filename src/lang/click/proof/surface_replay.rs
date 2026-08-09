@@ -2012,15 +2012,43 @@ pub(super) fn surface_smart_have_certificate(
                 simp.premises
                     .iter()
                     .map(|surface| {
-                        replay
+                        let freshly_lowered = lower_point_proposition(
+                            surface,
+                            &facts_for_restricted_simp_lowering(available),
+                            parameters,
+                            arguments,
+                            replay.old_reference_state(state),
+                            state,
+                            None,
+                            &replay.program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        );
+                        if let Ok(lowered) = &freshly_lowered
+                            && let Some(fact) = available.iter().find(|fact| {
+                                *fact == lowered
+                                    || condition_polarity_equivalent(fact, lowered)
+                            })
+                        {
+                            return Ok(fact.clone());
+                        }
+                        if let Some(kernel) = replay
                             .surface_propositions
                             .available_kernel(surface, available)
                             .cloned()
-                            .ok_or_else(|| {
-                                ClickError::new(
-                                    "could not retain an exact `simp() using` premise while lowering its certificate",
-                                )
-                            })
+                        {
+                            return Ok(kernel);
+                        }
+                        Err(ClickError::new(match freshly_lowered {
+                            Ok(_) => format!(
+                                "`simp() using` premise is not in the certified proof context: {}",
+                                describe_click_proposition(surface)
+                            ),
+                            Err(message) => format!(
+                                "could not lower `simp() using` premise `{}` while producing its certificate: {message}",
+                                describe_click_proposition(surface)
+                            ),
+                        }))
                     })
                     .collect::<Result<Vec<_>, _>>(),
             ),
@@ -2030,27 +2058,27 @@ pub(super) fn surface_smart_have_certificate(
     }
     .transpose()?;
     let certificate_available = restricted_available.as_deref().unwrap_or(available);
-    let mut proof = surface_simp_plan_proof(
-        replay,
-        state,
-        certificate_available,
-        parameters,
-        arguments,
-        predicate_environment,
-        click_function_environment,
-        &have.proposition,
-        plan,
-        unfolded_predicates,
-    )?;
-    if unfolded_predicates.is_empty()
-        && let (Some(exact), Proof::Script(source_tactics)) =
-            (restricted_available.as_ref(), &have.proof)
+    let proof = if let (Some(exact), Proof::Script(source_tactics)) =
+        (restricted_available.as_ref(), &have.proof)
         && let Some(ProofTactic::SimpUsing(simp)) = source_tactics.last()
     {
-        let lowering_facts = facts_for_direct_surface_lowering(available);
-        if let Ok(explicit_goal) = lower_point_proposition(
-            &have.proposition,
-            &lowering_facts,
+        let active_surface_goal = if unfolded_predicates.is_empty() {
+            have.proposition.clone()
+        } else {
+            unfold_structural_invariant_proposition(
+                predicate_environment,
+                &have.proposition,
+                unfolded_predicates,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "could not express the restricted smart proof goal after predicate unfolding: {message}"
+                ))
+            })?
+        };
+        let explicit_goal = lower_point_proposition(
+            &active_surface_goal,
+            &facts_for_restricted_simp_lowering(available),
             parameters,
             arguments,
             replay.old_reference_state(state),
@@ -2059,17 +2087,35 @@ pub(super) fn surface_smart_have_certificate(
             &replay.program_point_states,
             predicate_environment,
             click_function_environment,
-        ) {
-            let pairs = exact
-                .iter()
-                .cloned()
-                .zip(simp.premises.iter().cloned())
-                .collect::<Vec<_>>();
-            if let Some(tactics) = plan_explicit_equality_rewrites(&explicit_goal, &pairs, exact) {
-                proof = Proof::Script(tactics);
-            }
-        }
-    }
+        )
+        .map_err(ClickError::new)?;
+        let pairs = exact
+            .iter()
+            .cloned()
+            .zip(simp.premises.iter().cloned())
+            .collect::<Vec<_>>();
+        let explicit = lower_outcome_restricted_simp_tactics(&explicit_goal, &pairs)?;
+        let mut tactics = unfolded_predicates
+            .iter()
+            .cloned()
+            .map(ProofTactic::UnfoldPredicate)
+            .collect::<Vec<_>>();
+        tactics.extend(explicit);
+        Proof::Script(tactics)
+    } else {
+        surface_simp_plan_proof(
+            replay,
+            state,
+            certificate_available,
+            parameters,
+            arguments,
+            predicate_environment,
+            click_function_environment,
+            &have.proposition,
+            plan,
+            unfolded_predicates,
+        )?
+    };
     let tactic = ProofTactic::Have(ProofHave {
         proposition: have.proposition.clone(),
         proof,

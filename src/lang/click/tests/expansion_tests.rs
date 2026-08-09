@@ -1179,6 +1179,7 @@ fn restricted_simp_rewrites_pointer_aliases_inside_memory_loads() {
         int32 alias_value(
             int32 original[],
             int32 alias[],
+            int32 index,
             int32 length,
             int32 value
         ) {
@@ -1197,26 +1198,29 @@ fn restricted_simp_rewrites_pointer_aliases_inside_memory_loads() {
         int32 alias_value(
             int32 original[],
             int32 alias[],
+            int32 index,
             int32 length,
             int32 value
         ) {
+            requires index == 0;
             requires alias == original;
             owns valued_array(original, length, value);
-            ensures alias[0] == value;
+            ensures alias[index] == value;
         } by {
             unfold(valued_array(original, length, value));
             step();
-            have alias[0] == value by {
+            have alias[index] == value by {
                 simp() using {
                     original[0] == value;
                     alias == original;
+                    index == 0;
                 }
             }
             fold(valued_array(original, length, value));
             simp();
         }
     "#;
-    let offset = click_source.find("have alias[0] == value").unwrap();
+    let offset = click_source.find("have alias[index] == value").unwrap();
     let line = click_source[..offset]
         .bytes()
         .filter(|byte| *byte == b'\n')
@@ -1232,7 +1236,7 @@ fn restricted_simp_rewrites_pointer_aliases_inside_memory_loads() {
 
     let expanded = expand_c0_tactic_source_at(click_source, &sources, line, column)
         .expect("pointer-alias restricted simp should expand");
-    let expanded_have_start = expanded.find("have alias[0] == value").unwrap();
+    let expanded_have_start = expanded.find("have alias[index] == value").unwrap();
     let expanded_have_end = expanded[expanded_have_start..]
         .find("fold(valued_array")
         .map(|relative| expanded_have_start + relative)
@@ -1242,7 +1246,15 @@ fn restricted_simp_rewrites_pointer_aliases_inside_memory_loads() {
         expanded_have.contains("rewrite(alias == original);"),
         "{expanded_have}"
     );
-    assert!(expanded_have.contains("assumption();"), "{expanded_have}");
+    assert!(
+        expanded_have.contains("rewrite(index == 0);"),
+        "{expanded_have}"
+    );
+    assert!(
+        expanded_have.contains("rewrite(value == original[0]);"),
+        "{expanded_have}"
+    );
+    assert!(expanded_have.contains("normalize();"), "{expanded_have}");
     assert!(!expanded_have.contains("derive using"), "{expanded_have}");
     verify_c0_sources(&expanded, &sources)
         .expect("expanded pointer-alias certificate should replay");

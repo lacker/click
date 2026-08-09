@@ -240,7 +240,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     // before the smart plan is recorded, or expansion loses a required proof
     // step. Keep only the facts needed to spell direct program values.
     let direct_lowering_facts = if restricted_simp {
-        facts_for_direct_surface_lowering(available)
+        facts_for_restricted_simp_lowering(available)
     } else {
         facts_for_smart_have_lowering(available)
     };
@@ -258,6 +258,11 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     ) {
         Ok(fact) => fact,
         Err(_) if prelowered_goal.is_some() => prelowered_goal.expect("checked above").clone(),
+        Err(message) if restricted_simp => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` have proof {outer_tactic_index}: could not lower restricted `simp` goal without applying an ambient equality: {message}"
+            )));
+        }
         Err(message) => match lower_point_proposition(
             &have.proposition,
             &facts_for_simple_goal_lowering(available),
@@ -314,7 +319,12 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
         _ => None,
     };
     let reasoning_available = if let Some(surfaces) = restricted_surfaces {
-        let lowering_facts = facts_for_direct_surface_lowering(&available);
+        // Restricted simplification limits which facts may prove the goal,
+        // not which certified bounds may establish that a named premise's
+        // memory expressions are defined. Keep scalar/order facts for that
+        // lowering step; the `exact` vector below remains the entire
+        // simplifier context.
+        let lowering_facts = facts_for_restricted_simp_lowering(&available);
         let mut exact = Vec::new();
         for surface in surfaces {
             let lowered = lower_point_proposition(
