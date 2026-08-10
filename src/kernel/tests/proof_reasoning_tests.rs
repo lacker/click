@@ -56,6 +56,39 @@ fn int32_increment_lower_bound_axiom_has_the_exact_implications() {
 }
 
 #[test]
+fn int32_increment_preserves_order_axiom_has_the_exact_implications() {
+    let value = Bitvector32Term::Variable(Variable(90_020));
+    let lower = Bitvector32Term::Variable(Variable(90_021));
+    let upper = Bitvector32Term::Variable(Variable(90_022));
+    let theorem =
+        prove_int32_increment_preserves_order(value.clone(), lower.clone(), upper.clone());
+    let order_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(lower.clone(), value.clone()),
+        true,
+    );
+    let upper_premise =
+        Proposition::ConditionIs(ConditionTerm::signed_less_than(value.clone(), upper), true);
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::add(lower, Bitvector32Term::Constant(1)),
+            Bitvector32Term::add(value, Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(order_premise),
+            Box::new(Proposition::Implies(
+                Box::new(upper_premise),
+                Box::new(conclusion),
+            )),
+        )
+    );
+}
+
+#[test]
 fn proposition_derivation_honors_active_deadline() {
     let assumptions = Assumptions::new();
     let proposition = Proposition::ConditionIs(ConditionTerm::Constant(true), true);

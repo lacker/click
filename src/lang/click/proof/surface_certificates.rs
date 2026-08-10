@@ -1052,7 +1052,8 @@ pub(super) fn lower_restricted_simp_plan(
         }
     }
 
-    let tactics = plan_explicit_increment_lower_bound(goal, premise_pairs)
+    let tactics = plan_explicit_increment_preserves_order(goal, premise_pairs)
+        .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_equality_rewrites(goal, premise_pairs, &available))
         .ok_or_else(|| {
@@ -1182,6 +1183,58 @@ fn plan_explicit_increment_upper_bound(
             },
             ProofTactic::Assumption,
         ]);
+    }
+    None
+}
+
+fn plan_explicit_increment_preserves_order(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    for (order_kernel, order_surface) in premise_pairs {
+        let Some((lower, value)) = signed_nonstrict_parts(order_kernel) else {
+            continue;
+        };
+        for (upper_kernel, upper_surface) in premise_pairs {
+            let Some((upper_value, _)) = signed_strict_parts(upper_kernel) else {
+                continue;
+            };
+            if upper_value != value {
+                continue;
+            }
+            let expected = Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(
+                    Box::new(Bitvector32Term::add(
+                        lower.clone(),
+                        Bitvector32Term::Constant(1),
+                    )),
+                    Box::new(Bitvector32Term::add(
+                        value.clone(),
+                        Bitvector32Term::Constant(1),
+                    )),
+                ),
+                true,
+            );
+            if &expected != goal {
+                continue;
+            }
+            let Some((surface_lower, _)) = surface_nonstrict_parts(order_surface) else {
+                continue;
+            };
+            let Some((surface_value, surface_upper)) = surface_strict_parts(upper_surface) else {
+                continue;
+            };
+            return Some(vec![
+                ProofTactic::ApplyTheoremUsing {
+                    application: TheoremApplication {
+                        name: "int32_increment_preserves_order".to_string(),
+                        arguments: vec![surface_value, surface_lower, surface_upper],
+                    },
+                    premises: vec![order_surface.clone(), upper_surface.clone()],
+                },
+                ProofTactic::Assumption,
+            ]);
+        }
     }
     None
 }

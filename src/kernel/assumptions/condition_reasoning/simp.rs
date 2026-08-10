@@ -39,6 +39,11 @@ impl Assumptions {
                 }
             }
             ConditionTerm::Bitvector32SignedLessEqual(left, right)
+                if self.increment_preserves_order_for_simp(left, right) =>
+            {
+                Some(true)
+            }
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
                 if left.as_ref().add_const_base(1).is_some_and(|base| {
                     self.exact_condition_value(&ConditionTerm::signed_less_than(
                         base,
@@ -125,6 +130,27 @@ impl Assumptions {
                 }
             }
         }
+    }
+
+    fn increment_preserves_order_for_simp(
+        &self,
+        incremented_lower: &Bitvector32Term,
+        incremented_value: &Bitvector32Term,
+    ) -> bool {
+        let order_facts = self.condition_order_facts();
+        order_facts.iter().any(|(lower, value, strict)| {
+            if *strict
+                || Bitvector32Term::add(lower.clone(), Bitvector32Term::Constant(1))
+                    != *incremented_lower
+                || Bitvector32Term::add(value.clone(), Bitvector32Term::Constant(1))
+                    != *incremented_value
+            {
+                return false;
+            }
+            order_facts
+                .iter()
+                .any(|(strict_value, _, strict)| *strict && strict_value == value)
+        })
     }
 
     fn has_exact_bitvector_inequality_after_cancellation(

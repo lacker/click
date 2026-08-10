@@ -2116,6 +2116,36 @@ pub fn prove_int32_increment_lower_bound(
     ))
 }
 
+/// Signed int32 increment preserves non-strict order when a strict upper
+/// bound rules out overflow. Since `lower <= value < upper`, neither increment
+/// can wrap past `INT_MAX`.
+pub fn prove_int32_increment_preserves_order(
+    value: Bitvector32Term,
+    lower: Bitvector32Term,
+    upper: Bitvector32Term,
+) -> Theorem {
+    let order_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(lower.clone(), value.clone()),
+        true,
+    );
+    let upper_premise =
+        Proposition::ConditionIs(ConditionTerm::signed_less_than(value.clone(), upper), true);
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::add(lower, Bitvector32Term::Constant(1)),
+            Bitvector32Term::add(value, Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(order_premise),
+        Box::new(Proposition::Implies(
+            Box::new(upper_premise),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
 pub fn prove_memory_load(memory: CMemory, pointer: Pointer) -> Theorem {
     let outcome = memory.load(&pointer);
     Theorem::new(Proposition::CMemoryLoads {
