@@ -281,10 +281,10 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
         )) if matches!(value_type, CType::Int32Pointer | CType::UInt8Pointer) => {
             symbolic_pointer_contract_memory_load(pointer, bits, value_type)
         }
-        crate::kernel::CExpressionOutcome::Value(value) => Err(format!(
-            "load from {pointer:?} produced {value:?}, not {value_type:?}"
+        crate::kernel::CExpressionOutcome::Value(_) => Err(format!(
+            "contract load produced a value incompatible with {value_type:?}"
         )),
-        outcome => {
+        _outcome => {
             if assumptions.should_allow_symbolic_contract_loads() {
                 if !assumptions.proves(&required) {
                     record_surface_loadability_obligation(&required);
@@ -313,8 +313,8 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
             }
             let pure_facts = assumptions.pure_facts();
             Err(format!(
-                "{}\n  load from {pointer:?} as {value_type:?} produced {outcome:?}",
-                describe_missing_pure_fact(&required, &pure_facts, &[], &[], &[], &[])
+                "{}\n  contract load could not be read as {value_type:?}",
+                describe_missing_pure_fact(&required, &pure_facts, &[], &[], &[], &[]),
             ))
         }
     }
