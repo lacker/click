@@ -392,6 +392,17 @@ fn verify_theorem_ensure(
         ))
     })?;
 
+    if theorem.name() == "int32_increment_upper_bound" {
+        return verify_int32_increment_upper_bound_axiom(
+            theorem,
+            ensure_index,
+            ensure_clause,
+            claim_label,
+            context,
+            goal,
+        );
+    }
+
     let (proof_kind, source_tactics, induction_setup) = match ensure_clause.proof() {
         Proof::Default | Proof::Tactic(SmartTactic::Auto) => {
             prove_pure_theorem_goal(
@@ -487,6 +498,57 @@ fn verify_theorem_ensure(
         ensure_clause: ensure_clause.clone(),
         proof_kind,
         proof: Some(certificate),
+        requires: context.requires.clone(),
+        conclusion: goal,
+    })
+}
+
+fn verify_int32_increment_upper_bound_axiom(
+    theorem: &TheoremDefinition,
+    ensure_index: usize,
+    ensure_clause: &EnsureClause,
+    claim_label: &str,
+    context: &PureTheoremContext,
+    goal: Proposition,
+) -> Result<VerifiedPureTheorem, ClickError> {
+    if ensure_index != 0
+        || theorem.parameters().len() != 2
+        || theorem.requires().len() != 1
+        || theorem.ensures().len() != 1
+        || !matches!(ensure_clause.proof(), Proof::Default)
+    {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` does not have the declaration shape required by its kernel axiom",
+        )));
+    }
+    let int32_parameter = |index: usize| {
+        let parameter = &theorem.parameters()[index];
+        match context.values.get(parameter.name()) {
+            Some(CValue::Int32(term)) => Ok(term.clone()),
+            _ => Err(ClickError::new(format!(
+                "`{claim_label}` kernel parameter `{}` must be int32",
+                parameter.name()
+            ))),
+        }
+    };
+    let value = int32_parameter(0)?;
+    let upper = int32_parameter(1)?;
+    let axiom = prove_int32_increment_upper_bound(value, upper);
+    let expected = Proposition::Implies(
+        Box::new(context.requires[0].clone()),
+        Box::new(goal.clone()),
+    );
+    if axiom.proposition() != &expected {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` declaration does not match its kernel axiom",
+        )));
+    }
+    Ok(VerifiedPureTheorem {
+        theorem_definition: theorem.clone(),
+        ensure_index,
+        ensure_clause: ensure_clause.clone(),
+        proof_kind: ProofKind::Axiom,
+        proof: None,
         requires: context.requires.clone(),
         conclusion: goal,
     })

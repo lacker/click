@@ -2063,6 +2063,30 @@ pub fn prove_c_max_not_lt_returns_left(a: Variable, b: Variable) -> Option<Theor
     )))
 }
 
+/// Signed int32 increment preserves a strict upper bound as a non-strict
+/// bound. The strict premise also rules out signed overflow: if `value` were
+/// `INT_MAX`, no int32 `upper` could be greater than it.
+pub fn prove_int32_increment_upper_bound(
+    value: Bitvector32Term,
+    upper: Bitvector32Term,
+) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), upper.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::add(value, Bitvector32Term::Constant(1)),
+            upper,
+        ),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
 pub fn prove_memory_load(memory: CMemory, pointer: Pointer) -> Theorem {
     let outcome = memory.load(&pointer);
     Theorem::new(Proposition::CMemoryLoads {

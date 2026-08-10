@@ -1052,7 +1052,9 @@ pub(super) fn lower_restricted_simp_plan(
         }
     }
 
-    let tactics = plan_explicit_equality_rewrites(goal, premise_pairs, &available).ok_or_else(|| {
+    let tactics = plan_explicit_increment_upper_bound(goal, premise_pairs)
+        .or_else(|| plan_explicit_equality_rewrites(goal, premise_pairs, &available))
+        .ok_or_else(|| {
         let initial_rewrites = premise_pairs
             .iter()
             .map(|(kernel, surface)| {
@@ -1068,13 +1070,91 @@ pub(super) fn lower_restricted_simp_plan(
             describe_pure_fact(goal, &[], &[]),
             premise_pairs.len(),
         ))
-    })?;
+        })?;
     SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
         ClickError::new(format!(
             "`simp() using` produced a non-simple expansion: {error:?}"
         ))
     })?;
     Ok(tactics)
+}
+
+fn plan_explicit_increment_upper_bound(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    fn strict_parts(proposition: &Proposition) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
+        match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(left, right),
+                true,
+            ) => Some((left, right)),
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedGreaterThan(left, right),
+                true,
+            ) => Some((right, left)),
+            _ => None,
+        }
+    }
+
+    fn nonstrict_parts(proposition: &Proposition) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
+        match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(left, right),
+                true,
+            ) => Some((left, right)),
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedGreaterEqual(left, right),
+                true,
+            ) => Some((right, left)),
+            _ => None,
+        }
+    }
+
+    let (incremented, goal_upper) = nonstrict_parts(goal)?;
+    let Bitvector32Term::Add(left, right) = incremented else {
+        return None;
+    };
+    let base = if right.as_ref() == &Bitvector32Term::Constant(1) {
+        left.as_ref()
+    } else if left.as_ref() == &Bitvector32Term::Constant(1) {
+        right.as_ref()
+    } else {
+        return None;
+    };
+
+    for (kernel, surface) in premise_pairs {
+        let Some((premise_base, premise_upper)) = strict_parts(kernel) else {
+            continue;
+        };
+        if premise_base != base || premise_upper != goal_upper {
+            continue;
+        }
+        let ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } = surface
+        else {
+            continue;
+        };
+        let (value, upper) = match operator {
+            ComparisonOperator::LessThan => (left.clone(), right.clone()),
+            ComparisonOperator::GreaterThan => (right.clone(), left.clone()),
+            _ => continue,
+        };
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_increment_upper_bound".to_string(),
+                    arguments: vec![value, upper],
+                },
+                premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
 }
 
 pub(super) fn plan_restricted_simp_expansion(

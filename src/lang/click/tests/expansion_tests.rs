@@ -1206,6 +1206,44 @@ fn restricted_simp_without_simple_vocabulary_fails_instead_of_emitting_derive() 
 }
 
 #[test]
+fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
+    let click_source = r#"
+        theorem increment_stays_bounded(value: int32, upper: int32) {
+            requires value < upper;
+            ensures value + 1 <= upper by {
+                simp() using {
+                    value < upper;
+                }
+            }
+        }
+    "#;
+    let offset = click_source.find("simp() using").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("increment upper-bound simp should expand");
+    assert!(
+        expanded.contains("apply(int32_increment_upper_bound(value, upper)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("value < upper;"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+}
+
+#[test]
 fn restricted_simp_inside_have_expands_to_explicit_equality_rewrites() {
     let c_source = r#"
             int32 identity(int32 x, int32 y, int32 z) {

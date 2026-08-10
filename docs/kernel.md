@@ -39,6 +39,13 @@ construct arbitrary theorems directly. Public functions that return `Theorem`
 are trusted theorem-producing operations. In Click terminology these are
 axioms, even when Rust names them `prove_*`.
 
+`prove_int32_increment_upper_bound` is the first kernel axiom exposed as a
+named standard theorem. It constructs only the implication
+`value < upper -> value + 1 <= upper`. Standard-library verification checks
+the parsed declaration against that exact proposition before theorem
+application becomes available; expanded user proofs then use the ordinary
+simple `apply(...) using { ... }` certificate.
+
 Execution theorems retain every verification condition as an implication
 premise, including conditions that are not assumable during execution.
 `CFunctionExecutionCandidates` is deliberately theorem-free: replayed or

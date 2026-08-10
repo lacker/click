@@ -11,6 +11,23 @@ definitions are not hard-coded predicates or functions in the Click parser.
 
 ## Current Prelude
 
+The prelude begins with one kernel-backed signed-order theorem:
+
+```click
+theorem int32_increment_upper_bound(value: int32, upper: int32) {
+    requires value < upper;
+
+    ensures value + 1 <= upper;
+}
+```
+
+The strict premise rules out signed overflow as well as proving the resulting
+upper bound. Smart simplification may select this theorem, while expansion
+records an ordinary simple `apply(...) using { ... }` step with the exact
+premise. The declaration is checked against its fixed kernel axiom; users
+cannot introduce additional kernel-backed theorems by writing a declaration
+with a similar shape.
+
 ```click
 function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 {
     (lo..hi).fold(0, |acc, k| {

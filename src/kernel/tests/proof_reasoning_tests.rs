@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn int32_increment_upper_bound_axiom_has_the_exact_implication() {
+    let value = Bitvector32Term::Variable(Variable(90_000));
+    let upper = Bitvector32Term::Variable(Variable(90_001));
+    let theorem = prove_int32_increment_upper_bound(value.clone(), upper.clone());
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), upper.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::add(value, Bitvector32Term::Constant(1)),
+            upper,
+        ),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
 fn proposition_derivation_honors_active_deadline() {
     let assumptions = Assumptions::new();
     let proposition = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
