@@ -269,7 +269,7 @@ int32 owned_split_buffer_pipeline(
         assumption();
     }
     have data[1] == right_value by {
-        derive using {
+        simp() using {
             at(statement(5).entry, *(owner->data + 1)) == at(statement(5).entry, right_value);
             owner->data == data;
         }
