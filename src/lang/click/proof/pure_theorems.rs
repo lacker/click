@@ -322,9 +322,9 @@ fn lower_pure_simp_certificate(
     goal: &Proposition,
     certificate: &InternalProofPlan,
 ) -> Option<Vec<ProofTactic>> {
-    let tactic = match certificate.tactics() {
-        [ProofTactic::Normalize] => ProofTactic::Normalize,
-        [ProofTactic::ExactPropositionDerivation(derivation)] => {
+    let tactic = match certificate.operations() {
+        [InternalProofOperation::Surface(ProofTactic::Normalize)] => ProofTactic::Normalize,
+        [InternalProofOperation::ExactPropositionDerivation(derivation)] => {
             let premise_pairs = derivation
                 .context_premises()
                 .iter()
@@ -485,7 +485,7 @@ fn verify_theorem_ensure(
         ensure_index,
         ensure_clause: ensure_clause.clone(),
         proof_kind,
-        proof_tactics: Some(certificate.to_proof_tactics().to_vec()),
+        proof: Some(certificate),
         requires: context.requires.clone(),
         conclusion: goal,
     })
@@ -1446,15 +1446,6 @@ fn prove_pure_theorem_tactics(
                     }
                 }
                 available = applied;
-            }
-            ProofTactic::ExactPropositionDerivation(derivation) => {
-                let assumptions = assumptions_from_propositions(&available);
-                if derivation.conclusion() != &goal || !derivation.replay(&assumptions) {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: proposition derivation did not replay"
-                    )));
-                }
-                closed = true;
             }
             ProofTactic::Assumption => {
                 if !available.contains(&goal)

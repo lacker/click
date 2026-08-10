@@ -549,8 +549,8 @@ pub(super) fn execute_branch_step_from_execution_point(
             })
             .unwrap_or(statement_condition);
         replay
-            .planned_tactics
-            .push(ProofTactic::CertifiedPathAssumption {
+            .planned_operations
+            .push(InternalProofOperation::CertifiedPathAssumption {
                 occurrence,
                 condition,
                 value: condition_transition.is_true,
@@ -1318,8 +1318,8 @@ pub(super) fn execute_step_from_execution_point(
                 }
             }
             replay
-                .planned_tactics
-                .push(ProofTactic::CertifiedStatementStep {
+                .planned_operations
+                .push(InternalProofOperation::CertifiedStatementStep {
                     prerequisite_derivations,
                     exact_premises,
                     planned_transition: None,
@@ -1949,18 +1949,12 @@ pub(super) fn bounded_execute_from_execution_point(
             completed
                 .iter()
                 .map(|frontier| {
-                    InternalProofPlan::from_planned_tactics(&frontier.replay.planned_tactics)
-                        .map(|plan| {
-                            plan.with_statement_transitions(
-                                frontier.replay.planned_statement_transitions.clone(),
-                            )
-                        })
-                        .map_err(|error| {
-                            ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `execute` path planned a non-certificate tactic {:?}",
-                                error.smart_tactic()
-                            ))
-                        })
+                    Ok(InternalProofPlan::from_operations(
+                        frontier.replay.planned_operations.clone(),
+                    )
+                    .with_statement_transitions(
+                        frontier.replay.planned_statement_transitions.clone(),
+                    ))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         )
@@ -1978,7 +1972,8 @@ pub(super) fn bounded_execute_from_execution_point(
         tactic_index,
     )?;
     if let Some(alternatives) = alternatives {
-        replay.planned_tactics = vec![ProofTactic::CertifiedAlternatives(alternatives)];
+        replay.planned_operations =
+            vec![InternalProofOperation::CertifiedAlternatives(alternatives)];
     }
     Ok(())
 }

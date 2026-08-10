@@ -3,6 +3,11 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) struct InternalPlanReplay {
+    pub(in crate::lang::click::proof) context: ProofReplayContext,
+    pub(in crate::lang::click::proof) construction: SimpleProofBuilder,
+}
+
 pub(in crate::lang::click::proof) fn replay_internal_plan(
     mut context: ProofReplayContext,
     function_block: &FunctionBlock,
@@ -19,33 +24,104 @@ pub(in crate::lang::click::proof) fn replay_internal_plan(
     tactic_index: usize,
     source_index: usize,
     certificate: &InternalProofPlan,
-) -> Result<ProofReplayContext, ClickError> {
+) -> Result<InternalPlanReplay, ClickError> {
     context.replay.planned_statement_transitions = certificate.statement_transitions().to_vec();
-    let tactics = certificate
-        .tactics()
-        .iter()
-        .cloned()
-        .map(|tactic| IndexedTactic {
-            index: tactic_index,
-            source_index,
-            tactic,
-        })
-        .collect::<Vec<_>>();
-    replay_linear_tactics(
+    let mut construction = std::mem::take(&mut context.replay.simple_proof_builder);
+    let mut context_slot = Some(context);
+    for (operation_index, operation) in certificate.operations().iter().cloned().enumerate() {
+        let current = context_slot
+            .take()
+            .expect("internal plan replay context is restored after every operation");
+        let result = match operation {
+            InternalProofOperation::Surface(tactic) => {
+                let surface = SimpleProof::from_proof_tactics(std::slice::from_ref(&tactic))
+                    .map_err(|error| {
+                        ClickError::new(format!(
+                            "surface operation in internal plan is not a simple proof: {error:?}"
+                        ))
+                    })?;
+                for step in surface.steps() {
+                    construction.push_step(step.clone());
+                }
+                let indexed = IndexedTactic {
+                    index: tactic_index,
+                    source_index,
+                    tactic,
+                };
+                let replayed = SUPPRESS_SIMPLE_PROOF_CONSTRUCTION.with(|suppressed| {
+                    let previous = suppressed.replace(true);
+                    let result = replay_linear_tactics(
+                        current,
+                        function_block,
+                        parsed_function,
+                        claims,
+                        claim_label,
+                        function_environment,
+                        predicate_environment,
+                        click_function_environment,
+                        resource_environment,
+                        theorem_environment,
+                        function,
+                        arguments,
+                        std::slice::from_ref(&indexed),
+                    );
+                    suppressed.set(previous);
+                    result
+                });
+                replayed.map(|replayed| {
+                    debug_assert!(replayed.replay.simple_proof_builder.steps.is_empty());
+                    context_slot = Some(replayed);
+                })
+            }
+            operation => {
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    branch_path,
+                } = current;
+                let replayed = replay_internal_operation(
+                    &operation,
+                    &mut replay,
+                    &mut construction,
+                    &mut state,
+                    &mut requirement_pure_facts,
+                    &branch_path,
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                    tactic_index,
+                    source_index,
+                );
+                context_slot = Some(ProofReplayContext {
+                    state,
+                    pure_facts: requirement_pure_facts,
+                    replay,
+                    branch_path,
+                });
+                replayed
+            }
+        };
+        result.map_err(|error| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: internal plan operation {operation_index} failed: {}",
+                error.message()
+            ))
+        })?;
+    }
+    let context = context_slot.expect("internal plan replay retains its final context");
+    Ok(InternalPlanReplay {
         context,
-        function_block,
-        parsed_function,
-        claims,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        function,
-        arguments,
-        &tactics,
-    )
+        construction,
+    })
 }
 
 fn build_simple_proof_from_internal_plan(
@@ -64,11 +140,13 @@ fn build_simple_proof_from_internal_plan(
     tactic_index: usize,
     source_index: usize,
     plan: &InternalProofPlan,
-) -> Result<(SimpleProof, ProofReplayContext), ClickError> {
+) -> Result<(SimpleProof, ProofReplayContext, SimpleProofBuilder), ClickError> {
     let mut lowering_context = context.clone();
-    let steps = matches!(plan.tactics(), [ProofTactic::CertifiedFrame(_)])
-        .then(|| surface_branch_skeleton(&context.replay.simple_proof_builder.steps))
-        .unwrap_or_default();
+    let steps = if plan.is_certified_frame() {
+        surface_branch_skeleton(&context.replay.simple_proof_builder.steps)
+    } else {
+        Vec::new()
+    };
     lowering_context.replay.simple_proof_builder = SimpleProofBuilder {
         steps,
         last_step_entry: context.replay.simple_proof_builder.last_step_entry.clone(),
@@ -91,18 +169,18 @@ fn build_simple_proof_from_internal_plan(
         source_index,
         plan,
     )?;
-    if let Some(blocker) = &lowered.replay.simple_proof_builder.blocker {
+    if let Some(blocker) = &lowered.construction.blocker {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: smart search found an internal plan, but `SimpleProof` construction failed: {blocker}"
         )));
     }
-    if lowered.replay.simple_proof_builder.steps.is_empty() {
+    if lowered.construction.steps.is_empty() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: smart search found an internal plan, but `SimpleProof` construction produced no steps"
         )));
     }
-    let certificate = SimpleProof::from_steps(lowered.replay.simple_proof_builder.steps.clone());
-    Ok((certificate, lowered))
+    let certificate = SimpleProof::from_steps(lowered.construction.steps.clone());
+    Ok((certificate, lowered.context, lowered.construction))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -271,7 +349,7 @@ pub(in crate::lang::click::proof) fn complete_smart_tactic(
     plan: &InternalProofPlan,
 ) -> Result<ProofReplayContext, ClickError> {
     let outer_simple_proof = context.replay.simple_proof_builder.clone();
-    let (proof, mut internal_result) = build_simple_proof_from_internal_plan(
+    let (proof, mut internal_result, mut construction) = build_simple_proof_from_internal_plan(
         &context,
         function_block,
         parsed_function,
@@ -312,13 +390,9 @@ pub(in crate::lang::click::proof) fn complete_smart_tactic(
             error.message()
         ))
     })?;
-    let last_step_entry = internal_result
-        .replay
-        .simple_proof_builder
-        .last_step_entry
-        .clone();
+    let last_step_entry = construction.last_step_entry.clone();
     internal_result.replay.simple_proof_builder = outer_simple_proof;
-    let replaces_existing_branch = matches!(plan.tactics(), [ProofTactic::CertifiedFrame(_)])
+    let replaces_existing_branch = plan.is_certified_frame()
         && matches!(proof.steps(), [SimpleProofStep::If { .. }])
         && internal_result
             .replay
@@ -352,7 +426,8 @@ pub(in crate::lang::click::proof) fn complete_smart_tactic(
                 .push_step(step.clone());
         }
     }
-    internal_result.replay.simple_proof_builder.last_step_entry = last_step_entry;
+    construction.last_step_entry = last_step_entry;
+    internal_result.replay.simple_proof_builder.last_step_entry = construction.last_step_entry;
     verified_result.replay.simple_proof_builder = internal_result.replay.simple_proof_builder;
     Ok(verified_result)
 }

@@ -311,7 +311,7 @@ pub(super) fn lower_outcome_simp_tactic(
     // expensive when facts contain symbolic memory snapshots.
     if let Some(plan) =
         plan_simp_certificate(goal, &assumptions_from_propositions(&atomic_available))
-        && let [ProofTactic::ExactPropositionDerivation(derivation)] = plan.tactics()
+        && let [InternalProofOperation::ExactPropositionDerivation(derivation)] = plan.operations()
     {
         let ambient = assumptions_from_propositions(&atomic_available);
         let context = derivation
@@ -630,7 +630,7 @@ pub(super) fn lower_outcome_simp_tactic(
     let exact_assumptions = assumptions_from_propositions(&kernel_premises);
     check_verification_deadline()?;
     if let Some(plan) = plan_simp_certificate(goal, &assumptions_from_propositions(available))
-        && let [ProofTactic::ExactPropositionDerivation(derivation)] = plan.tactics()
+        && let [InternalProofOperation::ExactPropositionDerivation(derivation)] = plan.operations()
     {
         let context = derivation.context_premises();
         let selected = premise_pairs

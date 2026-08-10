@@ -411,13 +411,13 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         }
     }
     let planned_transition = replay.planned_statement_transitions.len();
-    replay.planned_tactics.push(match loop_step_policy {
-        LoopStepPolicy::EnterBody => ProofTactic::CertifiedStatementStep {
+    replay.planned_operations.push(match loop_step_policy {
+        LoopStepPolicy::EnterBody => InternalProofOperation::CertifiedStatementStep {
             prerequisite_derivations: transition.prerequisite_derivations.clone(),
             exact_premises,
             planned_transition: Some(planned_transition),
         },
-        LoopStepPolicy::ApplyVerifiedRule => ProofTactic::CertifiedLoopSummaryStep {
+        LoopStepPolicy::ApplyVerifiedRule => InternalProofOperation::CertifiedLoopSummaryStep {
             prerequisite_derivations: transition.prerequisite_derivations.clone(),
             exact_premises,
             planned_transition: Some(planned_transition),
@@ -457,20 +457,18 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         })
         .collect::<Vec<_>>();
     replay
-        .planned_tactics
-        .extend(
-            external_transports
-                .iter()
-                .map(|transport| ProofTactic::CertifiedFactTransport {
-                    source: transport.source.clone(),
-                    target: transport.target.clone(),
-                    theorem: transport.theorem.clone(),
-                }),
-        );
+        .planned_operations
+        .extend(external_transports.iter().map(|transport| {
+            InternalProofOperation::CertifiedFactTransport {
+                source: transport.source.clone(),
+                target: transport.target.clone(),
+                theorem: transport.theorem.clone(),
+            }
+        }));
     if !external_transports.is_empty() {
         replay
-            .planned_tactics
-            .push(ProofTactic::FinishCertifiedFactTransports(
+            .planned_operations
+            .push(InternalProofOperation::FinishCertifiedFactTransports(
                 external_transports
                     .iter()
                     .map(|transport| transport.source.clone())
@@ -514,8 +512,8 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
         }
     }
     replay
-        .planned_tactics
-        .push(ProofTactic::CertifiedStatementStep {
+        .planned_operations
+        .push(InternalProofOperation::CertifiedStatementStep {
             prerequisite_derivations: transition.prerequisite_derivations.clone(),
             exact_premises,
             planned_transition: None,

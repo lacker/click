@@ -458,9 +458,40 @@ pub(super) fn checked_surface_comparison_fact_at_point(
     )))
 }
 
+pub(super) struct SimpleProofConstructionContext<'a> {
+    replay: &'a mut TacticReplayState,
+    pub(super) simple_proof_builder: &'a mut SimpleProofBuilder,
+}
+
+impl<'a> SimpleProofConstructionContext<'a> {
+    pub(super) fn new(
+        replay: &'a mut TacticReplayState,
+        simple_proof_builder: &'a mut SimpleProofBuilder,
+    ) -> Self {
+        Self {
+            replay,
+            simple_proof_builder,
+        }
+    }
+}
+
+impl std::ops::Deref for SimpleProofConstructionContext<'_> {
+    type Target = TacticReplayState;
+
+    fn deref(&self) -> &Self::Target {
+        self.replay
+    }
+}
+
+impl std::ops::DerefMut for SimpleProofConstructionContext<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.replay
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(super) fn append_simple_proof_step_for_internal_tactic(
-    replay: &mut TacticReplayState,
+pub(super) fn append_simple_proof_step_for_operation(
+    replay: &mut SimpleProofConstructionContext<'_>,
     state: &CState,
     available: &[Proposition],
     function_block: &FunctionBlock,
@@ -468,7 +499,8 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
     arguments: &[CExpression],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    tactic: &ProofTactic,
+    surface_tactic: Option<&ProofTactic>,
+    internal_operation: Option<&InternalProofOperation>,
     _statement_uses_memory_context: Option<bool>,
 ) {
     if replay.simple_proof_builder.blocker.is_some() {
@@ -478,12 +510,15 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
         replay.simple_proof_builder.block(error.message());
         return;
     }
-    match tactic {
-        ProofTactic::CertifiedStatementStep {
-            prerequisite_derivations,
-            exact_premises,
-            planned_transition: Some(planned_transition),
-        } if !replay.simple_proof_builder.lowering_planned_transition
+    match (surface_tactic, internal_operation) {
+        (
+            None,
+            Some(InternalProofOperation::CertifiedStatementStep {
+                prerequisite_derivations,
+                exact_premises,
+                planned_transition: Some(planned_transition),
+            }),
+        ) if !replay.simple_proof_builder.lowering_planned_transition
             && replay
                 .planned_statement_transitions
                 .get(*planned_transition)
@@ -491,7 +526,7 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
         {
             let evidence = replay.planned_statement_transitions[*planned_transition].clone();
             replay.simple_proof_builder.lowering_planned_transition = true;
-            append_simple_proof_step_for_internal_tactic(
+            append_simple_proof_step_for_operation(
                 replay,
                 state,
                 available,
@@ -500,11 +535,12 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                 arguments,
                 predicate_environment,
                 click_function_environment,
-                &ProofTactic::CertifiedStatementStep {
+                None,
+                Some(&InternalProofOperation::CertifiedStatementStep {
                     prerequisite_derivations: prerequisite_derivations.clone(),
                     exact_premises: exact_premises.clone(),
                     planned_transition: None,
-                },
+                }),
                 None,
             );
             replay.simple_proof_builder.lowering_planned_transition = false;
@@ -608,18 +644,21 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                 }
             }
         }
-        ProofTactic::CertifiedLoopSummaryStep {
-            prerequisite_derivations,
-            exact_premises,
-            planned_transition: Some(planned_transition),
-        } if !replay.simple_proof_builder.lowering_planned_transition
+        (
+            None,
+            Some(InternalProofOperation::CertifiedLoopSummaryStep {
+                prerequisite_derivations,
+                exact_premises,
+                planned_transition: Some(planned_transition),
+            }),
+        ) if !replay.simple_proof_builder.lowering_planned_transition
             && replay
                 .planned_statement_transitions
                 .get(*planned_transition)
                 .is_some() =>
         {
             replay.simple_proof_builder.lowering_planned_transition = true;
-            append_simple_proof_step_for_internal_tactic(
+            append_simple_proof_step_for_operation(
                 replay,
                 state,
                 available,
@@ -628,20 +667,24 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                 arguments,
                 predicate_environment,
                 click_function_environment,
-                &ProofTactic::CertifiedLoopSummaryStep {
+                None,
+                Some(&InternalProofOperation::CertifiedLoopSummaryStep {
                     prerequisite_derivations: prerequisite_derivations.clone(),
                     exact_premises: exact_premises.clone(),
                     planned_transition: None,
-                },
+                }),
                 _statement_uses_memory_context,
             );
             replay.simple_proof_builder.lowering_planned_transition = false;
         }
-        ProofTactic::CertifiedStatementStep {
-            prerequisite_derivations: derivations,
-            exact_premises,
-            ..
-        } => {
+        (
+            None,
+            Some(InternalProofOperation::CertifiedStatementStep {
+                prerequisite_derivations: derivations,
+                exact_premises,
+                ..
+            }),
+        ) => {
             replay.simple_proof_builder.last_step_entry = Some(ProgramPointRef {
                 region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
                 kind: ProgramPointKind::Entry,
@@ -863,11 +906,14 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                 )),
             }
         }
-        ProofTactic::CertifiedLoopSummaryStep {
-            prerequisite_derivations: derivations,
-            exact_premises,
-            ..
-        } => {
+        (
+            None,
+            Some(InternalProofOperation::CertifiedLoopSummaryStep {
+                prerequisite_derivations: derivations,
+                exact_premises,
+                ..
+            }),
+        ) => {
             let loop_index = replay
                 .source_layout
                 .statement(replay.frontier.next_statement_index)
@@ -1247,7 +1293,7 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                 ),
             });
         }
-        ProofTactic::CertifiedFactTransport { source, target, .. } => {
+        (None, Some(InternalProofOperation::CertifiedFactTransport { source, target, .. })) => {
             let Some(step_entry) = replay.simple_proof_builder.last_step_entry.clone() else {
                 replay
                     .simple_proof_builder
@@ -1541,14 +1587,17 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                 )),
             }
         }
-        ProofTactic::FinishCertifiedFactTransports(_) => {}
-        ProofTactic::CertifiedPathAssumption {
-            occurrence,
-            condition,
-            value,
-            facts,
-            ..
-        } => {
+        (None, Some(InternalProofOperation::FinishCertifiedFactTransports(_))) => {}
+        (
+            None,
+            Some(InternalProofOperation::CertifiedPathAssumption {
+                occurrence,
+                condition,
+                value,
+                facts,
+                ..
+            }),
+        ) => {
             // Planning records the exact statement-entry point where the
             // branch decision was made. Keep that spelling here: alternatives
             // can replay without their common statement-step prefix, so a
@@ -1614,8 +1663,8 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                     tactic_offset: replay.simple_proof_builder.steps.len(),
                 });
         }
-        ProofTactic::CertifiedAlternatives(_) => {}
-        ProofTactic::Have(have) => {
+        (None, Some(InternalProofOperation::CertifiedAlternatives(_))) => {}
+        (Some(tactic @ ProofTactic::Have(have)), None) => {
             match SimpleProof::from_proof_tactics(std::slice::from_ref(tactic)) {
                 Ok(_) => replay
                     .simple_proof_builder
@@ -1632,7 +1681,7 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                     .block(format!("could not lower control-flow tactic: {error:?}")),
             }
         }
-        ProofTactic::ExactPropositionDerivation(derivation) => {
+        (None, Some(InternalProofOperation::ExactPropositionDerivation(derivation))) => {
             match lower_surface_atomic_derivation(
                 replay,
                 derivation,
@@ -1686,7 +1735,7 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                 )),
             }
         }
-        ProofTactic::CertifiedFrame(path_derivations) => {
+        (None, Some(InternalProofOperation::CertifiedFrame(path_derivations))) => {
             let lowered = path_derivations
                 .iter()
                 .map(|derivations| {
@@ -1818,8 +1867,8 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
         // preservation, and effect certificates have been checked. Recording
         // the source block here would either retain smart defaults or mark
         // the replay blocked before those certificates exist.
-        ProofTactic::Loop(_) => {}
-        _ => match tactic.class() {
+        (Some(ProofTactic::Loop(_)), None) => {}
+        (Some(tactic), None) => match tactic.class() {
             TacticClass::Simple(_) => replay
                 .simple_proof_builder
                 .push_source_tactic(tactic.clone()),
@@ -1833,8 +1882,11 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                         .block(format!("could not lower control-flow tactic: {error:?}")),
                 }
             }
-            TacticClass::Smart(_) | TacticClass::Internal(_) => {}
+            TacticClass::Smart(_) => {}
         },
+        (None, Some(InternalProofOperation::Surface(_))) | (Some(_), Some(_)) | (None, None) => {
+            unreachable!("invalid simple-proof construction operation")
+        }
     }
 }
 
@@ -2001,10 +2053,14 @@ pub(super) fn surface_simp_plan_proof(
             ))
         })?
     };
-    let proof = match plan.tactics() {
-        [ProofTactic::Assumption] => Proof::Script(vec![ProofTactic::Assumption]),
-        [ProofTactic::Normalize] => Proof::Script(vec![ProofTactic::Normalize]),
-        [ProofTactic::ExactPropositionDerivation(derivation)] => {
+    let proof = match plan.operations() {
+        [InternalProofOperation::Surface(ProofTactic::Assumption)] => {
+            Proof::Script(vec![ProofTactic::Assumption])
+        }
+        [InternalProofOperation::Surface(ProofTactic::Normalize)] => {
+            Proof::Script(vec![ProofTactic::Normalize])
+        }
+        [InternalProofOperation::ExactPropositionDerivation(derivation)] => {
             let (_, proof) = lower_surface_atomic_derivation(
                 replay,
                 derivation,

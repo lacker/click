@@ -169,7 +169,6 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Contradiction(_)
             | ProofTactic::Derive(_)
             | ProofTactic::Rewrite(_)
-            | ProofTactic::ExactPropositionDerivation(_)
             | ProofTactic::Simp
             | ProofTactic::SimpUsing(_) => {}
             ProofTactic::If(proof_if) => {
@@ -188,13 +187,6 @@ fn validate_pure_theorem_tactics(
             ProofTactic::CloseInvariants
             | ProofTactic::Step
             | ProofTactic::StepUsing(_)
-            | ProofTactic::CertifiedStatementStep { .. }
-            | ProofTactic::CertifiedLoopSummaryStep { .. }
-            | ProofTactic::CertifiedFactTransport { .. }
-            | ProofTactic::FinishCertifiedFactTransports(_)
-            | ProofTactic::CertifiedPathAssumption { .. }
-            | ProofTactic::CertifiedFrame(_)
-            | ProofTactic::CertifiedAlternatives(_)
             | ProofTactic::SmartStep
             | ProofTactic::SmartExecute
             | ProofTactic::SmartExecuteAllPaths
@@ -223,8 +215,6 @@ pub(in crate::lang::click) fn tactic_name(tactic: &ProofTactic) -> &'static str 
     match tactic {
         ProofTactic::Mark(_) => "mark",
         ProofTactic::Step | ProofTactic::StepUsing(_) => "step",
-        ProofTactic::CertifiedStatementStep { .. } => "step",
-        ProofTactic::CertifiedLoopSummaryStep { .. } => "loop",
         ProofTactic::SmartStep => "step",
         ProofTactic::SmartExecute => "execute",
         ProofTactic::SmartExecuteAllPaths => "execute",
@@ -256,12 +246,6 @@ pub(in crate::lang::click) fn tactic_name(tactic: &ProofTactic) -> &'static str 
         ProofTactic::CloseInvariants => "close_invariants",
         ProofTactic::Rewrite(_) => "rewrite",
         ProofTactic::Transport { .. } | ProofTactic::TransportUsing { .. } => "transport",
-        ProofTactic::ExactPropositionDerivation(_) => "derive",
-        ProofTactic::CertifiedFactTransport { .. }
-        | ProofTactic::FinishCertifiedFactTransports(_) => "transport",
-        ProofTactic::CertifiedPathAssumption { .. } => "if",
-        ProofTactic::CertifiedFrame(_) => "frame",
-        ProofTactic::CertifiedAlternatives(_) => "execute",
         ProofTactic::Simp => "simp",
         ProofTactic::SimpUsing(_) => "simp",
     }

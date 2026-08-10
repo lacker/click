@@ -652,11 +652,6 @@ fn pure_goal_simple_proof_gateway<T>(
     replay: impl FnOnce(&SimpleProof) -> Result<T, ClickError>,
 ) -> Result<(SimpleProof, T), ClickError> {
     let certificate = planner()?;
-    SimpleProof::from_proof_tactics(&certificate.to_proof_tactics()).map_err(|error| {
-        ClickError::new(format!(
-            "pure goal `{claim_label}` planner returned a non-surface certificate: {error:?}"
-        ))
-    })?;
     let replayed = replay(&certificate).map_err(|error| {
         ClickError::new(format!(
             "pure goal `{claim_label}` certificate failed ordinary replay:\n{}\n{}",
@@ -978,21 +973,6 @@ mod certificate_tests {
 
         assert_eq!(source_tactic_class(&smart), SourceTacticClass::Smart);
         assert_eq!(source_tactic_class(&structural), SourceTacticClass::Control);
-    }
-
-    #[test]
-    fn generated_alternatives_are_charged_to_the_owning_smart_tactic() {
-        let alternatives = ProofTactic::CertifiedAlternatives(Vec::new());
-
-        assert_eq!(
-            source_tactic_class(&alternatives),
-            SourceTacticClass::Control
-        );
-        assert!(
-            !has_independent_source_timing(&alternatives),
-            "the internal alternatives container must not hide smart execute time"
-        );
-        assert!(has_independent_source_timing(&ProofTactic::Step));
     }
 
     #[test]

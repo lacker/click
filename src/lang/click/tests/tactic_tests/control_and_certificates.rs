@@ -319,28 +319,6 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(
-        ProofTactic::CertifiedStatementStep {
-            prerequisite_derivations: Vec::new(),
-            exact_premises: Vec::new(),
-            planned_transition: None,
-        }
-        .class(),
-        TacticClass::Internal(InternalTacticKind::CertifiedStatementTransition)
-    ));
-    assert!(matches!(
-        ProofTactic::CertifiedLoopSummaryStep {
-            prerequisite_derivations: Vec::new(),
-            exact_premises: Vec::new(),
-            planned_transition: None,
-        }
-        .class(),
-        TacticClass::Internal(InternalTacticKind::CertifiedLoopSummaryTransition)
-    ));
-    assert!(matches!(
-        ProofTactic::CertifiedAlternatives(Vec::new()).class(),
-        TacticClass::ControlFlow(ControlFlowTactic::CertifiedAlternatives)
-    ));
-    assert!(matches!(
         ProofTactic::FoldResource(ResourceClause::Declared {
             access: ResourceAccessMode::Own,
             kind: ResourceKind::Composite,
@@ -378,10 +356,6 @@ fn parses_and_classifies_simple_and_smart_tactics() {
     assert!(matches!(
         ProofTactic::SmartFrame(None).class(),
         TacticClass::Smart(SmartTacticKind::Frame)
-    ));
-    assert!(matches!(
-        ProofTactic::CertifiedFrame(Vec::new()).class(),
-        TacticClass::Internal(InternalTacticKind::CertifiedFrame)
     ));
     assert!(matches!(
         ProofTactic::SmartStep.class(),
@@ -477,23 +451,12 @@ fn simple_proof_round_trips_nested_surface_steps() {
 }
 
 #[test]
-fn simple_proof_has_no_smart_or_internal_step_variant() {
+fn simple_proof_has_no_smart_step_variant() {
     let smart = SimpleProof::from_proof_tactics(&[ProofTactic::Simp])
         .expect_err("smart tactics are not simple proof steps");
     assert_eq!(
         smart.tactic_class(),
         TacticClass::Smart(SmartTacticKind::Simp)
-    );
-
-    let internal = SimpleProof::from_proof_tactics(&[ProofTactic::CertifiedStatementStep {
-        prerequisite_derivations: Vec::new(),
-        exact_premises: Vec::new(),
-        planned_transition: None,
-    }])
-    .expect_err("internal derivations are not simple proof steps");
-    assert_eq!(
-        internal.tactic_class(),
-        TacticClass::Internal(InternalTacticKind::CertifiedStatementTransition)
     );
 }
 
@@ -524,21 +487,6 @@ fn tactic_certificate_rejects_a_direct_smart_tactic() {
         TacticClass::Smart(SmartTacticKind::Simp)
     );
     assert_eq!(error.path(), &[CertificatePathSegment::Tactic(0)]);
-}
-
-#[test]
-fn tactic_certificate_rejects_internal_replay_evidence() {
-    let error = SimpleProof::from_proof_tactics(&[ProofTactic::CertifiedStatementStep {
-        prerequisite_derivations: Vec::new(),
-        exact_premises: Vec::new(),
-        planned_transition: None,
-    }])
-    .expect_err("internal replay evidence is not a surface tactic");
-
-    assert_eq!(
-        error.tactic_class(),
-        TacticClass::Internal(InternalTacticKind::CertifiedStatementTransition)
-    );
 }
 
 #[test]

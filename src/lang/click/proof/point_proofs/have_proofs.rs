@@ -361,17 +361,17 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     };
     let assumptions = assumptions_from_propositions(&reasoning_available);
     if reasoning_available.contains(&goal) {
-        let plan = InternalProofPlan::from_planned_tactics(&[ProofTactic::Assumption])
+        let plan = InternalProofPlan::from_surface_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple replay tactic");
         return Ok((fact, plan));
     }
     if matches!(normalize_proposition(&goal), SimpProposition::True) {
-        let plan = InternalProofPlan::from_planned_tactics(&[ProofTactic::Normalize])
+        let plan = InternalProofPlan::from_surface_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a simple replay tactic");
         return Ok((fact, plan));
     }
     if quantified_replay_equivalent_available_fact(&goal, &reasoning_available).is_some() {
-        let plan = InternalProofPlan::from_planned_tactics(&[ProofTactic::Assumption])
+        let plan = InternalProofPlan::from_surface_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple replay tactic");
         return Ok((fact, plan));
     }
@@ -382,19 +382,15 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
         && let Some(derivation) =
             minimal_proposition_derivation(&goal, std::slice::from_ref(equivalent))?
     {
-        let plan =
-            InternalProofPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
-                derivation,
-            )])
-            .expect("a directly normalized derivation is a simple replay tactic");
+        let plan = InternalProofPlan::from_operations(vec![
+            InternalProofOperation::ExactPropositionDerivation(derivation),
+        ]);
         return Ok((fact, plan));
     }
     if let Some(derivation) = search_condition_derivation(&goal, &reasoning_available)? {
-        let plan =
-            InternalProofPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
-                derivation,
-            )])
-            .expect("a bounded condition derivation is a simple replay tactic");
+        let plan = InternalProofPlan::from_operations(vec![
+            InternalProofOperation::ExactPropositionDerivation(derivation),
+        ]);
         return Ok((fact, plan));
     }
 

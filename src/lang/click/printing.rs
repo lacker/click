@@ -375,18 +375,10 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             line(output, &prefix, "}");
         }
         ProofTactic::SmartStep => line(output, &prefix, "step();"),
-        ProofTactic::CertifiedStatementStep { .. }
-        | ProofTactic::CertifiedLoopSummaryStep { .. }
-        | ProofTactic::SmartExecute
+        ProofTactic::SmartExecute
         | ProofTactic::SmartExecuteAllPaths
         | ProofTactic::ExecuteUntil(_)
         | ProofTactic::SmartFrame(_)
-        | ProofTactic::ExactPropositionDerivation(_)
-        | ProofTactic::CertifiedFactTransport { .. }
-        | ProofTactic::FinishCertifiedFactTransports(_)
-        | ProofTactic::CertifiedPathAssumption { .. }
-        | ProofTactic::CertifiedFrame(_)
-        | ProofTactic::CertifiedAlternatives(_)
         | ProofTactic::Simp => unreachable!("certificate validation rejects this tactic"),
     }
 }

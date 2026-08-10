@@ -453,7 +453,7 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
         !format!("{premises:?}").contains("unrelated"),
         "an irrelevant ambient loadability fact leaked into the exact frame certificate: {premises:?}"
     );
-    SimpleProof::from_proof_tactics(expanded)
+    SimpleProof::from_proof_tactics(&expanded)
         .expect("contextual frame expansion should be a surface certificate");
 }
 
@@ -505,7 +505,7 @@ fn contextual_frame_expands_independently_in_branch_leaves() {
         proof_if.else_tactics.last(),
         Some(ProofTactic::FrameUsing { region: None, .. })
     ));
-    SimpleProof::from_proof_tactics(expanded)
+    SimpleProof::from_proof_tactics(&expanded)
         .expect("branched frame expansion should be a surface certificate");
 }
 

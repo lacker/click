@@ -389,6 +389,220 @@ pub(in crate::lang::click::proof) fn replay_linear_tactics(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn replay_internal_operation(
+    operation: &InternalProofOperation,
+    replay: &mut TacticReplayState,
+    construction: &mut SimpleProofBuilder,
+    state: &mut CState,
+    requirement_pure_facts: &mut Vec<Proposition>,
+    branch_path: &[String],
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    claim_label: &str,
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function: &CFunction,
+    arguments: &[CExpression],
+    tactic_index: usize,
+    source_index: usize,
+) -> Result<(), ClickError> {
+    // Simple-proof construction still consumes the same checked planner
+    // evidence as replay. Keeping this call next to semantic replay makes the
+    // remaining builder removal explicit; the plan itself no longer crosses
+    // back through the surface-script representation.
+    {
+        let mut construction_context = SimpleProofConstructionContext::new(replay, construction);
+        append_simple_proof_step_for_operation(
+            &mut construction_context,
+            state,
+            requirement_pure_facts,
+            function_block,
+            parsed_function.parameters(),
+            arguments,
+            predicate_environment,
+            click_function_environment,
+            None,
+            Some(operation),
+            None,
+        );
+    }
+
+    match operation {
+        InternalProofOperation::Surface(_) => unreachable!("surface operation in internal replay"),
+        InternalProofOperation::CertifiedStatementStep {
+            prerequisite_derivations,
+            planned_transition,
+            ..
+        }
+        | InternalProofOperation::CertifiedLoopSummaryStep {
+            prerequisite_derivations,
+            planned_transition,
+            ..
+        } => {
+            let loop_step_policy = if matches!(
+                operation,
+                InternalProofOperation::CertifiedLoopSummaryStep { .. }
+            ) {
+                LoopStepPolicy::ApplyVerifiedRule
+            } else {
+                LoopStepPolicy::EnterBody
+            };
+            let planned_transition = planned_transition
+                .and_then(|index| replay.planned_statement_transitions.get(index).cloned());
+            let assumptions = assumptions_from_propositions(requirement_pure_facts);
+            execute_step_from_execution_point(
+                replay,
+                state,
+                requirement_pure_facts,
+                function_block,
+                function,
+                parsed_function.parameters(),
+                arguments,
+                &assumptions,
+                function_environment,
+                claim_label,
+                tactic_index,
+                "certified statement step",
+                prerequisite_derivations,
+                planned_transition.as_ref(),
+                StatementPrerequisitePolicy::Certified,
+                StatementFactTransportPolicy::None,
+                loop_step_policy,
+            )?;
+        }
+        InternalProofOperation::CertifiedPathAssumption { facts, theorem, .. } => {
+            if !matches!(
+                implication_body(theorem.proposition()),
+                Proposition::CConditionEvaluates { .. }
+            ) {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: certified path assumption is not backed by a condition-evaluation theorem"
+                )));
+            }
+            for fact in facts {
+                if !requirement_pure_facts.contains(fact) {
+                    requirement_pure_facts.push(fact.clone());
+                }
+            }
+        }
+        InternalProofOperation::CertifiedAlternatives(alternatives) => {
+            let base = ProofReplayContext {
+                state: state.clone(),
+                pure_facts: requirement_pure_facts.clone(),
+                replay: replay.clone(),
+                branch_path: branch_path.to_vec(),
+            };
+            let mut completed = Vec::new();
+            let mut surface_paths = Vec::new();
+            for alternative in alternatives {
+                let mut alternative_base = base.clone();
+                alternative_base.replay.simple_proof_builder = SimpleProofBuilder::default();
+                let result = replay_internal_plan(
+                    alternative_base,
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                    tactic_index,
+                    source_index,
+                    alternative,
+                )?;
+                surface_paths.push(result.construction);
+                completed.push(BoundedProofFrontier {
+                    replay: result.context.replay,
+                    state: result.context.state,
+                    pure_facts: result.context.pure_facts,
+                });
+            }
+            merge_bounded_execution_frontiers(
+                replay,
+                state,
+                requirement_pure_facts,
+                function,
+                arguments,
+                completed,
+                claim_label,
+                tactic_index,
+            )?;
+            match synthesize_surface_alternatives(surface_paths) {
+                Ok(steps) => {
+                    for step in steps {
+                        construction.push_step(step);
+                    }
+                }
+                Err(message) => construction.block(format!(
+                    "could not lower certified branch alternatives: {message}"
+                )),
+            }
+        }
+        InternalProofOperation::CertifiedFrame(path_derivations) => {
+            require_function_exit(replay, claim_label, tactic_index, "certified frame")?;
+            replay.defer_post_execution(
+                tactic_index,
+                source_index,
+                PostExecutionTactic::CertifiedFrame(path_derivations.clone()),
+            );
+        }
+        InternalProofOperation::ExactPropositionDerivation(derivation) => {
+            let assumptions = assumptions_from_propositions(requirement_pure_facts);
+            if !derivation.replay(&assumptions) {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: proposition derivation did not replay"
+                )));
+            }
+            if !requirement_pure_facts.contains(derivation.conclusion()) {
+                requirement_pure_facts.push(derivation.conclusion().clone());
+            }
+        }
+        InternalProofOperation::CertifiedFactTransport {
+            source,
+            target,
+            theorem,
+        } => {
+            let Some(available_source) =
+                materialization_equivalent_available_fact(source, requirement_pure_facts)
+            else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: certified fact transport is missing exact source {source:?}"
+                )));
+            };
+            if available_source != *source && !requirement_pure_facts.contains(source) {
+                requirement_pure_facts.retain(|fact| fact != &available_source);
+                requirement_pure_facts.push(source.clone());
+            }
+            let Proposition::Implies(theorem_source, theorem_target) = theorem.proposition() else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: certified fact transport theorem is not an implication"
+                )));
+            };
+            if theorem_source.as_ref() != source || theorem_target.as_ref() != target {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: certified fact transport theorem does not match its source and target"
+                )));
+            }
+            if !requirement_pure_facts.contains(target) {
+                requirement_pure_facts.push(target.clone());
+            }
+        }
+        InternalProofOperation::FinishCertifiedFactTransports(sources) => {
+            requirement_pure_facts.retain(|fact| !sources.contains(fact));
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn replay_frontier_local_loop_tactic(
     context: ProofReplayContext,
     loop_clause: &StructuralClause,
@@ -511,19 +725,28 @@ fn replay_linear_tactics_without_frontier_loops(
                 branch_skeleton,
             });
         }
-        if !deferred_post_execution {
-            append_simple_proof_step_for_internal_tactic(
-                &mut replay,
-                &state,
-                &requirement_pure_facts,
-                function_block,
-                parsed_function.parameters(),
-                arguments,
-                predicate_environment,
-                click_function_environment,
-                tactic,
-                None,
-            );
+        if !deferred_post_execution
+            && !SUPPRESS_SIMPLE_PROOF_CONSTRUCTION.with(std::cell::Cell::get)
+        {
+            let mut construction = std::mem::take(&mut replay.simple_proof_builder);
+            {
+                let mut construction_context =
+                    SimpleProofConstructionContext::new(&mut replay, &mut construction);
+                append_simple_proof_step_for_operation(
+                    &mut construction_context,
+                    &state,
+                    &requirement_pure_facts,
+                    function_block,
+                    parsed_function.parameters(),
+                    arguments,
+                    predicate_environment,
+                    click_function_environment,
+                    Some(tactic),
+                    None,
+                    None,
+                );
+            }
+            replay.simple_proof_builder = construction;
         }
         let _timing = (!(deferred_post_execution
             || replay.region_proof && matches!(tactic, ProofTactic::Simp))
@@ -622,7 +845,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     )
                 ))
             })?;
-            let plan = InternalProofPlan::from_planned_tactics(&[ProofTactic::TransportUsing {
+            let plan = InternalProofPlan::from_surface_tactics(&[ProofTactic::TransportUsing {
                 source: surface_source.clone(),
                 target: surface_target.clone(),
                 premises,
@@ -685,7 +908,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 predicate_environment,
                 click_function_environment,
             )?;
-            let plan = InternalProofPlan::from_planned_tactics(&[ProofTactic::ApplyTheoremUsing {
+            let plan = InternalProofPlan::from_surface_tactics(&[ProofTactic::ApplyTheoremUsing {
                 application: application.clone(),
                 premises,
             }])
@@ -1278,45 +1501,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 requirement_pure_facts = explicit_premises;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::Step
-            | ProofTactic::CertifiedStatementStep { .. }
-            | ProofTactic::CertifiedLoopSummaryStep { .. } => {
-                let (prerequisite_policy, certified_prerequisites, loop_step_policy) = match tactic
-                {
-                    ProofTactic::Step => (
-                        StatementPrerequisitePolicy::Exact,
-                        &[][..],
-                        LoopStepPolicy::EnterBody,
-                    ),
-                    ProofTactic::CertifiedStatementStep {
-                        prerequisite_derivations,
-                        ..
-                    } => (
-                        StatementPrerequisitePolicy::Certified,
-                        prerequisite_derivations.as_slice(),
-                        LoopStepPolicy::EnterBody,
-                    ),
-                    ProofTactic::CertifiedLoopSummaryStep {
-                        prerequisite_derivations,
-                        ..
-                    } => (
-                        StatementPrerequisitePolicy::Certified,
-                        prerequisite_derivations.as_slice(),
-                        LoopStepPolicy::ApplyVerifiedRule,
-                    ),
-                    _ => unreachable!(),
-                };
-                let planned_transition = match tactic {
-                    ProofTactic::CertifiedStatementStep {
-                        planned_transition: Some(index),
-                        ..
-                    }
-                    | ProofTactic::CertifiedLoopSummaryStep {
-                        planned_transition: Some(index),
-                        ..
-                    } => replay.planned_statement_transitions.get(*index).cloned(),
-                    _ => None,
-                };
+            ProofTactic::Step => {
                 execute_step_from_execution_point(
                     &mut replay,
                     &mut state,
@@ -1330,93 +1515,17 @@ fn replay_linear_tactics_without_frontier_loops(
                     claim_label,
                     tactic_index,
                     tactic_name(tactic),
-                    certified_prerequisites,
-                    planned_transition.as_ref(),
-                    prerequisite_policy,
+                    &[],
+                    None,
+                    StatementPrerequisitePolicy::Exact,
                     StatementFactTransportPolicy::None,
-                    loop_step_policy,
+                    LoopStepPolicy::EnterBody,
                 )?;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
-            }
-            ProofTactic::CertifiedPathAssumption { facts, theorem, .. } => {
-                if !matches!(
-                    implication_body(theorem.proposition()),
-                    Proposition::CConditionEvaluates { .. }
-                ) {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: certified path assumption is not backed by a condition-evaluation theorem"
-                    )));
-                }
-                for fact in facts {
-                    if !requirement_pure_facts.contains(fact) {
-                        requirement_pure_facts.push(fact.clone());
-                    }
-                }
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
-            }
-            ProofTactic::CertifiedAlternatives(alternatives) => {
-                let outer_simple_proof = replay.simple_proof_builder.clone();
-                let base = ProofReplayContext {
-                    state: state.clone(),
-                    pure_facts: requirement_pure_facts.clone(),
-                    replay: replay.clone(),
-                    branch_path: branch_path.clone(),
-                };
-                let mut completed = Vec::new();
-                let mut surface_paths = Vec::new();
-                for alternative in alternatives {
-                    let mut alternative_base = base.clone();
-                    alternative_base.replay.simple_proof_builder = SimpleProofBuilder::default();
-                    let result = replay_internal_plan(
-                        alternative_base,
-                        function_block,
-                        parsed_function,
-                        claims,
-                        claim_label,
-                        function_environment,
-                        predicate_environment,
-                        click_function_environment,
-                        resource_environment,
-                        theorem_environment,
-                        function,
-                        arguments,
-                        tactic_index,
-                        source_index,
-                        alternative,
-                    )?;
-                    surface_paths.push(result.replay.simple_proof_builder.clone());
-                    completed.push(BoundedProofFrontier {
-                        replay: result.replay,
-                        state: result.state,
-                        pure_facts: result.pure_facts,
-                    });
-                }
-                merge_bounded_execution_frontiers(
-                    &mut replay,
-                    &mut state,
-                    &mut requirement_pure_facts,
-                    function,
-                    arguments,
-                    completed,
-                    claim_label,
-                    tactic_index,
-                )?;
-                replay.simple_proof_builder = outer_simple_proof;
-                match synthesize_surface_alternatives(surface_paths) {
-                    Ok(steps) => {
-                        for step in steps {
-                            replay.simple_proof_builder.push_step(step);
-                        }
-                    }
-                    Err(message) => replay.simple_proof_builder.block(format!(
-                        "could not lower certified branch alternatives: {message}"
-                    )),
-                }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::SmartStep => {
                 let mut planning_replay = replay.clone();
-                planning_replay.planned_tactics.clear();
+                planning_replay.planned_operations.clear();
                 planning_replay.planned_statement_transitions.clear();
                 let mut planning_state = state.clone();
                 let mut planning_facts = requirement_pure_facts.clone();
@@ -1440,18 +1549,10 @@ fn replay_linear_tactics_without_frontier_loops(
                     LoopStepPolicy::EnterBody,
                 )?;
                 let certificate =
-                    InternalProofPlan::from_planned_tactics(&planning_replay.planned_tactics)
-                        .map(|plan| {
-                            plan.with_statement_transitions(
-                                planning_replay.planned_statement_transitions.clone(),
-                            )
-                        })
-                        .map_err(|error| {
-                            ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `step` planned a non-certificate tactic {:?}",
-                                error.smart_tactic()
-                            ))
-                        })?;
+                    InternalProofPlan::from_operations(planning_replay.planned_operations.clone())
+                        .with_statement_transitions(
+                            planning_replay.planned_statement_transitions.clone(),
+                        );
                 let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,
@@ -1482,7 +1583,7 @@ fn replay_linear_tactics_without_frontier_loops(
             }
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => {
                 let mut planning_replay = replay.clone();
-                planning_replay.planned_tactics.clear();
+                planning_replay.planned_operations.clear();
                 planning_replay.planned_statement_transitions.clear();
                 let mut planning_state = state.clone();
                 let mut planning_facts = requirement_pure_facts.clone();
@@ -1503,7 +1604,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 });
                 if direct_result.is_none_or(|result| result.is_err()) {
                     planning_replay = replay.clone();
-                    planning_replay.planned_tactics.clear();
+                    planning_replay.planned_operations.clear();
                     planning_replay.planned_statement_transitions.clear();
                     planning_state = state.clone();
                     planning_facts = requirement_pure_facts.clone();
@@ -1522,18 +1623,10 @@ fn replay_linear_tactics_without_frontier_loops(
                     )?;
                 }
                 let certificate =
-                    InternalProofPlan::from_planned_tactics(&planning_replay.planned_tactics)
-                        .map(|plan| {
-                            plan.with_statement_transitions(
-                                planning_replay.planned_statement_transitions.clone(),
-                            )
-                        })
-                        .map_err(|error| {
-                            ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `execute` planned a non-certificate tactic {:?}",
-                                error.smart_tactic()
-                            ))
-                        })?;
+                    InternalProofPlan::from_operations(planning_replay.planned_operations.clone())
+                        .with_statement_transitions(
+                            planning_replay.planned_statement_transitions.clone(),
+                        );
                 let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,
@@ -1571,7 +1664,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     )));
                 };
                 let mut planning_replay = replay.clone();
-                planning_replay.planned_tactics.clear();
+                planning_replay.planned_operations.clear();
                 planning_replay.planned_statement_transitions.clear();
                 let mut planning_state = state.clone();
                 let mut planning_facts = requirement_pure_facts.clone();
@@ -1590,18 +1683,10 @@ fn replay_linear_tactics_without_frontier_loops(
                     StatementPrerequisitePolicy::Planning,
                 )?;
                 let certificate =
-                    InternalProofPlan::from_planned_tactics(&planning_replay.planned_tactics)
-                        .map(|plan| {
-                            plan.with_statement_transitions(
-                                planning_replay.planned_statement_transitions.clone(),
-                            )
-                        })
-                        .map_err(|error| {
-                            ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `execute_until` planned a non-certificate tactic {:?}",
-                                error.smart_tactic()
-                            ))
-                        })?;
+                    InternalProofPlan::from_operations(planning_replay.planned_operations.clone())
+                        .with_statement_transitions(
+                            planning_replay.planned_statement_transitions.clone(),
+                        );
                 let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,
@@ -1633,7 +1718,7 @@ fn replay_linear_tactics_without_frontier_loops(
             ProofTactic::SmartFrame(region_ref) => {
                 if region_ref.is_some() {
                     let certificate =
-                        InternalProofPlan::from_planned_tactics(&[ProofTactic::FrameUsing {
+                        InternalProofPlan::from_surface_tactics(&[ProofTactic::FrameUsing {
                             region: region_ref.clone(),
                             premises: Vec::new(),
                         }])
@@ -1762,11 +1847,9 @@ fn replay_linear_tactics_without_frontier_loops(
                         path.outcome(),
                     )?);
                 }
-                let certificate =
-                    InternalProofPlan::from_planned_tactics(&[ProofTactic::CertifiedFrame(
-                        path_derivations,
-                    )])
-                    .expect("certified frame is a simple tactic");
+                let certificate = InternalProofPlan::from_operations(vec![
+                    InternalProofOperation::CertifiedFrame(path_derivations),
+                ]);
                 let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,
@@ -2002,14 +2085,6 @@ fn replay_linear_tactics_without_frontier_loops(
                     );
                 }
                 replay.frames.insert(region_ref.clone());
-            }
-            ProofTactic::CertifiedFrame(path_derivations) => {
-                require_function_exit(&replay, claim_label, tactic_index, "certified_frame")?;
-                replay.defer_post_execution(
-                    tactic_index,
-                    source_index,
-                    PostExecutionTactic::CertifiedFrame(path_derivations.clone()),
-                );
             }
             ProofTactic::UnfoldPredicate(name) => {
                 if predicate_environment.get(name).is_none() {
@@ -2518,53 +2593,6 @@ fn replay_linear_tactics_without_frontier_loops(
                     "`{claim_label}` tactic {tactic_index}: `{}` is only available while proving a pure goal, such as inside `have ... by`",
                     tactic_name(tactic)
                 )));
-            }
-            ProofTactic::ExactPropositionDerivation(derivation) => {
-                if !derivation.replay(&assumptions) {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: proposition derivation did not replay"
-                    )));
-                }
-                if !requirement_pure_facts.contains(derivation.conclusion()) {
-                    requirement_pure_facts.push(derivation.conclusion().clone());
-                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
-                }
-            }
-            ProofTactic::CertifiedFactTransport {
-                source,
-                target,
-                theorem,
-            } => {
-                let Some(available_source) =
-                    materialization_equivalent_available_fact(source, &requirement_pure_facts)
-                else {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: certified fact transport is missing exact source {source:?}"
-                    )));
-                };
-                if available_source != *source && !requirement_pure_facts.contains(source) {
-                    requirement_pure_facts.retain(|fact| fact != &available_source);
-                    requirement_pure_facts.push(source.clone());
-                }
-                let Proposition::Implies(theorem_source, theorem_target) = theorem.proposition()
-                else {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: certified fact transport theorem is not an implication"
-                    )));
-                };
-                if theorem_source.as_ref() != source || theorem_target.as_ref() != target {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: certified fact transport theorem does not match its source and target"
-                    )));
-                }
-                if !requirement_pure_facts.contains(target) {
-                    requirement_pure_facts.push(target.clone());
-                }
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
-            }
-            ProofTactic::FinishCertifiedFactTransports(sources) => {
-                requirement_pure_facts.retain(|fact| !sources.contains(fact));
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::CloseInvariants => {
                 if !replay.loop_invariant_region {

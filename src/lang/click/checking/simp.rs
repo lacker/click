@@ -848,12 +848,14 @@ pub(in crate::lang::click) fn plan_simp_certificate(
     proposition: &Proposition,
     assumptions: &Assumptions,
 ) -> Option<InternalProofPlan> {
-    let tactic = if matches!(normalize_proposition(proposition), SimpProposition::True) {
-        ProofTactic::Normalize
+    let operation = if matches!(normalize_proposition(proposition), SimpProposition::True) {
+        InternalProofOperation::Surface(ProofTactic::Normalize)
     } else {
-        ProofTactic::ExactPropositionDerivation(assumptions.derive_simp_proposition(proposition)?)
+        InternalProofOperation::ExactPropositionDerivation(
+            assumptions.derive_simp_proposition(proposition)?,
+        )
     };
-    InternalProofPlan::from_planned_tactics(&[tactic]).ok()
+    Some(InternalProofPlan::from_operations(vec![operation]))
 }
 
 pub(in crate::lang::click) fn replay_simp_certificate(
@@ -861,11 +863,11 @@ pub(in crate::lang::click) fn replay_simp_certificate(
     assumptions: &Assumptions,
     certificate: &InternalProofPlan,
 ) -> bool {
-    match certificate.tactics() {
-        [ProofTactic::Normalize] => {
+    match certificate.operations() {
+        [InternalProofOperation::Surface(ProofTactic::Normalize)] => {
             matches!(normalize_proposition(proposition), SimpProposition::True)
         }
-        [ProofTactic::ExactPropositionDerivation(derivation)] => {
+        [InternalProofOperation::ExactPropositionDerivation(derivation)] => {
             derivation.conclusion() == proposition && derivation.replay(assumptions)
         }
         _ => false,

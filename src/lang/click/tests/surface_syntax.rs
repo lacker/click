@@ -252,7 +252,7 @@ fn pure_simp_exposes_a_surface_derivation_certificate() {
 
     let verified = verify_click_theorems(source).expect("simp theorem should verify");
     assert!(matches!(
-        verified[0].proof_tactics.as_deref(),
+        verified[0].proof_tactics().as_deref(),
         Some([ProofTactic::Derive(ProofDerive { premises, .. })]) if premises.len() == 1
     ));
 }
@@ -323,11 +323,7 @@ fn verifies_explicit_structural_logic_tactics() {
     let verified = verify_click_theorems(source).expect("logical tactics should verify");
     assert_eq!(verified.len(), 8);
     assert!(verified.iter().all(|theorem| {
-        theorem.proof_kind == ProofKind::TacticScript
-            && theorem
-                .proof_tactics
-                .as_ref()
-                .is_some_and(|tactics| SimpleProof::from_proof_tactics(tactics).is_ok())
+        theorem.proof_kind == ProofKind::TacticScript && theorem.proof_certificate().is_ok()
     }));
 }
 
@@ -355,12 +351,11 @@ fn verifies_atomic_derivation_from_explicit_premises() {
 
     let verified = verify_click_theorems(source).expect("atomic derivations should verify");
     assert_eq!(verified.len(), 2);
-    assert!(verified.iter().all(|theorem| {
-        theorem
-            .proof_tactics
-            .as_ref()
-            .is_some_and(|tactics| SimpleProof::from_proof_tactics(tactics).is_ok())
-    }));
+    assert!(
+        verified
+            .iter()
+            .all(|theorem| { theorem.proof_certificate().is_ok() })
+    );
 }
 
 #[test]

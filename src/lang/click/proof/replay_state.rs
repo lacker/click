@@ -76,7 +76,7 @@ pub(super) struct TacticReplayState {
     /// symbolic body outcome; whole-function kernel certification checks every
     /// concrete path before any contract claim is exported.
     pub(super) execution_abstraction: bool,
-    pub(super) planned_tactics: Vec<ProofTactic>,
+    pub(super) planned_operations: Vec<InternalProofOperation>,
     /// Semantic transition evidence used only while lowering a smart plan to
     /// its `SimpleProof`. It is deliberately separate from `ProofTactic` so
     /// internal execution artifacts cannot masquerade as proof steps.
@@ -137,6 +137,8 @@ thread_local! {
     pub(super) static TACTIC_EXPANSION_PROBE: std::cell::RefCell<Option<TacticExpansionProbe>> =
         const { std::cell::RefCell::new(None) };
     pub(super) static SUPPRESS_TACTIC_EXPANSION_CAPTURE: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+    pub(super) static SUPPRESS_SIMPLE_PROOF_CONSTRUCTION: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
 }
 

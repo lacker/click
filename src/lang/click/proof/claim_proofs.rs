@@ -2930,12 +2930,9 @@ pub(super) fn finish_ordered_proof_replay(
                     claim: claim.verified_claim(),
                     proof_kind: ProofKind::TacticScript,
                     proof_tactics: Some(certificate_tactics.to_vec()),
-                    expanded_proof_tactics: replay.simple_proof_builder.blocker.is_none().then(
-                        || {
-                            SimpleProof::from_steps(replay.simple_proof_builder.steps.clone())
-                                .to_proof_tactics()
-                        },
-                    ),
+                    expanded_proof: replay.simple_proof_builder.blocker.is_none().then(|| {
+                        SimpleProof::from_steps(replay.simple_proof_builder.steps.clone())
+                    }),
                     expansion_blocker: replay.simple_proof_builder.blocker.clone(),
                     specification: specification.clone(),
                     theorem: theorem.clone(),
@@ -2984,10 +2981,10 @@ pub(super) fn finish_ordered_proof_replay(
                 expanded.block(message);
             }
             for theorem in &mut verified {
-                theorem.expanded_proof_tactics = expanded
+                theorem.expanded_proof = expanded
                     .blocker
                     .is_none()
-                    .then(|| SimpleProof::from_steps(expanded.steps.clone()).to_proof_tactics());
+                    .then(|| SimpleProof::from_steps(expanded.steps.clone()));
                 theorem.expansion_blocker = expanded.blocker.clone();
             }
         } else {
@@ -3016,9 +3013,10 @@ pub(super) fn finish_ordered_proof_replay(
                 let verified_claim = claim.verified_claim();
                 for theorem in &mut verified {
                     if theorem.claim == verified_claim {
-                        theorem.expanded_proof_tactics = expanded.blocker.is_none().then(|| {
-                            SimpleProof::from_steps(expanded.steps.clone()).to_proof_tactics()
-                        });
+                        theorem.expanded_proof = expanded
+                            .blocker
+                            .is_none()
+                            .then(|| SimpleProof::from_steps(expanded.steps.clone()));
                         theorem.expansion_blocker = expanded.blocker.clone();
                     }
                 }

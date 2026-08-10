@@ -95,10 +95,10 @@ certificates before their old `derive using` blocks can be removed:
   selected order rule. Add the smallest named simple arithmetic rule (or an
   equally explicit theorem application), not a generic arithmetic solver
   relabeled as simple.
-- The unchanged owned-string project currently misses normal verification
-  budgets before a scalar equality migration can be assessed. Fix
-  `owned-string-baseline-misses-verification-budgets.md` before using that
-  project as a migration gate.
+- The owned-string replay/certification instability has been fixed and the
+  project now passes repeated ordinary verification under its normal limit.
+  Its remaining `derive using` sites can therefore be migrated as focused
+  certificate-vocabulary work rather than treated as a baseline blocker.
 
 The input-cursor attempt also exposed and fixed a separate lowering bug:
 declaration expansion populated resource argument type metadata in `derive`
