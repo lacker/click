@@ -224,7 +224,7 @@ int32 owned_split_buffer_pipeline(
     }
     have owner->data == data by simp;
     have data[0] == left_value by {
-        derive using {
+        simp() using {
             at(statement(4).entry, owner->data[0]) == at(statement(4).entry, left_value);
             owner->data == data;
         }
