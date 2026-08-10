@@ -107,12 +107,27 @@ pub(super) struct ReplayCaseAssumption {
     pub(super) at_function_entry: bool,
 }
 
+/// One recorded surface mutation inside a tactic's builder scope, replayed
+/// onto the enclosing builder when the scope closes. Both operations resolve
+/// their position against the trailing branch structure, which the scope's
+/// skeleton shares with the enclosing builder, so replaying them reproduces
+/// the enclosing tree exactly.
+#[derive(Clone)]
+pub(super) enum SurfaceScopeOp {
+    Push(SimpleProofStep),
+    ReplaceTrailingBranch(Vec<SimpleProofStep>),
+}
+
 #[derive(Clone, Default)]
 pub(super) struct SimpleProofBuilder {
     pub(super) steps: Vec<SimpleProofStep>,
     pub(super) blocker: Option<String>,
     pub(super) last_step_entry: Option<ProgramPointRef>,
     pub(super) path_choices: Vec<SurfacePathChoice>,
+    /// When present, every surface mutation is also recorded here so a
+    /// tactic-scoped builder can be replayed onto the builder it was scoped
+    /// from. `None` outside a tactic scope.
+    pub(super) scope_ops: Option<Vec<SurfaceScopeOp>>,
     /// The facts the constructed certificate's own replay will have at the
     /// current point. Planning executes with automatically transported facts,
     /// but certificate replay carries only path facts, statement-local
@@ -350,22 +365,22 @@ pub(super) fn proof_site_for_claims(
     })
 }
 
-/// Begins a selected-tactic capture when the probe matches this tactic.
-/// Returns the branch skeleton of the surface tactics recorded so far
-/// (computed before the surface replay is reset), or `None` when no capture
-/// begins. The skeleton is only materialized on the single capturing
-/// iteration, keeping ordinary verification free of that per-tactic cost.
+/// Marks the probe active when it matches this tactic. The tactic's expansion
+/// itself comes from its builder scope; the probe only decides which tactic's
+/// scoped result is the requested one.
 pub(super) fn begin_tactic_expansion_capture(
     source_index: usize,
     _tactic: &ProofTactic,
-    replay: &mut TacticReplayState,
-) -> Option<Vec<ProofTactic>> {
+    replay: &TacticReplayState,
+) -> bool {
     if SUPPRESS_TACTIC_EXPANSION_CAPTURE.with(std::cell::Cell::get) {
-        return None;
+        return false;
     }
     TACTIC_EXPANSION_PROBE.with(|probe| {
         let mut slot = probe.borrow_mut();
-        let probe = slot.as_mut()?;
+        let Some(probe) = slot.as_mut() else {
+            return false;
+        };
         let sibling_branch_capture = probe.active
             && !replay.deferred_expansion_path_choices.is_empty()
             && probe.source_index == Some(source_index)
@@ -374,16 +389,10 @@ pub(super) fn begin_tactic_expansion_capture(
             || probe.source_index != Some(source_index)
             || replay.proof_site.as_ref() != Some(&probe.site)
         {
-            return None;
+            return false;
         }
         probe.active = true;
-        let branch_skeleton = surface_branch_skeleton(&replay.simple_proof_builder.steps);
-        let last_step_entry = replay.simple_proof_builder.last_step_entry.clone();
-        replay.simple_proof_builder = SimpleProofBuilder {
-            last_step_entry,
-            ..SimpleProofBuilder::default()
-        };
-        Some(SimpleProof::from_steps(branch_skeleton).to_proof_tactics())
+        true
     })
 }
 
@@ -490,8 +499,30 @@ pub(super) struct SurfacePathChoice {
 impl SimpleProofBuilder {
     pub(super) fn push_step(&mut self, step: SimpleProofStep) {
         if self.blocker.is_none() {
+            if let Some(ops) = &mut self.scope_ops {
+                ops.push(SurfaceScopeOp::Push(step.clone()));
+            }
             append_surface_step_to_leaves(&mut self.steps, step);
         }
+    }
+
+    /// Replaces the most recent surface branch with `steps`. A contextual
+    /// frame certificate synthesizes the branch structure it framed, so its
+    /// steps supersede the existing branch instead of nesting inside it.
+    pub(super) fn replace_trailing_branch(&mut self, steps: Vec<SimpleProofStep>) {
+        if self.blocker.is_some() {
+            return;
+        }
+        if let Some(ops) = &mut self.scope_ops {
+            ops.push(SurfaceScopeOp::ReplaceTrailingBranch(steps.clone()));
+        }
+        let branch_index = self
+            .steps
+            .iter()
+            .rposition(|step| matches!(step, SimpleProofStep::If { .. }))
+            .expect("trailing branch replacement requires an existing surface branch");
+        self.steps.truncate(branch_index);
+        self.steps.extend(steps);
     }
 
     pub(super) fn push_source_tactic(&mut self, tactic: ProofTactic) {
@@ -538,6 +569,57 @@ impl SimpleProofBuilder {
             self.path_choices.clear();
         }
     }
+}
+
+/// The enclosing builder saved while one tactic runs against a scoped view.
+pub(super) struct TacticSurfaceScope {
+    saved: SimpleProofBuilder,
+}
+
+/// Starts a builder scope for one source tactic: the tactic constructs its
+/// surface steps against a view seeded with the enclosing surface branch
+/// skeleton, so the steps it contributes exist as a standalone value — the
+/// tactic's expansion — while every mutation is also recorded for replay onto
+/// the enclosing builder when the scope ends.
+pub(super) fn begin_tactic_surface_scope(replay: &mut TacticReplayState) -> TacticSurfaceScope {
+    let saved = std::mem::take(&mut replay.simple_proof_builder);
+    // The scope starts unblocked even when the enclosing builder is blocked:
+    // the tactic's own expansion is well-defined either way, and the
+    // enclosing blocker keeps suppressing the replayed mutations when the
+    // scope closes.
+    replay.simple_proof_builder = SimpleProofBuilder {
+        steps: surface_branch_skeleton(&saved.steps),
+        last_step_entry: saved.last_step_entry.clone(),
+        scope_ops: Some(Vec::new()),
+        ..SimpleProofBuilder::default()
+    };
+    TacticSurfaceScope { saved }
+}
+
+/// Ends a tactic's builder scope: replays the recorded mutations onto the
+/// enclosing builder and returns the scoped builder — the tactic's standalone
+/// surface contribution over the branch skeleton it started from.
+pub(super) fn end_tactic_surface_scope(
+    replay: &mut TacticReplayState,
+    scope: TacticSurfaceScope,
+) -> SimpleProofBuilder {
+    let mut slice = std::mem::replace(&mut replay.simple_proof_builder, scope.saved);
+    let enclosing = &mut replay.simple_proof_builder;
+    for op in slice.scope_ops.take().into_iter().flatten() {
+        match op {
+            SurfaceScopeOp::Push(step) => enclosing.push_step(step),
+            SurfaceScopeOp::ReplaceTrailingBranch(steps) => {
+                enclosing.replace_trailing_branch(steps);
+            }
+        }
+    }
+    enclosing.last_step_entry = slice.last_step_entry.clone();
+    if enclosing.blocker.is_none()
+        && let Some(blocker) = &slice.blocker
+    {
+        enclosing.block(blocker.clone());
+    }
+    slice
 }
 
 pub(super) fn record_post_execution_surface_tactic(

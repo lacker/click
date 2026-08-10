@@ -415,12 +415,12 @@ fn replay_frontier_local_loop_tactic(
         mut replay,
         branch_path,
     } = context;
+    let mut scope = Some(begin_tactic_surface_scope(&mut replay));
     let capture_this_tactic = begin_tactic_expansion_capture(
         source_index,
         &ProofTactic::Loop(loop_clause.clone()),
-        &mut replay,
-    )
-    .is_some();
+        &replay,
+    );
     let _timing = TacticTiming::new(
         claim_label,
         tactic_index,
@@ -445,11 +445,9 @@ fn replay_frontier_local_loop_tactic(
         tactic_index,
         source_index,
     )?;
+    let slice = end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
     if capture_this_tactic {
-        return Err(finish_tactic_expansion_capture(
-            &replay.simple_proof_builder,
-            false,
-        ));
+        return Err(finish_tactic_expansion_capture(&slice, false));
     }
     Ok(ProofReplayContext {
         state,
@@ -497,17 +495,17 @@ fn replay_linear_tactics_without_frontier_loops(
             && replay.is_at_function_exit()
             && tactic_is_deferred_post_execution(tactic);
         let deferred_region_simp = replay.region_proof && matches!(tactic, ProofTactic::Simp);
-        let pre_capture_branch_skeleton =
-            begin_tactic_expansion_capture(source_index, tactic, &mut replay);
-        let capture_this_tactic = pre_capture_branch_skeleton.is_some();
-        if let Some(branch_skeleton) = pre_capture_branch_skeleton
-            && deferred_post_execution
-        {
+        let mut scope = Some(begin_tactic_surface_scope(&mut replay));
+        let capture_this_tactic = begin_tactic_expansion_capture(source_index, tactic, &replay);
+        if capture_this_tactic && deferred_post_execution {
             replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                 tactic_index,
                 source_index,
                 post_execution_index: replay.post_execution_tactics.len(),
-                branch_skeleton,
+                branch_skeleton: SimpleProof::from_steps(
+                    replay.simple_proof_builder.steps.clone(),
+                )
+                .to_proof_tactics(),
             });
         }
         if !deferred_post_execution {
@@ -667,11 +665,9 @@ fn replay_linear_tactics_without_frontier_loops(
             replay = result.replay;
             branch_path = result.branch_path;
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            let slice = end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
             if capture_this_tactic {
-                return Err(finish_tactic_expansion_capture(
-                    &replay.simple_proof_builder,
-                    false,
-                ));
+                return Err(finish_tactic_expansion_capture(&slice, false));
             }
             continue;
         }
@@ -735,11 +731,9 @@ fn replay_linear_tactics_without_frontier_loops(
             replay = result.replay;
             branch_path = result.branch_path;
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            let slice = end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
             if capture_this_tactic {
-                return Err(finish_tactic_expansion_capture(
-                    &replay.simple_proof_builder,
-                    false,
-                ));
+                return Err(finish_tactic_expansion_capture(&slice, false));
             }
             continue;
         }
@@ -824,6 +818,7 @@ fn replay_linear_tactics_without_frontier_loops(
                             premises,
                         },
                     );
+                    end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
                     continue;
                 }
                 if replay.is_at_function_entry() {
@@ -1010,6 +1005,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         requirement_pure_facts.push(target.clone());
                         assumptions = assumptions.assume_proposition(target);
                     }
+                    end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
                     continue;
                 }
                 let transition_facts =
@@ -1564,6 +1560,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     replay = result.replay;
                     branch_path = result.branch_path;
                     assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                    end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
                     continue;
                 }
                 require_function_exit(&replay, claim_label, tactic_index, "frame")?;
@@ -1811,6 +1808,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         ))
                     })?;
                     goal.closed = true;
+                    end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
                     continue;
                 }
                 require_function_exit(&replay, claim_label, tactic_index, "frame")?;
@@ -1866,6 +1864,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     };
                     replay.defer_post_execution(tactic_index, source_index, deferred);
                     replay.frames.insert(region_ref.clone());
+                    end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
                     continue;
                 }
                 let effect_claims = claims
@@ -1934,6 +1933,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         source_index,
                         PostExecutionTactic::UnfoldPredicate(name.clone()),
                     );
+                    end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
                     continue;
                 }
                 if !replay.unfolded_predicates.contains(name) {
@@ -2074,6 +2074,7 @@ fn replay_linear_tactics_without_frontier_loops(
                                 premises: premises.clone(),
                             },
                         );
+                        end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
                         continue;
                     }
                     return Err(ClickError::new(format!(
@@ -2198,6 +2199,7 @@ fn replay_linear_tactics_without_frontier_loops(
                             "`{claim_label}` tactic {tactic_index}: post-execution `have` is not available in this region proof"
                         )));
                     }
+                    end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
                     continue;
                 }
                 let mut have_facts = requirement_pure_facts.clone();
@@ -2340,10 +2342,9 @@ fn replay_linear_tactics_without_frontier_loops(
                         )?;
                         certificate = fallback;
                     }
-                    replay
-                        .simple_proof_builder
-                        .steps
-                        .extend(certificate.steps().iter().cloned());
+                    for step in certificate.steps() {
+                        replay.simple_proof_builder.push_step(step.clone());
+                    }
                 }
                 // Do not teach certificate replay the search-time lowering of
                 // this goal until the generated surface certificate has
@@ -2379,6 +2380,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         source_index,
                         PostExecutionTactic::Witness(witness.clone()),
                     );
+                    end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
                     continue;
                 }
                 require_function_exit(&replay, claim_label, tactic_index, "witness")?;
@@ -2398,6 +2400,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         source_index,
                         PostExecutionTactic::Choose(choice.clone()),
                     );
+                    end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
                     continue;
                 }
                 require_function_exit(&replay, claim_label, tactic_index, "choose")?;
@@ -2472,11 +2475,9 @@ fn replay_linear_tactics_without_frontier_loops(
                 }
             }
         }
+        let slice = end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
         if capture_this_tactic && !deferred_post_execution && !deferred_region_simp {
-            return Err(finish_tactic_expansion_capture(
-                &replay.simple_proof_builder,
-                false,
-            ));
+            return Err(finish_tactic_expansion_capture(&slice, false));
         }
     }
 

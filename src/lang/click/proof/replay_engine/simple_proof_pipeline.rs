@@ -228,13 +228,7 @@ pub(in crate::lang::click::proof) fn complete_smart_tactic(
             .iter()
             .any(|step| matches!(step, SimpleProofStep::If { .. }));
     if replaces_existing_branch {
-        let branch_index = merged
-            .steps
-            .iter()
-            .rposition(|step| matches!(step, SimpleProofStep::If { .. }))
-            .expect("an existing surface branch was checked above");
-        merged.steps.truncate(branch_index);
-        merged.steps.extend(proof.steps().iter().cloned());
+        merged.replace_trailing_branch(proof.steps().to_vec());
     } else {
         for step in proof.steps() {
             merged.push_step(step.clone());
