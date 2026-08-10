@@ -151,7 +151,7 @@ int32 input_cursor_take(struct input_cursor* owner) {
     }
     step();
     have 0 <= owner->pos by {
-        derive using {
+        simp() using {
             at(statement(2).entry, separate(memory(owner->pos), memory(owner->len)));
             at(statement(2).entry, separate(memory(owner->pos), memory(owner->data)));
             at(statement(2).entry, separate(memory(owner->len), memory(owner->data)));
