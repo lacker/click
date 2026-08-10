@@ -333,7 +333,7 @@ int32 owned_split_buffer_pipeline(
     have data[0] == left_value by simp;
     have data[1] == right_value by simp;
     have c(result) == data[1] by {
-        derive using {
+        simp() using {
             at(statement(7).entry, c(result)) == at(statement(7).entry, *(owner->data + 1));
             owner->data == data;
         }
