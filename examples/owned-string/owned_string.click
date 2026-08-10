@@ -371,7 +371,7 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         }
     }
     have result == (old(owner->len) + 1) by {
-        derive using {
+        simp() using {
             owner->len == (old(owner->len) + 1);
         }
     }
