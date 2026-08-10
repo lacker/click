@@ -1032,20 +1032,20 @@ struct SimpleStructuralItem {
     effect_proof: Option<Box<SimpleProof>>,
 }
 
-/// Private search machinery used while constructing a [`SimpleProof`]. This
-/// is not a smart-tactic result and cannot cross the smart/simple boundary.
+/// Point-proof evidence for a smart `have`/`simp` at a single proof point.
+/// This is not a smart-tactic result and cannot cross the smart/simple
+/// boundary; execution-shaped smart tactics construct [`SimpleProofStep`]
+/// values directly during search instead of recording a plan.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[doc(hidden)]
 pub struct InternalProofPlan {
     operations: Vec<InternalProofOperation>,
-    statement_transitions: Vec<PlannedStatementTransition>,
 }
 
-/// One operation in a smart tactic's private construction plan.
-///
-/// Surface tactics are kept distinct from semantic evidence so the plan can
-/// be migrated away from replaying internal variants of [`ProofTactic`]
-/// without changing search behavior in the same step.
+/// Checked kernel evidence used as the input to constructing one
+/// [`SimpleProofStep`]. An operation never forms an ordered replayable
+/// program of its own: search consumes it transiently to spell the surface
+/// step, and the resulting `SimpleProof` is what replays.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum InternalProofOperation {
     Surface(ProofTactic),
@@ -1074,7 +1074,6 @@ pub(crate) enum InternalProofOperation {
         theorem: Theorem,
     },
     CertifiedFrame(Vec<Vec<PropositionDerivation>>),
-    CertifiedAlternatives(Vec<InternalProofPlan>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1401,10 +1400,7 @@ impl CertificateError {
 
 impl InternalProofPlan {
     pub(crate) fn from_operations(operations: Vec<InternalProofOperation>) -> Self {
-        Self {
-            operations,
-            statement_transitions: Vec::new(),
-        }
+        Self { operations }
     }
 
     fn from_surface_tactics(tactics: &[ProofTactic]) -> Result<Self, InternalPlanError> {
@@ -1415,31 +1411,11 @@ impl InternalProofPlan {
                 .cloned()
                 .map(InternalProofOperation::from_planned_tactic)
                 .collect(),
-            statement_transitions: Vec::new(),
         })
     }
 
     pub(crate) fn operations(&self) -> &[InternalProofOperation] {
         &self.operations
-    }
-
-    pub(crate) fn is_certified_frame(&self) -> bool {
-        matches!(
-            self.operations.as_slice(),
-            [InternalProofOperation::CertifiedFrame(_)]
-        )
-    }
-
-    fn with_statement_transitions(
-        mut self,
-        statement_transitions: Vec<PlannedStatementTransition>,
-    ) -> Self {
-        self.statement_transitions = statement_transitions;
-        self
-    }
-
-    fn statement_transitions(&self) -> &[PlannedStatementTransition] {
-        &self.statement_transitions
     }
 }
 

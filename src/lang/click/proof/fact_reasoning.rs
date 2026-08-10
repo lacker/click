@@ -711,24 +711,6 @@ pub(in crate::lang::click) fn search_condition_derivation(
     Ok(None)
 }
 
-pub(super) fn derivation_replays_with_materialized_context(
-    derivation: &PropositionDerivation,
-    available: &[Proposition],
-) -> Result<bool, ClickError> {
-    let assumptions = assumptions_from_propositions(available);
-    if derivation.replay(&assumptions) {
-        return Ok(true);
-    }
-    let Some(materialized_context) = derivation
-        .context_premises()
-        .iter()
-        .map(|premise| materialization_equivalent_available_fact(premise, available))
-        .collect::<Option<Vec<_>>>()
-    else {
-        return Ok(false);
-    };
-    Ok(minimal_proposition_derivation(derivation.conclusion(), &materialized_context)?.is_some())
-}
 
 pub(super) fn exact_facts_directly_conflict(left: &Proposition, right: &Proposition) -> bool {
     let left = normalize_direct_atomic_memory_loads(left);

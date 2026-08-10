@@ -209,7 +209,6 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         &mut next_verification_variable,
         StatementPrerequisitePolicy::Explicit,
         StatementFactTransportPolicy::None,
-        &[],
     )
     .expect("simple transition should execute");
     let [transition] = transitions.as_slice() else {

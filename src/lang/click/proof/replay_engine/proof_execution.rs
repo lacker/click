@@ -305,10 +305,10 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     *index,
                     "branch",
                     Some(take_then),
-                    &[],
                     StatementPrerequisitePolicy::Contextual,
                     BranchStepPolicy::Explore,
                     true,
+                    None,
                 )
                 .map_err(|error| add_proof_branch_path(error, &branch_context.branch_path))?;
                 if !entered {

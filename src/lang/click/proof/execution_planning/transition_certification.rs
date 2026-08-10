@@ -6,37 +6,22 @@ pub(in crate::lang::click::proof) fn certified_condition_transitions(
     condition: &CExpression,
     context_label: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
-    certified_prerequisites: &[PropositionDerivation],
     filter_assumption_conflicts: bool,
 ) -> Result<Vec<CertifiedConditionTransition>, ClickError> {
-    let mut transition_pure_facts = pure_facts.to_vec();
+    let transition_pure_facts = pure_facts.to_vec();
     let planning_assumptions = assumptions_from_propositions(pure_facts);
     let mut assumptions = match prerequisite_policy {
         StatementPrerequisitePolicy::Exact
         | StatementPrerequisitePolicy::Explicit
-        | StatementPrerequisitePolicy::Certified
         | StatementPrerequisitePolicy::Contextual => assumptions_from_propositions(pure_facts),
         StatementPrerequisitePolicy::Planning => {
             assumptions_from_propositions(pure_facts).defer_non_exact_loadability_obligations()
         }
     };
-    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified) {
-        for derivation in certified_prerequisites {
-            if derivation_replays_with_materialized_context(derivation, pure_facts)? {
-                assumptions = assumptions.assume_proposition(derivation.conclusion().clone());
-                if !transition_pure_facts.contains(derivation.conclusion()) {
-                    transition_pure_facts.push(derivation.conclusion().clone());
-                }
-            }
-        }
-    }
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
         assumptions = assumptions.defer_non_exact_loadability_obligations();
         assumptions = assumptions.defer_non_exact_condition_reasoning();
-    } else if matches!(
-        prerequisite_policy,
-        StatementPrerequisitePolicy::Certified | StatementPrerequisitePolicy::Explicit
-    ) {
+    } else if matches!(prerequisite_policy, StatementPrerequisitePolicy::Explicit) {
         assumptions = assumptions.defer_non_exact_loadability_obligations();
     }
     let evaluation = prove_symbolic_c_condition_evaluation(
@@ -123,18 +108,12 @@ pub(in crate::lang::click::proof) fn certified_condition_transitions(
             }
             for obligation in path.obligations() {
                 let derivation = match prerequisite_policy {
-                    StatementPrerequisitePolicy::Exact
-                    | StatementPrerequisitePolicy::Certified => {
+                    StatementPrerequisitePolicy::Exact => {
                         if exact_fact_is_available(obligation.proposition(), pure_facts)
                             || matches!(
                                 normalize_proposition(obligation.proposition()),
                                 SimpProposition::True
                             )
-                            || matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified)
-                                && certified_prerequisites.iter().any(|derivation| {
-                                    derivation.conclusion() == obligation.proposition()
-                                        && derivation.replay(&prerequisite_assumptions)
-                                })
                         {
                             None
                         } else {
@@ -229,25 +208,12 @@ pub(in crate::lang::click) fn certified_statement_transitions(
     next_verification_variable: &mut u64,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
-    certified_prerequisites: &[PropositionDerivation],
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
-    let mut transition_pure_facts = pure_facts.to_vec();
+    let transition_pure_facts = pure_facts.to_vec();
     let mut assumptions = assumptions_from_propositions(pure_facts);
-    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified) {
-        for derivation in certified_prerequisites {
-            if derivation_replays_with_materialized_context(derivation, pure_facts)? {
-                assumptions = assumptions.assume_proposition(derivation.conclusion().clone());
-                if !transition_pure_facts.contains(derivation.conclusion()) {
-                    transition_pure_facts.push(derivation.conclusion().clone());
-                }
-            }
-        }
-    }
     if matches!(
         prerequisite_policy,
-        StatementPrerequisitePolicy::Exact
-            | StatementPrerequisitePolicy::Explicit
-            | StatementPrerequisitePolicy::Certified
+        StatementPrerequisitePolicy::Exact | StatementPrerequisitePolicy::Explicit
     ) {
         assumptions = assumptions.defer_non_exact_loadability_obligations();
         assumptions = assumptions.prefer_symbolic_external_loads();
@@ -324,7 +290,6 @@ pub(in crate::lang::click) fn certified_statement_transitions(
         context_label,
         prerequisite_policy,
         fact_transport_policy,
-        certified_prerequisites,
         statement_contains_call(statement),
     )?;
     for transition in &mut transitions {
@@ -420,7 +385,6 @@ pub(in crate::lang::click::proof) fn certified_loop_exit_transitions_with_proven
         context_label,
         StatementPrerequisitePolicy::Contextual,
         StatementFactTransportPolicy::Automatic,
-        &[],
         statement_contains_call(statement),
     )
 }
@@ -489,7 +453,6 @@ fn certified_transitions_from_execution(
     context_label: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
-    certified_prerequisites: &[PropositionDerivation],
     normalize_statement_facts_to_exit: bool,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     if let Some(limit) = execution.limit() {
@@ -648,9 +611,7 @@ fn certified_transitions_from_execution(
             for obligation in path.obligations() {
                 let proposition = obligation.proposition();
                 let derivation = match prerequisite_policy {
-                    StatementPrerequisitePolicy::Exact
-                    | StatementPrerequisitePolicy::Explicit
-                    | StatementPrerequisitePolicy::Certified => {
+                    StatementPrerequisitePolicy::Exact | StatementPrerequisitePolicy::Explicit => {
                         if exact_fact_is_available(proposition, pure_facts)
                             || materialization_equivalent_available_fact(
                                 proposition,
@@ -660,11 +621,6 @@ fn certified_transitions_from_execution(
                             || directly_matching_separation_fact(proposition, pure_facts).is_some()
                             || directly_covering_loadability_fact(proposition, pure_facts).is_some()
                             || matches!(normalize_proposition(proposition), SimpProposition::True)
-                            || matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified)
-                                && certified_prerequisites.iter().any(|derivation| {
-                                    derivation.conclusion() == proposition
-                                        && derivation.replay(&prerequisite_assumptions)
-                                })
                         {
                             None
                         } else if matches!(

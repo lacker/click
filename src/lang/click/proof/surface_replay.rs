@@ -489,6 +489,46 @@ impl std::ops::DerefMut for SimpleProofConstructionContext<'_> {
     }
 }
 
+/// Constructs the surface step(s) for one planned operation directly into the
+/// planning replay's own [`SimpleProofBuilder`]. This is the plan-time
+/// counterpart of the old plan-lowering replay: search commits to a move and
+/// immediately records how that move is spelled in Surface Click, so a smart
+/// tactic's result is a [`SimpleProof`] value rather than a private operation
+/// program that must be re-executed to discover its spelling.
+///
+/// Premises are spelled against the builder's replay-visible
+/// `certificate_facts`, not the planning executor's own fact set.
+pub(super) fn construct_simple_step_for_planned_operation(
+    replay: &mut TacticReplayState,
+    state: &CState,
+    function_block: &FunctionBlock,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    environments: ConstructionEnvironments<'_>,
+    operation: &InternalProofOperation,
+) {
+    let mut builder = std::mem::take(&mut replay.simple_proof_builder);
+    let available = std::mem::take(&mut builder.certificate_facts);
+    {
+        let mut context = SimpleProofConstructionContext::new(replay, &mut builder);
+        append_simple_proof_step_for_operation(
+            &mut context,
+            state,
+            &available,
+            function_block,
+            parameters,
+            arguments,
+            environments.predicate_environment,
+            environments.click_function_environment,
+            None,
+            Some(operation),
+            None,
+        );
+    }
+    builder.certificate_facts = available;
+    replay.simple_proof_builder = builder;
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn append_simple_proof_step_for_operation(
     replay: &mut SimpleProofConstructionContext<'_>,
@@ -1663,7 +1703,6 @@ pub(super) fn append_simple_proof_step_for_operation(
                     tactic_offset: replay.simple_proof_builder.steps.len(),
                 });
         }
-        (None, Some(InternalProofOperation::CertifiedAlternatives(_))) => {}
         (Some(tactic @ ProofTactic::Have(have)), None) => {
             match SimpleProof::from_proof_tactics(std::slice::from_ref(tactic)) {
                 Ok(_) => replay

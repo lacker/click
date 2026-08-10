@@ -389,10 +389,10 @@ pub(super) fn execute_branch_step_from_execution_point(
     tactic_index: usize,
     tactic_name: &str,
     requested_branch: Option<bool>,
-    certified_prerequisites: &[PropositionDerivation],
     prerequisite_policy: StatementPrerequisitePolicy,
     branch_step_policy: BranchStepPolicy,
     complete_empty_branch: bool,
+    construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<bool, ClickError> {
     replay.completed_branch_regions.clear();
     let statement_index = replay.frontier.next_statement_index;
@@ -431,6 +431,9 @@ pub(super) fn execute_branch_step_from_execution_point(
         )));
     };
 
+    let points_before = construction
+        .is_some()
+        .then(|| replay.program_point_states.clone());
     record_statement_program_point_state(
         replay,
         function_block,
@@ -438,6 +441,16 @@ pub(super) fn execute_branch_step_from_execution_point(
         ProgramPointKind::Entry,
         current_state.clone(),
     );
+    let construction_point_overrides = points_before
+        .map(|before| {
+            replay
+                .program_point_states
+                .iter()
+                .filter(|(point, state)| before.get(*point) != Some(*state))
+                .map(|(point, _)| (point.clone(), before.get(point).cloned()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
     let condition_transitions = certified_condition_transitions(
@@ -446,7 +459,6 @@ pub(super) fn execute_branch_step_from_execution_point(
         &condition,
         &transition_label,
         prerequisite_policy,
-        certified_prerequisites,
         true,
     )?;
     let condition_was_proven = condition_transitions.len() == 1;
@@ -548,22 +560,46 @@ pub(super) fn execute_branch_step_from_execution_point(
                 })
             })
             .unwrap_or(statement_condition);
-        replay
-            .planned_operations
-            .push(InternalProofOperation::CertifiedPathAssumption {
-                occurrence,
-                condition,
-                value: condition_transition.is_true,
-                facts: condition_transition.path_facts.clone(),
-                theorem: condition_transition.theorem.clone(),
-            });
+        if let Some(environments) = construction {
+            let restore = apply_construction_point_view(replay, &construction_point_overrides);
+            construct_simple_step_for_planned_operation(
+                replay,
+                &current_state,
+                function_block,
+                parameters,
+                arguments,
+                environments,
+                &InternalProofOperation::CertifiedPathAssumption {
+                    occurrence,
+                    condition,
+                    value: condition_transition.is_true,
+                    facts: condition_transition.path_facts.clone(),
+                    theorem: condition_transition.theorem.clone(),
+                },
+            );
+            restore_construction_point_view(replay, restore);
+            let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
+            for fact in &condition_transition.path_facts {
+                if !certificate_facts.contains(fact) {
+                    certificate_facts.push(fact.clone());
+                }
+            }
+        }
     }
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+        let restore = apply_construction_point_view(replay, &construction_point_overrides);
         append_condition_transition_certificate(
             replay,
             &condition_transition,
             condition_was_proven || matches!(branch_step_policy, BranchStepPolicy::RequireProven),
+            &current_state,
+            available_pure_facts,
+            function_block,
+            parameters,
+            arguments,
+            construction,
         );
+        restore_construction_point_view(replay, restore);
     }
     *available_pure_facts = condition_transition.pure_facts;
     current_state = crate::kernel::resolve_pending_heap_allocations(
@@ -626,7 +662,6 @@ fn execute_concrete_loop_head_step(
     claim_label: &str,
     tactic_index: usize,
     tactic_name: &str,
-    certified_prerequisites: &[PropositionDerivation],
     prerequisite_policy: StatementPrerequisitePolicy,
     statement_index: usize,
     loop_index: usize,
@@ -635,6 +670,7 @@ fn execute_concrete_loop_head_step(
     current_state: CState,
     loop_statement: CStatement,
     remaining: Option<CStatement>,
+    construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
     replay.concrete_loop_execution = true;
     let CStatement::While {
@@ -644,6 +680,9 @@ fn execute_concrete_loop_head_step(
         unreachable!("concrete loop stepping requires a while statement");
     };
 
+    let points_before = construction
+        .is_some()
+        .then(|| replay.program_point_states.clone());
     record_statement_program_point_state(
         replay,
         function_block,
@@ -658,6 +697,16 @@ fn execute_concrete_loop_head_step(
         ProgramPointKind::Entry,
         current_state.clone(),
     );
+    let construction_point_overrides = points_before
+        .map(|before| {
+            replay
+                .program_point_states
+                .iter()
+                .filter(|(point, state)| before.get(*point) != Some(*state))
+                .map(|(point, _)| (point.clone(), before.get(point).cloned()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
 
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
@@ -667,7 +716,6 @@ fn execute_concrete_loop_head_step(
         &condition,
         &transition_label,
         prerequisite_policy,
-        certified_prerequisites,
         true,
     )?;
     if condition_transitions.len() != 1 {
@@ -689,7 +737,19 @@ fn execute_concrete_loop_head_step(
         .next()
         .expect("one condition transition was required");
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        append_condition_transition_certificate(replay, &condition_transition, true);
+        let restore = apply_construction_point_view(replay, &construction_point_overrides);
+        append_condition_transition_certificate(
+            replay,
+            &condition_transition,
+            true,
+            &current_state,
+            available_pure_facts,
+            function_block,
+            parameters,
+            arguments,
+            construction,
+        );
+        restore_construction_point_view(replay, restore);
     }
     *available_pure_facts = condition_transition.pure_facts;
     replay.frontier.execution_start_state = Some(execution_start_state);
@@ -830,6 +890,46 @@ pub(super) fn record_loop_program_point_state(
     );
 }
 
+/// Swaps the listed program points to their pre-recording values (or removes
+/// points the recording introduced) so a surface step can be spelled against
+/// the view its own replay will have; returns what must be put back.
+fn apply_construction_point_view(
+    replay: &mut TacticReplayState,
+    overrides: &[(ProgramPointRef, Option<CState>)],
+) -> Vec<(ProgramPointRef, Option<CState>)> {
+    let mut restore = Vec::with_capacity(overrides.len());
+    for (point, prior) in overrides {
+        restore.push((point.clone(), replay.program_point_states.get(point).cloned()));
+        match prior {
+            Some(state) => {
+                replay
+                    .program_point_states
+                    .insert(point.clone(), state.clone());
+            }
+            None => {
+                replay.program_point_states.remove(point);
+            }
+        }
+    }
+    restore
+}
+
+fn restore_construction_point_view(
+    replay: &mut TacticReplayState,
+    restore: Vec<(ProgramPointRef, Option<CState>)>,
+) {
+    for (point, value) in restore {
+        match value {
+            Some(state) => {
+                replay.program_point_states.insert(point, state);
+            }
+            None => {
+                replay.program_point_states.remove(&point);
+            }
+        }
+    }
+}
+
 pub(super) fn record_statement_program_point_state(
     replay: &mut TacticReplayState,
     function_block: &FunctionBlock,
@@ -879,121 +979,6 @@ pub(super) fn record_code_region_program_point_state(
             state.clone(),
         );
     }
-}
-
-fn apply_planned_statement_transition(
-    evidence: &PlannedStatementTransition,
-    current_state: &CState,
-    statement: &CStatement,
-    available_pure_facts: &[Proposition],
-    context_label: &str,
-) -> Result<CertifiedStatementTransition, ClickError> {
-    let mut replay_facts = available_pure_facts.to_vec();
-    for fact in evidence
-        .transition
-        .execution_facts
-        .iter()
-        .filter(|fact| fact.is_certified())
-    {
-        if !replay_facts.contains(fact.proposition()) {
-            replay_facts.push(fact.proposition().clone());
-        }
-    }
-    let mut proposition = evidence.transition.theorem.proposition();
-    while let Proposition::Implies(premise, body) = proposition {
-        let mut certified_by_derivation = false;
-        for derivation in &evidence.transition.prerequisite_derivations {
-            if derivation.conclusion() == premise.as_ref()
-                && derivation_replays_with_materialized_context(derivation, &replay_facts)?
-            {
-                certified_by_derivation = true;
-                break;
-            }
-        }
-        let certified = exact_fact_is_available(premise, available_pure_facts)
-            || materialization_equivalent_available_fact(premise, available_pure_facts).is_some()
-            || matches!(normalize_proposition(premise), SimpProposition::True)
-            || evidence
-                .transition
-                .execution_facts
-                .iter()
-                .any(|fact| fact.is_certified() && fact.proposition() == premise.as_ref())
-            || certified_by_derivation;
-        if !certified {
-            return Err(ClickError::new(format!(
-                "{context_label} certificate is missing prerequisite {premise:?}"
-            )));
-        }
-        proposition = body;
-    }
-    let Proposition::CStatementVerifies {
-        state: theorem_state,
-        statement: theorem_statement,
-        outcome,
-    } = proposition
-    else {
-        return Err(ClickError::new(format!(
-            "{context_label} certificate has an unexpected theorem body: {proposition:?}"
-        )));
-    };
-    if theorem_state != current_state || theorem_statement != statement {
-        return Err(ClickError::new(format!(
-            "{context_label} certificate does not match the current statement execution"
-        )));
-    }
-    if outcome != &evidence.transition.outcome {
-        return Err(ClickError::new(format!(
-            "{context_label} certificate outcome does not match its execution theorem"
-        )));
-    }
-
-    let mut transition = evidence.transition.clone();
-    transition.pure_facts = available_pure_facts.to_vec();
-    for fact in &transition.path_facts {
-        if !transition.pure_facts.contains(fact) {
-            transition.pure_facts.push(fact.clone());
-        }
-    }
-    let internal_transports = transition
-        .fact_transports
-        .iter()
-        .filter(|transport| transport.statement_local)
-        .collect::<Vec<_>>();
-    for transport in &internal_transports {
-        if !exact_fact_is_available(&transport.source, &transition.pure_facts) {
-            return Err(ClickError::new(format!(
-                "{context_label} internal fact transport is missing exact statement-produced source {:?}",
-                transport.source
-            )));
-        }
-        let Proposition::Implies(theorem_source, theorem_target) = transport.theorem.proposition()
-        else {
-            return Err(ClickError::new(format!(
-                "{context_label} internal fact transport theorem is not an implication"
-            )));
-        };
-        if theorem_source.as_ref() != &transport.source
-            || theorem_target.as_ref() != &transport.target
-        {
-            return Err(ClickError::new(format!(
-                "{context_label} internal fact transport theorem does not match its source and target"
-            )));
-        }
-    }
-    let internal_sources = internal_transports
-        .iter()
-        .map(|transport| &transport.source)
-        .collect::<Vec<_>>();
-    transition
-        .pure_facts
-        .retain(|fact| !internal_sources.contains(&fact));
-    for transport in internal_transports {
-        if !transition.pure_facts.contains(&transport.target) {
-            transition.pure_facts.push(transport.target.clone());
-        }
-    }
-    transition.fact_transports.clear();
-    Ok(transition)
 }
 
 pub(super) const SOURCE_SITE_ANNOTATION_DEPTH_LIMIT: usize = 32;
@@ -1146,11 +1131,10 @@ pub(super) fn execute_step_from_execution_point(
     claim_label: &str,
     tactic_index: usize,
     tactic_name: &str,
-    certified_prerequisites: &[PropositionDerivation],
-    planned_transition: Option<&PlannedStatementTransition>,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     loop_step_policy: LoopStepPolicy,
+    construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
     replay.completed_branch_regions.clear();
     let statement_index = replay.frontier.next_statement_index;
@@ -1172,10 +1156,10 @@ pub(super) fn execute_step_from_execution_point(
             tactic_index,
             "step",
             None,
-            certified_prerequisites,
             prerequisite_policy,
             BranchStepPolicy::RequireProven,
             false,
+            construction,
         )?;
         debug_assert!(entered);
         return Ok(());
@@ -1212,7 +1196,6 @@ pub(super) fn execute_step_from_execution_point(
             claim_label,
             tactic_index,
             tactic_name,
-            certified_prerequisites,
             prerequisite_policy,
             statement_index,
             loop_index,
@@ -1221,10 +1204,20 @@ pub(super) fn execute_step_from_execution_point(
             current_state,
             source_statement,
             remaining,
+            construction,
         );
     }
     let step_statement = source_statement;
 
+    // The surface step for this statement is spelled from the proof point
+    // *before* the statement runs. Its own replay establishes this
+    // statement's entry snapshots only while re-executing it, so construction
+    // must see the program points exactly as they were before these entry
+    // recordings: points the recording adds or overwrites here are presented
+    // at their prior value (or absence) while the step is spelled.
+    let points_before = construction
+        .is_some()
+        .then(|| replay.program_point_states.clone());
     record_statement_program_point_state(
         replay,
         function_block,
@@ -1241,43 +1234,31 @@ pub(super) fn execute_step_from_execution_point(
             current_state.clone(),
         );
     }
+    let construction_point_overrides = points_before
+        .map(|before| {
+            replay
+                .program_point_states
+                .iter()
+                .filter(|(point, state)| before.get(*point) != Some(*state))
+                .map(|(point, _)| (point.clone(), before.get(point).cloned()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
-    let direct_transition = planned_transition
-        .map(|evidence| {
-            apply_planned_statement_transition(
-                evidence,
-                &current_state,
-                &step_statement,
-                available_pure_facts,
-                &transition_label,
-            )
-        })
-        .transpose()?;
-    let transitions = if let Some(transition) = direct_transition {
-        replay.next_opaque_call = planned_transition
-            .expect("a direct transition requires planning evidence")
-            .next_opaque_call;
-        replay.next_verification_variable = planned_transition
-            .expect("a direct transition requires planning evidence")
-            .next_verification_variable;
-        vec![transition]
-    } else {
-        certified_statement_transitions(
-            &current_state,
-            available_pure_facts,
-            &step_statement,
-            function_environment,
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
-            &transition_label,
-            &mut replay.next_opaque_call,
-            &mut replay.next_verification_variable,
-            prerequisite_policy,
-            fact_transport_policy,
-            certified_prerequisites,
-        )?
-        .0
-    };
+    let transitions = certified_statement_transitions(
+        &current_state,
+        available_pure_facts,
+        &step_statement,
+        function_environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &transition_label,
+        &mut replay.next_opaque_call,
+        &mut replay.next_verification_variable,
+        prerequisite_policy,
+        fact_transport_policy,
+    )?
+    .0;
     if transitions.len() > 1
         && transitions
             .iter()
@@ -1287,7 +1268,9 @@ pub(super) fn execute_step_from_execution_point(
         // notably when it returns an unresolved malloc result. This is not C
         // control flow and needs no proof-level case split: all successors
         // complete the function at the same statement boundary.
-        if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+        if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
+            && let Some(environments) = construction
+        {
             let mut prerequisite_derivations = Vec::new();
             let mut exact_premises = Vec::new();
             for transition in &transitions {
@@ -1317,13 +1300,21 @@ pub(super) fn execute_step_from_execution_point(
                     }
                 }
             }
-            replay
-                .planned_operations
-                .push(InternalProofOperation::CertifiedStatementStep {
+            let restore = apply_construction_point_view(replay, &construction_point_overrides);
+            construct_simple_step_for_planned_operation(
+                replay,
+                &current_state,
+                function_block,
+                parameters,
+                arguments,
+                environments,
+                &InternalProofOperation::CertifiedStatementStep {
                     prerequisite_derivations,
                     exact_premises,
                     planned_transition: None,
-                });
+                },
+            );
+            restore_construction_point_view(replay, restore);
         }
 
         let mut common_pure_facts = transitions[0].pure_facts.clone();
@@ -1496,8 +1487,10 @@ pub(super) fn execute_step_from_execution_point(
                 .record_lowering(&exit_surface, target)?;
         }
     }
+    let mut deferred_transport_operations = Vec::new();
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        append_statement_transition_certificate(
+        let restore = apply_construction_point_view(replay, &construction_point_overrides);
+        deferred_transport_operations = append_statement_transition_certificate(
             replay,
             &transition,
             if loop_index.is_some() {
@@ -1505,35 +1498,18 @@ pub(super) fn execute_step_from_execution_point(
             } else {
                 LoopStepPolicy::EnterBody
             },
+            &current_state,
+            function_block,
+            parameters,
+            arguments,
+            construction,
         );
+        restore_construction_point_view(replay, restore);
         // A direct memory-snapshot transport needs no surface `transport`
         // tactic, but its target still needs a stable source spelling for a
         // later simple step. Record that spelling at this statement's exit;
         // otherwise exact evaluator guards such as `defined(x + 1)` become
         // anonymous after an unrelated local-memory change.
-        let exit_point = ProgramPointRef {
-            region: CodeRegionRef::Statement(statement_index),
-            kind: ProgramPointKind::Exit,
-        };
-        for transport in transition
-            .fact_transports
-            .iter()
-            .filter(|transport| !transport.statement_local)
-        {
-            let surfaces = replay
-                .surface_propositions
-                .surfaces(&transport.source)
-                .cloned()
-                .collect::<Vec<_>>();
-            for surface in surfaces {
-                let exit_surface = surface_with_source_site(&surface, &exit_point)?;
-                replay
-                    .surface_propositions
-                    .record_lowering(&exit_surface, &transport.target)?;
-            }
-        }
-    }
-    if planned_transition.is_some() {
         let exit_point = ProgramPointRef {
             region: CodeRegionRef::Statement(statement_index),
             kind: ProgramPointKind::Exit,
@@ -1757,6 +1733,48 @@ pub(super) fn execute_step_from_execution_point(
             )));
         }
     }
+    // Standalone fact-transport steps are spelled against the post-statement
+    // state, so their construction runs after the statement's exit snapshots
+    // are in place. Each transport adds its target to the replay-visible
+    // certificate facts, and finishing the transports retires the stale
+    // pre-statement sources, mirroring what the certificate's own replay
+    // carries across this statement.
+    if construction.is_some() {
+        for operation in &deferred_transport_operations {
+            if let Some(environments) = construction {
+                construct_simple_step_for_planned_operation(
+                    replay,
+                    state,
+                    function_block,
+                    parameters,
+                    arguments,
+                    environments,
+                    operation,
+                );
+            }
+            let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
+            match operation {
+                InternalProofOperation::CertifiedFactTransport { target, .. } => {
+                    if !certificate_facts.contains(target) {
+                        certificate_facts.push(target.clone());
+                    }
+                }
+                InternalProofOperation::FinishCertifiedFactTransports(sources) => {
+                    certificate_facts.retain(|fact| {
+                        !sources.iter().any(|source| {
+                            source == fact
+                                || materialization_equivalent_available_fact(
+                                    source,
+                                    std::slice::from_ref(fact),
+                                )
+                                .is_some()
+                        })
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1856,7 +1874,19 @@ pub(super) fn bounded_execute_from_execution_point(
     claim_label: &str,
     tactic_index: usize,
     prerequisite_policy: StatementPrerequisitePolicy,
+    construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
+    // Each explored path constructs its own surface steps from a clean
+    // builder; the paths are merged back into one step sequence (with `if`
+    // structure at genuine forks) once the frontiers are complete. Every
+    // path starts from the replay-visible certificate facts at this point.
+    let base_builder = construction
+        .is_some()
+        .then(|| std::mem::take(&mut replay.simple_proof_builder));
+    if let Some(base) = &base_builder {
+        replay.simple_proof_builder.certificate_facts = base.certificate_facts.clone();
+        replay.simple_proof_builder.last_step_entry = base.last_step_entry.clone();
+    }
     let mut pending = vec![BoundedProofFrontier {
         replay: replay.clone(),
         state: state.clone(),
@@ -1903,10 +1933,10 @@ pub(super) fn bounded_execute_from_execution_point(
                     tactic_index,
                     "execute",
                     Some(take_then),
-                    &[],
                     prerequisite_policy,
                     BranchStepPolicy::Explore,
                     false,
+                    construction,
                 )?;
                 if entered {
                     pending.push(branch);
@@ -1929,11 +1959,10 @@ pub(super) fn bounded_execute_from_execution_point(
             claim_label,
             tactic_index,
             "execute",
-            &[],
-            None,
             prerequisite_policy,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::EnterBody,
+            construction,
         )
         .map_err(|error| {
             ClickError::new(format!(
@@ -1944,23 +1973,13 @@ pub(super) fn bounded_execute_from_execution_point(
         pending.push(frontier);
     }
 
-    let alternatives = if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        Some(
-            completed
-                .iter()
-                .map(|frontier| {
-                    Ok(InternalProofPlan::from_operations(
-                        frontier.replay.planned_operations.clone(),
-                    )
-                    .with_statement_transitions(
-                        frontier.replay.planned_statement_transitions.clone(),
-                    ))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        )
-    } else {
-        None
-    };
+    let synthesized_paths = base_builder.map(|base| {
+        let paths = completed
+            .iter()
+            .map(|frontier| frontier.replay.simple_proof_builder.clone())
+            .collect::<Vec<_>>();
+        (base, synthesize_surface_alternatives(paths))
+    });
     merge_bounded_execution_frontiers(
         replay,
         state,
@@ -1971,9 +1990,18 @@ pub(super) fn bounded_execute_from_execution_point(
         claim_label,
         tactic_index,
     )?;
-    if let Some(alternatives) = alternatives {
-        replay.planned_operations =
-            vec![InternalProofOperation::CertifiedAlternatives(alternatives)];
+    if let Some((mut base, synthesized)) = synthesized_paths {
+        match synthesized {
+            Ok(steps) => {
+                for step in steps {
+                    base.push_step(step);
+                }
+            }
+            Err(message) => base.block(format!(
+                "could not lower certified branch alternatives: {message}"
+            )),
+        }
+        replay.simple_proof_builder = base;
     }
     Ok(())
 }
@@ -2067,6 +2095,7 @@ pub(super) fn execute_rest_from_execution_point(
     function_environment: &CExecutionEnvironment,
     claim_label: &str,
     tactic_index: usize,
+    construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
     loop {
         let can_execute_one_step = match &replay.frontier.point {
@@ -2096,11 +2125,10 @@ pub(super) fn execute_rest_from_execution_point(
             claim_label,
             tactic_index,
             "execute",
-            &[],
-            None,
             StatementPrerequisitePolicy::Planning,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::ApplyVerifiedRule,
+            construction,
         )?;
     }
 
@@ -2117,6 +2145,7 @@ pub(super) fn execute_rest_from_execution_point(
             claim_label,
             tactic_index,
             StatementPrerequisitePolicy::Planning,
+            construction,
         )?;
     }
     Ok(())
@@ -2136,6 +2165,7 @@ pub(super) fn execute_until_statement(
     claim_label: &str,
     tactic_index: usize,
     prerequisite_policy: StatementPrerequisitePolicy,
+    construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
     if replay.source_layout.statement(statement_index).is_none() {
         return Err(ClickError::new(format!(
@@ -2172,11 +2202,10 @@ pub(super) fn execute_until_statement(
             claim_label,
             tactic_index,
             "execute_until",
-            &[],
-            None,
             prerequisite_policy,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::ApplyVerifiedRule,
+            construction,
         )?;
         if replay.is_at_function_exit() {
             return Err(ClickError::new(format!(

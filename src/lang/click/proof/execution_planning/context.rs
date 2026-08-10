@@ -394,11 +394,24 @@ pub(in crate::lang::click::proof) struct CertifiedConditionTransition {
     pub(in crate::lang::click::proof) planning_exact_premises: Vec<Proposition>,
 }
 
+/// Records the planning evidence for a certified statement transition and
+/// immediately constructs its surface step against the current planning state.
+///
+/// Fact transports that must become standalone surface steps are returned to
+/// the caller instead of being constructed here: their surface spelling is
+/// resolved against the post-statement state, which does not exist yet at this
+/// call point.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     replay: &mut TacticReplayState,
     transition: &CertifiedStatementTransition,
     loop_step_policy: LoopStepPolicy,
-) {
+    state: &CState,
+    function_block: &FunctionBlock,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    construction: Option<ConstructionEnvironments<'_>>,
+) -> Vec<InternalProofOperation> {
     let mut exact_premises = transition.planning_premises.clone();
     for transport in &transition.fact_transports {
         if !transport.statement_local && !exact_premises.contains(&transport.source) {
@@ -411,7 +424,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         }
     }
     let planned_transition = replay.planned_statement_transitions.len();
-    replay.planned_operations.push(match loop_step_policy {
+    let statement_operation = match loop_step_policy {
         LoopStepPolicy::EnterBody => InternalProofOperation::CertifiedStatementStep {
             prerequisite_derivations: transition.prerequisite_derivations.clone(),
             exact_premises,
@@ -422,7 +435,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
             exact_premises,
             planned_transition: Some(planned_transition),
         },
-    });
+    };
     replay
         .planned_statement_transitions
         .push(PlannedStatementTransition {
@@ -430,6 +443,43 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
             next_opaque_call: replay.next_opaque_call,
             next_verification_variable: replay.next_verification_variable,
         });
+    if let Some(environments) = construction {
+        construct_simple_step_for_planned_operation(
+            replay,
+            state,
+            function_block,
+            parameters,
+            arguments,
+            environments,
+            &statement_operation,
+        );
+        // Certificate replay carries the pre-statement facts across this
+        // step, adds the transition's path facts, and rewrites
+        // statement-local transports; automatic planning transports stay out
+        // of the replay-visible set.
+        let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
+        for fact in &transition.path_facts {
+            if !certificate_facts.contains(fact) {
+                certificate_facts.push(fact.clone());
+            }
+        }
+        let local_sources = transition
+            .fact_transports
+            .iter()
+            .filter(|transport| transport.statement_local)
+            .map(|transport| &transport.source)
+            .collect::<Vec<_>>();
+        certificate_facts.retain(|fact| !local_sources.contains(&fact));
+        for transport in transition
+            .fact_transports
+            .iter()
+            .filter(|transport| transport.statement_local)
+        {
+            if !certificate_facts.contains(&transport.target) {
+                certificate_facts.push(transport.target.clone());
+            }
+        }
+    }
     // Definedness guards are exact `step() using` premises, so Selected
     // statement execution already carries them to their certified targets.
     // Other transported facts can still require an explicit surface bridge.
@@ -456,25 +506,23 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
                     != normalize_direct_atomic_memory_loads(&transport.target)
         })
         .collect::<Vec<_>>();
-    replay
-        .planned_operations
-        .extend(external_transports.iter().map(|transport| {
-            InternalProofOperation::CertifiedFactTransport {
-                source: transport.source.clone(),
-                target: transport.target.clone(),
-                theorem: transport.theorem.clone(),
-            }
-        }));
+    let mut deferred_operations = external_transports
+        .iter()
+        .map(|transport| InternalProofOperation::CertifiedFactTransport {
+            source: transport.source.clone(),
+            target: transport.target.clone(),
+            theorem: transport.theorem.clone(),
+        })
+        .collect::<Vec<_>>();
     if !external_transports.is_empty() {
-        replay
-            .planned_operations
-            .push(InternalProofOperation::FinishCertifiedFactTransports(
-                external_transports
-                    .iter()
-                    .map(|transport| transport.source.clone())
-                    .collect(),
-            ));
+        deferred_operations.push(InternalProofOperation::FinishCertifiedFactTransports(
+            external_transports
+                .iter()
+                .map(|transport| transport.source.clone())
+                .collect(),
+        ));
     }
+    deferred_operations
 }
 
 pub(in crate::lang::click::proof) fn theorem_implication_premises(
@@ -489,10 +537,17 @@ pub(in crate::lang::click::proof) fn theorem_implication_premises(
     premises
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     replay: &mut TacticReplayState,
     transition: &CertifiedConditionTransition,
     include_path_fact: bool,
+    state: &CState,
+    available: &[Proposition],
+    function_block: &FunctionBlock,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    construction: Option<ConstructionEnvironments<'_>>,
 ) {
     let mut exact_premises = if include_path_fact {
         theorem_implication_premises(&transition.theorem)
@@ -511,13 +566,31 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
             }
         }
     }
-    replay
-        .planned_operations
-        .push(InternalProofOperation::CertifiedStatementStep {
+    let Some(environments) = construction else {
+        return;
+    };
+    construct_simple_step_for_planned_operation(
+        replay,
+        state,
+        function_block,
+        parameters,
+        arguments,
+        environments,
+        &InternalProofOperation::CertifiedStatementStep {
             prerequisite_derivations: transition.prerequisite_derivations.clone(),
             exact_premises,
             planned_transition: None,
-        });
+        },
+    );
+    // A condition step introduces evaluation guards and path facts without
+    // touching memory; extend the replay-visible set with exactly what this
+    // transition adds over the planning context.
+    let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
+    for fact in &transition.pure_facts {
+        if !available.contains(fact) && !certificate_facts.contains(fact) {
+            certificate_facts.push(fact.clone());
+        }
+    }
 }
 
 pub(in crate::lang::click::proof) fn surface_c_condition(
@@ -571,7 +644,6 @@ pub(in crate::lang::click::proof) fn surface_c_condition(
 pub(in crate::lang::click) enum StatementPrerequisitePolicy {
     Exact,
     Explicit,
-    Certified,
     Contextual,
     Planning,
 }

@@ -418,7 +418,6 @@ fn split_execution_proof_branch_contexts(
             condition,
             "execution proof traversal",
             StatementPrerequisitePolicy::Contextual,
-            &[],
             true,
         )? {
             let next = ExecutionProofContext {
@@ -741,7 +740,6 @@ fn advance_execution_proof_statement(
                 &mut context.next_verification_variable,
                 StatementPrerequisitePolicy::Contextual,
                 StatementFactTransportPolicy::Automatic,
-                &[],
             )?,
             _ => certified_loop_exit_transitions_with_proven_phases(
                 &context.state,

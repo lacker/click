@@ -76,10 +76,10 @@ pub(super) struct TacticReplayState {
     /// symbolic body outcome; whole-function kernel certification checks every
     /// concrete path before any contract claim is exported.
     pub(super) execution_abstraction: bool,
-    pub(super) planned_operations: Vec<InternalProofOperation>,
-    /// Semantic transition evidence used only while lowering a smart plan to
-    /// its `SimpleProof`. It is deliberately separate from `ProofTactic` so
-    /// internal execution artifacts cannot masquerade as proof steps.
+    /// Semantic transition evidence recorded by planning so the surface step
+    /// constructed for a statement move can consult the certified transition.
+    /// It is deliberately separate from `ProofTactic` so internal execution
+    /// artifacts cannot masquerade as proof steps.
     pub(super) planned_statement_transitions: Vec<PlannedStatementTransition>,
     pub(super) surface_propositions: SurfacePropositionMap,
     pub(super) simple_proof_builder: SimpleProofBuilder,
@@ -113,9 +113,25 @@ pub(super) struct SimpleProofBuilder {
     pub(super) blocker: Option<String>,
     pub(super) last_step_entry: Option<ProgramPointRef>,
     pub(super) path_choices: Vec<SurfacePathChoice>,
+    /// The facts the constructed certificate's own replay will have at the
+    /// current point. Planning executes with automatically transported facts,
+    /// but certificate replay carries only path facts, statement-local
+    /// rewrites, and explicit surface transports across each step. Premises
+    /// are spelled against this replay-visible set so every generated
+    /// `using` list names a fact its replay can actually check.
+    pub(super) certificate_facts: Vec<Proposition>,
     /// Prevents the planner-metadata wrapper for a statement transition from
     /// re-entering itself while it emits the ordinary surface step.
     pub(super) lowering_planned_transition: bool,
+}
+
+/// Environments a planning executor needs to construct the [`SimpleProofStep`]
+/// for each committed search move at the moment the move is made. Passing
+/// `None` runs the executor without surface construction (ordinary replay).
+#[derive(Clone, Copy)]
+pub(super) struct ConstructionEnvironments<'a> {
+    pub(super) predicate_environment: &'a PredicateEnvironment,
+    pub(super) click_function_environment: &'a ClickFunctionEnvironment,
 }
 
 #[derive(Clone)]
@@ -137,8 +153,6 @@ thread_local! {
     pub(super) static TACTIC_EXPANSION_PROBE: std::cell::RefCell<Option<TacticExpansionProbe>> =
         const { std::cell::RefCell::new(None) };
     pub(super) static SUPPRESS_TACTIC_EXPANSION_CAPTURE: std::cell::Cell<bool> =
-        const { std::cell::Cell::new(false) };
-    pub(super) static SUPPRESS_SIMPLE_PROOF_CONSTRUCTION: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
 }
 
@@ -860,7 +874,6 @@ pub(super) enum PostExecutionTactic {
         premises: Vec<ClickProposition>,
         facts: Vec<Proposition>,
     },
-    CertifiedFrame(Vec<Vec<PropositionDerivation>>),
     Simp,
 }
 
@@ -921,7 +934,6 @@ pub(super) fn post_execution_tactic_timing(
         PostExecutionTactic::FrameRegion(_) => ("frame", "simple"),
         PostExecutionTactic::Frame => ("frame", "simple"),
         PostExecutionTactic::FrameUsing { .. } => ("frame", "simple"),
-        PostExecutionTactic::CertifiedFrame(_) => ("frame", "simple"),
     }
 }
 

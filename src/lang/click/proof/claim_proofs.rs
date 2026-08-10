@@ -2437,64 +2437,6 @@ pub(super) fn finish_ordered_proof_replay(
                             },
                         );
                     }
-                    PostExecutionTactic::CertifiedFrame(path_derivations) => {
-                        let derivations = path_derivations.get(path_index).ok_or_else(|| {
-                            ClickError::new(format!(
-                                "`{proof_label}` path {path_index}, tactic {tactic_index}: certified frame has no derivations for this execution path"
-                            ))
-                        })?;
-                        let mut frame_facts = path_requirements.clone();
-                        frame_facts.extend(
-                            path.execution_facts()
-                                .iter()
-                                .map(|fact| fact.proposition().clone()),
-                        );
-                        let assumptions = assumptions_from_propositions(&frame_facts);
-                        for derivation in derivations {
-                            if !derivation.replay(&assumptions) {
-                                return Err(ClickError::new(format!(
-                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: certified frame derivation did not replay for {:?}",
-                                    derivation.conclusion()
-                                )));
-                            }
-                            if !path_requirements.contains(derivation.conclusion()) {
-                                path_requirements.push(derivation.conclusion().clone());
-                            }
-                        }
-                        let mut closed_effect = false;
-                        for (claim_index, claim) in claims.iter().enumerate() {
-                            if !matches!(claim, FunctionClaimRef::Effect(_, _)) {
-                                continue;
-                            }
-                            let claim_label =
-                                function_claim_label(function_block.signature().name(), claim);
-                            check_effect_claim_exact(
-                                &claim_label,
-                                path_index,
-                                &path.execution_facts(),
-                                &path_requirements,
-                                claim,
-                                parsed_function.parameters(),
-                                arguments,
-                                pre_state,
-                                &outcome,
-                            )?;
-                            closures[claim_index] = ClaimClosure::by_exact_check();
-                            closed_effect = true;
-                        }
-                        if closed_effect {
-                            apply_checked_contract_resource_transition(
-                                &mut outcome,
-                                pre_state,
-                                function,
-                                arguments,
-                                &path_requirements,
-                                &path.execution_facts(),
-                                &proof_label,
-                                path_index,
-                            )?;
-                        }
-                    }
                     PostExecutionTactic::Simp => {
                         let capturing_this_tactic = replay
                             .deferred_tactic_capture
