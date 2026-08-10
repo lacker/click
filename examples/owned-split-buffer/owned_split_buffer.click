@@ -229,18 +229,14 @@ int32 owned_split_buffer_pipeline(
             owner->data == data;
         }
     }
-    have 1 < owner->len by {
-        derive using {
+    have 1 < length by {
+        simp() using {
             2 <= length;
-            ignored == left_value;
-            owner->len == length;
-            owner->len == owner->len;
-            owner->split == 1;
-            owner->split == owner->split;
-            data[0] == left_value;
-            owner->data == data;
-            loadable(old(object(owner)));
         }
+    }
+    have 1 < owner->len by {
+        rewrite(owner->len == length);
+        assumption();
     }
     step() using {
         1 < owner->len;
