@@ -66,7 +66,7 @@ int32 composite_resource_vector_fill_loop_snapshot(
                 }
             }
             have i <= owner->len by {
-                derive using {
+                simp() using {
                     at(statement(3).entry, i) < at(statement(3).entry, owner->len);
                 }
             }
