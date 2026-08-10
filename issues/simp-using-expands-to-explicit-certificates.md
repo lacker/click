@@ -49,6 +49,8 @@ The `simp() using` foundation is now separate from legacy `derive`:
   checking the goal with `derive`;
 - supported equality and pointer-alias derivations expand to `rewrite`,
   `assumption`, and `normalize`; and
+- a listed fact may be recognized under an equivalent certified memory
+  snapshot without admitting any other ambient fact to the simplifier; and
 - an unsupported derivation fails locally with a bounded missing-simple-rule
   diagnostic. It never falls back to `derive`, including after a generated
   certificate fails replay.
@@ -101,22 +103,29 @@ certificate, not on the amount of irrelevant earlier snapshot history.
 
 ## Remaining migration blockers
 
-The first completed source migration is `examples/binary-tree`: its int32,
-pointer, and pointer-offset equality chains now expand to explicit `rewrite`
-and `assumption` steps. Two other source shapes still need principled surface
+Completed source migrations now include the equality chains in
+`examples/binary-tree`, four element/pointer/result equalities in
+`examples/owned-split-buffer`, and the final result equality in
+`examples/owned-string`. They expand to explicit `rewrite`, `assumption`, and
+`normalize` steps. Other source shapes still need principled surface
 certificates before their old `derive using` blocks can be removed:
 
 - `examples/vector-push` proves `1 <= owner->len` after incrementing a
   nonnegative old length, and `examples/input-cursor` has the analogous
-  `0 <= owner->pos` successor proof. Smart simplification verifies these
-  arithmetic consequences, but equality rewrites alone cannot express the
-  selected order rule. Add the smallest named simple arithmetic rule (or an
-  equally explicit theorem application), not a generic arithmetic solver
-  relabeled as simple.
+  `0 <= owner->pos` successor proof. The two remaining
+  `examples/owned-split-buffer` sites likewise need ordinary signed-order
+  consequences. Smart simplification verifies these arithmetic consequences,
+  but equality rewrites alone cannot express the selected order rule. Add the
+  smallest named simple arithmetic rule (or an equally explicit theorem
+  application), not a generic arithmetic solver relabeled as simple.
 - The owned-string replay/certification instability has been fixed and the
   project now passes repeated ordinary verification under its normal limit.
-  Its remaining `derive using` sites can therefore be migrated as focused
-  certificate-vocabulary work rather than treated as a baseline blocker.
+  Its remaining `derive using` sites expose implicit execution-history and
+  loadability dependencies: several listed equality sets do not prove their
+  goals alone, and indexed-load goals need a named pointer/loadability
+  transport before they can even be lowered in the restricted context. Keep
+  these sites unchanged until expansion selects that evidence explicitly;
+  do not restore ambient lowering or derivation fallbacks.
 - A listed fact exposed as one conjunct of an unfolded predicate has no simple
   conjunction-elimination rule yet. Restricted simplification now reports
   that missing vocabulary directly instead of hiding the extraction inside a
