@@ -164,11 +164,8 @@ pub(in crate::lang::click) fn capture_c0_tactic_expansion(
     source_index: usize,
 ) -> Result<Vec<ProofTactic>, ClickError> {
     let mut capture = ExpansionCapture::for_tactic(site.clone(), source_index);
-    let verification = verify_c0_sources_with_expansion_capture(
-        click_source,
-        c_sources,
-        &mut capture,
-    );
+    let verification =
+        verify_c0_sources_with_expansion_capture(click_source, c_sources, &mut capture);
     if let Some(result) = capture.result {
         return result.map_err(ClickError::new);
     }
@@ -200,11 +197,8 @@ pub(in crate::lang::click) fn capture_c0_proof_site_expansion(
     site: ProofSite,
 ) -> Result<Vec<ProofTactic>, ClickError> {
     let mut capture = ExpansionCapture::for_site(site.clone());
-    let verification = verify_c0_sources_with_expansion_capture(
-        click_source,
-        c_sources,
-        &mut capture,
-    );
+    let verification =
+        verify_c0_sources_with_expansion_capture(click_source, c_sources, &mut capture);
     if let Some(result) = capture.result {
         return result.map_err(ClickError::new);
     }
@@ -356,9 +350,7 @@ pub(super) fn tactic_expansion_capture_matches(
     source_index: usize,
 ) -> bool {
     capture.is_some_and(|capture| {
-        capture.active
-            && site == Some(&capture.site)
-            && capture.source_index == Some(source_index)
+        capture.active && site == Some(&capture.site) && capture.source_index == Some(source_index)
     })
 }
 

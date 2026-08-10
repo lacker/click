@@ -711,7 +711,6 @@ pub(in crate::lang::click) fn search_condition_derivation(
     Ok(None)
 }
 
-
 pub(super) fn exact_facts_directly_conflict(left: &Proposition, right: &Proposition) -> bool {
     let left = normalize_direct_atomic_memory_loads(left);
     let right = normalize_direct_atomic_memory_loads(right);

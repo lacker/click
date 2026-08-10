@@ -363,7 +363,11 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                         .effects
                         .insert(item_index, certificate.clone());
                 }
-                finish_proof_site_expansion_capture(expansion_capture.as_deref_mut(), &site, &certificate);
+                finish_proof_site_expansion_capture(
+                    expansion_capture.as_deref_mut(),
+                    &site,
+                    &certificate,
+                );
             }
 
             *next_statement_index = source_region.continuation_node;
@@ -702,8 +706,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     if matches!(proof_site, ProofSite::StructuralItem { .. })
         && let Proof::Script(source_tactics) = proof
     {
-        let source_index =
-            selected_tactic_index_for_site(expansion_capture.as_deref(), proof_site);
+        let source_index = selected_tactic_index_for_site(expansion_capture.as_deref(), proof_site);
         if let Some(source_index) = source_index
             && matches!(source_tactics.get(source_index), Some(ProofTactic::Simp))
             && source_index <= certificate.to_proof_tactics().len()

@@ -1325,7 +1325,10 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
     let mut captured_paths = Vec::new();
     for context in contexts {
         let path_choices = context.replay.deferred_expansion_path_choices.clone();
-        resume_deferred_tactic_expansion_capture(expansion_capture.as_deref_mut(), &context.replay)?;
+        resume_deferred_tactic_expansion_capture(
+            expansion_capture.as_deref_mut(),
+            &context.replay,
+        )?;
         let path_had_deferred_capture = context.replay.deferred_tactic_capture.is_some();
         let result_before = expansion_capture
             .as_deref()

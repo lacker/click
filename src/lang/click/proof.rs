@@ -40,9 +40,7 @@ pub(super) use pure_theorems::{
 };
 use replay_engine::*;
 use replay_state::*;
-pub(super) use replay_state::{
-    capture_c0_proof_site_expansion, capture_c0_tactic_expansion,
-};
+pub(super) use replay_state::{capture_c0_proof_site_expansion, capture_c0_tactic_expansion};
 pub(super) use resources::instantiate_composite_resource_body_resources;
 use resources::*;
 use structural::*;

@@ -899,7 +899,10 @@ fn apply_construction_point_view(
 ) -> Vec<(ProgramPointRef, Option<CState>)> {
     let mut restore = Vec::with_capacity(overrides.len());
     for (point, prior) in overrides {
-        restore.push((point.clone(), replay.program_point_states.get(point).cloned()));
+        restore.push((
+            point.clone(),
+            replay.program_point_states.get(point).cloned(),
+        ));
         match prior {
             Some(state) => {
                 replay

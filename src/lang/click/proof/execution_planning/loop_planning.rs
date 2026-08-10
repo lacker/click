@@ -880,12 +880,12 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         environment.arguments,
     )
     .map_err(|error| {
-            ClickError::new(format!(
-                "`{claim_label}` preservation certificate failed ordinary replay:\n{}\n{}",
-                format_simple_proof(&certificate),
-                error.message()
-            ))
-        })?;
+        ClickError::new(format!(
+            "`{claim_label}` preservation certificate failed ordinary replay:\n{}\n{}",
+            format_simple_proof(&certificate),
+            error.message()
+        ))
+    })?;
     let effect_items = environment
         .function_block
         .structural_clauses()
