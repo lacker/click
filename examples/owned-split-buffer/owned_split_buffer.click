@@ -291,7 +291,7 @@ int32 owned_split_buffer_pipeline(
         separate(memory(object(owner)), memory(data[0..length]));
     }
     have owner->data == data by {
-        derive using {
+        simp() using {
             owner->data == at(statement(4).entry, owner->data);
             at(statement(4).entry, owner->data) == at(statement(3).entry, owner->data);
             at(statement(3).entry, owner->data) == at(statement(3).entry, data);
