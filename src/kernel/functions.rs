@@ -1495,9 +1495,10 @@ fn counted_population_quantities(
                         && definition.condition().is_none()
                         && definition.facts().is_empty()))
         });
-        let population_is_observed = tracked_state
-            .counted_population_proven_equal(name, arguments, assumptions)
-            .is_some();
+        let population_is_observed = tracked_state.observes_population_family(name)
+            || tracked_state
+                .counted_population_proven_equal(name, arguments, assumptions)
+                .is_some();
         if !has_declared_body && !population_is_observed {
             continue;
         }
@@ -1896,7 +1897,6 @@ fn apply_counted_population_transitions(
     let post_contract_state = with_contract_argument_views(post_state, function, argument_values);
     let active_populations = post_contract_state
         .counted_populations()
-        .iter()
         .filter_map(|population| {
             function
                 .composite_resource_definitions()

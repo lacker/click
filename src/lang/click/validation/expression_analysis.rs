@@ -190,6 +190,157 @@ pub(in crate::lang::click) fn proposition_contains_resource_count(
     }
 }
 
+pub(in crate::lang::click) fn collect_resource_count_families(
+    proposition: &ClickProposition,
+    families: &mut BTreeSet<String>,
+) {
+    fn collect_expression(expression: &ContractExpression, families: &mut BTreeSet<String>) {
+        match expression {
+            ContractExpression::ResourceCount(resource) => {
+                if let ResourceClause::Declared {
+                    name, arguments, ..
+                } = resource.as_ref()
+                {
+                    families.insert(name.clone());
+                    for argument in arguments {
+                        collect_expression(argument, families);
+                    }
+                }
+            }
+            ContractExpression::Field { base, .. }
+            | ContractExpression::Old(base)
+            | ContractExpression::At {
+                expression: base, ..
+            }
+            | ContractExpression::BitwiseNot(base) => collect_expression(base, families),
+            ContractExpression::Add(left, right)
+            | ContractExpression::Subtract(left, right)
+            | ContractExpression::Multiply(left, right)
+            | ContractExpression::Divide(left, right)
+            | ContractExpression::Remainder(left, right)
+            | ContractExpression::ShiftLeft(left, right)
+            | ContractExpression::ShiftRight(left, right)
+            | ContractExpression::BitwiseAnd(left, right)
+            | ContractExpression::BitwiseOr(left, right)
+            | ContractExpression::BitwiseXor(left, right)
+            | ContractExpression::Index(left, right) => {
+                collect_expression(left, families);
+                collect_expression(right, families);
+            }
+            ContractExpression::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                collect_resource_count_families(condition, families);
+                collect_expression(then_branch, families);
+                collect_expression(else_branch, families);
+            }
+            ContractExpression::RangeFold {
+                start,
+                end,
+                initial,
+                body,
+                ..
+            } => {
+                collect_expression(start, families);
+                collect_expression(end, families);
+                collect_expression(initial, families);
+                collect_expression(body, families);
+            }
+            ContractExpression::Let { value, body, .. } => {
+                collect_expression(value, families);
+                collect_expression(body, families);
+            }
+            ContractExpression::Call { arguments, .. } => {
+                for argument in arguments {
+                    collect_expression(argument, families);
+                }
+            }
+            ContractExpression::CFragment(_)
+            | ContractExpression::CBinding(_)
+            | ContractExpression::ResourceWildcard => {}
+        }
+    }
+
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            collect_expression(left, families);
+            collect_expression(right, families);
+        }
+        ClickProposition::Defined { expression } => collect_expression(expression, families),
+        ClickProposition::At { proposition, .. }
+        | ClickProposition::Not(proposition)
+        | ClickProposition::ForAll {
+            body: proposition, ..
+        }
+        | ClickProposition::Exists {
+            body: proposition, ..
+        } => {
+            collect_resource_count_families(proposition, families);
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            collect_resource_count_families(left, families);
+            collect_resource_count_families(right, families);
+        }
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            collect_expression(start, families);
+            collect_expression(end, families);
+            collect_resource_count_families(body, families);
+        }
+        ClickProposition::PredicateCall { arguments, .. } => {
+            for argument in arguments {
+                collect_expression(argument, families);
+            }
+        }
+        ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. } => {}
+    }
+}
+
+pub(in crate::lang::click) fn collect_called_predicates(
+    proposition: &ClickProposition,
+    names: &mut BTreeSet<String>,
+) {
+    match proposition {
+        ClickProposition::PredicateCall { name, .. } => {
+            names.insert(name.clone());
+        }
+        ClickProposition::At { proposition, .. }
+        | ClickProposition::Not(proposition)
+        | ClickProposition::ForAll {
+            body: proposition, ..
+        }
+        | ClickProposition::Exists {
+            body: proposition, ..
+        } => {
+            collect_called_predicates(proposition, names);
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            collect_called_predicates(left, names);
+            collect_called_predicates(right, names);
+        }
+        ClickProposition::RangeAll { body, .. } | ClickProposition::RangeAny { body, .. } => {
+            collect_called_predicates(body, names);
+        }
+        ClickProposition::Comparison { .. }
+        | ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. }
+        | ClickProposition::Defined { .. } => {}
+    }
+}
+
 fn contract_segment_contains_old_expression(segment: &ContractSegment) -> bool {
     [&segment.base, &segment.start, &segment.end]
         .into_iter()

@@ -22,7 +22,7 @@ pub(super) fn materialize_counted_population_bodies(
     _parameters: &[syntax::C0Parameter],
     _arguments: &[CExpression],
     mut state: CState,
-    observes_population_counts: bool,
+    observed_population_families: &BTreeSet<String>,
     _predicate_environment: &PredicateEnvironment,
     _click_function_environment: &ClickFunctionEnvironment,
     _claim_label: &str,
@@ -62,6 +62,7 @@ pub(super) fn materialize_counted_population_bodies(
     let mut family_totals = BTreeMap::<String, Bitvector32Term>::new();
 
     for (name, resource_arguments, visible_quantity) in populations {
+        let observes_population = observed_population_families.contains(&name);
         let tracks_population_in_body = resource_environment
             .get(&name)
             .and_then(|definition| definition.composite_body())
@@ -70,10 +71,10 @@ pub(super) fn materialize_counted_population_bodies(
         // ledger merely so `open`/`unfold` can expose its body. Counts are
         // materialized when the proof observes them, when the body relates C
         // state to the population, or when visible multiplicity matters.
-        if !observes_population_counts && !tracks_population_in_body && visible_quantity == 1 {
+        if !observes_population && !tracks_population_in_body && visible_quantity == 1 {
             continue;
         }
-        let count = if observes_population_counts {
+        let count = if observes_population {
             let count = Bitvector32Term::Variable(Variable(next_variable));
             next_variable = next_variable.saturating_add(1);
             count

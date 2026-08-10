@@ -2634,6 +2634,7 @@ pub(super) fn finish_ordered_proof_replay(
                                 }
                                 continue;
                             }
+                            let grouped_claim_count = grouped_pending.len();
                             let certificate = match &outcome {
                                 CFunctionOutcome::Return {
                                     value: result,
@@ -2648,7 +2649,7 @@ pub(super) fn finish_ordered_proof_replay(
                                     certify_grouped_outcome_simp_transition(
                                         &certificate_replay,
                                         grouped_transition_goals,
-                                        grouped_pending.len(),
+                                        grouped_claim_count,
                                         &surface_certificate_facts,
                                         parsed_function.parameters(),
                                         arguments,

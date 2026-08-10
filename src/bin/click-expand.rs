@@ -326,6 +326,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn resource_pattern_exit_simp_expansion_replays() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests/resource_pattern_counts_cross_contracts.md");
+        let mdtest = read_mdtest(&path).expect("fixture should parse");
+        let click_source = mdtest
+            .click_source
+            .as_deref()
+            .expect("fixture should have Click");
+        let click_line = mdtest.click_line(70).expect("fixture line should map");
+        let sources = source_refs(&mdtest.c_sources);
+        let expanded = expand_c0_tactic_source_at(click_source, &sources, click_line, 5)
+            .expect("exit simp should generate a certificate");
+        click::lang::click::verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+            panic!(
+                "resource-pattern exit simp expansion should replay: {}\n{expanded}",
+                error.message()
+            )
+        });
+    }
+
+    #[test]
     fn parses_time_limit_before_or_after_positionals() {
         let before =
             parse_arguments(["--time-limit", "30s", "example.click:12:5"].map(str::to_string))

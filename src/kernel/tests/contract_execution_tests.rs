@@ -1,5 +1,123 @@
 use super::*;
 
+fn pool_resource_spec(name: &str) -> CResourceSpec {
+    CResourceSpec::Composite {
+        access: CResourceAccessMode::Own,
+        name: name.to_string(),
+        arguments: vec![c_variable("pool"), c_variable("object")],
+        parameter_types: vec![CType::Int32, CType::Int32],
+    }
+}
+
+fn pool_transition_function(from: &str, to: &str) -> CFunction {
+    let parameters = vec![
+        c_parameter("pool", CType::Int32),
+        c_parameter("object", CType::Int32),
+    ];
+    let definition_parameters = parameters.clone();
+    c_function(
+        CType::Void,
+        format!("{from}_to_{to}"),
+        parameters,
+        c_return(CExpression::Value(CValue::Void)),
+    )
+    .with_resource_summary(vec![pool_resource_spec(from)], vec![pool_resource_spec(to)])
+    .with_composite_resource_definitions(vec![
+        CCompositeResourceDefinition::new(
+            from,
+            definition_parameters.clone(),
+            None,
+            false,
+            Vec::new(),
+            Vec::new(),
+        ),
+        CCompositeResourceDefinition::new(
+            to,
+            definition_parameters,
+            None,
+            false,
+            Vec::new(),
+            Vec::new(),
+        ),
+    ])
+}
+
+fn apply_pool_transition(state: &CState, function: &CFunction, pool: u32, object: u32) -> CState {
+    let arguments = vec![c_int32_literal(pool), c_int32_literal(object)];
+    let outcome = CFunctionOutcome::Return {
+        value: CValue::Void,
+        state: state.clone(),
+    };
+    let (outcome, obligations) = apply_c_function_contract_resource_transition(
+        state,
+        function,
+        &arguments,
+        outcome,
+        &Assumptions::new(),
+    )
+    .expect("the checked resource transition should replay");
+    assert!(obligations.is_empty());
+    let CFunctionOutcome::Return { state, .. } = outcome else {
+        panic!("resource transition did not return");
+    };
+    state
+}
+
+fn pool_count(state: &CState, pool: u32) -> Bitvector32Term {
+    state.counted_population_sum(
+        "pool_object",
+        &[Some(int32(pool)), None],
+        &Assumptions::new(),
+    )
+}
+
+#[test]
+fn observed_resource_family_counts_cross_checked_contracts() {
+    let checkout = pool_transition_function("available", "pool_object");
+    let return_object = pool_transition_function("pool_object", "available");
+    let mut state = CState::new()
+        .with_observed_population_family("pool_object")
+        .with_resource_context(
+            ResourceContext::new()
+                .unchecked_with_fact(CResourceFact::own_composite(
+                    "available".to_string(),
+                    vec![int32(1), int32(10)],
+                ))
+                .unchecked_with_fact(CResourceFact::own_composite(
+                    "available".to_string(),
+                    vec![int32(1), int32(11)],
+                ))
+                .unchecked_with_fact(CResourceFact::own_composite(
+                    "available".to_string(),
+                    vec![int32(2), int32(20)],
+                )),
+        );
+
+    assert_eq!(pool_count(&state, 1), Bitvector32Term::Constant(0));
+    assert_eq!(pool_count(&state, 2), Bitvector32Term::Constant(0));
+
+    state = apply_pool_transition(&state, &checkout, 1, 10);
+    assert_eq!(pool_count(&state, 1), Bitvector32Term::Constant(1));
+    assert_eq!(pool_count(&state, 2), Bitvector32Term::Constant(0));
+
+    state = apply_pool_transition(&state, &checkout, 1, 11);
+    assert_eq!(pool_count(&state, 1), Bitvector32Term::Constant(2));
+    assert_eq!(pool_count(&state, 2), Bitvector32Term::Constant(0));
+
+    state = apply_pool_transition(&state, &checkout, 2, 20);
+    assert_eq!(pool_count(&state, 1), Bitvector32Term::Constant(2));
+    assert_eq!(pool_count(&state, 2), Bitvector32Term::Constant(1));
+
+    state = apply_pool_transition(&state, &return_object, 1, 10);
+    assert_eq!(pool_count(&state, 1), Bitvector32Term::Constant(1));
+    assert_eq!(pool_count(&state, 2), Bitvector32Term::Constant(1));
+
+    state = apply_pool_transition(&state, &return_object, 1, 11);
+    assert_eq!(pool_count(&state, 1), Bitvector32Term::Constant(0));
+    assert_eq!(pool_count(&state, 2), Bitvector32Term::Constant(1));
+    assert!(state.observes_population_family("pool_object"));
+}
+
 #[test]
 fn local_declaration_allocates_stack_object_for_address_of() {
     let local_pointer = Pointer {

@@ -824,14 +824,26 @@ pub(super) fn c_function_contract_certification_assumptions(
             .clone()
             .allow_symbolic_contract_loads()
             .prefer_symbolic_external_loads();
-        let paths = lower_spec_proposition_at_state_with_loop_entry(
+        let paths = match lower_spec_proposition_at_state_with_loop_entry(
             &entry_state,
             requirement,
             None,
             &lowering_assumptions,
             &mut budget,
-        )
-        .ok()?;
+        ) {
+            Ok(paths) => paths,
+            Err(limit) => {
+                if crate::instrumentation::enabled() {
+                    crate::instrumentation::emit(
+                        crate::instrumentation::VerificationEvent::Diagnostic(format!(
+                            "contract requirement lowering hit {limit:?} for {}",
+                            function.name()
+                        )),
+                    );
+                }
+                return None;
+            }
+        };
         let path = if let [path] = paths.as_slice() {
             path
         } else {
@@ -861,6 +873,17 @@ pub(super) fn c_function_contract_certification_assumptions(
                     })
                     .collect::<Vec<_>>();
                 let [path] = consistent.as_slice() else {
+                    if crate::instrumentation::enabled() {
+                        crate::instrumentation::emit(
+                            crate::instrumentation::VerificationEvent::Diagnostic(format!(
+                                "contract requirement for {} lowered to {} paths; {} matched the selected surface facts and {} remained consistent",
+                                function.name(),
+                                paths.len(),
+                                proposition_matches.len(),
+                                consistent.len(),
+                            )),
+                        );
+                    }
                     return None;
                 };
                 *path

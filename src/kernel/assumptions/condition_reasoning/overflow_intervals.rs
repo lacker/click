@@ -22,7 +22,33 @@ impl Assumptions {
                         ConditionTerm::signed_greater_equal(left.clone(), zero.clone()),
                         true,
                     ) || self.has_lower_bound_at_or_above(&left, &zero));
-                (ordered_nonnegative || nonnegative_minus_one).then_some(false)
+                if ordered_nonnegative || nonnegative_minus_one {
+                    return Some(false);
+                }
+                if right == Bitvector32Term::Constant(1) {
+                    let int_min = Bitvector32Term::Constant(i32::MIN as u32);
+                    let strict_lower_bound = self.condition_facts.iter().find_map(
+                        |(condition, value)| {
+                            (matches!(
+                                (condition, value),
+                                (ConditionTerm::Bitvector32SignedLessThan(lower, fact_left), true)
+                                    if lower.as_ref() == &int_min
+                                        && fact_left.as_ref() == &left
+                            ) || matches!(
+                                (condition, value),
+                                (ConditionTerm::Bitvector32SignedGreaterThan(fact_left, lower), true)
+                                    if lower.as_ref() == &int_min
+                                        && fact_left.as_ref() == &left
+                            ))
+                            .then(|| Proposition::ConditionIs(condition.clone(), *value))
+                        },
+                    );
+                    if let Some(provenance) = &strict_lower_bound {
+                        record_implicit_reasoning_provenance(self, provenance);
+                        return Some(false);
+                    }
+                }
+                None
             }
             ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
                 if right.as_ref() == &Bitvector32Term::Constant(1) {

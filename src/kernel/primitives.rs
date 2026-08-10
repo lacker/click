@@ -1172,6 +1172,9 @@ pub struct CCountedPopulation {
     pub(super) name: String,
     pub(super) arguments: Vec<CValue>,
     pub(super) count: Bitvector32Term,
+    /// Marks observation of a resource family even while its exact population
+    /// is zero. Marker entries are not themselves resource populations.
+    pub(super) family_observation_marker: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]

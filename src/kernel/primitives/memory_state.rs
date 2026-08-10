@@ -639,17 +639,18 @@ impl CState {
         count: Bitvector32Term,
     ) -> Self {
         let name = name.into();
-        if let Some(population) = self
-            .counted_populations
-            .iter_mut()
-            .find(|population| population.name == name && population.arguments == arguments)
-        {
+        if let Some(population) = self.counted_populations.iter_mut().find(|population| {
+            !population.family_observation_marker
+                && population.name == name
+                && population.arguments == arguments
+        }) {
             population.count = count;
         } else {
             self.counted_populations.push(CCountedPopulation {
                 name,
                 arguments,
                 count,
+                family_observation_marker: false,
             });
         }
         self
@@ -658,7 +659,11 @@ impl CState {
     pub fn counted_population(&self, name: &str, arguments: &[CValue]) -> Option<&Bitvector32Term> {
         self.counted_populations
             .iter()
-            .find(|population| population.name == name && population.arguments == arguments)
+            .find(|population| {
+                !population.family_observation_marker
+                    && population.name == name
+                    && population.arguments == arguments
+            })
             .map(|population| &population.count)
     }
 
@@ -671,7 +676,8 @@ impl CState {
         self.counted_populations
             .iter()
             .find(|population| {
-                population.name == name
+                !population.family_observation_marker
+                    && population.name == name
                     && population.arguments.len() == arguments.len()
                     && population
                         .arguments
@@ -699,7 +705,8 @@ impl CState {
         self.counted_populations
             .iter()
             .filter(|population| {
-                population.name == name
+                !population.family_observation_marker
+                    && population.name == name
                     && population.arguments.len() == arguments.len()
                     && population
                         .arguments
@@ -721,13 +728,37 @@ impl CState {
     }
 
     pub fn without_counted_population(mut self, name: &str, arguments: &[CValue]) -> Self {
-        self.counted_populations
-            .retain(|population| population.name != name || population.arguments != arguments);
+        self.counted_populations.retain(|population| {
+            population.family_observation_marker
+                || population.name != name
+                || population.arguments != arguments
+        });
         self
     }
 
-    pub fn counted_populations(&self) -> &[CCountedPopulation] {
-        &self.counted_populations
+    pub fn counted_populations(&self) -> impl Iterator<Item = &CCountedPopulation> {
+        self.counted_populations
+            .iter()
+            .filter(|population| !population.family_observation_marker)
+    }
+
+    pub fn with_observed_population_family(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        if !self.observes_population_family(&name) {
+            self.counted_populations.push(CCountedPopulation {
+                name,
+                arguments: Vec::new(),
+                count: Bitvector32Term::Constant(0),
+                family_observation_marker: true,
+            });
+        }
+        self
+    }
+
+    pub fn observes_population_family(&self, name: &str) -> bool {
+        self.counted_populations
+            .iter()
+            .any(|population| population.family_observation_marker && population.name == name)
     }
 
     /// The logical resource-state component used to index predicate facts.

@@ -1161,6 +1161,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
                     CValue::Int32(count) => count,
                     _ => unreachable!("an int32 population count remains int32"),
                 },
+                family_observation_marker: population.family_observation_marker,
             })
             .collect(),
     }

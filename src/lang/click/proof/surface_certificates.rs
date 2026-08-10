@@ -1379,6 +1379,52 @@ fn certify_outcome_simp_have(
         )));
     }
 
+    // A claim lowered under an active top-level predicate unfold may need its
+    // certificate to state the body explicitly. Choose that spelling only
+    // when lowering it in this same context reproduces the exact kernel goal;
+    // predicates whose surface lowering carries distinct binding information
+    // retain their original spelling.
+    let certificate_surface_goal = match surface_goal {
+        ClickProposition::PredicateCall { name, .. }
+            if replay
+                .unfolded_predicates
+                .iter()
+                .any(|unfolded| unfolded == name) =>
+        {
+            let unfolded_surface = unfold_structural_invariant_proposition(
+                predicate_environment,
+                surface_goal,
+                &replay.unfolded_predicates,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` could not express its unfolded certificate goal: {message}"
+                ))
+            })?;
+            let unfolded_lowering = lower_outcome_proposition_with_obligations(
+                parameters,
+                arguments,
+                pre_state,
+                post_state,
+                Some(result),
+                &goal_lowering_facts,
+                &unfolded_surface,
+                predicate_environment,
+                click_function_environment,
+                &replay.program_point_states,
+            );
+            if unfolded_lowering.is_ok_and(|lowered| {
+                normalize_direct_atomic_memory_loads(&lowered.proposition)
+                    == normalize_direct_atomic_memory_loads(goal)
+            }) {
+                unfolded_surface
+            } else {
+                surface_goal.clone()
+            }
+        }
+        _ => surface_goal.clone(),
+    };
+
     let mut certified_available = available.to_vec();
     for fact in crate::kernel::certified_store_loadability_facts(&replay.effect_facts) {
         if !certified_available.contains(&fact) {
@@ -1832,7 +1878,7 @@ fn certify_outcome_simp_have(
         }
     }
     let surface_have = ProofHave {
-        proposition: surface_goal.clone(),
+        proposition: certificate_surface_goal,
         proof,
     };
     let surface_tactic = ProofTactic::Have(surface_have.clone());
@@ -2133,7 +2179,7 @@ pub(super) struct GroupedOutcomeSimpGoal {
 pub(super) fn certify_grouped_outcome_simp_transition(
     replay: &TacticReplayState,
     goals: Vec<GroupedOutcomeSimpGoal>,
-    newly_closed_claim_count: usize,
+    claim_count: usize,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -2213,10 +2259,7 @@ pub(super) fn certify_grouped_outcome_simp_transition(
         pending = next_pending;
     }
 
-    tactics.extend(std::iter::repeat_n(
-        ProofTactic::Assumption,
-        newly_closed_claim_count,
-    ));
+    tactics.extend(std::iter::repeat_n(ProofTactic::Assumption, claim_count));
     SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
         ClickError::new(format!(
             "`{proof_label}` path {path_index}, tactic {tactic_index}: grouped `simp` produced an invalid transition certificate: {error:?}"

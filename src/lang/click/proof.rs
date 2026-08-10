@@ -1,5 +1,5 @@
 use super::diagnostics::*;
-use super::validation::tactic_name;
+use super::validation::{collect_called_predicates, collect_resource_count_families, tactic_name};
 use super::*;
 
 mod claim_proofs;
@@ -1679,23 +1679,38 @@ pub(super) fn initial_claim_context(
 > {
     let (mut state, arguments) =
         initial_call_state(function_block.requires(), parsed_function.parameters())?;
-    let observes_population_counts = function_block.requires().iter().any(|requirement| {
-        let mut requirement = requirement;
-        while let Requirement::Labeled {
-            requirement: nested,
-            ..
-        } = requirement
-        {
-            requirement = nested;
+    let mut observed_population_families = BTreeSet::new();
+    let mut pending_predicates = BTreeSet::new();
+    for requirement in function_block.requires() {
+        if let Some(proposition) = requirement.proposition() {
+            collect_resource_count_families(proposition, &mut observed_population_families);
+            collect_called_predicates(proposition, &mut pending_predicates);
         }
-        matches!(requirement, Requirement::Proposition(proposition) if proposition_contains_resource_count(proposition))
-    });
+    }
+    // Predicate facts carry their resource-state snapshot opaquely. Register
+    // every family a reachable predicate may observe before constructing
+    // those facts so zero populations remain observable across later opaque
+    // calls.
+    let mut visited_predicates = BTreeSet::new();
+    while let Some(name) = pending_predicates.pop_first() {
+        if !visited_predicates.insert(name.clone()) {
+            continue;
+        }
+        let Some(definition) = predicate_environment.get(&name) else {
+            continue;
+        };
+        collect_resource_count_families(definition.body(), &mut observed_population_families);
+        collect_called_predicates(definition.body(), &mut pending_predicates);
+    }
+    for family in &observed_population_families {
+        state = state.with_observed_population_family(family.clone());
+    }
     let (population_state, population_facts) = materialize_counted_population_bodies(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
         state,
-        observes_population_counts,
+        &observed_population_families,
         predicate_environment,
         click_function_environment,
         claim_label,

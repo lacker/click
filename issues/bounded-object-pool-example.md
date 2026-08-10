@@ -1,13 +1,9 @@
 # Finish the bounded object-pool example
 
-Build the practical bounded-pool example after its independently reduced
-blockers are green:
-
-- `resource-pattern-counts-cross-contracts.md`;
-- `decrement-arithmetic-certificates.md`;
-- `step-expansion-carries-stale-history.md`;
-- `population-body-authorizes-c-access.md`; and
-- `marked-load-transport-loses-identity.md`.
+Build the practical bounded-pool example after its remaining independently
+reduced blocker, `invariant-population-body-authorizes-c-access.md`, is green.
+Resource-pattern transitions, decrement certificates, step expansion, and
+marked-load transport now have focused passing regressions.
 
 The preserved investigation is on local branch
 `wip/bounded-pool-investigation` at commit `5154279`, with a worktree at

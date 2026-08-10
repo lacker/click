@@ -2561,6 +2561,14 @@ impl Parser {
 
     fn parse_contract_unary(&mut self) -> Result<ContractExpression, ClickError> {
         if self.peek() == Some(&Token::Minus) {
+            if let Some(Token::Number(value)) = self.peek_next().cloned()
+                && value <= i32::MAX as u32 + 1
+            {
+                self.position += 2;
+                return Ok(ContractExpression::CFragment(CExpression::Value(int32(
+                    0u32.wrapping_sub(value),
+                ))));
+            }
             self.position += 1;
             return Ok(ContractExpression::Subtract(
                 Box::new(ContractExpression::CFragment(CExpression::Value(int32(0)))),
@@ -2979,6 +2987,12 @@ impl Parser {
 
     fn parse_ensure_unary(&mut self) -> Result<C0Expression, ClickError> {
         if self.peek() == Some(&Token::Minus) {
+            if let Some(Token::Number(value)) = self.peek_next().cloned()
+                && value <= i32::MAX as u32 + 1
+            {
+                self.position += 2;
+                return Ok(C0Expression::Int32Literal(0u32.wrapping_sub(value)));
+            }
             self.position += 1;
             return Ok(C0Expression::Subtract(
                 Box::new(C0Expression::Int32Literal(0)),

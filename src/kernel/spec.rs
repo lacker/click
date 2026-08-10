@@ -592,22 +592,28 @@ pub(super) fn lower_spec_comparison_proposition_at_state(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     let mut paths = Vec::new();
-    for left_path in evaluate_spec_expression_paths_with_loop_entry(
+    let left_paths = evaluate_spec_expression_paths_with_loop_entry(
         state,
         left,
         loop_entry_state,
         assumptions,
         budget,
-    )? {
+    )?;
+    let left_path_count = left_paths.len();
+    let mut right_path_count = 0usize;
+    let mut merge_failure_count = 0usize;
+    for left_path in left_paths {
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
-        for right_path in evaluate_spec_expression_paths_with_loop_entry(
+        let right_paths = evaluate_spec_expression_paths_with_loop_entry(
             state,
             right,
             loop_entry_state,
             &right_assumptions,
             budget,
-        )? {
+        )?;
+        right_path_count = right_path_count.saturating_add(right_paths.len());
+        for right_path in right_paths {
             let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &left_path.facts,
                 &left_path.obligations,
@@ -615,6 +621,7 @@ pub(super) fn lower_spec_comparison_proposition_at_state(
                 &right_path.obligations,
                 assumptions,
             ) else {
+                merge_failure_count = merge_failure_count.saturating_add(1);
                 continue;
             };
             if let Some(proposition) =
@@ -627,6 +634,13 @@ pub(super) fn lower_spec_comparison_proposition_at_state(
                 });
             }
         }
+    }
+    if paths.is_empty() && crate::instrumentation::enabled() {
+        crate::instrumentation::emit(crate::instrumentation::VerificationEvent::Diagnostic(
+            format!(
+                "spec comparison produced no paths: {left_path_count} left paths, {right_path_count} right paths, {merge_failure_count} inconsistent merges"
+            ),
+        ));
     }
     Ok(paths)
 }
@@ -775,7 +789,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                     let path_assumptions =
                         assumptions_with_path_context(assumptions, &facts, &obligations);
                     let mut total: Option<Bitvector32Term> = None;
-                    for population in state.counted_populations().iter().filter(|population| {
+                    for population in state.counted_populations().filter(|population| {
                         population.name == *name
                             && population.arguments.len() == arguments.len()
                             && population.arguments.iter().zip(&arguments).all(
