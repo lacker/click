@@ -170,7 +170,7 @@ int32 input_cursor_take(struct input_cursor* owner) {
         }
     }
     have owner->pos <= owner->len by {
-        derive using {
+        simp() using {
             old(owner->pos) < owner->len;
         }
     }
