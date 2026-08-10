@@ -2276,6 +2276,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         claim_label,
                         tactic_index,
                         &have_facts,
+                        &replay.effect_facts,
                         parsed_function.parameters(),
                         arguments,
                         replay.old_reference_state(&state),

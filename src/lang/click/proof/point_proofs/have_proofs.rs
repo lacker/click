@@ -180,6 +180,7 @@ pub(in crate::lang::click::proof) fn prove_have_at_current_point(
     claim_label: &str,
     outer_tactic_index: usize,
     outer_available: &[Proposition],
+    transition_facts: &[ExecutionPureFact],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -196,6 +197,7 @@ pub(in crate::lang::click::proof) fn prove_have_at_current_point(
         claim_label,
         outer_tactic_index,
         outer_available,
+        transition_facts,
         parameters,
         arguments,
         pre_state,
@@ -456,6 +458,7 @@ pub(in crate::lang::click::proof) fn prove_have_at_point(
     claim_label: &str,
     outer_tactic_index: usize,
     outer_available: &[Proposition],
+    transition_facts: &[ExecutionPureFact],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -477,6 +480,7 @@ pub(in crate::lang::click::proof) fn prove_have_at_point(
         claim_label,
         outer_tactic_index,
         outer_available,
+        transition_facts,
         parameters,
         arguments,
         pre_state,
@@ -501,6 +505,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_at_point(
     claim_label: &str,
     outer_tactic_index: usize,
     outer_available: &[Proposition],
+    transition_facts: &[ExecutionPureFact],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -540,6 +545,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_at_point(
             claim_label,
             outer_tactic_index,
             outer_available,
+            transition_facts,
             parameters,
             arguments,
             pre_state,
@@ -579,6 +585,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
     claim_label: &str,
     outer_tactic_index: usize,
     outer_available: &[Proposition],
+    transition_facts: &[ExecutionPureFact],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -738,6 +745,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     claim_label,
                     outer_tactic_index,
                     &available,
+                    transition_facts,
                     parameters,
                     arguments,
                     pre_state,
@@ -752,6 +760,111 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 )?;
                 if !available.contains(&inner_fact) {
                     available.push(inner_fact);
+                }
+            }
+            ProofTactic::TransportUsing {
+                source: surface_source,
+                target: surface_target,
+                premises: surface_premises,
+            } => {
+                let lower = |surface: &ClickProposition, facts: &[Proposition]| {
+                    surface_propositions
+                        .and_then(|propositions| {
+                            propositions.available_kernel(surface, facts).cloned()
+                        })
+                        .map(Ok)
+                        .unwrap_or_else(|| {
+                            lower_point_proposition_with_values(
+                                surface,
+                                facts,
+                                values.clone(),
+                                &array_refs,
+                                pre_state,
+                                state,
+                                result,
+                                program_point_states,
+                                predicate_environment,
+                                click_function_environment,
+                            )
+                        })
+                };
+                let explicit_premises = surface_premises
+                    .iter()
+                    .map(|premise| lower(premise, &available))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `transport using` premise: {message}"
+                        ))
+                    })?;
+                for premise in &explicit_premises {
+                    if !exact_fact_is_available(premise, &available) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `transport using` requires an exact available premise"
+                        )));
+                    }
+                }
+
+                let source = lower(surface_source, &available).map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `transport` source: {message}"
+                    ))
+                })?;
+                let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
+                let resource_facts = state
+                    .resources()
+                    .observable_facts_assuming_valid(&explicit_assumptions);
+                let selected_assumptions = available
+                    .iter()
+                    .filter(|fact| is_implicit_fact_transport_context(fact))
+                    .cloned()
+                    .chain(resource_facts)
+                    .fold(explicit_assumptions, |assumptions, fact| {
+                        assumptions.assume_proposition(fact)
+                    });
+                if !exact_fact_is_available(&source, &explicit_premises)
+                    && selected_assumptions
+                        .derive_atomic_proposition(&source)
+                        .is_none()
+                {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `transport using` source is not derivable from its explicit premises"
+                    )));
+                }
+
+                let target = lower(surface_target, &available).map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `transport` target: {message}"
+                    ))
+                })?;
+                if !exact_fact_is_available(&target, &available)
+                    && materialization_equivalent_available_fact(&target, &available).is_none()
+                {
+                    let transition_facts =
+                        fact_transport_transition_facts(transition_facts, &source);
+                    let transport_assumptions = transition_facts
+                        .iter()
+                        .fold(selected_assumptions, |assumptions, fact| {
+                            assumptions.assume_proposition(fact.proposition().clone())
+                        })
+                        .assume_proposition(source.clone());
+                    if !certified_fact_transport_reaches_through(
+                        &source,
+                        &target,
+                        state.memory(),
+                        &transport_assumptions,
+                        &transition_facts,
+                    ) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: no certified transport connects `{}` to `{}` using {} explicit premise(s)",
+                            describe_click_proposition(surface_source),
+                            describe_click_proposition(surface_target),
+                            surface_premises.len(),
+                        )));
+                    }
+                }
+                if !available.contains(&target) {
+                    available.push(target);
                 }
             }
             ProofTactic::Choose(choice) => {

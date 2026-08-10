@@ -276,6 +276,7 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                     &step_claim_label,
                     certificate_index,
                     &replay_available,
+                    &[],
                     environment.parsed_function.parameters(),
                     environment.arguments,
                     environment.initial_state,
