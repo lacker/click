@@ -109,21 +109,19 @@ Completed source migrations now include the equality chains in
 `examples/binary-tree`, four element/pointer/result equalities in
 `examples/owned-split-buffer`, and the final result equality in
 `examples/owned-string`. Signed increment bounds in the composite-vector loop
-regression and `examples/input-cursor` have also migrated. Equality cases
-expand to explicit `rewrite`, `assumption`, and `normalize` steps; increment
-cases expand to applications of the standard theorems
-`int32_increment_upper_bound` and `int32_increment_lower_bound`, followed by
-`assumption`. Other source shapes still need principled surface certificates
+regression and `examples/input-cursor`, plus the shifted increment order in
+`examples/vector-push`, have also migrated. Equality cases expand to explicit
+`rewrite`, `assumption`, and `normalize` steps; increment cases expand to
+applications of the standard theorems `int32_increment_upper_bound`,
+`int32_increment_lower_bound`, and `int32_increment_preserves_order`, followed
+by `assumption`. Other source shapes still need principled surface certificates
 before their old `derive using` blocks can be removed:
 
-- `examples/vector-push` proves `1 <= owner->len` after incrementing a
-  nonnegative old length. This is a shifted-order fact (`0 <= old_len` implies
-  `1 <= old_len + 1`), not either of the now-supported bound-preservation
-  rules. The two remaining `examples/owned-split-buffer` sites need the
-  adjacent signed-order consequence `2 <= length` implies `1 < length`, plus
-  an equality substitution in one case. Add the smallest named standard
-  theorem applications for these exact order shapes, not a generic arithmetic
-  solver relabeled as simple.
+- The two remaining `examples/owned-split-buffer` sites need the adjacent
+  signed-order consequence `2 <= length` implies `1 < length`, plus an
+  equality substitution in one case. Add the smallest named standard theorem
+  application for this exact order shape, not a generic arithmetic solver
+  relabeled as simple.
 - The owned-string replay/certification instability has been fixed and the
   project now passes repeated ordinary verification under its normal limit.
   Its remaining `derive using` sites expose implicit execution-history and
@@ -140,8 +138,8 @@ before their old `derive using` blocks can be removed:
 The input-cursor attempt also exposed and fixed a separate lowering bug:
 declaration expansion populated resource argument type metadata in `derive`
 premises but omitted `simp() using` premises. A focused syntax regression now
-keeps that metadata; the example reaches the arithmetic-certificate gap above
-instead of failing resource lowering.
+keeps that metadata, and the affected arithmetic proofs now expand through the
+named increment theorems instead of failing resource lowering.
 
 Keep affected proof sites unchanged until their focused regressions expand and
 replay. Do not count retaining `derive using` as a workaround for either
