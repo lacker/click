@@ -38,19 +38,9 @@ int32 vector_push(struct vector* owner, int32 value) {
     step();
     step();
     have 1 <= owner->len by {
-        derive using {
-            at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
-            at(statement(0).entry, loadable(owner[0..1]));
-            at(statement(0).entry, loadable((owner + 1)[0..1]));
-            at(statement(0).entry, loadable((owner + 2)[0..2]));
-            loadable(old(owner->data[0..load_int32(byte_offset(owner, 4))]));
+        simp() using {
             at(statement(5).entry, 0) <= at(statement(5).entry, owner->len);
-            at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->len);
             at(statement(5).entry, owner->len) < at(statement(5).entry, (owner->len + 1));
-            at(statement(6).entry, index) < at(statement(6).entry, owner->cap);
-            separate(memory(owner[0..1]), memory(owner[1..2]));
-            separate(memory(owner[0..1]), memory(owner[2..4]));
-            separate(memory(owner[1..2]), memory(owner[2..4]));
         }
     }
     have owner->len <= owner->cap by simp;
