@@ -4,7 +4,7 @@ use super::*;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn replay_internal_plan(
-    context: ProofReplayContext,
+    mut context: ProofReplayContext,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
@@ -20,6 +20,7 @@ pub(in crate::lang::click::proof) fn replay_internal_plan(
     source_index: usize,
     certificate: &InternalProofPlan,
 ) -> Result<ProofReplayContext, ClickError> {
+    context.replay.planned_statement_transitions = certificate.statement_transitions().to_vec();
     let tactics = certificate
         .tactics()
         .iter()

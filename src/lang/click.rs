@@ -802,9 +802,11 @@ pub struct CertifiedFactTransport {
     pub(crate) statement_local: bool,
 }
 
-#[doc(hidden)]
+/// Private semantic evidence retained while a smart tactic constructs its
+/// [`SimpleProof`]. This is planner metadata, not a proof step and cannot
+/// cross the smart/simple boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CertifiedStatementReplay {
+pub(crate) struct PlannedStatementTransition {
     pub(crate) transition: CertifiedStatementTransition,
     pub(crate) next_opaque_call: u64,
     pub(crate) next_verification_variable: u64,
@@ -823,13 +825,13 @@ pub enum ProofTactic {
     CertifiedStatementStep {
         prerequisite_derivations: Vec<PropositionDerivation>,
         exact_premises: Vec<Proposition>,
+        planned_transition: Option<usize>,
     },
     CertifiedLoopSummaryStep {
         prerequisite_derivations: Vec<PropositionDerivation>,
         exact_premises: Vec<Proposition>,
+        planned_transition: Option<usize>,
     },
-    CertifiedStatementReplay(Box<CertifiedStatementReplay>),
-    CertifiedLoopSummaryReplay(Box<CertifiedStatementReplay>),
     SmartStep,
     SmartExecute,
     SmartExecuteAllPaths,
@@ -1075,6 +1077,7 @@ struct SimpleStructuralItem {
 #[doc(hidden)]
 pub struct InternalProofPlan {
     tactics: Vec<ProofTactic>,
+    statement_transitions: Vec<PlannedStatementTransition>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1410,11 +1413,24 @@ impl InternalProofPlan {
         validate_internal_plan_tactics(tactics, &mut Vec::new())?;
         Ok(Self {
             tactics: tactics.to_vec(),
+            statement_transitions: Vec::new(),
         })
     }
 
     fn tactics(&self) -> &[ProofTactic] {
         &self.tactics
+    }
+
+    fn with_statement_transitions(
+        mut self,
+        statement_transitions: Vec<PlannedStatementTransition>,
+    ) -> Self {
+        self.statement_transitions = statement_transitions;
+        self
+    }
+
+    fn statement_transitions(&self) -> &[PlannedStatementTransition] {
+        &self.statement_transitions
     }
 }
 
@@ -1693,12 +1709,6 @@ impl ProofTactic {
             Self::StepUsing(_) => TacticClass::Simple(SimpleTactic::StatementTransition),
             Self::CertifiedStatementStep { .. } => {
                 TacticClass::Internal(InternalTacticKind::CertifiedStatementTransition)
-            }
-            Self::CertifiedStatementReplay(_) => {
-                TacticClass::Internal(InternalTacticKind::CertifiedStatementTransition)
-            }
-            Self::CertifiedLoopSummaryReplay(_) => {
-                TacticClass::Internal(InternalTacticKind::CertifiedLoopSummaryTransition)
             }
             Self::CertifiedLoopSummaryStep { .. } => {
                 TacticClass::Internal(InternalTacticKind::CertifiedLoopSummaryTransition)

@@ -377,8 +377,6 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::SmartStep => line(output, &prefix, "step();"),
         ProofTactic::CertifiedStatementStep { .. }
         | ProofTactic::CertifiedLoopSummaryStep { .. }
-        | ProofTactic::CertifiedStatementReplay(_)
-        | ProofTactic::CertifiedLoopSummaryReplay(_)
         | ProofTactic::SmartExecute
         | ProofTactic::SmartExecuteAllPaths
         | ProofTactic::ExecuteUntil(_)

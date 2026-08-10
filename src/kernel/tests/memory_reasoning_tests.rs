@@ -691,6 +691,32 @@ fn direct_transport_rewrites_loads_inside_pointer_equality() {
 }
 
 #[test]
+fn direct_transport_rewrites_loads_inside_signed_add_overflow_guard() {
+    let before = CMemory::new();
+    let field = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let loaded = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(before.clone()),
+        Box::new(field.clone()),
+    );
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::signed_add_overflows(loaded, Bitvector32Term::Constant(1)),
+        false,
+    );
+    let after = before.clone().with_block("local:result", 4);
+
+    let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &Assumptions::new())
+        .expect("an unrelated local allocation should transport an arithmetic definedness guard");
+    let Proposition::Implies(source, target) = theorem.proposition() else {
+        panic!("transport theorem must be an implication");
+    };
+    assert_eq!(source.as_ref(), &fact);
+    assert_eq!(c_condition_fact_memories(target), vec![after]);
+}
+
+#[test]
 fn pointer_equality_composes_across_same_block_offset_equalities() {
     let final_pointer = Pointer {
         block: PointerBlock::ExternalArgument,

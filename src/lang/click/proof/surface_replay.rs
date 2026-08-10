@@ -40,6 +40,16 @@ pub(super) fn checked_surface_fact_at_point(
             return Ok(old_candidate);
         }
     }
+    if let Ok(ClickProposition::Defined { expression }) =
+        replay.surface_propositions.surface(kernel)
+    {
+        let old_candidate = ClickProposition::Defined {
+            expression: ContractExpression::Old(Box::new(expression.clone())),
+        };
+        if check(&old_candidate).ok().as_ref() == Some(kernel) {
+            return Ok(old_candidate);
+        }
+    }
     if let Proposition::Predicate {
         name,
         arguments: target_arguments,
@@ -342,6 +352,22 @@ pub(super) fn checked_surface_comparison_fact_at_point(
     }
     for (point, _) in exact_points.iter().chain(&compatible_points) {
         for base in &bases {
+            if let Ok(candidate) = surface_with_source_site(base, point)
+                && lower_surface_candidate_at_point(
+                    replay,
+                    &candidate,
+                    available,
+                    parameters,
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .is_ok_and(|lowered| matches_kernel(&lowered))
+                && strictly_replayable(&candidate)
+            {
+                return Ok(candidate);
+            }
             let ClickProposition::Comparison {
                 left,
                 operator,
@@ -453,23 +479,18 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
         return;
     }
     match tactic {
-        ProofTactic::CertifiedStatementReplay(evidence) => {
-            let mut exact_premises = evidence.transition.planning_premises.clone();
-            for transport in &evidence.transition.fact_transports {
-                if !transport.statement_local
-                    && exact_fact_is_available(&transport.source, available)
-                    && !exact_premises.contains(&transport.source)
-                {
-                    exact_premises.push(transport.source.clone());
-                }
-            }
-            for obligation in &evidence.transition.obligations {
-                if exact_fact_is_available(obligation.proposition(), available)
-                    && !exact_premises.contains(obligation.proposition())
-                {
-                    exact_premises.push(obligation.proposition().clone());
-                }
-            }
+        ProofTactic::CertifiedStatementStep {
+            prerequisite_derivations,
+            exact_premises,
+            planned_transition: Some(planned_transition),
+        } if !replay.simple_proof_builder.lowering_planned_transition
+            && replay
+                .planned_statement_transitions
+                .get(*planned_transition)
+                .is_some() =>
+        {
+            let evidence = replay.planned_statement_transitions[*planned_transition].clone();
+            replay.simple_proof_builder.lowering_planned_transition = true;
             append_simple_proof_step_for_internal_tactic(
                 replay,
                 state,
@@ -480,14 +501,13 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                 predicate_environment,
                 click_function_environment,
                 &ProofTactic::CertifiedStatementStep {
-                    prerequisite_derivations: evidence.transition.prerequisite_derivations.clone(),
-                    // Planning records the exact entry-state premises consumed
-                    // by successful checks without changing the authoritative
-                    // execution transition.
-                    exact_premises,
+                    prerequisite_derivations: prerequisite_derivations.clone(),
+                    exact_premises: exact_premises.clone(),
+                    planned_transition: None,
                 },
                 None,
             );
+            replay.simple_proof_builder.lowering_planned_transition = false;
             let post_state = match &evidence.transition.outcome {
                 CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
                     Some(state)
@@ -588,17 +608,17 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                 }
             }
         }
-        ProofTactic::CertifiedLoopSummaryReplay(evidence) => {
-            let exact_premises = theorem_implication_premises(&evidence.transition.theorem)
-                .into_iter()
-                .filter(|premise| {
-                    !evidence
-                        .transition
-                        .execution_facts
-                        .iter()
-                        .any(|fact| fact.is_certified() && fact.proposition() == premise)
-                })
-                .collect();
+        ProofTactic::CertifiedLoopSummaryStep {
+            prerequisite_derivations,
+            exact_premises,
+            planned_transition: Some(planned_transition),
+        } if !replay.simple_proof_builder.lowering_planned_transition
+            && replay
+                .planned_statement_transitions
+                .get(*planned_transition)
+                .is_some() =>
+        {
+            replay.simple_proof_builder.lowering_planned_transition = true;
             append_simple_proof_step_for_internal_tactic(
                 replay,
                 state,
@@ -609,15 +629,18 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                 predicate_environment,
                 click_function_environment,
                 &ProofTactic::CertifiedLoopSummaryStep {
-                    prerequisite_derivations: evidence.transition.prerequisite_derivations.clone(),
-                    exact_premises,
+                    prerequisite_derivations: prerequisite_derivations.clone(),
+                    exact_premises: exact_premises.clone(),
+                    planned_transition: None,
                 },
                 _statement_uses_memory_context,
             );
+            replay.simple_proof_builder.lowering_planned_transition = false;
         }
         ProofTactic::CertifiedStatementStep {
             prerequisite_derivations: derivations,
             exact_premises,
+            ..
         } => {
             replay.simple_proof_builder.last_step_entry = Some(ProgramPointRef {
                 region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
@@ -690,6 +713,11 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                         required == fact
                             || normalize_direct_atomic_memory_loads(required)
                                 == normalize_direct_atomic_memory_loads(fact)
+                            || materialization_equivalent_available_fact(
+                                required,
+                                std::slice::from_ref(fact),
+                            )
+                            .is_some()
                     });
                     // A permission the resource projection reproduces is
                     // reconstructed by the replay for itself. One it does not
@@ -838,6 +866,7 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
         ProofTactic::CertifiedLoopSummaryStep {
             prerequisite_derivations: derivations,
             exact_premises,
+            ..
         } => {
             let loop_index = replay
                 .source_layout
@@ -1276,17 +1305,27 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                 .cloned()
                 .collect::<Vec<_>>();
             if !points.contains(&step_entry) {
-                points.push(step_entry);
+                points.push(step_entry.clone());
             }
             let mut candidates = Vec::new();
             for base_surface in base_surfaces {
-                let Some(variants) = comparison_program_point_variants(&base_surface, &points)
-                else {
-                    replay.simple_proof_builder.block(
-                        "fact transport surface lowering currently supports comparisons only",
-                    );
-                    return;
-                };
+                let mut variants = vec![base_surface.clone()];
+                for point in &points {
+                    if let Ok(candidate) = surface_with_source_site(&base_surface, point)
+                        && !variants.contains(&candidate)
+                    {
+                        variants.push(candidate);
+                    }
+                }
+                if let Some(comparison_variants) =
+                    comparison_program_point_variants(&base_surface, &points)
+                {
+                    for candidate in comparison_variants {
+                        if !variants.contains(&candidate) {
+                            variants.push(candidate);
+                        }
+                    }
+                }
                 for candidate in variants {
                     if !candidates.contains(&candidate) {
                         candidates.push(candidate);
@@ -1350,40 +1389,57 @@ pub(super) fn append_simple_proof_step_for_internal_tactic(
                     _ => None,
                 })
                 .flatten()
-                .is_some_and(|premises| {
-                    premises.iter().any(|premise| {
-                        replay
+                .and_then(|premises| {
+                    premises.iter().find_map(|premise| {
+                        let recorded = replay
                             .surface_propositions
                             .surfaces(source)
-                            .any(|surface| surface == premise)
+                            .any(|surface| surface == premise);
+                        let entry_spelling_matches = surface_with_source_site(premise, &step_entry)
+                            .ok()
+                            .and_then(|candidate| {
+                                lower_surface_candidate_at_point(
+                                    replay,
+                                    &candidate,
+                                    available,
+                                    parameters,
+                                    arguments,
+                                    state,
+                                    predicate_environment,
+                                    click_function_environment,
+                                )
+                                .ok()
+                            })
+                            .is_some_and(|lowered| {
+                                normalize_direct_atomic_memory_loads(&lowered)
+                                    == normalize_direct_atomic_memory_loads(source)
+                            });
+                        (recorded || entry_spelling_matches).then_some(premise.clone())
                     })
                 });
-            match (find_candidate(source), find_candidate(target)) {
-                (
-                    Some((_surface_source, _)),
-                    Some((surface_target, lowered_surface_target)),
-                ) if selected_by_preceding_step => {
-                    // `step() using` replays with Selected fact transport, so a
-                    // listed statement-entry source is already carried by the
-                    // certified statement transition. Do not ask the
-                    // post-state context to independently reconstruct the
-                    // same frame proof.
-                    if let Err(error) = replay
-                        .surface_propositions
-                        .record_lowering(&surface_target, &lowered_surface_target)
-                    {
-                        replay.simple_proof_builder.block(format!(
-                            "could not retain the certified fact transport target spelling: {}",
-                            error.message()
-                        ));
-                    }
+            if let Some(surface_source) = &selected_by_preceding_step {
+                let target_point = ProgramPointRef {
+                    region: step_entry.region.clone(),
+                    kind: ProgramPointKind::Exit,
+                };
+                let surface_target = surface_with_source_site(surface_source, &target_point)
+                    .unwrap_or_else(|_| surface_source.clone());
+                if let Err(error) = replay
+                    .surface_propositions
+                    .record_lowering(&surface_target, target)
+                {
+                    replay.simple_proof_builder.block(format!(
+                        "could not retain the selected statement transport target spelling: {}",
+                        error.message()
+                    ));
                 }
+                return;
+            }
+            match (find_candidate(source), find_candidate(target)) {
                 (
                     Some((surface_source, _)),
                     Some((surface_target, lowered_surface_target)),
-                )
-                    if surface_source == surface_target =>
-                {
+                ) if surface_source == surface_target => {
                     if let Err(error) = replay
                         .surface_propositions
                         .record_lowering(&surface_target, &lowered_surface_target)

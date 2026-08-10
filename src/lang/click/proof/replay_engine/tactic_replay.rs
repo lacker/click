@@ -1280,19 +1280,12 @@ fn replay_linear_tactics_without_frontier_loops(
             }
             ProofTactic::Step
             | ProofTactic::CertifiedStatementStep { .. }
-            | ProofTactic::CertifiedLoopSummaryStep { .. }
-            | ProofTactic::CertifiedStatementReplay(_)
-            | ProofTactic::CertifiedLoopSummaryReplay(_) => {
-                let (
-                    prerequisite_policy,
-                    certified_prerequisites,
-                    certified_replay,
-                    loop_step_policy,
-                ) = match tactic {
+            | ProofTactic::CertifiedLoopSummaryStep { .. } => {
+                let (prerequisite_policy, certified_prerequisites, loop_step_policy) = match tactic
+                {
                     ProofTactic::Step => (
                         StatementPrerequisitePolicy::Exact,
                         &[][..],
-                        None,
                         LoopStepPolicy::EnterBody,
                     ),
                     ProofTactic::CertifiedStatementStep {
@@ -1301,7 +1294,6 @@ fn replay_linear_tactics_without_frontier_loops(
                     } => (
                         StatementPrerequisitePolicy::Certified,
                         prerequisite_derivations.as_slice(),
-                        None,
                         LoopStepPolicy::EnterBody,
                     ),
                     ProofTactic::CertifiedLoopSummaryStep {
@@ -1310,22 +1302,20 @@ fn replay_linear_tactics_without_frontier_loops(
                     } => (
                         StatementPrerequisitePolicy::Certified,
                         prerequisite_derivations.as_slice(),
-                        None,
-                        LoopStepPolicy::ApplyVerifiedRule,
-                    ),
-                    ProofTactic::CertifiedStatementReplay(evidence) => (
-                        StatementPrerequisitePolicy::Certified,
-                        evidence.transition.prerequisite_derivations.as_slice(),
-                        Some(evidence.as_ref()),
-                        LoopStepPolicy::EnterBody,
-                    ),
-                    ProofTactic::CertifiedLoopSummaryReplay(evidence) => (
-                        StatementPrerequisitePolicy::Certified,
-                        evidence.transition.prerequisite_derivations.as_slice(),
-                        Some(evidence.as_ref()),
                         LoopStepPolicy::ApplyVerifiedRule,
                     ),
                     _ => unreachable!(),
+                };
+                let planned_transition = match tactic {
+                    ProofTactic::CertifiedStatementStep {
+                        planned_transition: Some(index),
+                        ..
+                    }
+                    | ProofTactic::CertifiedLoopSummaryStep {
+                        planned_transition: Some(index),
+                        ..
+                    } => replay.planned_statement_transitions.get(*index).cloned(),
+                    _ => None,
                 };
                 execute_step_from_execution_point(
                     &mut replay,
@@ -1341,7 +1331,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     tactic_index,
                     tactic_name(tactic),
                     certified_prerequisites,
-                    certified_replay,
+                    planned_transition.as_ref(),
                     prerequisite_policy,
                     StatementFactTransportPolicy::None,
                     loop_step_policy,
@@ -1427,6 +1417,7 @@ fn replay_linear_tactics_without_frontier_loops(
             ProofTactic::SmartStep => {
                 let mut planning_replay = replay.clone();
                 planning_replay.planned_tactics.clear();
+                planning_replay.planned_statement_transitions.clear();
                 let mut planning_state = state.clone();
                 let mut planning_facts = requirement_pure_facts.clone();
                 execute_step_from_execution_point(
@@ -1450,6 +1441,11 @@ fn replay_linear_tactics_without_frontier_loops(
                 )?;
                 let certificate =
                     InternalProofPlan::from_planned_tactics(&planning_replay.planned_tactics)
+                        .map(|plan| {
+                            plan.with_statement_transitions(
+                                planning_replay.planned_statement_transitions.clone(),
+                            )
+                        })
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `step` planned a non-certificate tactic {:?}",
@@ -1487,6 +1483,7 @@ fn replay_linear_tactics_without_frontier_loops(
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => {
                 let mut planning_replay = replay.clone();
                 planning_replay.planned_tactics.clear();
+                planning_replay.planned_statement_transitions.clear();
                 let mut planning_state = state.clone();
                 let mut planning_facts = requirement_pure_facts.clone();
                 let force_all_paths = matches!(tactic, ProofTactic::SmartExecuteAllPaths);
@@ -1507,6 +1504,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 if direct_result.is_none_or(|result| result.is_err()) {
                     planning_replay = replay.clone();
                     planning_replay.planned_tactics.clear();
+                    planning_replay.planned_statement_transitions.clear();
                     planning_state = state.clone();
                     planning_facts = requirement_pure_facts.clone();
                     bounded_execute_from_execution_point(
@@ -1525,6 +1523,11 @@ fn replay_linear_tactics_without_frontier_loops(
                 }
                 let certificate =
                     InternalProofPlan::from_planned_tactics(&planning_replay.planned_tactics)
+                        .map(|plan| {
+                            plan.with_statement_transitions(
+                                planning_replay.planned_statement_transitions.clone(),
+                            )
+                        })
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `execute` planned a non-certificate tactic {:?}",
@@ -1569,6 +1572,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 };
                 let mut planning_replay = replay.clone();
                 planning_replay.planned_tactics.clear();
+                planning_replay.planned_statement_transitions.clear();
                 let mut planning_state = state.clone();
                 let mut planning_facts = requirement_pure_facts.clone();
                 execute_until_statement(
@@ -1587,6 +1591,11 @@ fn replay_linear_tactics_without_frontier_loops(
                 )?;
                 let certificate =
                     InternalProofPlan::from_planned_tactics(&planning_replay.planned_tactics)
+                        .map(|plan| {
+                            plan.with_statement_transitions(
+                                planning_replay.planned_statement_transitions.clone(),
+                            )
+                        })
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `execute_until` planned a non-certificate tactic {:?}",

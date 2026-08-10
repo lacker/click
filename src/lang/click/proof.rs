@@ -1837,6 +1837,36 @@ pub(super) fn initial_claim_context(
         click_function_environment,
         claim_label,
     )?;
+    let definedness_state = project_initial_composite_resource_cores(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        state.clone(),
+        &requirement_pure_facts,
+        claim_label,
+        true,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let definedness = requirement_definedness_propositions(
+        function_block.requires(),
+        parsed_function.parameters(),
+        &arguments,
+        &definedness_state,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    for (surface, kernel) in &definedness {
+        surface_propositions.record_lowering(surface, kernel)?;
+    }
+    // These facts are consequences of accepting the requirements. Keep them
+    // out of resource-body projection, but include them in the certified entry
+    // context and in the opaque rule exported for this function.
+    for (_, kernel) in definedness.into_iter().rev() {
+        if !requirement_pure_facts.contains(&kernel) {
+            requirement_pure_facts.insert(0, kernel);
+        }
+    }
     for requirement in function_block.requires() {
         let Requirement::Resource(resource) = requirement.inner() else {
             continue;

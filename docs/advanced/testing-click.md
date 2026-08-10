@@ -68,14 +68,16 @@ cargo nextest run
 `.config/nextest.toml` reports any test slower than 10 seconds as slow and
 kills any test still running after 60 seconds. Treat a test that trips either
 threshold as a bug: split it, or fix the prover slowdown it is exposing. The
-mdtest and example-project harnesses are exempted up to 20 minutes because
-each is a single test function covering many directly verified fixtures.
+mdtest and example-project harnesses are aggregate tests covering many directly
+verified fixtures, so their outer test-process allowance is not a per-project
+verification budget.
 
 Plain `cargo test` does not apply nextest's outer Rust-test deadline. The
 fixture harnesses still report per-fixture limits from the shared event stream:
 each mdtest gets 30 seconds by default (`MDTEST_TIME_LIMIT`), and each example
-project gets 10 minutes (`CLICK_EXAMPLE_TIME_LIMIT`). Override those variables
-while reducing a slow fixture; neither disables tactic budgets.
+sidecar gets the ordinary `click verify` 30-second limit
+(`CLICK_EXAMPLE_TIME_LIMIT`). Override those variables while reducing a slow
+fixture; neither disables tactic budgets.
 
 Production tactics have two independent bounds. A deterministic work budget
 counts cooperative prover checkpoints, while the existing real-time limit
@@ -94,10 +96,12 @@ documented reason; it is not a way to make one difficult proof pass.
 
 Rust library tests enforce deterministic tactic-work budgets but do not
 inherit the production time limits. Tests specifically about real-time
-interruption install explicit time limits. The mdtest and example integration
-gates use the same deterministic work budgets and retain only their larger
-per-fixture wall-clock deadline as a hang backstop. They no longer rerun a
-successful proof to decide whether a noisy timing observation was
+interruption install explicit time limits. The mdtest integration gate retains
+a per-fixture hang deadline. The example gate deliberately matches ordinary
+`click verify`: production tactic budgets and an independent 30-second
+wall-clock deadline for every sidecar, traversed serially and fail-fast across
+projects. The gates do not rerun a successful proof to decide whether a noisy
+timing observation was
 "confirmed": host throughput cannot change the semantic result in the first
 place.
 

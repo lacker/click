@@ -399,31 +399,59 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     transition: &CertifiedStatementTransition,
     loop_step_policy: LoopStepPolicy,
 ) {
+    let mut exact_premises = transition.planning_premises.clone();
+    for transport in &transition.fact_transports {
+        if !transport.statement_local && !exact_premises.contains(&transport.source) {
+            exact_premises.push(transport.source.clone());
+        }
+    }
+    for obligation in &transition.obligations {
+        if !exact_premises.contains(obligation.proposition()) {
+            exact_premises.push(obligation.proposition().clone());
+        }
+    }
+    let planned_transition = replay.planned_statement_transitions.len();
     replay.planned_tactics.push(match loop_step_policy {
-        LoopStepPolicy::EnterBody => {
-            ProofTactic::CertifiedStatementReplay(Box::new(CertifiedStatementReplay {
-                transition: transition.clone(),
-                next_opaque_call: replay.next_opaque_call,
-                next_verification_variable: replay.next_verification_variable,
-            }))
-        }
-        LoopStepPolicy::ApplyVerifiedRule => {
-            ProofTactic::CertifiedLoopSummaryReplay(Box::new(CertifiedStatementReplay {
-                transition: transition.clone(),
-                next_opaque_call: replay.next_opaque_call,
-                next_verification_variable: replay.next_verification_variable,
-            }))
-        }
+        LoopStepPolicy::EnterBody => ProofTactic::CertifiedStatementStep {
+            prerequisite_derivations: transition.prerequisite_derivations.clone(),
+            exact_premises,
+            planned_transition: Some(planned_transition),
+        },
+        LoopStepPolicy::ApplyVerifiedRule => ProofTactic::CertifiedLoopSummaryStep {
+            prerequisite_derivations: transition.prerequisite_derivations.clone(),
+            exact_premises,
+            planned_transition: Some(planned_transition),
+        },
     });
-    // Facts produced by the statement are not available until the certified
-    // statement replay has run. Their transports are checked as part of that
-    // replay; only facts that existed at statement entry need separate
-    // transport tactics.
+    replay
+        .planned_statement_transitions
+        .push(PlannedStatementTransition {
+            transition: transition.clone(),
+            next_opaque_call: replay.next_opaque_call,
+            next_verification_variable: replay.next_verification_variable,
+        });
+    // Definedness guards are exact `step() using` premises, so Selected
+    // statement execution already carries them to their certified targets.
+    // Other transported facts can still require an explicit surface bridge.
+    let is_evaluator_guard = |fact: &Proposition| {
+        matches!(
+            fact,
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedAddOverflows(_, _)
+                    | ConditionTerm::Bitvector32SignedSubtractOverflows(_, _)
+                    | ConditionTerm::Bitvector32SignedMultiplyOverflows(_, _)
+                    | ConditionTerm::Bitvector32SignedDivideOverflows(_, _)
+                    | ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, _),
+                _
+            )
+        )
+    };
     let external_transports = transition
         .fact_transports
         .iter()
         .filter(|transport| {
             !transport.statement_local
+                && !is_evaluator_guard(&transport.source)
                 && normalize_direct_atomic_memory_loads(&transport.source)
                     != normalize_direct_atomic_memory_loads(&transport.target)
         })
@@ -490,6 +518,7 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
         .push(ProofTactic::CertifiedStatementStep {
             prerequisite_derivations: transition.prerequisite_derivations.clone(),
             exact_premises,
+            planned_transition: None,
         });
 }
 

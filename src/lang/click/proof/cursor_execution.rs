@@ -881,8 +881,8 @@ pub(super) fn record_code_region_program_point_state(
     }
 }
 
-fn replay_certified_statement_transition(
-    evidence: &CertifiedStatementReplay,
+fn apply_planned_statement_transition(
+    evidence: &PlannedStatementTransition,
     current_state: &CState,
     statement: &CStatement,
     available_pure_facts: &[Proposition],
@@ -1029,6 +1029,7 @@ pub(super) fn surface_with_source_site(
     fn annotate(
         proposition: &ClickProposition,
         expression_at_source: &impl Fn(&ContractExpression) -> ContractExpression,
+        point: &ProgramPointRef,
         depth: usize,
     ) -> Result<ClickProposition, ClickError> {
         if depth >= SOURCE_SITE_ANNOTATION_DEPTH_LIMIT {
@@ -1046,34 +1047,38 @@ pub(super) fn surface_with_source_site(
                 operator: *operator,
                 right: expression_at_source(right),
             },
-            ClickProposition::Defined { expression } => ClickProposition::Defined {
-                expression: expression_at_source(expression),
+            ClickProposition::Defined { .. } => ClickProposition::At {
+                selector: VisitSelector::ProgramPoint(point.clone()),
+                proposition: Box::new(proposition.clone()),
             },
             ClickProposition::At { .. } => proposition.clone(),
             ClickProposition::And(left, right) => ClickProposition::And(
-                Box::new(annotate(left, expression_at_source, depth + 1)?),
-                Box::new(annotate(right, expression_at_source, depth + 1)?),
+                Box::new(annotate(left, expression_at_source, point, depth + 1)?),
+                Box::new(annotate(right, expression_at_source, point, depth + 1)?),
             ),
             ClickProposition::Or(left, right) => ClickProposition::Or(
-                Box::new(annotate(left, expression_at_source, depth + 1)?),
-                Box::new(annotate(right, expression_at_source, depth + 1)?),
+                Box::new(annotate(left, expression_at_source, point, depth + 1)?),
+                Box::new(annotate(right, expression_at_source, point, depth + 1)?),
             ),
-            ClickProposition::Not(body) => {
-                ClickProposition::Not(Box::new(annotate(body, expression_at_source, depth + 1)?))
-            }
+            ClickProposition::Not(body) => ClickProposition::Not(Box::new(annotate(
+                body,
+                expression_at_source,
+                point,
+                depth + 1,
+            )?)),
             ClickProposition::Implies(left, right) => ClickProposition::Implies(
-                Box::new(annotate(left, expression_at_source, depth + 1)?),
-                Box::new(annotate(right, expression_at_source, depth + 1)?),
+                Box::new(annotate(left, expression_at_source, point, depth + 1)?),
+                Box::new(annotate(right, expression_at_source, point, depth + 1)?),
             ),
             ClickProposition::ForAll { c_type, name, body } => ClickProposition::ForAll {
                 c_type: *c_type,
                 name: name.clone(),
-                body: Box::new(annotate(body, expression_at_source, depth + 1)?),
+                body: Box::new(annotate(body, expression_at_source, point, depth + 1)?),
             },
             ClickProposition::Exists { c_type, name, body } => ClickProposition::Exists {
                 c_type: *c_type,
                 name: name.clone(),
-                body: Box::new(annotate(body, expression_at_source, depth + 1)?),
+                body: Box::new(annotate(body, expression_at_source, point, depth + 1)?),
             },
             ClickProposition::RangeAll {
                 start,
@@ -1084,7 +1089,7 @@ pub(super) fn surface_with_source_site(
                 start: expression_at_source(start),
                 end: expression_at_source(end),
                 item: item.clone(),
-                body: Box::new(annotate(body, expression_at_source, depth + 1)?),
+                body: Box::new(annotate(body, expression_at_source, point, depth + 1)?),
             },
             ClickProposition::RangeAny {
                 start,
@@ -1095,7 +1100,7 @@ pub(super) fn surface_with_source_site(
                 start: expression_at_source(start),
                 end: expression_at_source(end),
                 item: item.clone(),
-                body: Box::new(annotate(body, expression_at_source, depth + 1)?),
+                body: Box::new(annotate(body, expression_at_source, point, depth + 1)?),
             },
             ClickProposition::PredicateCall { name, arguments } => {
                 ClickProposition::PredicateCall {
@@ -1108,7 +1113,7 @@ pub(super) fn surface_with_source_site(
             | ClickProposition::Loadable { .. } => proposition.clone(),
         })
     }
-    annotate(surface, &expression_at_source, 0)
+    annotate(surface, &expression_at_source, point, 0)
 }
 
 pub(super) fn predicate_call_source_site(surface: &ClickProposition) -> Option<ProgramPointRef> {
@@ -1142,7 +1147,7 @@ pub(super) fn execute_step_from_execution_point(
     tactic_index: usize,
     tactic_name: &str,
     certified_prerequisites: &[PropositionDerivation],
-    certified_replay: Option<&CertifiedStatementReplay>,
+    planned_transition: Option<&PlannedStatementTransition>,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     loop_step_policy: LoopStepPolicy,
@@ -1238,9 +1243,9 @@ pub(super) fn execute_step_from_execution_point(
     }
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
-    let direct_transition = certified_replay
+    let direct_transition = planned_transition
         .map(|evidence| {
-            replay_certified_statement_transition(
+            apply_planned_statement_transition(
                 evidence,
                 &current_state,
                 &step_statement,
@@ -1250,11 +1255,11 @@ pub(super) fn execute_step_from_execution_point(
         })
         .transpose()?;
     let transitions = if let Some(transition) = direct_transition {
-        replay.next_opaque_call = certified_replay
-            .expect("a direct transition requires replay evidence")
+        replay.next_opaque_call = planned_transition
+            .expect("a direct transition requires planning evidence")
             .next_opaque_call;
-        replay.next_verification_variable = certified_replay
-            .expect("a direct transition requires replay evidence")
+        replay.next_verification_variable = planned_transition
+            .expect("a direct transition requires planning evidence")
             .next_verification_variable;
         vec![transition]
     } else {
@@ -1317,6 +1322,7 @@ pub(super) fn execute_step_from_execution_point(
                 .push(ProofTactic::CertifiedStatementStep {
                     prerequisite_derivations,
                     exact_premises,
+                    planned_transition: None,
                 });
         }
 
@@ -1500,6 +1506,55 @@ pub(super) fn execute_step_from_execution_point(
                 LoopStepPolicy::EnterBody
             },
         );
+        // A direct memory-snapshot transport needs no surface `transport`
+        // tactic, but its target still needs a stable source spelling for a
+        // later simple step. Record that spelling at this statement's exit;
+        // otherwise exact evaluator guards such as `defined(x + 1)` become
+        // anonymous after an unrelated local-memory change.
+        let exit_point = ProgramPointRef {
+            region: CodeRegionRef::Statement(statement_index),
+            kind: ProgramPointKind::Exit,
+        };
+        for transport in transition
+            .fact_transports
+            .iter()
+            .filter(|transport| !transport.statement_local)
+        {
+            let surfaces = replay
+                .surface_propositions
+                .surfaces(&transport.source)
+                .cloned()
+                .collect::<Vec<_>>();
+            for surface in surfaces {
+                let exit_surface = surface_with_source_site(&surface, &exit_point)?;
+                replay
+                    .surface_propositions
+                    .record_lowering(&exit_surface, &transport.target)?;
+            }
+        }
+    }
+    if planned_transition.is_some() {
+        let exit_point = ProgramPointRef {
+            region: CodeRegionRef::Statement(statement_index),
+            kind: ProgramPointKind::Exit,
+        };
+        for transport in transition
+            .fact_transports
+            .iter()
+            .filter(|transport| !transport.statement_local)
+        {
+            let surfaces = replay
+                .surface_propositions
+                .surfaces(&transport.source)
+                .cloned()
+                .collect::<Vec<_>>();
+            for surface in surfaces {
+                let exit_surface = surface_with_source_site(&surface, &exit_point)?;
+                replay
+                    .surface_propositions
+                    .record_lowering(&exit_surface, &transport.target)?;
+            }
+        }
     }
     // Preserve a surface name for each store while its exact source statement
     // is still known. The certified equation records the address evaluated
@@ -1895,6 +1950,11 @@ pub(super) fn bounded_execute_from_execution_point(
                 .iter()
                 .map(|frontier| {
                     InternalProofPlan::from_planned_tactics(&frontier.replay.planned_tactics)
+                        .map(|plan| {
+                            plan.with_statement_transitions(
+                                frontier.replay.planned_statement_transitions.clone(),
+                            )
+                        })
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `execute` path planned a non-certificate tactic {:?}",

@@ -190,8 +190,6 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::StepUsing(_)
             | ProofTactic::CertifiedStatementStep { .. }
             | ProofTactic::CertifiedLoopSummaryStep { .. }
-            | ProofTactic::CertifiedStatementReplay(_)
-            | ProofTactic::CertifiedLoopSummaryReplay(_)
             | ProofTactic::CertifiedFactTransport { .. }
             | ProofTactic::FinishCertifiedFactTransports(_)
             | ProofTactic::CertifiedPathAssumption { .. }
@@ -227,8 +225,6 @@ pub(in crate::lang::click) fn tactic_name(tactic: &ProofTactic) -> &'static str 
         ProofTactic::Step | ProofTactic::StepUsing(_) => "step",
         ProofTactic::CertifiedStatementStep { .. } => "step",
         ProofTactic::CertifiedLoopSummaryStep { .. } => "loop",
-        ProofTactic::CertifiedStatementReplay(_) => "step",
-        ProofTactic::CertifiedLoopSummaryReplay(_) => "loop",
         ProofTactic::SmartStep => "step",
         ProofTactic::SmartExecute => "execute",
         ProofTactic::SmartExecuteAllPaths => "execute",

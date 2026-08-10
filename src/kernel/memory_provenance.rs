@@ -1888,6 +1888,26 @@ fn transport_framed_atomic_condition(
             let (left, right) = binary(left, right)?;
             ConditionTerm::equal(left, right)
         }
+        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::signed_add_overflows(left, right)
+        }
+        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::signed_subtract_overflows(left, right)
+        }
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::signed_multiply_overflows(left, right)
+        }
+        ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::signed_divide_overflows(left, right)
+        }
+        ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::signed_shift_left_overflows(left, right)
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::pointer_offset_equal(
             transport_framed_atomic_pointer_offset(left, after, assumptions)?,
             transport_framed_atomic_pointer_offset(right, after, assumptions)?,
@@ -1902,13 +1922,7 @@ fn transport_framed_atomic_condition(
                 offset: transport_framed_atomic_pointer_offset(&right.offset, after, assumptions)?,
             },
         ),
-        ConditionTerm::Constant(_)
-        | ConditionTerm::Variable(_)
-        | ConditionTerm::Bitvector32SignedAddOverflows(_, _)
-        | ConditionTerm::Bitvector32SignedSubtractOverflows(_, _)
-        | ConditionTerm::Bitvector32SignedMultiplyOverflows(_, _)
-        | ConditionTerm::Bitvector32SignedDivideOverflows(_, _)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, _) => return None,
+        ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => return None,
     })
 }
 

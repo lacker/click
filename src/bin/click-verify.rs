@@ -7,8 +7,9 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use click::cli::{
-    files_with_extension, find_projects, format_duration, looks_like_source_location,
-    parse_duration, parse_source_location, read_verifying_sources, source_refs,
+    DEFAULT_VERIFY_TIME_LIMIT, files_with_extension, find_projects, format_duration,
+    looks_like_source_location, parse_duration, parse_source_location, read_verifying_sources,
+    source_refs,
 };
 use click::lang::click::{
     c0_function_names, c0_incremental_selection, verify_c0_sources, verify_c0_sources_at,
@@ -29,7 +30,6 @@ itself when it holds sidecars, or each immediate subdirectory that does. This
 is the command to run after applying an expansion emitted by `click expand`.
 Each sidecar has a 30-second limit by default.";
 
-const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(30);
 const INCREMENTAL_CACHE_SCHEMA: &str = "click-verified-v1";
 type LoadedSidecar = (String, Vec<(String, String)>);
 
@@ -80,7 +80,7 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
 
 fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
     let mut target = None;
-    let mut time_limit = DEFAULT_TIME_LIMIT;
+    let mut time_limit = DEFAULT_VERIFY_TIME_LIMIT;
     let mut changed_since = None;
     let mut explain = false;
     let mut parse_options = true;
@@ -624,7 +624,7 @@ mod tests {
             parse_arguments(["example.click".to_string()]),
             Ok(Arguments {
                 target: "example.click".to_string(),
-                time_limit: DEFAULT_TIME_LIMIT,
+                time_limit: DEFAULT_VERIFY_TIME_LIMIT,
                 changed_since: None,
                 explain: false,
             })
@@ -651,7 +651,7 @@ mod tests {
             ]),
             Ok(Arguments {
                 target: "examples".to_string(),
-                time_limit: DEFAULT_TIME_LIMIT,
+                time_limit: DEFAULT_VERIFY_TIME_LIMIT,
                 changed_since: Some("HEAD~1".to_string()),
                 explain: true,
             })

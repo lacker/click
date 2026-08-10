@@ -941,7 +941,11 @@ fn memory_range_structurally_covers(
     available: &CMemoryRange,
     required: &CMemoryRange,
 ) -> Option<bool> {
-    let base_delta = required.base().element_index_from_base(available.base())?;
+    let base_delta = if required.base() == available.base() {
+        Bitvector32Term::Constant(0)
+    } else {
+        required.base().element_index_from_base(available.base())?
+    };
     let available_start = available.start().as_const()? as i32;
     let available_end = available.end().as_const()? as i32;
     let required_start =

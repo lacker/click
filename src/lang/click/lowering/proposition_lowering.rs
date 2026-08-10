@@ -84,7 +84,9 @@ impl KernelPropositionLowerer {
                     )
                 })?;
                 let state = self.values.iter().fold(
-                    CState::new().with_memory(self.memory.clone()),
+                    self.resource_state
+                        .clone()
+                        .unwrap_or_else(|| CState::new().with_memory(self.memory.clone())),
                     |state, (name, value)| state.with_local(name.clone(), value.clone()),
                 );
                 c_expression_definedness_proposition(&state, &expression).map_err(|limit| {

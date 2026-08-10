@@ -228,6 +228,120 @@ pub(in crate::lang::click) fn requirement_propositions(
     Ok(propositions)
 }
 
+/// Checked definedness facts implicit in accepting arithmetic requirements.
+///
+/// Evaluating a C comparison containing partial arithmetic first establishes
+/// that arithmetic's evaluator guards. Record those guards explicitly so a
+/// later call certificate can name the exact fact it consumed instead of
+/// asking a simple statement step to repeat arithmetic reasoning.
+pub(in crate::lang::click) fn requirement_definedness_surfaces(
+    requires: &[Requirement],
+) -> Vec<ClickProposition> {
+    fn contains_partial_arithmetic(expression: &ContractExpression) -> bool {
+        match expression {
+            ContractExpression::Add(_, _)
+            | ContractExpression::Subtract(_, _)
+            | ContractExpression::Multiply(_, _)
+            | ContractExpression::Divide(_, _)
+            | ContractExpression::Remainder(_, _)
+            | ContractExpression::ShiftLeft(_, _)
+            | ContractExpression::ShiftRight(_, _) => true,
+            ContractExpression::BitwiseAnd(left, right)
+            | ContractExpression::BitwiseOr(left, right)
+            | ContractExpression::BitwiseXor(left, right) => {
+                contains_partial_arithmetic(left) || contains_partial_arithmetic(right)
+            }
+            ContractExpression::BitwiseNot(body) => contains_partial_arithmetic(body),
+            _ => false,
+        }
+    }
+
+    fn collect<'a>(
+        proposition: &'a ClickProposition,
+        expressions: &mut Vec<&'a ContractExpression>,
+    ) {
+        match proposition {
+            ClickProposition::Comparison { left, right, .. } => {
+                if contains_partial_arithmetic(left) {
+                    expressions.push(left);
+                }
+                if contains_partial_arithmetic(right) {
+                    expressions.push(right);
+                }
+            }
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                collect(left, expressions);
+                collect(right, expressions);
+            }
+            ClickProposition::Not(body) => collect(body, expressions),
+            // Bound-variable definedness must remain under its quantifier.
+            ClickProposition::ForAll { .. }
+            | ClickProposition::Exists { .. }
+            | ClickProposition::RangeAll { .. }
+            | ClickProposition::RangeAny { .. }
+            | ClickProposition::Separate { .. }
+            | ClickProposition::Contains { .. }
+            | ClickProposition::Loadable { .. }
+            | ClickProposition::Defined { .. }
+            | ClickProposition::At { .. }
+            | ClickProposition::PredicateCall { .. } => {}
+        }
+    }
+
+    let mut result = Vec::new();
+    for requirement in requires {
+        let Requirement::Proposition(proposition) = requirement.inner() else {
+            continue;
+        };
+        let mut expressions = Vec::new();
+        collect(proposition, &mut expressions);
+        for expression in expressions {
+            if contract_expression_to_c_fragment(expression).is_none() {
+                continue;
+            }
+            let surface = ClickProposition::Defined {
+                expression: expression.clone(),
+            };
+            if !result.contains(&surface) {
+                result.push(surface);
+            }
+        }
+    }
+    result
+}
+
+pub(in crate::lang::click) fn requirement_definedness_propositions(
+    requires: &[Requirement],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<(ClickProposition, Proposition)>, ClickError> {
+    let mut result = Vec::new();
+    for surface in requirement_definedness_surfaces(requires) {
+        let kernel = requirement_proposition_prop(
+            parameters,
+            arguments,
+            state,
+            &surface,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        if matches!(normalize_proposition(&kernel), SimpProposition::True)
+            || result
+                .iter()
+                .any(|(_, fact): &(ClickProposition, Proposition)| fact == &kernel)
+        {
+            continue;
+        }
+        result.push((surface, kernel));
+    }
+    Ok(result)
+}
+
 pub(in crate::lang::click) fn resource_context_from_requirements(
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],

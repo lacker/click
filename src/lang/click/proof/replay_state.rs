@@ -77,6 +77,10 @@ pub(super) struct TacticReplayState {
     /// concrete path before any contract claim is exported.
     pub(super) execution_abstraction: bool,
     pub(super) planned_tactics: Vec<ProofTactic>,
+    /// Semantic transition evidence used only while lowering a smart plan to
+    /// its `SimpleProof`. It is deliberately separate from `ProofTactic` so
+    /// internal execution artifacts cannot masquerade as proof steps.
+    pub(super) planned_statement_transitions: Vec<PlannedStatementTransition>,
     pub(super) surface_propositions: SurfacePropositionMap,
     pub(super) simple_proof_builder: SimpleProofBuilder,
     pub(super) deferred_tactic_capture: Option<DeferredTacticCapture>,
@@ -109,6 +113,9 @@ pub(super) struct SimpleProofBuilder {
     pub(super) blocker: Option<String>,
     pub(super) last_step_entry: Option<ProgramPointRef>,
     pub(super) path_choices: Vec<SurfacePathChoice>,
+    /// Prevents the planner-metadata wrapper for a statement transition from
+    /// re-entering itself while it emits the ordinary surface step.
+    pub(super) lowering_planned_transition: bool,
 }
 
 #[derive(Clone)]

@@ -153,6 +153,10 @@ pub const DEFAULT_SIMPLE_TACTIC_LIMIT: Duration = Duration::from_millis(500);
 pub const DEFAULT_SMART_TACTIC_LIMIT: Duration = Duration::from_secs(2);
 pub const DEFAULT_CONTROL_TACTIC_LIMIT: Duration = Duration::from_secs(6);
 pub const DEFAULT_EXPANSION_TIME_LIMIT: Duration = Duration::from_secs(60);
+/// Whole-sidecar deadline used by ordinary `click verify` and verification
+/// fixtures. Directory verification applies it independently to each
+/// sidecar, so one slow project cannot consume the following projects' time.
+pub const DEFAULT_VERIFY_TIME_LIMIT: Duration = Duration::from_secs(30);
 
 /// Disables tactic budget enforcement in the fixture harnesses, for A/B runs
 /// and archaeology on old trees.

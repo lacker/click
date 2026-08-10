@@ -286,6 +286,16 @@ pub(in crate::lang::click) fn certified_statement_transitions(
         planning_premises.retain(|premise| exact_fact_is_available(premise, pure_facts));
         let mut leaf_premises = Vec::new();
         for premise in planning_premises {
+            // An exact consumed premise is already the smallest stable
+            // certificate dependency. Do not replace it with a different
+            // ambient fact that can re-derive it: that would turn a simple
+            // statement step back into heuristic reasoning during replay.
+            if pure_facts.contains(&premise) {
+                if !leaf_premises.contains(&premise) {
+                    leaf_premises.push(premise);
+                }
+                continue;
+            }
             let alternatives = pure_facts
                 .iter()
                 .filter(|available| *available != &premise)

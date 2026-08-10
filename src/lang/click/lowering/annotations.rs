@@ -243,6 +243,12 @@ pub(in crate::lang::click) fn function_contract_summary(
     };
     let mut opaque_contract_supported = true;
     let mut requires = Vec::new();
+    for proposition in requirement_definedness_surfaces(function_block.requires()) {
+        match lowerer.click_proposition_to_spec_proposition(&proposition, &context) {
+            Ok(proposition) => requires.push(proposition),
+            Err(_) => opaque_contract_supported = false,
+        }
+    }
     for requirement in function_block.requires() {
         let proposition = match requirement.inner() {
             Requirement::Proposition(proposition) => proposition.clone(),

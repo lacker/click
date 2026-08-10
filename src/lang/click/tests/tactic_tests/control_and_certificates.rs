@@ -322,6 +322,7 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         ProofTactic::CertifiedStatementStep {
             prerequisite_derivations: Vec::new(),
             exact_premises: Vec::new(),
+            planned_transition: None,
         }
         .class(),
         TacticClass::Internal(InternalTacticKind::CertifiedStatementTransition)
@@ -330,6 +331,7 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         ProofTactic::CertifiedLoopSummaryStep {
             prerequisite_derivations: Vec::new(),
             exact_premises: Vec::new(),
+            planned_transition: None,
         }
         .class(),
         TacticClass::Internal(InternalTacticKind::CertifiedLoopSummaryTransition)
@@ -486,6 +488,7 @@ fn simple_proof_has_no_smart_or_internal_step_variant() {
     let internal = SimpleProof::from_proof_tactics(&[ProofTactic::CertifiedStatementStep {
         prerequisite_derivations: Vec::new(),
         exact_premises: Vec::new(),
+        planned_transition: None,
     }])
     .expect_err("internal derivations are not simple proof steps");
     assert_eq!(
@@ -528,6 +531,7 @@ fn tactic_certificate_rejects_internal_replay_evidence() {
     let error = SimpleProof::from_proof_tactics(&[ProofTactic::CertifiedStatementStep {
         prerequisite_derivations: Vec::new(),
         exact_premises: Vec::new(),
+        planned_transition: None,
     }])
     .expect_err("internal replay evidence is not a surface tactic");
 
