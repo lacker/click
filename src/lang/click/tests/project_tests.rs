@@ -87,6 +87,56 @@ int32 caller(int32 x) {
 }
 
 #[test]
+fn tactic_expansion_loads_callees_after_the_selected_source_tactic() {
+    let sources = [
+        ("first.c", "int32 first(int32 x) { return x; }"),
+        ("later.c", "int32 later(int32 x) { return x; }"),
+        (
+            "caller.c",
+            "int32 caller(int32 x) { int32 a = first(x); int32 b = later(x); return a + b; }",
+        ),
+    ];
+    let click_source = r#"
+verifying "first.c";
+verifying "later.c";
+verifying "caller.c";
+
+int32 first(int32 x) { ensures result == x; } by simp;
+int32 later(int32 x) { ensures result == x; } by simp;
+int32 caller(int32 x) { ensures result == x + x; } by {
+    step();
+    step();
+    execute();
+    simp();
+}
+"#;
+    let source_map = sources.iter().copied().collect::<BTreeMap<_, _>>();
+    let file = parse_c0_click_file(click_source, &sources).unwrap();
+    let parsed = parse_verified_sources(&file, &source_map).unwrap();
+    let required = tactic_expansion_required_functions(
+        &file,
+        &parsed,
+        (
+            ProofSite::FunctionClaim {
+                function_name: "caller".to_string(),
+                claim: CProofClaim::Grouped,
+            },
+            Some(0),
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(
+        required,
+        BTreeSet::from([
+            "caller".to_string(),
+            "first".to_string(),
+            "later".to_string(),
+        ])
+    );
+}
+
+#[test]
 fn modular_call_snapshot_anchor_replays_with_owned_resource() {
     let init_c = r#"
 struct box {

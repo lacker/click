@@ -1029,7 +1029,7 @@ pub(in crate::lang::click) fn tactic_expansion_required_functions(
             .map(|function| function.signature().name().to_string())
             .collect());
     };
-    let tactic_index = tactic_index.ok_or_else(|| {
+    let _tactic_index = tactic_index.ok_or_else(|| {
         ClickError::new(format!(
             "whole-proof capture is not supported for function claim {claim:?}"
         ))
@@ -1039,7 +1039,7 @@ pub(in crate::lang::click) fn tactic_expansion_required_functions(
         .iter()
         .find(|function| function.signature().name() == function_name)
         .ok_or_else(|| ClickError::new(format!("unknown function `{function_name}`")))?;
-    let tactics = match claim {
+    let _tactics = match claim {
         CProofClaim::Grouped => function_block.grouped_proof().and_then(Proof::tactics),
         CProofClaim::Ensure(index) => function_block
             .ensures()
@@ -1061,40 +1061,14 @@ pub(in crate::lang::click) fn tactic_expansion_required_functions(
         .1;
     let statement_calls = c0_statement_calls(parsed_function.body());
     let mut required = BTreeSet::from([function_name]);
-    // Capturing a tactic in one claim still verifies every earlier claim of
-    // the same function first. Those proofs may execute farther through the
-    // body than the selected claim has reached. When there is no earlier
-    // claim, keep the narrower prefix selection: expansion must still be able
-    // to emit before an unrelated invalid suffix or untouched callee is
-    // checked by the ordinary whole-file verifier.
-    let has_earlier_claim = match claim {
-        CProofClaim::Grouped => false,
-        CProofClaim::Effect(index) => index > 0,
-        CProofClaim::Ensure(index) => !function_block.effects().is_empty() || index > 0,
-    };
-    let structural_traversal = proof::proof_contains_frontier_loop(match claim {
-        CProofClaim::Grouped => function_block
-            .grouped_proof()
-            .expect("grouped tactics came from a grouped proof"),
-        CProofClaim::Ensure(index) => function_block
-            .ensures()
-            .get(index)
-            .expect("ensure tactics came from an ensure clause")
-            .proof(),
-        CProofClaim::Effect(index) => function_block
-            .effects()
-            .get(index)
-            .expect("effect tactics came from an effect clause")
-            .proof(),
-    });
-    let touched_end = if has_earlier_claim || structural_traversal {
-        statement_calls.len()
-    } else {
-        proof_statement_prefix_end(tactics, tactic_index, statement_calls.len())
-    };
+    // Expansion is defined only for an already-correct complete proof unit.
+    // Capturing some post-execution tactics also legitimately continues past
+    // their source location before the surface certificate is complete. Load
+    // every callee of the selected function so capture and final rewritten
+    // verification use the same dependency closure. Unrelated functions are
+    // still excluded by this targeted traversal.
     let mut pending = statement_calls
         .iter()
-        .take(touched_end)
         .flatten()
         .cloned()
         .collect::<Vec<_>>();
@@ -1163,34 +1137,6 @@ pub(in crate::lang::click) fn tactic_expansion_dependency_context(
         .collect::<Vec<_>>();
     Ok((!rendered.is_empty())
         .then(|| format!("required dependency paths: {}", rendered.join(", "))))
-}
-
-pub(in crate::lang::click) fn proof_statement_prefix_end(
-    tactics: &[ProofTactic],
-    selected_tactic: usize,
-    statement_count: usize,
-) -> usize {
-    let mut cursor = 0_usize;
-    let Some(prefix) = tactics.get(..=selected_tactic) else {
-        return statement_count;
-    };
-    for tactic in prefix {
-        match tactic {
-            ProofTactic::StepUsing(_) | ProofTactic::SmartStep => cursor = cursor.saturating_add(1),
-            ProofTactic::ExecuteUntil(CodeRegionRef::Statement(target)) => {
-                cursor = target.saturating_add(1)
-            }
-            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => {
-                cursor = statement_count
-            }
-            ProofTactic::If(_)
-            | ProofTactic::Branch(_)
-            | ProofTactic::ExecuteUntil(CodeRegionRef::Function | CodeRegionRef::Loop(_))
-            | ProofTactic::ExecuteUntil(CodeRegionRef::Label(_)) => return statement_count,
-            _ => {}
-        }
-    }
-    cursor.min(statement_count)
 }
 
 pub(in crate::lang::click) fn verification_required_functions(

@@ -714,7 +714,7 @@ int32 caller() {
 }
 
 #[test]
-fn selected_tactic_emits_before_the_normal_verifier_checks_the_suffix() {
+fn selected_tactic_requires_the_complete_function_dependency_closure() {
     let zero_c = "int32 zero() { return 1; }";
     let caller_c = "int32 caller() { int32 value; value = zero(); return value; }";
     let click_source = r#"
@@ -738,12 +738,9 @@ int32 caller() {
 "#;
     let sources = [("zero.c", zero_c), ("caller.c", caller_c)];
 
-    let expanded =
+    let error =
         expand_top_level_tactic_for_test(click_source, &sources, "caller", CProofClaim::Grouped, 0)
-            .expect("capture should emit without running the ordinary full verifier");
-
-    let error = verify_c0_sources(&expanded, &sources)
-        .expect_err("the separate verification step should reject the invalid sidecar");
+            .expect_err("capture must reject an invalid callee used later in the proof unit");
     assert!(error.message().contains("zero.ensures_0"));
     assert!(
         error
