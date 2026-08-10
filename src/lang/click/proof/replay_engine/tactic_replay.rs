@@ -45,6 +45,7 @@ fn tactic_is_deferred_post_execution(tactic: &ProofTactic) -> bool {
 }
 
 fn execute_frontier_local_loop(
+    expansion_capture: Option<&mut ExpansionCapture>,
     loop_template: &StructuralClause,
     replay: &mut TacticReplayState,
     state: &mut CState,
@@ -179,6 +180,7 @@ fn execute_frontier_local_loop(
         .cloned()
         .collect();
     let _exit_contexts = verify_execution_proofs_forward(
+        expansion_capture,
         &current_loop,
         vec![ExecutionProofContext {
             state: state.clone(),
@@ -320,6 +322,7 @@ fn execute_frontier_local_loop(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn replay_linear_tactics(
     mut context: ProofReplayContext,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
@@ -340,6 +343,7 @@ pub(in crate::lang::click::proof) fn replay_linear_tactics(
         };
         context = replay_linear_tactics_without_frontier_loops(
             context,
+            expansion_capture.as_deref_mut(),
             function_block,
             parsed_function,
             claims,
@@ -355,6 +359,7 @@ pub(in crate::lang::click::proof) fn replay_linear_tactics(
         )?;
         context = replay_frontier_local_loop_tactic(
             context,
+            expansion_capture.as_deref_mut(),
             loop_clause,
             indexed_tactic.index,
             indexed_tactic.source_index,
@@ -372,6 +377,7 @@ pub(in crate::lang::click::proof) fn replay_linear_tactics(
     }
     replay_linear_tactics_without_frontier_loops(
         context,
+        expansion_capture,
         function_block,
         parsed_function,
         claims,
@@ -390,6 +396,7 @@ pub(in crate::lang::click::proof) fn replay_linear_tactics(
 #[allow(clippy::too_many_arguments)]
 fn replay_frontier_local_loop_tactic(
     context: ProofReplayContext,
+    expansion_capture: Option<&mut ExpansionCapture>,
     loop_clause: &StructuralClause,
     tactic_index: usize,
     source_index: usize,
@@ -415,12 +422,10 @@ fn replay_frontier_local_loop_tactic(
         mut replay,
         branch_path,
     } = context;
+    let mut expansion_capture = expansion_capture;
     let mut scope = Some(begin_tactic_surface_scope(&mut replay));
-    let capture_this_tactic = begin_tactic_expansion_capture(
-        source_index,
-        &ProofTactic::Loop(loop_clause.clone()),
-        &replay,
-    );
+    let capture_this_tactic =
+        begin_tactic_expansion_capture(expansion_capture.as_deref_mut(), source_index, &replay);
     let _timing = TacticTiming::new(
         claim_label,
         tactic_index,
@@ -429,6 +434,7 @@ fn replay_frontier_local_loop_tactic(
         replay.frontier.next_statement_index,
     );
     execute_frontier_local_loop(
+        expansion_capture.as_deref_mut(),
         loop_clause,
         &mut replay,
         &mut state,
@@ -447,7 +453,7 @@ fn replay_frontier_local_loop_tactic(
     )?;
     let slice = end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
     if capture_this_tactic {
-        return Err(finish_tactic_expansion_capture(&slice, false));
+        finish_tactic_expansion_capture(expansion_capture, &slice, false);
     }
     Ok(ProofReplayContext {
         state,
@@ -460,6 +466,7 @@ fn replay_frontier_local_loop_tactic(
 #[allow(clippy::too_many_arguments)]
 fn replay_linear_tactics_without_frontier_loops(
     context: ProofReplayContext,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
@@ -496,7 +503,8 @@ fn replay_linear_tactics_without_frontier_loops(
             && tactic_is_deferred_post_execution(tactic);
         let deferred_region_simp = replay.region_proof && matches!(tactic, ProofTactic::Simp);
         let mut scope = Some(begin_tactic_surface_scope(&mut replay));
-        let capture_this_tactic = begin_tactic_expansion_capture(source_index, tactic, &replay);
+        let capture_this_tactic =
+            begin_tactic_expansion_capture(expansion_capture.as_deref_mut(), source_index, &replay);
         if capture_this_tactic && deferred_post_execution {
             replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                 tactic_index,
@@ -667,7 +675,7 @@ fn replay_linear_tactics_without_frontier_loops(
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
             let slice = end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
             if capture_this_tactic {
-                return Err(finish_tactic_expansion_capture(&slice, false));
+                finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &slice, false);
             }
             continue;
         }
@@ -733,7 +741,7 @@ fn replay_linear_tactics_without_frontier_loops(
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
             let slice = end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
             if capture_this_tactic {
-                return Err(finish_tactic_expansion_capture(&slice, false));
+                finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &slice, false);
             }
             continue;
         }
@@ -2477,7 +2485,7 @@ fn replay_linear_tactics_without_frontier_loops(
         }
         let slice = end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
         if capture_this_tactic && !deferred_post_execution && !deferred_region_simp {
-            return Err(finish_tactic_expansion_capture(&slice, false));
+            finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &slice, false);
         }
     }
 

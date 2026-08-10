@@ -1304,6 +1304,7 @@ fn add_have_case_assumptions(
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     contexts: Vec<ProofReplayContext>,
     source_path: &str,
     function_block: &FunctionBlock,
@@ -1324,8 +1325,13 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
     let mut captured_paths = Vec::new();
     for context in contexts {
         let path_choices = context.replay.deferred_expansion_path_choices.clone();
-        resume_deferred_tactic_expansion_capture(&context.replay)?;
-        match finish_ordered_proof_replay(
+        resume_deferred_tactic_expansion_capture(expansion_capture.as_deref_mut(), &context.replay)?;
+        let path_had_deferred_capture = context.replay.deferred_tactic_capture.is_some();
+        let result_before = expansion_capture
+            .as_deref()
+            .is_some_and(|capture| capture.result.is_some());
+        let theorems = finish_ordered_proof_replay(
+            expansion_capture.as_deref_mut(),
             context,
             source_path,
             function_block,
@@ -1341,30 +1347,31 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
             arguments,
             tactics,
             &mut certification_cache,
-        ) {
-            Ok(theorems) => {
-                for theorem in theorems {
-                    if !verified.contains(&theorem) {
-                        verified.push(theorem);
-                    }
-                }
+        )?;
+        for theorem in theorems {
+            if !verified.contains(&theorem) {
+                verified.push(theorem);
             }
-            Err(error) if error.is_expansion_complete() => {
-                let captured = take_path_tactic_expansion_capture()?;
-                captured_paths.push(SimpleProofBuilder {
-                    steps: SimpleProof::from_proof_tactics(&captured)
-                        .map_err(|error| {
-                            ClickError::new(format!(
-                                "captured branch expansion was not a simple proof: {error:?}"
-                            ))
-                        })?
-                        .steps()
-                        .to_vec(),
-                    path_choices,
-                    ..SimpleProofBuilder::default()
-                });
-            }
-            Err(error) => return Err(error),
+        }
+        let path_finished_capture = path_had_deferred_capture
+            && !result_before
+            && expansion_capture
+                .as_deref()
+                .is_some_and(|capture| capture.result.is_some());
+        if path_finished_capture {
+            let captured = take_path_tactic_expansion_capture(expansion_capture.as_deref_mut())?;
+            captured_paths.push(SimpleProofBuilder {
+                steps: SimpleProof::from_proof_tactics(&captured)
+                    .map_err(|error| {
+                        ClickError::new(format!(
+                            "captured branch expansion was not a simple proof: {error:?}"
+                        ))
+                    })?
+                    .steps()
+                    .to_vec(),
+                path_choices,
+                ..SimpleProofBuilder::default()
+            });
         }
     }
     if !captured_paths.is_empty() {
@@ -1381,13 +1388,14 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
             })?
         };
         let allow_empty = tactics.is_empty();
-        return Err(finish_tactic_expansion_capture(
+        finish_tactic_expansion_capture(
+            expansion_capture,
             &SimpleProofBuilder {
                 steps: tactics,
                 ..SimpleProofBuilder::default()
             },
             allow_empty,
-        ));
+        );
     }
     Ok(verified)
 }

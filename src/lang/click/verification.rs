@@ -101,6 +101,26 @@ pub fn verify_c0_sources(
     })
 }
 
+/// Runs one ordinary verification while filling in the given expansion
+/// capture. Verification behaves identically with or without the capture;
+/// only the capture's `result` differs.
+pub(in crate::lang::click) fn verify_c0_sources_with_expansion_capture(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    expansion_capture: &mut ExpansionCapture,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        verify_c0_sources_with_environment(
+            click_source,
+            c_sources,
+            None,
+            None,
+            Some(expansion_capture),
+        )
+        .map(|(verified, _)| verified)
+    })
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0IncrementalSelection {
     pub selected_functions: Vec<String>,
@@ -274,7 +294,7 @@ impl C0VerificationSession {
         c_sources: &[(&str, &str)],
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
         let (verified, verified_function_environment) =
-            verify_c0_sources_with_environment(click_source, c_sources, None, None)?;
+            verify_c0_sources_with_environment(click_source, c_sources, None, None, None)?;
         let baseline_file = parse_c0_click_file(click_source, c_sources)?;
         Ok((
             Self {
@@ -360,6 +380,7 @@ impl C0VerificationSession {
             &c_sources,
             Some(target),
             initial_environment,
+            None,
         )
         .map(|(verified, _)| verified)
     }
@@ -384,7 +405,7 @@ pub(in crate::lang::click) fn verify_c0_sources_targeted(
     c_sources: &[(&str, &str)],
     verification_target: Option<VerificationTarget>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    verify_c0_sources_with_environment(click_source, c_sources, verification_target, None)
+    verify_c0_sources_with_environment(click_source, c_sources, verification_target, None, None)
         .map(|(verified, _)| verified)
 }
 
@@ -393,6 +414,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
     c_sources: &[(&str, &str)],
     verification_target: Option<VerificationTarget>,
     initial_function_environment: Option<CExecutionEnvironment>,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
 ) -> Result<(Vec<VerifiedCTheorem>, CExecutionEnvironment), ClickError> {
     check_verification_deadline()?;
     let (file, parsed_sources, selected_functions) = {
@@ -401,8 +423,15 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
         let struct_layouts = parse_c_struct_layouts(&c_sources)?;
         let file = parser::parse_with_struct_layouts(click_source, struct_layouts)?;
         let parsed_sources = parse_verified_sources(&file, &c_sources)?;
-        let expansion_functions = proof::active_c0_tactic_expansion_request()
-            .map(|request| tactic_expansion_required_functions(&file, &parsed_sources, request))
+        let expansion_functions = expansion_capture
+            .as_deref()
+            .map(|capture| {
+                tactic_expansion_required_functions(
+                    &file,
+                    &parsed_sources,
+                    (capture.site.clone(), capture.source_index),
+                )
+            })
             .transpose()?;
         let selected_functions = if expansion_functions.is_some() {
             expansion_functions
@@ -563,6 +592,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
         check_signature(&function_block.signature, parsed_function, source_path)?;
         validate_region_proof_clauses(&function_block, parsed_function)?;
         let verified_loop_rules = verify_loop_execution_proofs(
+            expansion_capture.as_deref_mut(),
             &function_block,
             parsed_function,
             &function_environment,
@@ -592,6 +622,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
         if let Some(grouped_proof) = function_block.grouped_proof() {
             let theorems = match grouped_proof {
                 Proof::Tactic(SmartTactic::Auto) => prove_claims_by_grouped_auto(
+                    expansion_capture.as_deref_mut(),
                     source_path,
                     &function_block,
                     parsed_function,
@@ -603,6 +634,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                     &theorem_environment,
                 )?,
                 Proof::Script(tactics) => prove_claims_by_grouped_tactics(
+                    expansion_capture.as_deref_mut(),
                     source_path,
                     &function_block,
                     parsed_function,
@@ -633,6 +665,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                 };
                 let theorems = match claim.proof() {
                     Proof::Default | Proof::Tactic(SmartTactic::Auto) => prove_claim_by_auto(
+                        expansion_capture.as_deref_mut(),
                         source_path,
                         &function_block,
                         parsed_function,
@@ -645,6 +678,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                         &theorem_environment,
                     )?,
                     Proof::Tactic(SmartTactic::Frame) => prove_claim_by_frame(
+                        expansion_capture.as_deref_mut(),
                         source_path,
                         &function_block,
                         parsed_function,
@@ -657,6 +691,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                         &theorem_environment,
                     )?,
                     Proof::Tactic(SmartTactic::Simp) => prove_claim_by_simp(
+                        expansion_capture.as_deref_mut(),
                         source_path,
                         &function_block,
                         parsed_function,
@@ -669,6 +704,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                         &theorem_environment,
                     )?,
                     Proof::Script(tactics) => prove_claim_by_tactics(
+                        expansion_capture.as_deref_mut(),
                         source_path,
                         &function_block,
                         parsed_function,

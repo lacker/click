@@ -2,6 +2,7 @@ use super::*;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     loop_index: usize,
     proof: &Proof,
     clause: &StructuralClause,
@@ -151,8 +152,9 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                         initialize_statement_index,
                     )
                 });
-                let plan = || {
+                let plan = |expansion_capture: Option<&mut ExpansionCapture>| {
                     plan_point_pure_goal_certificate(
+                        expansion_capture,
                         &initialize_site,
                         proposition,
                         proof,
@@ -171,21 +173,15 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                         environment.theorem_environment,
                     )
                 };
+                // Nested frontier-loop phase tactics use absolute source
+                // indices in the enclosing proof. The per-invariant pure
+                // planner sees only the local phase script, so route no
+                // expansion capture into it there; the phase merger below
+                // retains the expansion at the absolute source site.
                 let direct_plan = if environment.frontier_loop_source.is_some() {
-                    // Nested frontier-loop phase tactics use absolute source
-                    // indices in the enclosing proof. The per-invariant pure
-                    // planner sees only the local phase script, so let the
-                    // phase merger below retain the expansion at the absolute
-                    // source site instead of allowing a local planner to
-                    // misinterpret that index.
-                    SUPPRESS_TACTIC_EXPANSION_CAPTURE.with(|suppressed| {
-                        let previous = suppressed.replace(true);
-                        let result = plan();
-                        suppressed.set(previous);
-                        result
-                    })
+                    plan(None)
                 } else {
-                    plan()
+                    plan(expansion_capture.as_deref_mut())
                 }?;
                 let (planned_fact, planned_certificate) = direct_plan;
                 initialization_surface_propositions
@@ -424,6 +420,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
             match execute_internal_proof(
                 &program,
                 context.clone(),
+                None,
                 environment.function_block,
                 environment.parsed_function,
                 &[],
@@ -480,6 +477,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
 
 #[allow(clippy::too_many_arguments)]
 fn verify_structural_effect_proof(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     loop_index: usize,
     item_index: usize,
     item: &StructuralItem,
@@ -531,9 +529,11 @@ fn verify_structural_effect_proof(
         ))
     })?;
     if environment.frontier_loop_source.is_some()
-        && selected_tactic_index_for_site(&site) == Some(effect_source_index)
+        && selected_tactic_index_for_site(expansion_capture.as_deref(), &site)
+            == Some(effect_source_index)
     {
         record_proof_site_tactic_expansion(
+            expansion_capture.as_deref_mut(),
             &site,
             effect_source_index,
             &certificate.to_proof_tactics(),
@@ -559,6 +559,7 @@ fn verify_structural_effect_proof(
             replay,
             branch_path: context.branch_path.clone(),
         },
+        expansion_capture,
         environment.function_block,
         environment.parsed_function,
         &[],
@@ -611,6 +612,7 @@ pub(in crate::lang::click::proof) struct LoopPreservationProofResult {
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     loop_index: usize,
     tactics: &[ProofTactic],
     first_generated_tactic_index: usize,
@@ -709,6 +711,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             replay,
             branch_path: Vec::new(),
         },
+        expansion_capture.as_deref_mut(),
         environment.function_block,
         environment.parsed_function,
         &proof_claims,
@@ -816,7 +819,11 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             .is_some_and(|source| source.preserve_source_index.is_none());
         if !omitted_frontier_preservation
             && context.replay.region_simp.is_some_and(|(_, source_index)| {
-                tactic_expansion_capture_matches(context.replay.proof_site.as_ref(), source_index)
+                tactic_expansion_capture_matches(
+                    expansion_capture.as_deref(),
+                    context.replay.proof_site.as_ref(),
+                    source_index,
+                )
             })
         {
             let capture = SimpleProofBuilder {
@@ -826,7 +833,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                     .to_vec(),
                 ..SimpleProofBuilder::default()
             };
-            return Err(finish_tactic_expansion_capture(&capture, false));
+            finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &capture, false);
         }
         let surface_tactics =
             SimpleProof::from_steps(context.replay.simple_proof_builder.steps.clone())
@@ -848,36 +855,31 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     let certificate_program = build_internal_proof(&certificate.to_proof_tactics(), &claim_label)?;
     // This is a detached, deterministic replay of the certificate just
     // produced above. Its local tactic indices start at zero and are not
-    // source occurrences in the enclosing proof. Letting the expansion probe
-    // observe them can make (for example) certificate tactic 1 overwrite the
-    // expansion selected for enclosing source tactic 1.
-    let replayed = SUPPRESS_TACTIC_EXPANSION_CAPTURE
-        .with(|suppressed| {
-            let previous = suppressed.replace(true);
-            let result = execute_internal_proof(
-                &certificate_program,
-                ProofReplayContext {
-                    state: preservation.state().clone(),
-                    pure_facts: pure_facts.to_vec(),
-                    replay: replay_start,
-                    branch_path: Vec::new(),
-                },
-                environment.function_block,
-                environment.parsed_function,
-                &proof_claims,
-                &claim_label,
-                environment.function_environment,
-                environment.predicate_environment,
-                environment.click_function_environment,
-                environment.resource_environment,
-                environment.theorem_environment,
-                environment.function,
-                environment.arguments,
-            );
-            suppressed.set(previous);
-            result
-        })
-        .map_err(|error| {
+    // source occurrences in the enclosing proof, so no expansion capture is
+    // routed into it: certificate tactic 1 must not be mistaken for enclosing
+    // source tactic 1.
+    let replayed = execute_internal_proof(
+        &certificate_program,
+        ProofReplayContext {
+            state: preservation.state().clone(),
+            pure_facts: pure_facts.to_vec(),
+            replay: replay_start,
+            branch_path: Vec::new(),
+        },
+        None,
+        environment.function_block,
+        environment.parsed_function,
+        &proof_claims,
+        &claim_label,
+        environment.function_environment,
+        environment.predicate_environment,
+        environment.click_function_environment,
+        environment.resource_environment,
+        environment.theorem_environment,
+        environment.function,
+        environment.arguments,
+    )
+    .map_err(|error| {
             ClickError::new(format!(
                 "`{claim_label}` preservation certificate failed ordinary replay:\n{}\n{}",
                 format_simple_proof(&certificate),
@@ -977,6 +979,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             effect_items.iter().zip(effect_checks).enumerate()
         {
             let effect_certificate = verify_structural_effect_proof(
+                expansion_capture.as_deref_mut(),
                 loop_index,
                 *item_index,
                 item,

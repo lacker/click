@@ -2,6 +2,7 @@ use super::*;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click) fn verify_loop_execution_proofs(
+    expansion_capture: Option<&mut ExpansionCapture>,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     function_environment: &CExecutionEnvironment,
@@ -67,6 +68,7 @@ pub(in crate::lang::click) fn verify_loop_execution_proofs(
     let mut next_statement_index = 0;
     let mut next_loop_index = 0;
     verify_execution_proofs_forward(
+        expansion_capture,
         function.body(),
         vec![ExecutionProofContext {
             state: entry_state,

@@ -157,52 +157,23 @@ pub(super) struct DeferredTacticCapture {
     pub(super) branch_skeleton: Vec<ProofTactic>,
 }
 
-pub(super) struct TacticExpansionProbe {
-    pub(super) site: ProofSite,
-    pub(super) source_index: Option<usize>,
-    pub(super) active: bool,
-    pub(super) result: Option<Result<Vec<ProofTactic>, String>>,
-}
-
-thread_local! {
-    pub(super) static TACTIC_EXPANSION_PROBE: std::cell::RefCell<Option<TacticExpansionProbe>> =
-        const { std::cell::RefCell::new(None) };
-    pub(super) static SUPPRESS_TACTIC_EXPANSION_CAPTURE: std::cell::Cell<bool> =
-        const { std::cell::Cell::new(false) };
-}
-
 pub(in crate::lang::click) fn capture_c0_tactic_expansion(
     click_source: &str,
     c_sources: &[(&str, &str)],
     site: ProofSite,
     source_index: usize,
 ) -> Result<Vec<ProofTactic>, ClickError> {
-    TACTIC_EXPANSION_PROBE.with(|probe| {
-        let mut probe = probe.borrow_mut();
-        if probe.is_some() {
-            return Err(ClickError::new(
-                "cannot nest selected-tactic expansion requests",
-            ));
-        }
-        *probe = Some(TacticExpansionProbe {
-            site: site.clone(),
-            source_index: Some(source_index),
-            active: false,
-            result: None,
-        });
-        Ok(())
-    })?;
-
-    let verification = verify_c0_sources(click_source, c_sources);
-    let captured = TACTIC_EXPANSION_PROBE.with(|probe| probe.borrow_mut().take());
-    let Some(captured) = captured else {
-        return Err(ClickError::new("selected-tactic expansion probe was lost"));
-    };
-    if let Some(result) = captured.result {
+    let mut capture = ExpansionCapture::for_tactic(site.clone(), source_index);
+    let verification = verify_c0_sources_with_expansion_capture(
+        click_source,
+        c_sources,
+        &mut capture,
+    );
+    if let Some(result) = capture.result {
         return result.map_err(ClickError::new);
     }
     match verification {
-        Err(error) if !error.is_expansion_complete() => {
+        Err(error) => {
             match super::tactic_expansion_dependency_context(
                 click_source,
                 c_sources,
@@ -216,9 +187,6 @@ pub(in crate::lang::click) fn capture_c0_tactic_expansion(
                 None => Err(error),
             }
         }
-        Err(_) => Err(ClickError::new(
-            "selected tactic completed without recording an expansion",
-        )),
         Ok(_) => Err(ClickError::new(format!(
             "selected {} proof has no source tactic {source_index}",
             site.description()
@@ -226,50 +194,22 @@ pub(in crate::lang::click) fn capture_c0_tactic_expansion(
     }
 }
 
-pub(in crate::lang::click) fn active_c0_tactic_expansion_request()
--> Option<(ProofSite, Option<usize>)> {
-    TACTIC_EXPANSION_PROBE.with(|probe| {
-        probe
-            .borrow()
-            .as_ref()
-            .map(|probe| (probe.site.clone(), probe.source_index))
-    })
-}
-
 pub(in crate::lang::click) fn capture_c0_proof_site_expansion(
     click_source: &str,
     c_sources: &[(&str, &str)],
     site: ProofSite,
 ) -> Result<Vec<ProofTactic>, ClickError> {
-    TACTIC_EXPANSION_PROBE.with(|probe| {
-        let mut probe = probe.borrow_mut();
-        if probe.is_some() {
-            return Err(ClickError::new(
-                "cannot nest selected-proof expansion requests",
-            ));
-        }
-        *probe = Some(TacticExpansionProbe {
-            site: site.clone(),
-            source_index: None,
-            active: false,
-            result: None,
-        });
-        Ok(())
-    })?;
-
-    let verification = verify_c0_sources(click_source, c_sources);
-    let captured = TACTIC_EXPANSION_PROBE.with(|probe| probe.borrow_mut().take());
-    let Some(captured) = captured else {
-        return Err(ClickError::new("selected-proof expansion probe was lost"));
-    };
-    if let Some(result) = captured.result {
+    let mut capture = ExpansionCapture::for_site(site.clone());
+    let verification = verify_c0_sources_with_expansion_capture(
+        click_source,
+        c_sources,
+        &mut capture,
+    );
+    if let Some(result) = capture.result {
         return result.map_err(ClickError::new);
     }
     match verification {
-        Err(error) if !error.is_expansion_complete() => Err(error),
-        Err(_) => Err(ClickError::new(
-            "selected proof completed without recording an expansion",
-        )),
+        Err(error) => Err(error),
         Ok(_) if matches!(site, ProofSite::LoopPhase { .. }) => {
             // A loop phase nested under an unreachable C path can have no
             // initialization/preservation obligations at all.  There is no
@@ -286,63 +226,52 @@ pub(in crate::lang::click) fn capture_c0_proof_site_expansion(
 }
 
 pub(super) fn finish_proof_site_expansion_capture(
+    capture: Option<&mut ExpansionCapture>,
     site: &ProofSite,
     certificate: &SimpleProof,
-) -> Result<(), ClickError> {
-    let captured = TACTIC_EXPANSION_PROBE.with(|probe| {
-        let mut slot = probe.borrow_mut();
-        let Some(probe) = slot.as_mut() else {
-            return false;
-        };
-        if probe.site != *site || probe.source_index.is_some() {
-            return false;
-        }
-        probe.active = true;
-        probe.result = Some(Ok(certificate.to_proof_tactics().to_vec()));
-        true
-    });
-    if captured {
-        Err(ClickError::expansion_complete())
-    } else {
-        Ok(())
+) {
+    let Some(capture) = capture else {
+        return;
+    };
+    if capture.site != *site || capture.source_index.is_some() || capture.result.is_some() {
+        return;
     }
+    capture.active = true;
+    capture.result = Some(Ok(certificate.to_proof_tactics().to_vec()));
 }
 
 pub(super) fn record_proof_site_tactic_expansion(
+    capture: Option<&mut ExpansionCapture>,
     site: &ProofSite,
     source_index: usize,
     tactics: &[ProofTactic],
 ) {
-    TACTIC_EXPANSION_PROBE.with(|probe| {
-        let mut slot = probe.borrow_mut();
-        let Some(probe) = slot.as_mut() else {
-            return;
-        };
-        if probe.site != *site || probe.source_index != Some(source_index) {
-            return;
+    let Some(capture) = capture else {
+        return;
+    };
+    if capture.site != *site || capture.source_index != Some(source_index) {
+        return;
+    }
+    capture.active = true;
+    match &mut capture.result {
+        None => capture.result = Some(Ok(tactics.to_vec())),
+        Some(Ok(existing)) if existing == tactics => {}
+        Some(Ok(_)) => {
+            capture.result = Some(Err(
+                "selected tactic expands differently across proof obligations".to_string(),
+            ));
         }
-        probe.active = true;
-        match &mut probe.result {
-            None => probe.result = Some(Ok(tactics.to_vec())),
-            Some(Ok(existing)) if existing == tactics => {}
-            Some(Ok(_)) => {
-                probe.result = Some(Err(
-                    "selected tactic expands differently across proof obligations".to_string(),
-                ));
-            }
-            Some(Err(_)) => {}
-        }
-    });
+        Some(Err(_)) => {}
+    }
 }
 
-pub(super) fn selected_tactic_index_for_site(site: &ProofSite) -> Option<usize> {
-    TACTIC_EXPANSION_PROBE.with(|probe| {
-        probe
-            .borrow()
-            .as_ref()
-            .filter(|probe| probe.site == *site)
-            .and_then(|probe| probe.source_index)
-    })
+pub(super) fn selected_tactic_index_for_site(
+    capture: Option<&ExpansionCapture>,
+    site: &ProofSite,
+) -> Option<usize> {
+    capture
+        .filter(|capture| capture.site == *site)
+        .and_then(|capture| capture.source_index)
 }
 
 pub(super) fn proof_site_for_claims(
@@ -365,127 +294,114 @@ pub(super) fn proof_site_for_claims(
     })
 }
 
-/// Marks the probe active when it matches this tactic. The tactic's expansion
-/// itself comes from its builder scope; the probe only decides which tactic's
-/// scoped result is the requested one.
+/// Marks the capture active when it matches this tactic. The tactic's
+/// expansion itself comes from its builder scope; the capture only decides
+/// which tactic's scoped result is the requested one.
 pub(super) fn begin_tactic_expansion_capture(
+    capture: Option<&mut ExpansionCapture>,
     source_index: usize,
-    _tactic: &ProofTactic,
     replay: &TacticReplayState,
 ) -> bool {
-    if SUPPRESS_TACTIC_EXPANSION_CAPTURE.with(std::cell::Cell::get) {
+    let Some(capture) = capture else {
+        return false;
+    };
+    let sibling_branch_capture = capture.active
+        && !replay.deferred_expansion_path_choices.is_empty()
+        && capture.source_index == Some(source_index)
+        && replay.proof_site.as_ref() == Some(&capture.site);
+    if capture.active && !sibling_branch_capture
+        || capture.source_index != Some(source_index)
+        || replay.proof_site.as_ref() != Some(&capture.site)
+    {
         return false;
     }
-    TACTIC_EXPANSION_PROBE.with(|probe| {
-        let mut slot = probe.borrow_mut();
-        let Some(probe) = slot.as_mut() else {
-            return false;
-        };
-        let sibling_branch_capture = probe.active
-            && !replay.deferred_expansion_path_choices.is_empty()
-            && probe.source_index == Some(source_index)
-            && replay.proof_site.as_ref() == Some(&probe.site);
-        if probe.active && !sibling_branch_capture
-            || probe.source_index != Some(source_index)
-            || replay.proof_site.as_ref() != Some(&probe.site)
-        {
-            return false;
-        }
-        probe.active = true;
-        true
-    })
+    capture.active = true;
+    true
 }
 
 /// `allow_empty` accepts an empty expansion as the exact answer: the selected
 /// tactic contributed no surface tactics to the accepted certificate, so the
 /// rewrite removes it. Every other caller keeps the empty guard — for them an
 /// empty capture means the lowering lost the tactics, not that none exist.
+///
+/// The first completed capture wins; verification continues normally either
+/// way.
 pub(super) fn finish_tactic_expansion_capture(
+    capture: Option<&mut ExpansionCapture>,
     simple_proof_builder: &SimpleProofBuilder,
     allow_empty: bool,
-) -> ClickError {
-    let captured = TACTIC_EXPANSION_PROBE.with(|probe| {
-        let mut slot = probe.borrow_mut();
-        let Some(probe) = slot.as_mut() else {
-            return false;
-        };
-        probe.result = Some(match &simple_proof_builder.blocker {
-            Some(blocker) => Err(format!("could not expand selected tactic: {blocker}")),
-            None if simple_proof_builder.steps.is_empty() && !allow_empty => {
-                Err("selected tactic produced no standalone surface expansion".to_string())
-            }
-            None => {
-                Ok(SimpleProof::from_steps(simple_proof_builder.steps.clone()).to_proof_tactics())
-            }
-        });
-        true
-    });
-    if !captured {
-        return ClickError::new(
-            "could not expand the selected tactic: the expansion probe was no longer active",
-        );
+) {
+    let Some(capture) = capture else {
+        return;
+    };
+    if capture.result.is_some() {
+        return;
     }
-    ClickError::expansion_complete()
+    capture.result = Some(match &simple_proof_builder.blocker {
+        Some(blocker) => Err(format!("could not expand selected tactic: {blocker}")),
+        None if simple_proof_builder.steps.is_empty() && !allow_empty => {
+            Err("selected tactic produced no standalone surface expansion".to_string())
+        }
+        None => Ok(SimpleProof::from_steps(simple_proof_builder.steps.clone()).to_proof_tactics()),
+    });
 }
 
-pub(super) fn tactic_expansion_capture_is_active() -> bool {
-    TACTIC_EXPANSION_PROBE.with(|probe| probe.borrow().as_ref().is_some_and(|probe| probe.active))
+pub(super) fn tactic_expansion_capture_is_active(capture: Option<&ExpansionCapture>) -> bool {
+    capture.is_some_and(|capture| capture.active)
 }
 
 pub(super) fn tactic_expansion_capture_matches(
+    capture: Option<&ExpansionCapture>,
     site: Option<&ProofSite>,
     source_index: usize,
 ) -> bool {
-    TACTIC_EXPANSION_PROBE.with(|probe| {
-        probe.borrow().as_ref().is_some_and(|probe| {
-            probe.active && site == Some(&probe.site) && probe.source_index == Some(source_index)
-        })
+    capture.is_some_and(|capture| {
+        capture.active
+            && site == Some(&capture.site)
+            && capture.source_index == Some(source_index)
     })
 }
 
-/// Takes one path-local selected-tactic expansion while leaving the probe
+/// Takes one path-local selected-tactic expansion while leaving the capture
 /// installed for a sibling execution path. Frontier-local `branch` uses this
 /// to collect the certificate produced at one shared source occurrence under
 /// each C arm before it emits their logical case split.
-pub(super) fn take_path_tactic_expansion_capture() -> Result<Vec<ProofTactic>, ClickError> {
-    TACTIC_EXPANSION_PROBE.with(|probe| {
-        let mut slot = probe.borrow_mut();
-        let Some(probe) = slot.as_mut() else {
-            return Err(ClickError::new(
-                "selected-tactic expansion probe was lost between branch paths",
-            ));
-        };
-        let result = probe.result.take().ok_or_else(|| {
-            ClickError::new("selected tactic completed without recording its branch expansion")
-        })?;
-        probe.active = false;
-        result.map_err(ClickError::new)
-    })
+pub(super) fn take_path_tactic_expansion_capture(
+    capture: Option<&mut ExpansionCapture>,
+) -> Result<Vec<ProofTactic>, ClickError> {
+    let Some(capture) = capture else {
+        return Err(ClickError::new(
+            "selected-tactic expansion capture was lost between branch paths",
+        ));
+    };
+    let result = capture.result.take().ok_or_else(|| {
+        ClickError::new("selected tactic completed without recording its branch expansion")
+    })?;
+    capture.active = false;
+    result.map_err(ClickError::new)
 }
 
 pub(super) fn resume_deferred_tactic_expansion_capture(
+    capture: Option<&mut ExpansionCapture>,
     replay: &TacticReplayState,
 ) -> Result<(), ClickError> {
     let Some(deferred) = &replay.deferred_tactic_capture else {
         return Ok(());
     };
-    TACTIC_EXPANSION_PROBE.with(|probe| {
-        let mut slot = probe.borrow_mut();
-        let Some(probe) = slot.as_mut() else {
-            return Err(ClickError::new(
-                "selected-tactic expansion probe was lost before deferred finalization",
-            ));
-        };
-        if replay.proof_site.as_ref() != Some(&probe.site)
-            || probe.source_index != Some(deferred.source_index)
-        {
-            return Err(ClickError::new(
-                "deferred tactic capture no longer matches the selected proof occurrence",
-            ));
-        }
-        probe.active = true;
-        Ok(())
-    })
+    let Some(capture) = capture else {
+        return Err(ClickError::new(
+            "selected-tactic expansion capture was lost before deferred finalization",
+        ));
+    };
+    if replay.proof_site.as_ref() != Some(&capture.site)
+        || capture.source_index != Some(deferred.source_index)
+    {
+        return Err(ClickError::new(
+            "deferred tactic capture no longer matches the selected proof occurrence",
+        ));
+    }
+    capture.active = true;
+    Ok(())
 }
 
 #[derive(Clone)]

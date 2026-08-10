@@ -848,6 +848,47 @@ fn find_claim_proof_edit(
     )))
 }
 
+/// An explicit expansion request threaded through one verification run.
+///
+/// Verification fills in `result` for the selected proof site as it goes;
+/// nothing about verification's own control flow or replay state depends on
+/// the capture being present. This replaces the old thread-local expansion
+/// probe and its abort-by-sentinel-error protocol: expansion is now one
+/// ordinary verification plus a lookup.
+#[derive(Debug)]
+pub(super) struct ExpansionCapture {
+    pub(super) site: ProofSite,
+    /// `Some` selects one source tactic; `None` requests the whole proof at
+    /// the site.
+    pub(super) source_index: Option<usize>,
+    /// The selected occurrence has been reached; used to route sibling-branch
+    /// and deferred finalization bookkeeping for the same occurrence.
+    pub(super) active: bool,
+    /// First completed capture wins; site-certificate recorders additionally
+    /// require agreement across proof obligations.
+    pub(super) result: Option<Result<Vec<ProofTactic>, String>>,
+}
+
+impl ExpansionCapture {
+    pub(super) fn for_tactic(site: ProofSite, source_index: usize) -> Self {
+        Self {
+            site,
+            source_index: Some(source_index),
+            active: false,
+            result: None,
+        }
+    }
+
+    pub(super) fn for_site(site: ProofSite) -> Self {
+        Self {
+            site,
+            source_index: None,
+            active: false,
+            result: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum ProofSite {
     FunctionClaim {

@@ -4,6 +4,7 @@ use super::*;
 pub(in crate::lang::click::proof) fn execute_internal_proof(
     node: &InternalProofNode,
     context: ProofReplayContext,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
@@ -25,6 +26,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             let branch_path = context.branch_path.clone();
             let context = replay_linear_tactics(
                 context,
+                expansion_capture.as_deref_mut(),
                 function_block,
                 parsed_function,
                 claims,
@@ -42,6 +44,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             execute_internal_proof(
                 continuation,
                 context,
+                expansion_capture.as_deref_mut(),
                 function_block,
                 parsed_function,
                 claims,
@@ -88,6 +91,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             let opened_contexts = execute_internal_proof(
                 body,
                 opened,
+                expansion_capture.as_deref_mut(),
                 function_block,
                 parsed_function,
                 claims,
@@ -145,6 +149,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 let mut continued = execute_internal_proof(
                     continuation,
                     closed,
+                    expansion_capture.as_deref_mut(),
                     function_block,
                     parsed_function,
                     claims,
@@ -196,6 +201,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 let branch_contexts = execute_internal_proof(
                     branch,
                     branch_context,
+                    expansion_capture.as_deref_mut(),
                     function_block,
                     parsed_function,
                     claims,
@@ -212,6 +218,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     let mut continued = execute_internal_proof(
                         continuation,
                         branch_context,
+                        expansion_capture.as_deref_mut(),
                         function_block,
                         parsed_function,
                         claims,
@@ -253,11 +260,9 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             }
             let continuation_index = source_region.continuation_node;
             let initial_continuation_depth = context.replay.frontier.continuations.len();
-            let selected_source_index = context
-                .replay
-                .proof_site
-                .as_ref()
-                .and_then(selected_tactic_index_for_site);
+            let selected_source_index = context.replay.proof_site.as_ref().and_then(|site| {
+                selected_tactic_index_for_site(expansion_capture.as_deref(), site)
+            });
             let capture_in_continuation = selected_source_index
                 .is_some_and(|wanted| internal_proof_contains_source_index(continuation, wanted));
             let capture_condition = if selected_source_index.is_some() && !capture_in_continuation {
@@ -332,6 +337,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 let branch_contexts = execute_internal_proof(
                     branch,
                     branch_context,
+                    expansion_capture.as_deref_mut(),
                     function_block,
                     parsed_function,
                     claims,
@@ -508,6 +514,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             let mut continued = execute_internal_proof(
                 continuation,
                 joined_context,
+                expansion_capture.as_deref_mut(),
                 function_block,
                 parsed_function,
                 claims,
@@ -707,9 +714,6 @@ fn proof_case_is_stable_program_point_condition(proposition: &ClickProposition) 
 }
 
 fn add_proof_branch_context(error: ClickError, branch: &str) -> ClickError {
-    if error.is_expansion_complete() {
-        return error;
-    }
     ClickError::new(format!("in {branch}:\n{}", error.message()))
 }
 

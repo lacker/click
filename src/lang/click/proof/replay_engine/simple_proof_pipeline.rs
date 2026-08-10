@@ -33,26 +33,25 @@ pub(in crate::lang::click::proof) fn replay_simple_proof(
     let enclosing_case_assumptions = context.replay.case_assumptions.clone();
     let program =
         build_generated_certificate_proof(&proof.to_proof_tactics(), claim_label, source_index)?;
-    let completed = SUPPRESS_TACTIC_EXPANSION_CAPTURE.with(|suppressed| {
-        let previous = suppressed.replace(true);
-        let result = execute_internal_proof(
-            &program,
-            context,
-            function_block,
-            parsed_function,
-            claims,
-            claim_label,
-            function_environment,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-            theorem_environment,
-            function,
-            arguments,
-        );
-        suppressed.set(previous);
-        result
-    })?;
+    // The independent replay is a detached check of the constructed proof;
+    // its tactic indices are certificate-local, so no expansion capture is
+    // routed into it.
+    let completed = execute_internal_proof(
+        &program,
+        context,
+        None,
+        function_block,
+        parsed_function,
+        claims,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        function,
+        arguments,
+    )?;
     merge_surface_certificate_contexts(
         completed,
         function,

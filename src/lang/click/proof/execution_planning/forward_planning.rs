@@ -1,6 +1,7 @@
 use super::*;
 
 pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     statement: &CStatement,
     contexts: Vec<ExecutionProofContext>,
     next_statement_index: &mut usize,
@@ -11,6 +12,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
     match statement {
         CStatement::Seq(first, second) => {
             let contexts = verify_execution_proofs_forward(
+                expansion_capture.as_deref_mut(),
                 first,
                 contexts,
                 next_statement_index,
@@ -19,6 +21,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                 verified_loop_rules,
             )?;
             verify_execution_proofs_forward(
+                expansion_capture.as_deref_mut(),
                 second,
                 contexts,
                 next_statement_index,
@@ -54,6 +57,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                 split_execution_proof_branch_contexts(condition, contexts)?;
             *next_statement_index = then_statement_index;
             let mut joined = verify_execution_proofs_forward(
+                expansion_capture.as_deref_mut(),
                 then_branch,
                 then_contexts,
                 next_statement_index,
@@ -63,6 +67,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
             )?;
             *next_statement_index = else_statement_index;
             joined.extend(verify_execution_proofs_forward(
+                expansion_capture.as_deref_mut(),
                 else_branch,
                 else_contexts,
                 next_statement_index,
@@ -118,6 +123,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                 let assumptions = assumptions_from_propositions(&context.pure_facts);
                 if let Some((clause, proof)) = initialization_proof {
                     let certificate = verify_loop_initialization_pure_proof(
+                        expansion_capture.as_deref_mut(),
                         loop_index,
                         proof,
                         clause,
@@ -185,6 +191,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                                 (tactics, first_generated_tactic_index)
                             };
                         let result = verify_one_loop_preservation_proof(
+                            expansion_capture.as_deref_mut(),
                             loop_index,
                             &preservation_tactics,
                             first_generated_tactic_index,
@@ -248,7 +255,8 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                 }
                 if environment.frontier_loop_source.is_some() {
                     if let Some(phase_start) = selected_source_index
-                        && let Some(selected) = selected_tactic_index_for_site(&site)
+                        && let Some(selected) =
+                            selected_tactic_index_for_site(expansion_capture.as_deref(), &site)
                         && let Some(local_index) = selected.checked_sub(phase_start)
                         // The parser keeps a single smart tactic as `Tactic`
                         // rather than wrapping it in a one-item `Script`.
@@ -265,13 +273,15 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                         })
                     {
                         record_proof_site_tactic_expansion(
+                            expansion_capture.as_deref_mut(),
                             &site,
                             selected,
                             &initialization_certificate.to_proof_tactics(),
                         );
                     }
                 } else {
-                    if let Some(source_index) = selected_tactic_index_for_site(&site)
+                    if let Some(source_index) =
+                        selected_tactic_index_for_site(expansion_capture.as_deref(), &site)
                         && let Some((_, Proof::Script(source_tactics))) = initialization_proof
                         && matches!(source_tactics.get(source_index), Some(ProofTactic::Simp))
                         && !source_tactics.iter().any(|tactic| {
@@ -283,12 +293,17 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                         })
                     {
                         record_proof_site_tactic_expansion(
+                            expansion_capture.as_deref_mut(),
                             &site,
                             source_index,
                             &initialization_certificate.to_proof_tactics(),
                         );
                     }
-                    finish_proof_site_expansion_capture(&site, &initialization_certificate)?;
+                    finish_proof_site_expansion_capture(
+                        expansion_capture.as_deref_mut(),
+                        &site,
+                        &initialization_certificate,
+                    );
                 }
             }
             if !preservation_path_certificates.is_empty() {
@@ -308,6 +323,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                 }
                 if environment.frontier_loop_source.is_none() {
                     finish_proof_site_expansion_capture(
+                        expansion_capture.as_deref_mut(),
                         &ProofSite::LoopPhase {
                             function_name: environment
                                 .function_block
@@ -318,7 +334,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                             phase: "preserve",
                         },
                         &preservation_certificate,
-                    )?;
+                    );
                 }
             }
             for (item_index, paths) in effect_path_certificates {
@@ -347,7 +363,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                         .effects
                         .insert(item_index, certificate.clone());
                 }
-                finish_proof_site_expansion_capture(&site, &certificate)?;
+                finish_proof_site_expansion_capture(expansion_capture.as_deref_mut(), &site, &certificate);
             }
 
             *next_statement_index = source_region.continuation_node;
@@ -448,6 +464,7 @@ fn split_execution_proof_branch_contexts(
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: &ProofSite,
     proposition: &ClickProposition,
     proof: &Proof,
@@ -524,10 +541,12 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         && let Ok(certificate) = SimpleProof::from_proof_tactics(tactics)
     {
         if lowered_applied_theorem_script
-            && let Some(source_index) = selected_tactic_index_for_site(proof_site)
+            && let Some(source_index) =
+                selected_tactic_index_for_site(expansion_capture.as_deref(), proof_site)
             && let Some(tactic) = certificate.to_proof_tactics().get(source_index)
         {
             record_proof_site_tactic_expansion(
+                expansion_capture.as_deref_mut(),
                 proof_site,
                 source_index,
                 std::slice::from_ref(tactic),
@@ -683,18 +702,14 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     if matches!(proof_site, ProofSite::StructuralItem { .. })
         && let Proof::Script(source_tactics) = proof
     {
-        let source_index = TACTIC_EXPANSION_PROBE.with(|probe| {
-            probe
-                .borrow()
-                .as_ref()
-                .filter(|probe| probe.site == *proof_site)
-                .and_then(|probe| probe.source_index)
-        });
+        let source_index =
+            selected_tactic_index_for_site(expansion_capture.as_deref(), proof_site);
         if let Some(source_index) = source_index
             && matches!(source_tactics.get(source_index), Some(ProofTactic::Simp))
             && source_index <= certificate.to_proof_tactics().len()
         {
             record_proof_site_tactic_expansion(
+                expansion_capture.as_deref_mut(),
                 proof_site,
                 source_index,
                 &certificate.to_proof_tactics()[source_index..],

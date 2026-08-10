@@ -62,7 +62,7 @@ pub use expansion::{
     c0_tactic_source_position, expand_c0_claim_source, expand_c0_tactic_source_at,
     verifying_source_paths,
 };
-use expansion::{ProofSite, VerificationTarget, verification_target_at};
+use expansion::{ExpansionCapture, ProofSite, VerificationTarget, verification_target_at};
 use lowering::*;
 use parser::ContractLetBinding;
 pub use printing::{format_proof_tactics, format_simple_proof};
@@ -1958,11 +1958,6 @@ pub enum ProofKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickError {
     message: String,
-    /// Internal marker for the selected-tactic expansion capture: when a
-    /// probe records its expansion, verification is aborted with an error
-    /// carrying this flag instead of a real failure. Control flow must test
-    /// this flag, never the message text.
-    expansion_complete: bool,
     timing_tactic: Option<TimingTacticContext>,
 }
 
@@ -2456,23 +2451,8 @@ impl ClickError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: diagnostics::bound_error_message(message.into()),
-            expansion_complete: false,
             timing_tactic: current_timing_tactic(),
         }
-    }
-
-    /// The internal sentinel that unwinds verification once a selected-tactic
-    /// expansion has been captured; see `proof::capture_c0_tactic_expansion`.
-    pub(crate) fn expansion_complete() -> Self {
-        Self {
-            message: "internal: selected tactic expansion complete".into(),
-            expansion_complete: true,
-            timing_tactic: None,
-        }
-    }
-
-    pub(crate) fn is_expansion_complete(&self) -> bool {
-        self.expansion_complete
     }
 
     pub fn message(&self) -> &str {
@@ -2480,7 +2460,7 @@ impl ClickError {
     }
 
     fn emit_timing_failure(&self) {
-        if !instrumentation::enabled() || self.expansion_complete {
+        if !instrumentation::enabled() {
             return;
         }
         if let Some(tactic) = &self.timing_tactic {

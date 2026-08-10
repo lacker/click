@@ -35,6 +35,7 @@ fn apply_checked_contract_resource_transition(
 }
 
 pub(in crate::lang::click) fn prove_claim_by_tactics(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -115,6 +116,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             replay,
             branch_path: Vec::new(),
         },
+        expansion_capture.as_deref_mut(),
         function_block,
         parsed_function,
         &proof_claims,
@@ -129,6 +131,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
     )?;
 
     finish_ordered_proof_contexts(
+        expansion_capture,
         contexts,
         source_path,
         function_block,
@@ -148,6 +151,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -233,6 +237,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             replay,
             branch_path: Vec::new(),
         },
+        expansion_capture.as_deref_mut(),
         function_block,
         parsed_function,
         claims,
@@ -247,6 +252,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
     )?;
 
     finish_ordered_proof_contexts(
+        expansion_capture,
         contexts,
         source_path,
         function_block,
@@ -266,6 +272,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click) fn prove_claims_by_grouped_auto(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -302,6 +309,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_auto(
     }
 
     let verified = prove_claims_by_grouped_tactics(
+        expansion_capture.as_deref_mut(),
         source_path,
         function_block,
         parsed_function,
@@ -331,6 +339,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_auto(
             ))
         })?;
     let replayed = prove_claims_by_grouped_tactics(
+        expansion_capture.as_deref_mut(),
         source_path,
         function_block,
         parsed_function,
@@ -764,6 +773,7 @@ use exit_claim::{ClaimClosure, ClosedClaim, ExitClaimContext, ExitSimpClosure};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn finish_ordered_proof_replay(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     context: ProofReplayContext,
     source_path: &str,
     function_block: &FunctionBlock,
@@ -2964,14 +2974,14 @@ pub(super) fn finish_ordered_proof_replay(
                 }
             }
         }
-        if tactic_expansion_capture_is_active() {
+        if tactic_expansion_capture_is_active(expansion_capture.as_deref()) {
             let Some(deferred) = replay.deferred_tactic_capture.as_ref() else {
                 // Structured proofs produce one replay context per logical
-                // case.  A selected deferred tactic activates the shared
-                // probe while those contexts are being built, but contexts
+                // case.  A selected deferred tactic activates the expansion
+                // capture while those contexts are being built, but contexts
                 // from sibling branches legitimately have no capture.  Let
                 // them finish; the matching context records the expansion,
-                // or the outer probe reports that no result was ever seen.
+                // or the expansion entry reports that no result was seen.
                 return Ok(verified);
             };
             // A tactic whose claims all closed by exact checks or grouped
@@ -3012,10 +3022,11 @@ pub(super) fn finish_ordered_proof_replay(
                     }
                 }
             }
-            return Err(finish_tactic_expansion_capture(
+            finish_tactic_expansion_capture(
+                expansion_capture.as_deref_mut(),
                 &capture,
                 contributes_no_tactics,
-            ));
+            );
         }
         Ok(verified)
     })();

@@ -41,8 +41,7 @@ pub(super) use pure_theorems::{
 use replay_engine::*;
 use replay_state::*;
 pub(super) use replay_state::{
-    active_c0_tactic_expansion_request, capture_c0_proof_site_expansion,
-    capture_c0_tactic_expansion,
+    capture_c0_proof_site_expansion, capture_c0_tactic_expansion,
 };
 pub(super) use resources::instantiate_composite_resource_body_resources;
 use resources::*;
@@ -1952,6 +1951,7 @@ fn canonical_claim_caller_state(
 }
 
 pub(super) fn prove_claim_by_auto(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -1966,6 +1966,7 @@ pub(super) fn prove_claim_by_auto(
     let mut loop_verification_error = None;
     for tactics in auto_loop_verification_tactic_candidates(function_block, claim) {
         match prove_claim_by_tactics(
+            expansion_capture.as_deref_mut(),
             source_path,
             function_block,
             parsed_function,
@@ -1981,6 +1982,7 @@ pub(super) fn prove_claim_by_auto(
         ) {
             Ok(mut theorems) => {
                 if let Err(error) = certify_auto_claim_result(
+                    expansion_capture.as_deref_mut(),
                     source_path,
                     function_block,
                     parsed_function,
@@ -2009,6 +2011,7 @@ pub(super) fn prove_claim_by_auto(
     let mut bounded_certificate_error = None;
     for tactics in bounded_execution_tactic_candidates(claim) {
         match prove_claim_by_tactics(
+            expansion_capture.as_deref_mut(),
             source_path,
             function_block,
             parsed_function,
@@ -2024,6 +2027,7 @@ pub(super) fn prove_claim_by_auto(
         ) {
             Ok(theorems) => {
                 if let Err(error) = certify_auto_claim_result(
+                    expansion_capture.as_deref_mut(),
                     source_path,
                     function_block,
                     parsed_function,
@@ -2056,6 +2060,7 @@ pub(super) fn prove_claim_by_auto(
 
 #[allow(clippy::too_many_arguments)]
 fn certify_auto_claim_result(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -2079,6 +2084,7 @@ fn certify_auto_claim_result(
             ))
         })?;
     let replayed = prove_claim_by_tactics(
+        expansion_capture.as_deref_mut(),
         source_path,
         function_block,
         parsed_function,
@@ -2110,6 +2116,7 @@ fn certify_auto_claim_result(
 }
 
 pub(super) fn prove_claim_by_frame(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -2129,6 +2136,7 @@ pub(super) fn prove_claim_by_frame(
 
     let tactics = [ProofTactic::SmartFrame(None)];
     let mut theorems = prove_claim_by_tactics(
+        expansion_capture.as_deref_mut(),
         source_path,
         function_block,
         parsed_function,
@@ -2149,6 +2157,7 @@ pub(super) fn prove_claim_by_frame(
 }
 
 pub(super) fn prove_claim_by_simp(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -2173,6 +2182,7 @@ pub(super) fn prove_claim_by_simp(
 
     let tactics = [ProofTactic::Simp];
     let mut theorems = prove_claim_by_tactics(
+        expansion_capture.as_deref_mut(),
         source_path,
         function_block,
         parsed_function,
