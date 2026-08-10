@@ -239,7 +239,10 @@ pub(super) fn project_initial_composite_resource_cores(
         let resources = state
             .resources()
             .clone()
-            .try_compose_with_facts(viewed_contained_resources, &assumptions)
+            .try_compose_with_facts_delaying_normalization(
+                viewed_contained_resources,
+                &assumptions,
+            )
             .map_err(|error| {
                 ClickError::new(format!(
                     "`{claim_label}` setup failed: projecting composite resource core `{name}` produced {}",

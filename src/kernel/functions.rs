@@ -1513,6 +1513,17 @@ fn counted_population_quantities(
     quantities
 }
 
+fn definition_has_population_wide_body(
+    definition: &CCompositeResourceDefinition,
+    track_ordinary_populations: bool,
+) -> bool {
+    definition.is_counted_population()
+        || (track_ordinary_populations
+            && !definition.is_recursive()
+            && definition.condition().is_none()
+            && definition.facts().is_empty())
+}
+
 #[derive(Default)]
 struct CCountedPopulationTransition {
     activated_body_resources: Vec<CResourceFact>,
@@ -1620,6 +1631,17 @@ fn apply_counted_population_transitions(
     let mut transition = CCountedPopulationTransition::default();
     let mut transition_guaranteed_facts = Vec::new();
     for (name, arguments) in keys {
+        let population_body_definition =
+            function
+                .composite_resource_definitions()
+                .iter()
+                .find(|definition| {
+                    definition.name() == name
+                        && definition_has_population_wide_body(
+                            definition,
+                            track_ordinary_populations,
+                        )
+                });
         let required_quantity = required_quantities
             .get(&(name.clone(), arguments.clone()))
             .copied()
@@ -1770,26 +1792,28 @@ fn apply_counted_population_transitions(
             *post_state = post_state
                 .clone()
                 .without_counted_population(&name, &arguments);
-            let singleton = ResourceContext::new().unchecked_with_fact(CResourceFact::own(
-                CResource::Composite {
-                    name: name.clone(),
-                    arguments: arguments.clone(),
-                },
-            ));
-            let finalized = match evaluate_resource_population_body_resources(
-                &singleton,
-                &entry_state,
-                function.composite_resource_definitions(),
-                assumptions,
-                budget,
-                true,
-            )? {
-                Ok(resources) => resources,
-                Err(error) => return Ok(Err(error)),
-            };
-            transition
-                .finalized_body_resources
-                .extend(finalized.facts().iter().cloned());
+            if population_body_definition.is_some() {
+                let singleton = ResourceContext::new().unchecked_with_fact(CResourceFact::own(
+                    CResource::Composite {
+                        name: name.clone(),
+                        arguments: arguments.clone(),
+                    },
+                ));
+                let finalized = match evaluate_resource_population_body_resources(
+                    &singleton,
+                    &entry_state,
+                    function.composite_resource_definitions(),
+                    assumptions,
+                    budget,
+                    true,
+                )? {
+                    Ok(resources) => resources,
+                    Err(error) => return Ok(Err(error)),
+                };
+                transition
+                    .finalized_body_resources
+                    .extend(finalized.facts().iter().cloned());
+            }
         } else {
             *post_state = post_state.clone().with_counted_population(
                 name.clone(),
@@ -2886,6 +2910,37 @@ pub(super) fn resource_context_definitionally_contains(
         remaining = next;
     }
     true
+}
+
+/// Checks definitional containment while requiring every unconsumed resource
+/// to be duplicable. This recognizes two folded names for the same owned body
+/// without permitting a replay state to add unrelated ghost ownership.
+pub(super) fn resource_context_definitionally_contains_without_owned_residue(
+    available: &ResourceContext,
+    required: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &Assumptions,
+) -> bool {
+    let mut remaining = available.clone();
+    let mut required = required.facts().to_vec();
+    required.sort_by_key(resource_fact_transfer_priority);
+    for fact in &required {
+        let Some(next) = consume_resource_fact_definitionally(
+            &remaining,
+            fact,
+            definitions,
+            memory,
+            assumptions,
+        ) else {
+            return false;
+        };
+        remaining = next;
+    }
+    remaining
+        .facts()
+        .iter()
+        .all(|fact| matches!(fact, CResourceFact::View(_)))
 }
 
 pub(super) fn resource_contexts_definitionally_equivalent_by_consumption(

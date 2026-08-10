@@ -42,7 +42,7 @@ impl ResourceContext {
             .map(|context| context.normalized(assumptions))
     }
 
-    pub(in crate::kernel) fn try_compose_with_facts_delaying_normalization(
+    pub(crate) fn try_compose_with_facts_delaying_normalization(
         self,
         facts: impl IntoIterator<Item = CResourceFact>,
         assumptions: &Assumptions,

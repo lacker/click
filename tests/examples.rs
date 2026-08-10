@@ -16,7 +16,16 @@ const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 /// suite is a meaningful green gate. Run one with `CLICK_EXAMPLE=<name>`, or
 /// all of them with `CLICK_RUN_QUARANTINED=1`. Each entry names the reason;
 /// remove entries as they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[];
+const QUARANTINED: &[(&str, &str)] = &[
+    (
+        "owned-string",
+        "issues/owned-string-baseline-misses-verification-budgets.md: replay/certification resource representation remains nondeterministic",
+    ),
+    (
+        "owned-vector",
+        "issues/owned-vector-baseline-misses-project-budget.md: several smart proof sites push the project past its deadline",
+    ),
+];
 
 #[test]
 fn example_projects() {

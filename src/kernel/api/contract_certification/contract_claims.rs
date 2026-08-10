@@ -161,7 +161,56 @@ pub fn c_function_outcomes_program_state_equal_by_execution_provenance(
         right_state.memory(),
         right_facts,
         assumptions,
-    ) && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
+    ) && (c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
+        || return_values_equal_by_certified_stores(
+            left_value,
+            left_state.memory(),
+            left_facts,
+            right_value,
+            assumptions,
+        )
+        || return_values_equal_by_certified_stores(
+            left_value,
+            right_state.memory(),
+            right_facts,
+            right_value,
+            assumptions,
+        ))
+}
+
+fn return_values_equal_by_certified_stores(
+    left: &CValue,
+    post_memory: &CMemory,
+    execution_facts: &[ExecutionPureFact],
+    right: &CValue,
+    assumptions: &Assumptions,
+) -> bool {
+    let (CValue::Int32(left) | CValue::UInt8(left), CValue::Int32(right) | CValue::UInt8(right)) =
+        (left, right)
+    else {
+        return false;
+    };
+    certification_proves_post_proposition(
+        assumptions,
+        &Proposition::ConditionIs(ConditionTerm::equal(left.clone(), right.clone()), true),
+        post_memory,
+        execution_facts,
+    )
+}
+
+fn owned_composite_resource_names(resources: &ResourceContext) -> Vec<&str> {
+    let mut names = resources
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact {
+            CResourceFact::Own(CResource::Composite { name, .. }, _) => Some(name.as_str()),
+            CResourceFact::Own(CResource::Memory(_) | CResource::Token { .. }, _)
+            | CResourceFact::View(_) => None,
+        })
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    names.dedup();
+    names
 }
 
 fn memories_equal_by_execution_provenance(
@@ -449,7 +498,21 @@ pub fn certify_c_function_execution_path_resource_representation(
     premises.extend(observable_resource_facts);
     let assumptions = assumptions_with_propositions(&path.assumptions, &premises);
     let values_equal =
-        c_values_proven_equal_for_memory_resolution(value, desired_value, &assumptions);
+        c_values_proven_equal_for_memory_resolution(value, desired_value, &assumptions)
+            || return_values_equal_by_certified_stores(
+                value,
+                return_state.memory(),
+                &path.execution_facts(),
+                desired_value,
+                &assumptions,
+            )
+            || return_values_equal_by_certified_stores(
+                value,
+                desired_state.memory(),
+                desired_facts,
+                desired_value,
+                &assumptions,
+            );
     let memories_equal = c_memories_definitionally_equal(
         return_state.memory(),
         desired_state.memory(),
@@ -468,6 +531,8 @@ pub fn certify_c_function_execution_path_resource_representation(
     if !values_equal || !memories_equal {
         return None;
     }
+    let folded_names_differ = owned_composite_resource_names(return_state.resources())
+        != owned_composite_resource_names(desired_state.resources());
     let resources_equal = resource_context_definitionally_contains(
         return_state.resources(),
         desired_state.resources(),
@@ -481,7 +546,14 @@ pub fn certify_c_function_execution_path_resource_representation(
         desired_state.memory(),
         desired_state.resources(),
         &assumptions,
-    );
+    ) || (folded_names_differ
+        && resource_context_definitionally_contains_without_owned_residue(
+            desired_state.resources(),
+            return_state.resources(),
+            function.composite_resource_definitions(),
+            desired_state.memory(),
+            &assumptions,
+        ));
     if !resources_equal {
         return None;
     }

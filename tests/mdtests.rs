@@ -17,10 +17,7 @@ const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
 /// green gate. Run one with `MDTEST_FILTER=<name>`, or all of them with
 /// `CLICK_RUN_QUARANTINED=1`. Each entry names the reason; remove entries as
 /// they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[(
-    "c_decreases_resource_mutating_nullable.md",
-    "issues/c-decreases-counted-body-condition-undecidable.md",
-)];
+const QUARANTINED: &[(&str, &str)] = &[];
 
 #[test]
 fn mdtests() {

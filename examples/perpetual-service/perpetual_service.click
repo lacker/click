@@ -39,8 +39,37 @@ int32 service_step(struct service* owner) {
     ensures owner->cell[0] == owner->phase;
 } by {
     unfold(service(owner));
-    execute();
+    branch {
+        ensuring {
+            fact 0 <= owner->phase;
+            fact owner->phase <= 1;
+            fact owner->cell == old(owner->cell);
+            fact separate(memory(object(owner)), memory(owner->cell[0..1]));
+            owns owner->phase;
+            owns owner->cell;
+            owns owner->cell[0..1];
+        }
+        then {
+            step() using {
+                loadable(owner->phase);
+            }
+        }
+        else {
+            step() using {
+                loadable(owner->phase);
+            }
+        }
+    }
+    step() using {
+        loadable(owner->phase);
+        loadable(owner->cell);
+        loadable(owner->cell[0..1]);
+    }
     fold(service(owner));
+    observe(service(owner));
+    step() using {
+        loadable(owner->phase);
+    }
     frame();
     simp();
 }

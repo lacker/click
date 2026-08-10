@@ -387,9 +387,7 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             have 1 <= owner->cap by simp;
             have owner->cap <= 536870911 by simp;
             fold(allocated_vector(owner));
-            step() using {
-                owner->len < owner->cap;
-            }
+            step() using {}
             simp();
         }
     } else {
@@ -417,9 +415,7 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
         have 1 <= owner->cap by simp;
         have owner->cap <= 536870911 by simp;
         fold(allocated_vector(owner));
-        step() using {
-            owner->len < owner->cap;
-        }
+        step() using {}
         have 0 == 0 by {
             normalize();
         }

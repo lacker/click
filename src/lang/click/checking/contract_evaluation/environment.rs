@@ -585,12 +585,21 @@ pub(in crate::lang::click) fn lower_predicate_call_arguments_with_environment(
         ));
     }
 
-    // Predicate identity includes the logical resource-state snapshot as well
-    // as any explicit array memories. Otherwise an old predicate fact
-    // containing `count(...)` would silently change meaning after a resource
-    // transition. C memory and locals are deliberately not part of this
-    // hidden argument.
-    let mut lowered_arguments = vec![Term::CState(post_state.resource_state_snapshot())];
+    // Only a predicate that can observe `count(...)` includes the logical
+    // resource-state snapshot in its identity. Giving every predicate that
+    // hidden dependency makes an ordinary memory predicate change spelling
+    // after an unrelated resource transition. C memory and locals remain
+    // explicit through the predicate's ordinary arguments.
+    let resource_state = if predicate_observes_resource_state(
+        definition,
+        predicate_environment,
+        &mut BTreeSet::new(),
+    ) {
+        post_state.resource_state_snapshot()
+    } else {
+        CState::new()
+    };
+    let mut lowered_arguments = vec![Term::CState(resource_state)];
     for (parameter, argument) in definition.parameters().iter().zip(arguments) {
         if parameter_is_click_array_ref(parameter) {
             let array_ref = evaluate_contract_array_ref_with_environment(
@@ -643,6 +652,64 @@ pub(in crate::lang::click) fn lower_predicate_call_arguments_with_environment(
         }
     }
     Ok(lowered_arguments)
+}
+
+fn predicate_observes_resource_state(
+    definition: &PredicateDefinition,
+    predicate_environment: &PredicateEnvironment,
+    visiting: &mut BTreeSet<String>,
+) -> bool {
+    if proposition_contains_resource_count(definition.body()) {
+        return true;
+    }
+    if !visiting.insert(definition.name().to_string()) {
+        return false;
+    }
+    let result = nested_predicate_names(definition.body())
+        .into_iter()
+        .any(|name| {
+            predicate_environment.get(name).is_some_and(|nested| {
+                predicate_observes_resource_state(nested, predicate_environment, visiting)
+            })
+        });
+    visiting.remove(definition.name());
+    result
+}
+
+fn nested_predicate_names(proposition: &ClickProposition) -> Vec<&str> {
+    let mut names = Vec::new();
+    fn collect<'a>(proposition: &'a ClickProposition, names: &mut Vec<&'a str>) {
+        match proposition {
+            ClickProposition::PredicateCall { name, .. } => names.push(name),
+            ClickProposition::At { proposition, .. }
+            | ClickProposition::Not(proposition)
+            | ClickProposition::ForAll {
+                body: proposition, ..
+            }
+            | ClickProposition::Exists {
+                body: proposition, ..
+            }
+            | ClickProposition::RangeAll {
+                body: proposition, ..
+            }
+            | ClickProposition::RangeAny {
+                body: proposition, ..
+            } => collect(proposition, names),
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                collect(left, names);
+                collect(right, names);
+            }
+            ClickProposition::Comparison { .. }
+            | ClickProposition::Defined { .. }
+            | ClickProposition::Separate { .. }
+            | ClickProposition::Contains { .. }
+            | ClickProposition::Loadable { .. } => {}
+        }
+    }
+    collect(proposition, &mut names);
+    names
 }
 
 pub(in crate::lang::click) fn c_value_matches_click_type(value: &CValue, c_type: C0Type) -> bool {

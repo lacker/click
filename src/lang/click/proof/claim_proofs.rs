@@ -1044,6 +1044,14 @@ pub(super) fn finish_ordered_proof_replay(
             for fact in replayed_facts {
                 path_assumptions = path_assumptions.assume_proposition(fact);
             }
+            for equation in crate::kernel::certified_store_equations(&replayed.execution_facts())
+                .into_iter()
+                .chain(crate::kernel::certified_store_equations(
+                    &certified_path.execution_facts(),
+                ))
+            {
+                path_assumptions = path_assumptions.assume_proposition(equation);
+            }
             if let CFunctionOutcome::Return { state, .. } = certified
                 && let Ok(resource_facts) = state.resources().observable_facts(&path_assumptions)
             {
