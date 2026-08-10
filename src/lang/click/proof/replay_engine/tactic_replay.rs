@@ -2259,6 +2259,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         replay.old_reference_state(&state),
                         &state,
                         &replay.program_point_states,
+                        &replay.surface_propositions,
                         predicate_environment,
                         click_function_environment,
                         unfolded_predicates,

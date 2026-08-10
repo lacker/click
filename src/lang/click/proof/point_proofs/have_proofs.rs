@@ -223,6 +223,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     pre_state: &CState,
     state: &CState,
     program_point_states: &ProgramPointStates,
+    surface_propositions: &SurfacePropositionMap,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
@@ -329,6 +330,10 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
         let lowering_facts = facts_for_restricted_simp_lowering(&available);
         let mut exact = Vec::new();
         for surface in surfaces {
+            if let Some(recorded) = surface_propositions.available_kernel(surface, &available) {
+                exact.push(recorded.clone());
+                continue;
+            }
             let lowered = lower_point_proposition(
                 surface,
                 &lowering_facts,
@@ -346,16 +351,27 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
                     "`{claim_label}` have proof {outer_tactic_index}: could not lower `simp` premise: {message}"
                 ))
             })?;
-            if !available
+            let exact_available = available
                 .iter()
-                .any(|fact| fact == &lowered || condition_polarity_equivalent(fact, &lowered))
-            {
+                .find(|fact| *fact == &lowered || condition_polarity_equivalent(fact, &lowered))
+                .cloned()
+                .or_else(|| materialization_equivalent_available_fact(&lowered, &available))
+                .or_else(|| {
+                    // A listed `at(...)` fact can denote an available kernel
+                    // fact whose load atoms carry another certified snapshot.
+                    // Bridging establishes identity of that one premise; it
+                    // does not add the rest of `available` to simp's context.
+                    snapshot_bridged_fact_is_available(&lowered, &available, &[])
+                        .then_some(lowered.clone())
+                });
+            let Some(exact_fact) = exact_available else {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` have proof {outer_tactic_index}: `simp` is missing an exact listed premise: {}",
-                    describe_pure_fact(&lowered, parameters, arguments)
+                    "`{claim_label}` have proof {outer_tactic_index}: `simp` listed a premise that is not exactly available\n  Click: {}\n  lowered: {}",
+                    describe_click_proposition(surface),
+                    describe_pure_fact(&lowered, parameters, arguments),
                 )));
-            }
-            exact.push(lowered);
+            };
+            exact.push(exact_fact);
         }
         exact
     } else {

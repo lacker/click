@@ -599,6 +599,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         pre_state,
         state,
         program_point_states,
+        surface_propositions,
         predicate_environment,
         click_function_environment,
         &unfolded_predicates,

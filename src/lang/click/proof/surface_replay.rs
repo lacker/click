@@ -1096,6 +1096,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         replay.old_reference_state(state),
                         state,
                         &replay.program_point_states,
+                        &replay.surface_propositions,
                         predicate_environment,
                         click_function_environment,
                         &[],
@@ -1174,6 +1175,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         replay.old_reference_state(state),
                         state,
                         &replay.program_point_states,
+                        &replay.surface_propositions,
                         predicate_environment,
                         click_function_environment,
                         &[],
@@ -2163,6 +2165,13 @@ pub(super) fn surface_smart_have_certificate(
                 simp.premises
                     .iter()
                     .map(|surface| {
+                        if let Some(kernel) = replay
+                            .surface_propositions
+                            .available_kernel(surface, available)
+                            .cloned()
+                        {
+                            return Ok(kernel);
+                        }
                         let freshly_lowered = lower_point_proposition(
                             surface,
                             &facts_for_restricted_simp_lowering(available),
@@ -2183,12 +2192,20 @@ pub(super) fn surface_smart_have_certificate(
                         {
                             return Ok(fact.clone());
                         }
-                        if let Some(kernel) = replay
-                            .surface_propositions
-                            .available_kernel(surface, available)
-                            .cloned()
+                        if let Ok(lowered) = &freshly_lowered
+                            && let Some(fact) =
+                                materialization_equivalent_available_fact(lowered, available)
                         {
-                            return Ok(kernel);
+                            return Ok(fact);
+                        }
+                        if let Ok(lowered) = &freshly_lowered
+                            && snapshot_bridged_fact_is_available(lowered, available, &[])
+                        {
+                            // Retain the listed spelling after checking that
+                            // it is the same available fact across certified
+                            // snapshots. The restricted reasoning context is
+                            // still exactly the listed premise vector.
+                            return Ok(lowered.clone());
                         }
                         Err(ClickError::new(match freshly_lowered {
                             Ok(_) => format!(
