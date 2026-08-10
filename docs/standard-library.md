@@ -33,11 +33,21 @@ theorem int32_increment_preserves_order(value: int32, lower: int32, upper: int32
 
     ensures lower + 1 <= value + 1;
 }
+
+theorem int32_successor_le_implies_lt(lower: int32, value: int32) {
+    requires lower < lower + 1;
+    requires lower + 1 <= value;
+
+    ensures lower < value;
+}
 ```
 
 The strict upper premise rules out signed overflow. It either proves the
 resulting upper bound directly, lets an existing lower bound survive the
 increment, or lets both sides of an established order increment together.
+The successor theorem states its no-overflow condition separately, allowing a
+concrete condition such as `1 < 2` to be discharged by context-free kernel
+normalization while an adjacent non-strict bound is supplied explicitly.
 Smart simplification may select these theorems, while expansion records an
 ordinary simple `apply(...) using { ... }` step with the exact premises. Each
 declaration is checked against its fixed kernel axiom; users cannot introduce

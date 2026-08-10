@@ -2146,6 +2146,32 @@ pub fn prove_int32_increment_preserves_order(
     ))
 }
 
+/// A value at least one greater than `lower` is strictly greater than
+/// `lower`. The first premise explicitly proves that forming the successor did
+/// not wrap in signed int32 arithmetic.
+pub fn prove_int32_successor_le_implies_lt(
+    lower: Bitvector32Term,
+    value: Bitvector32Term,
+) -> Theorem {
+    let successor = Bitvector32Term::add(lower.clone(), Bitvector32Term::Constant(1));
+    let no_overflow_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(lower.clone(), successor.clone()),
+        true,
+    );
+    let bound_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(successor, value.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_than(lower, value), true);
+    Theorem::new(Proposition::Implies(
+        Box::new(no_overflow_premise),
+        Box::new(Proposition::Implies(
+            Box::new(bound_premise),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
 pub fn prove_memory_load(memory: CMemory, pointer: Pointer) -> Theorem {
     let outcome = memory.load(&pointer);
     Theorem::new(Proposition::CMemoryLoads {

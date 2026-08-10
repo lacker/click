@@ -1052,7 +1052,8 @@ pub(super) fn lower_restricted_simp_plan(
         }
     }
 
-    let tactics = plan_explicit_increment_preserves_order(goal, premise_pairs)
+    let tactics = plan_explicit_successor_le_implies_lt(goal, premise_pairs)
+        .or_else(|| plan_explicit_increment_preserves_order(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_equality_rewrites(goal, premise_pairs, &available))
@@ -1180,6 +1181,49 @@ fn plan_explicit_increment_upper_bound(
                     arguments: vec![value, upper],
                 },
                 premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
+}
+
+fn plan_explicit_successor_le_implies_lt(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let (lower, value) = signed_strict_parts(goal)?;
+    for (bound_kernel, bound_surface) in premise_pairs {
+        let Some((successor, bound_value)) = signed_nonstrict_parts(bound_kernel) else {
+            continue;
+        };
+        if bound_value != value
+            || successor != &Bitvector32Term::add(lower.clone(), Bitvector32Term::Constant(1))
+        {
+            continue;
+        }
+        let no_overflow = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessThan(
+                Box::new(lower.clone()),
+                Box::new(successor.clone()),
+            ),
+            true,
+        );
+        if !normalizes_context_free(&no_overflow) {
+            continue;
+        }
+        let Bitvector32Term::Constant(lower) = lower else {
+            continue;
+        };
+        let surface_lower = ContractExpression::CFragment(CExpression::Value(int32(*lower)));
+        let (_, surface_value) = surface_nonstrict_parts(bound_surface)?;
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_successor_le_implies_lt".to_string(),
+                    arguments: vec![surface_lower, surface_value],
+                },
+                premises: vec![bound_surface.clone()],
             },
             ProofTactic::Assumption,
         ]);

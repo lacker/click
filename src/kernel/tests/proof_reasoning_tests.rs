@@ -89,6 +89,34 @@ fn int32_increment_preserves_order_axiom_has_the_exact_implications() {
 }
 
 #[test]
+fn int32_successor_le_implies_lt_axiom_has_the_exact_implications() {
+    let lower = Bitvector32Term::Variable(Variable(90_030));
+    let value = Bitvector32Term::Variable(Variable(90_031));
+    let theorem = prove_int32_successor_le_implies_lt(lower.clone(), value.clone());
+    let successor = Bitvector32Term::add(lower.clone(), Bitvector32Term::Constant(1));
+    let no_overflow_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(lower.clone(), successor.clone()),
+        true,
+    );
+    let bound_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(successor, value.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_than(lower, value), true);
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(no_overflow_premise),
+            Box::new(Proposition::Implies(
+                Box::new(bound_premise),
+                Box::new(conclusion),
+            )),
+        )
+    );
+}
+
+#[test]
 fn proposition_derivation_honors_active_deadline() {
     let assumptions = Assumptions::new();
     let proposition = Proposition::ConditionIs(ConditionTerm::Constant(true), true);

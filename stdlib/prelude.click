@@ -20,6 +20,13 @@ theorem int32_increment_preserves_order(value: int32, lower: int32, upper: int32
     ensures lower + 1 <= value + 1;
 }
 
+theorem int32_successor_le_implies_lt(lower: int32, value: int32) {
+    requires lower < lower + 1;
+    requires lower + 1 <= value;
+
+    ensures lower < value;
+}
+
 function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 {
     (lo..hi).fold(0, |acc, k| {
         acc + if p[k] == x { 1 } else { 0 }

@@ -397,6 +397,7 @@ fn verify_theorem_ensure(
         "int32_increment_upper_bound"
             | "int32_increment_lower_bound"
             | "int32_increment_preserves_order"
+            | "int32_successor_le_implies_lt"
     ) {
         return verify_kernel_standard_theorem_axiom(
             theorem,
@@ -519,6 +520,7 @@ fn verify_kernel_standard_theorem_axiom(
     let (parameter_count, requirement_count) = match theorem.name() {
         "int32_increment_upper_bound" => (2, 1),
         "int32_increment_lower_bound" | "int32_increment_preserves_order" => (3, 2),
+        "int32_successor_le_implies_lt" => (2, 2),
         _ => unreachable!("only registered kernel standard theorems call this verifier"),
     };
     if ensure_index != 0
@@ -551,6 +553,9 @@ fn verify_kernel_standard_theorem_axiom(
         }
         "int32_increment_preserves_order" => {
             prove_int32_increment_preserves_order(value, int32_parameter(1)?, int32_parameter(2)?)
+        }
+        "int32_successor_le_implies_lt" => {
+            prove_int32_successor_le_implies_lt(value, int32_parameter(1)?)
         }
         _ => unreachable!("checked above"),
     };

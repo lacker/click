@@ -1334,6 +1334,44 @@ fn restricted_simp_expands_increment_order_to_theorem_application() {
 }
 
 #[test]
+fn restricted_simp_expands_adjacent_order_to_theorem_application() {
+    let click_source = r#"
+        theorem two_at_most_implies_one_below(value: int32) {
+            requires 2 <= value;
+            ensures 1 < value by {
+                simp() using {
+                    2 <= value;
+                }
+            }
+        }
+    "#;
+    let offset = click_source.find("simp() using").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("adjacent order simp should expand");
+    assert!(
+        expanded.contains("apply(int32_successor_le_implies_lt(1, value)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("2 <= value;"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+}
+
+#[test]
 fn restricted_simp_inside_have_expands_to_explicit_equality_rewrites() {
     let c_source = r#"
             int32 identity(int32 x, int32 y, int32 z) {

@@ -39,14 +39,15 @@ construct arbitrary theorems directly. Public functions that return `Theorem`
 are trusted theorem-producing operations. In Click terminology these are
 axioms, even when Rust names them `prove_*`.
 
-`prove_int32_increment_upper_bound` and
-`prove_int32_increment_lower_bound`, and
-`prove_int32_increment_preserves_order` are kernel axioms exposed as named
-standard theorems. They construct only the fixed signed-increment implications
-documented in the standard library. Standard-library verification checks each
-parsed declaration against its exact proposition before theorem application
-becomes available; expanded user proofs then use the ordinary simple
-`apply(...) using { ... }` certificate.
+`prove_int32_increment_upper_bound`,
+`prove_int32_increment_lower_bound`,
+`prove_int32_increment_preserves_order`, and
+`prove_int32_successor_le_implies_lt` are kernel axioms exposed as named
+standard theorems. They construct only the fixed signed-increment and
+successor-order implications documented in the standard library.
+Standard-library verification checks each parsed declaration against its exact
+proposition before theorem application becomes available; expanded user proofs
+then use the ordinary simple `apply(...) using { ... }` certificate.
 
 Execution theorems retain every verification condition as an implication
 premise, including conditions that are not assumable during execution.
