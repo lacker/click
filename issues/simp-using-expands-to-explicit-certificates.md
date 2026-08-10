@@ -48,7 +48,9 @@ The `simp() using` foundation is now separate from legacy `derive`:
 - certificate lowering consumes the selected restricted plan rather than
   checking the goal with `derive`;
 - supported equality and pointer-alias derivations expand to `rewrite`,
-  `assumption`, and `normalize`; and
+  `assumption`, and `normalize`;
+- supported signed increment bounds expand to named standard-theorem
+  applications whose exact propositions are checked against kernel axioms;
 - a listed fact may be recognized under an equivalent certified memory
   snapshot without admitting any other ambient fact to the simplifier; and
 - an unsupported derivation fails locally with a bounded missing-simple-rule
@@ -106,18 +108,22 @@ certificate, not on the amount of irrelevant earlier snapshot history.
 Completed source migrations now include the equality chains in
 `examples/binary-tree`, four element/pointer/result equalities in
 `examples/owned-split-buffer`, and the final result equality in
-`examples/owned-string`. They expand to explicit `rewrite`, `assumption`, and
-`normalize` steps. Other source shapes still need principled surface
-certificates before their old `derive using` blocks can be removed:
+`examples/owned-string`. Signed increment bounds in the composite-vector loop
+regression and `examples/input-cursor` have also migrated. Equality cases
+expand to explicit `rewrite`, `assumption`, and `normalize` steps; increment
+cases expand to applications of the standard theorems
+`int32_increment_upper_bound` and `int32_increment_lower_bound`, followed by
+`assumption`. Other source shapes still need principled surface certificates
+before their old `derive using` blocks can be removed:
 
 - `examples/vector-push` proves `1 <= owner->len` after incrementing a
-  nonnegative old length, and `examples/input-cursor` has the analogous
-  `0 <= owner->pos` successor proof. The two remaining
-  `examples/owned-split-buffer` sites likewise need ordinary signed-order
-  consequences. Smart simplification verifies these arithmetic consequences,
-  but equality rewrites alone cannot express the selected order rule. Add the
-  smallest named simple arithmetic rule (or an equally explicit theorem
-  application), not a generic arithmetic solver relabeled as simple.
+  nonnegative old length. This is a shifted-order fact (`0 <= old_len` implies
+  `1 <= old_len + 1`), not either of the now-supported bound-preservation
+  rules. The two remaining `examples/owned-split-buffer` sites need the
+  adjacent signed-order consequence `2 <= length` implies `1 < length`, plus
+  an equality substitution in one case. Add the smallest named standard
+  theorem applications for these exact order shapes, not a generic arithmetic
+  solver relabeled as simple.
 - The owned-string replay/certification instability has been fixed and the
   project now passes repeated ordinary verification under its normal limit.
   Its remaining `derive using` sites expose implicit execution-history and
