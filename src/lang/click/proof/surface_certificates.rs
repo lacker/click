@@ -1052,7 +1052,8 @@ pub(super) fn lower_restricted_simp_plan(
         }
     }
 
-    let tactics = plan_explicit_increment_upper_bound(goal, premise_pairs)
+    let tactics = plan_explicit_increment_lower_bound(goal, premise_pairs)
+        .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_equality_rewrites(goal, premise_pairs, &available))
         .ok_or_else(|| {
         let initial_rewrites = premise_pairs
@@ -1079,70 +1080,98 @@ pub(super) fn lower_restricted_simp_plan(
     Ok(tactics)
 }
 
+fn signed_strict_parts(proposition: &Proposition) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
+    match proposition {
+        Proposition::ConditionIs(ConditionTerm::Bitvector32SignedLessThan(left, right), true) => {
+            Some((left, right))
+        }
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterThan(left, right),
+            true,
+        ) => Some((right, left)),
+        _ => None,
+    }
+}
+
+fn signed_nonstrict_parts(
+    proposition: &Proposition,
+) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
+    match proposition {
+        Proposition::ConditionIs(ConditionTerm::Bitvector32SignedLessEqual(left, right), true) => {
+            Some((left, right))
+        }
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right),
+            true,
+        ) => Some((right, left)),
+        _ => None,
+    }
+}
+
+fn increment_base(term: &Bitvector32Term) -> Option<&Bitvector32Term> {
+    let Bitvector32Term::Add(left, right) = term else {
+        return None;
+    };
+    if right.as_ref() == &Bitvector32Term::Constant(1) {
+        Some(left)
+    } else if left.as_ref() == &Bitvector32Term::Constant(1) {
+        Some(right)
+    } else {
+        None
+    }
+}
+
+fn surface_strict_parts(
+    proposition: &ClickProposition,
+) -> Option<(ContractExpression, ContractExpression)> {
+    let ClickProposition::Comparison {
+        left,
+        operator,
+        right,
+    } = proposition
+    else {
+        return None;
+    };
+    match operator {
+        ComparisonOperator::LessThan => Some((left.clone(), right.clone())),
+        ComparisonOperator::GreaterThan => Some((right.clone(), left.clone())),
+        _ => None,
+    }
+}
+
+fn surface_nonstrict_parts(
+    proposition: &ClickProposition,
+) -> Option<(ContractExpression, ContractExpression)> {
+    let ClickProposition::Comparison {
+        left,
+        operator,
+        right,
+    } = proposition
+    else {
+        return None;
+    };
+    match operator {
+        ComparisonOperator::LessEqual => Some((left.clone(), right.clone())),
+        ComparisonOperator::GreaterEqual => Some((right.clone(), left.clone())),
+        _ => None,
+    }
+}
+
 fn plan_explicit_increment_upper_bound(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    fn strict_parts(proposition: &Proposition) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
-        match proposition {
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessThan(left, right),
-                true,
-            ) => Some((left, right)),
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedGreaterThan(left, right),
-                true,
-            ) => Some((right, left)),
-            _ => None,
-        }
-    }
-
-    fn nonstrict_parts(proposition: &Proposition) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
-        match proposition {
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessEqual(left, right),
-                true,
-            ) => Some((left, right)),
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedGreaterEqual(left, right),
-                true,
-            ) => Some((right, left)),
-            _ => None,
-        }
-    }
-
-    let (incremented, goal_upper) = nonstrict_parts(goal)?;
-    let Bitvector32Term::Add(left, right) = incremented else {
-        return None;
-    };
-    let base = if right.as_ref() == &Bitvector32Term::Constant(1) {
-        left.as_ref()
-    } else if left.as_ref() == &Bitvector32Term::Constant(1) {
-        right.as_ref()
-    } else {
-        return None;
-    };
+    let (incremented, goal_upper) = signed_nonstrict_parts(goal)?;
+    let base = increment_base(incremented)?;
 
     for (kernel, surface) in premise_pairs {
-        let Some((premise_base, premise_upper)) = strict_parts(kernel) else {
+        let Some((premise_base, premise_upper)) = signed_strict_parts(kernel) else {
             continue;
         };
         if premise_base != base || premise_upper != goal_upper {
             continue;
         }
-        let ClickProposition::Comparison {
-            left,
-            operator,
-            right,
-        } = surface
-        else {
-            continue;
-        };
-        let (value, upper) = match operator {
-            ComparisonOperator::LessThan => (left.clone(), right.clone()),
-            ComparisonOperator::GreaterThan => (right.clone(), left.clone()),
-            _ => continue,
-        };
+        let (value, upper) = surface_strict_parts(surface)?;
         return Some(vec![
             ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
@@ -1153,6 +1182,48 @@ fn plan_explicit_increment_upper_bound(
             },
             ProofTactic::Assumption,
         ]);
+    }
+    None
+}
+
+fn plan_explicit_increment_lower_bound(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let (goal_lower, incremented) = signed_nonstrict_parts(goal)?;
+    let base = increment_base(incremented)?;
+
+    for (lower_kernel, lower_surface) in premise_pairs {
+        let Some((premise_lower, lower_base)) = signed_nonstrict_parts(lower_kernel) else {
+            continue;
+        };
+        if premise_lower != goal_lower || lower_base != base {
+            continue;
+        }
+        let Some((surface_lower, _)) = surface_nonstrict_parts(lower_surface) else {
+            continue;
+        };
+        for (upper_kernel, upper_surface) in premise_pairs {
+            let Some((upper_base, _)) = signed_strict_parts(upper_kernel) else {
+                continue;
+            };
+            if upper_base != base {
+                continue;
+            }
+            let Some((surface_value, surface_upper)) = surface_strict_parts(upper_surface) else {
+                continue;
+            };
+            return Some(vec![
+                ProofTactic::ApplyTheoremUsing {
+                    application: TheoremApplication {
+                        name: "int32_increment_lower_bound".to_string(),
+                        arguments: vec![surface_value, surface_lower, surface_upper],
+                    },
+                    premises: vec![lower_surface.clone(), upper_surface.clone()],
+                },
+                ProofTactic::Assumption,
+            ]);
+        }
     }
     None
 }

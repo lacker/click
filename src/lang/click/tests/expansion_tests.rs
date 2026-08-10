@@ -1244,6 +1244,51 @@ fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
 }
 
 #[test]
+fn restricted_simp_expands_increment_lower_bound_to_theorem_application() {
+    let click_source = r#"
+        theorem increment_preserves_lower_bound(
+            value: int32,
+            lower: int32,
+            upper: int32
+        ) {
+            requires lower <= value;
+            requires value < upper;
+            ensures lower <= value + 1 by {
+                simp() using {
+                    lower <= value;
+                    value < upper;
+                }
+            }
+        }
+    "#;
+    let offset = click_source.find("simp() using").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("increment lower-bound simp should expand");
+    assert!(
+        expanded.contains("apply(int32_increment_lower_bound(value, lower, upper)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("lower <= value;"), "{expanded}");
+    assert!(expanded.contains("value < upper;"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+}
+
+#[test]
 fn restricted_simp_inside_have_expands_to_explicit_equality_rewrites() {
     let c_source = r#"
             int32 identity(int32 x, int32 y, int32 z) {

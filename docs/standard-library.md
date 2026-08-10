@@ -19,12 +19,20 @@ theorem int32_increment_upper_bound(value: int32, upper: int32) {
 
     ensures value + 1 <= upper;
 }
+
+theorem int32_increment_lower_bound(value: int32, lower: int32, upper: int32) {
+    requires lower <= value;
+    requires value < upper;
+
+    ensures lower <= value + 1;
+}
 ```
 
-The strict premise rules out signed overflow as well as proving the resulting
-upper bound. Smart simplification may select this theorem, while expansion
+The strict upper premise rules out signed overflow. It either proves the
+resulting upper bound directly, or lets an existing lower bound survive the
+increment. Smart simplification may select these theorems, while expansion
 records an ordinary simple `apply(...) using { ... }` step with the exact
-premise. The declaration is checked against its fixed kernel axiom; users
+premises. Each declaration is checked against its fixed kernel axiom; users
 cannot introduce additional kernel-backed theorems by writing a declaration
 with a similar shape.
 

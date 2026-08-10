@@ -2087,6 +2087,35 @@ pub fn prove_int32_increment_upper_bound(
     ))
 }
 
+/// Signed int32 increment preserves a non-strict lower bound when a strict
+/// upper bound rules out signed overflow.
+pub fn prove_int32_increment_lower_bound(
+    value: Bitvector32Term,
+    lower: Bitvector32Term,
+    upper: Bitvector32Term,
+) -> Theorem {
+    let lower_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(lower.clone(), value.clone()),
+        true,
+    );
+    let upper_premise =
+        Proposition::ConditionIs(ConditionTerm::signed_less_than(value.clone(), upper), true);
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            lower,
+            Bitvector32Term::add(value, Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(lower_premise),
+        Box::new(Proposition::Implies(
+            Box::new(upper_premise),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
 pub fn prove_memory_load(memory: CMemory, pointer: Pointer) -> Theorem {
     let outcome = memory.load(&pointer);
     Theorem::new(Proposition::CMemoryLoads {

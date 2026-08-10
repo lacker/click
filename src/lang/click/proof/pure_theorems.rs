@@ -392,8 +392,11 @@ fn verify_theorem_ensure(
         ))
     })?;
 
-    if theorem.name() == "int32_increment_upper_bound" {
-        return verify_int32_increment_upper_bound_axiom(
+    if matches!(
+        theorem.name(),
+        "int32_increment_upper_bound" | "int32_increment_lower_bound"
+    ) {
+        return verify_kernel_standard_theorem_axiom(
             theorem,
             ensure_index,
             ensure_clause,
@@ -503,7 +506,7 @@ fn verify_theorem_ensure(
     })
 }
 
-fn verify_int32_increment_upper_bound_axiom(
+fn verify_kernel_standard_theorem_axiom(
     theorem: &TheoremDefinition,
     ensure_index: usize,
     ensure_clause: &EnsureClause,
@@ -511,9 +514,14 @@ fn verify_int32_increment_upper_bound_axiom(
     context: &PureTheoremContext,
     goal: Proposition,
 ) -> Result<VerifiedPureTheorem, ClickError> {
+    let (parameter_count, requirement_count) = match theorem.name() {
+        "int32_increment_upper_bound" => (2, 1),
+        "int32_increment_lower_bound" => (3, 2),
+        _ => unreachable!("only registered kernel standard theorems call this verifier"),
+    };
     if ensure_index != 0
-        || theorem.parameters().len() != 2
-        || theorem.requires().len() != 1
+        || theorem.parameters().len() != parameter_count
+        || theorem.requires().len() != requirement_count
         || theorem.ensures().len() != 1
         || !matches!(ensure_clause.proof(), Proof::Default)
     {
@@ -532,12 +540,22 @@ fn verify_int32_increment_upper_bound_axiom(
         }
     };
     let value = int32_parameter(0)?;
-    let upper = int32_parameter(1)?;
-    let axiom = prove_int32_increment_upper_bound(value, upper);
-    let expected = Proposition::Implies(
-        Box::new(context.requires[0].clone()),
-        Box::new(goal.clone()),
-    );
+    let axiom = match theorem.name() {
+        "int32_increment_upper_bound" => {
+            prove_int32_increment_upper_bound(value, int32_parameter(1)?)
+        }
+        "int32_increment_lower_bound" => {
+            prove_int32_increment_lower_bound(value, int32_parameter(1)?, int32_parameter(2)?)
+        }
+        _ => unreachable!("checked above"),
+    };
+    let expected = context
+        .requires
+        .iter()
+        .rev()
+        .fold(goal.clone(), |body, requirement| {
+            Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
+        });
     if axiom.proposition() != &expected {
         return Err(ClickError::new(format!(
             "`{claim_label}` declaration does not match its kernel axiom",

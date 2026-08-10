@@ -6,6 +6,13 @@ theorem int32_increment_upper_bound(value: int32, upper: int32) {
     ensures value + 1 <= upper;
 }
 
+theorem int32_increment_lower_bound(value: int32, lower: int32, upper: int32) {
+    requires lower <= value;
+    requires value < upper;
+
+    ensures lower <= value + 1;
+}
+
 function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 {
     (lo..hi).fold(0, |acc, k| {
         acc + if p[k] == x { 1 } else { 0 }
