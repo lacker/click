@@ -271,10 +271,8 @@ int32 owned_split_buffer_pipeline(
         }
     }
     have owner->split < owner->len by {
-        derive using {
-            1 < owner->len;
-            owner->split == 1;
-        }
+        rewrite(owner->split == 1);
+        assumption();
     }
     step() using {
         owner->split < owner->len;
