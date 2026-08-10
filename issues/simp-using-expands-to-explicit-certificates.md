@@ -106,22 +106,18 @@ certificate, not on the amount of irrelevant earlier snapshot history.
 ## Remaining migration blockers
 
 Completed source migrations now include the equality chains in
-`examples/binary-tree`, four element/pointer/result equalities in
+`examples/binary-tree`, all element/pointer/result and order derivations in
 `examples/owned-split-buffer`, and the final result equality in
 `examples/owned-string`. Signed increment bounds in the composite-vector loop
 regression and `examples/input-cursor`, plus the shifted increment order in
 `examples/vector-push`, have also migrated. Equality cases expand to explicit
-`rewrite`, `assumption`, and `normalize` steps; increment cases expand to
+`rewrite`, `assumption`, and `normalize` steps; signed-order cases expand to
 applications of the standard theorems `int32_increment_upper_bound`,
-`int32_increment_lower_bound`, and `int32_increment_preserves_order`, followed
-by `assumption`. Other source shapes still need principled surface certificates
-before their old `derive using` blocks can be removed:
+`int32_increment_lower_bound`, `int32_increment_preserves_order`, and
+`int32_successor_le_implies_lt`, followed by `assumption`. Other source shapes
+still need principled surface certificates before their old `derive using`
+blocks can be removed:
 
-- The two remaining `examples/owned-split-buffer` sites need the adjacent
-  signed-order consequence `2 <= length` implies `1 < length`, plus an
-  equality substitution in one case. Add the smallest named standard theorem
-  application for this exact order shape, not a generic arithmetic solver
-  relabeled as simple.
 - The owned-string replay/certification instability has been fixed and the
   project now passes repeated ordinary verification under its normal limit.
   Its remaining `derive using` sites expose implicit execution-history and
