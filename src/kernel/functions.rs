@@ -1489,11 +1489,7 @@ fn counted_population_quantities(
         // first produced and last consumed unit.
         let has_declared_body = definitions.iter().any(|definition| {
             definition.name() == name
-                && (definition.is_counted_population()
-                    || (track_ordinary_populations
-                        && !definition.is_recursive()
-                        && definition.condition().is_none()
-                        && definition.facts().is_empty()))
+                && definition_has_population_wide_body(definition, track_ordinary_populations)
         });
         let population_is_observed = tracked_state.observes_population_family(name)
             || tracked_state
@@ -1522,7 +1518,58 @@ fn definition_has_population_wide_body(
         || (track_ordinary_populations
             && !definition.is_recursive()
             && definition.condition().is_none()
-            && definition.facts().is_empty())
+            && definition
+                .contains()
+                .iter()
+                .all(resource_spec_has_snapshot_independent_footprint))
+}
+
+fn resource_spec_has_snapshot_independent_footprint(resource: &CResourceSpec) -> bool {
+    match resource {
+        CResourceSpec::Read(segment) | CResourceSpec::Write(segment) => {
+            segment.guard.is_none()
+                && c_expression_is_snapshot_independent(&segment.base)
+                && c_expression_is_snapshot_independent(&segment.start)
+                && c_expression_is_snapshot_independent(&segment.end)
+        }
+        CResourceSpec::Composite { arguments, .. } | CResourceSpec::Token { arguments, .. } => {
+            arguments.iter().all(c_expression_is_snapshot_independent)
+        }
+    }
+}
+
+fn c_expression_is_snapshot_independent(expression: &CExpression) -> bool {
+    match expression {
+        CExpression::Value(_) | CExpression::Variable(_) => true,
+        CExpression::AddressOf(inner)
+        | CExpression::Not(inner)
+        | CExpression::BitwiseNot(inner) => c_expression_is_snapshot_independent(inner),
+        CExpression::PointerOffsetBytes { pointer, .. } => {
+            c_expression_is_snapshot_independent(pointer)
+        }
+        CExpression::Load(_) | CExpression::TypedLoad { .. } | CExpression::Index(_, _) => false,
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right) => {
+            c_expression_is_snapshot_independent(left)
+                && c_expression_is_snapshot_independent(right)
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1655,16 +1702,8 @@ fn apply_counted_population_transitions(
             let refreshes_ordinary_population = track_ordinary_populations
                 && required_quantity > 0
                 && caller_state.counted_population(&name, &arguments).is_some()
-                && function
-                    .composite_resource_definitions()
-                    .iter()
-                    .any(|definition| {
-                        definition.name() == name
-                            && !definition.is_counted_population()
-                            && !definition.is_recursive()
-                            && definition.condition().is_none()
-                            && definition.facts().is_empty()
-                    });
+                && population_body_definition
+                    .is_some_and(|definition| !definition.is_counted_population());
             if refreshes_ordinary_population {
                 let singleton = ResourceContext::new().unchecked_with_fact(CResourceFact::own(
                     CResource::Composite {
@@ -1822,16 +1861,8 @@ fn apply_counted_population_transitions(
                 new_count.clone(),
             );
             let activates_ordinary_population = track_ordinary_populations
-                && function
-                    .composite_resource_definitions()
-                    .iter()
-                    .any(|definition| {
-                        definition.name() == name
-                            && !definition.is_counted_population()
-                            && !definition.is_recursive()
-                            && definition.condition().is_none()
-                            && definition.facts().is_empty()
-                    });
+                && population_body_definition
+                    .is_some_and(|definition| !definition.is_counted_population());
             if !population_was_initialized && activates_ordinary_population {
                 let singleton = ResourceContext::new().unchecked_with_fact(CResourceFact::own(
                     CResource::Composite {
@@ -1902,7 +1933,8 @@ fn apply_counted_population_transitions(
                 .composite_resource_definitions()
                 .iter()
                 .any(|definition| {
-                    definition.is_counted_population() && definition.name() == population.name
+                    definition.name() == population.name
+                        && definition_has_population_wide_body(definition, true)
                 })
                 .then(|| {
                     CResourceFact::own(CResource::Composite {
@@ -1913,11 +1945,12 @@ fn apply_counted_population_transitions(
         })
         .collect::<Vec<_>>();
     let active_populations = ResourceContext::new().unchecked_with_facts(active_populations);
-    let Some(population_facts) = evaluate_counted_population_fact_propositions(
+    let Some(population_facts) = evaluate_resource_population_fact_propositions(
         &active_populations,
         function.composite_resource_definitions(),
         &post_contract_state,
         &Assumptions::new(),
+        true,
     ) else {
         return Ok(Err(CRuntimeError::FunctionContract(
             "could not evaluate resource population postcondition".to_string(),
@@ -2068,13 +2101,50 @@ fn expand_composite_resource_fact_with_children(
     let mut expanded = expansion_base;
     let missing = children
         .iter()
-        .filter(|child| !expanded.facts().contains(child))
+        .filter(|child| {
+            !expanded.facts().contains(child)
+                && !resource_context_contains_exact_owned_fact(&expanded, child, assumptions)
+        })
         .cloned()
         .collect::<Vec<_>>();
     expanded = expanded
         .try_compose_into_valid_context_delaying_normalization(missing, assumptions)
         .ok()?;
     Some((expanded, children))
+}
+
+fn resource_context_contains_exact_owned_fact(
+    context: &ResourceContext,
+    required: &CResourceFact,
+    assumptions: &Assumptions,
+) -> bool {
+    if !required.is_own() {
+        return false;
+    }
+    if let CResourceFact::Own(CResource::Memory(required_range), _) = required {
+        let exact_parts = context
+            .facts()
+            .iter()
+            .filter(|available| {
+                available.memory_own_range().is_some_and(|available_range| {
+                    memory_range_covers(required_range, available_range, assumptions)
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let exact_parts = ResourceContext::new().unchecked_with_facts(exact_parts);
+        return exact_parts.validity_error(assumptions).is_none()
+            && exact_parts.satisfies_fact(required, assumptions);
+    }
+    context.facts().iter().any(|available| {
+        if !available.is_own() || available.family() != required.family() {
+            return false;
+        }
+        ResourceContext::new()
+            .unchecked_with_fact(available.clone())
+            .without_fact_delaying_normalization(required, assumptions)
+            .is_some_and(|remaining| remaining.is_empty())
+    })
 }
 
 pub(super) fn evaluate_guarded_contract_condition(
@@ -2364,11 +2434,12 @@ pub(super) fn expand_all_composite_resource_facts_and_propositions(
     Some((expanded, propositions))
 }
 
-pub(super) fn evaluate_counted_population_fact_propositions(
+pub(super) fn evaluate_resource_population_fact_propositions(
     context: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     state: &CState,
     assumptions: &Assumptions,
+    include_ordinary: bool,
 ) -> Option<Vec<Proposition>> {
     let mut populations = BTreeMap::<(String, Vec<CValue>), u32>::new();
     for fact in context.facts() {
@@ -2413,7 +2484,7 @@ pub(super) fn evaluate_counted_population_fact_propositions(
         // additional invariant evaluation. In particular, do not force an
         // undecided conditional body before certification enumerates its
         // guard cases.
-        if !definition.is_counted_population() {
+        if !definition.is_counted_population() && !include_ordinary {
             continue;
         }
         if population_count.is_none() {

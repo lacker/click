@@ -642,11 +642,12 @@ fn prepare_function_claim_path(
         return Err("the required composite resources cannot be expanded".to_string());
     };
     let mut assumptions = assumptions_with_propositions(&assumptions, &definition_facts);
-    let Some(population_facts) = evaluate_counted_population_fact_propositions(
+    let Some(population_facts) = evaluate_resource_population_fact_propositions(
         &required_resources,
         function.composite_resource_definitions(),
         &entry_state,
         &assumptions,
+        false,
     ) else {
         return Err("the counted population facts cannot be evaluated".to_string());
     };

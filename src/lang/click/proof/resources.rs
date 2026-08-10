@@ -1538,7 +1538,6 @@ pub(super) fn unfold_composite_resource(
     }
 
     let body_was_already_exposed = composite_body.condition().is_none()
-        && composite_body.facts().is_empty()
         && unfolded_facts
             .iter()
             .all(|fact| state.resources().satisfies_fact(fact, &assumptions));
