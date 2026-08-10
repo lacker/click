@@ -876,7 +876,7 @@ pub enum ProofTactic {
         premises: Vec<ClickProposition>,
     },
     Simp,
-    SimpUsing(ProofDerive),
+    SimpUsing(ProofSimpUsing),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1760,6 +1760,11 @@ pub struct ProofBranch {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProofDerive {
+    premises: Vec<ClickProposition>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofSimpUsing {
     premises: Vec<ClickProposition>,
 }
 

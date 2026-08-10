@@ -2245,7 +2245,7 @@ pub(super) fn surface_smart_have_certificate(
             .cloned()
             .zip(simp.premises.iter().cloned())
             .collect::<Vec<_>>();
-        let explicit = lower_outcome_restricted_simp_tactics(&explicit_goal, &pairs)?;
+        let explicit = lower_restricted_simp_plan(&explicit_goal, plan, &pairs)?;
         let mut tactics = unfolded_predicates
             .iter()
             .cloned()

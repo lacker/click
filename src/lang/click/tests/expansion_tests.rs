@@ -1118,6 +1118,94 @@ fn restricted_simp_expands_to_explicit_equality_rewrites() {
 }
 
 #[test]
+fn restricted_simp_after_unfold_does_not_hide_conjunction_extraction_in_derive() {
+    let click_source = r#"
+            predicate equality_chain(x: int32, y: int32, z: int32) {
+                x == y and y == z
+            }
+
+            theorem equality_transitive_after_unfold(x: int32, y: int32, z: int32) {
+                requires equality_chain(x, y, z);
+                ensures x == z by {
+                    unfold(equality_chain);
+                    simp() using {
+                        x == y;
+                        y == z;
+                    }
+                }
+            }
+        "#;
+    let offset = click_source.find("simp() using").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let error = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect_err("missing conjunction elimination must not fall back to derive");
+    assert!(
+        error
+            .message()
+            .contains("no explicit simple proof rule for extracting listed conjunct"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        !error.message().contains("derive using"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn restricted_simp_without_simple_vocabulary_fails_instead_of_emitting_derive() {
+    let click_source = r#"
+            theorem strict_order_implies_nonstrict(x: int32, y: int32) {
+                requires x < y;
+                ensures x <= y by {
+                    simp() using {
+                        x < y;
+                    }
+                }
+            }
+        "#;
+    let offset = click_source.find("simp() using").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let error = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect_err("unsupported restricted simp must not fall back to derive");
+    assert!(
+        error
+            .message()
+            .contains("no explicit simple proof rule for the selected derivation"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        !error.message().contains("derive using"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn restricted_simp_inside_have_expands_to_explicit_equality_rewrites() {
     let c_source = r#"
             int32 identity(int32 x, int32 y, int32 z) {

@@ -58,9 +58,11 @@ premises; it is not the same spelling as the contextual bare tactic.
 `execute_until(statement(N))` is smart; expansion replaces it with the
 corresponding sequence of simple `step() using { ... }` tactics.
 
-Other common simple proposition tactics are `assumption()`, `normalize()`,
-`rewrite(...)`, `intro()`, `split()`, `left()`, `right()`,
-`contradiction(...)`, and `derive using { ... }`.
+`simp() using { ... }` is still smart: the listed facts restrict its search,
+and expansion replaces it with named simple rules. Common simple proposition
+tactics are `assumption()`, `normalize()`, `rewrite(...)`, `intro()`,
+`split()`, `left()`, `right()`, and `contradiction(...)`. Legacy
+`derive using { ... }` remains only for proofs awaiting migration.
 
 ## Pure and execution proofs
 

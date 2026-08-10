@@ -959,9 +959,14 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 let direct_goal_lowering_facts =
                     matches!(tactic, ProofTactic::Assumption | ProofTactic::Normalize)
                         .then(|| facts_for_simple_goal_lowering(&available));
-                if let ProofTactic::Derive(derive) | ProofTactic::SimpUsing(derive) = tactic {
+                let explicit_premises = match tactic {
+                    ProofTactic::Derive(derive) => Some(&derive.premises),
+                    ProofTactic::SimpUsing(simp) => Some(&simp.premises),
+                    _ => None,
+                };
+                if let Some(explicit_premises) = explicit_premises {
                     let mut lowering_facts = facts_for_direct_derivation_lowering(&available);
-                    let mut unresolved = derive.premises.iter().collect::<Vec<_>>();
+                    let mut unresolved = explicit_premises.iter().collect::<Vec<_>>();
                     while !unresolved.is_empty() {
                         let mut next = Vec::new();
                         let prior_fact_count = lowering_facts.len();

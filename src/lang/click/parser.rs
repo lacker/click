@@ -1990,7 +1990,7 @@ impl Parser {
                     if self.peek() == Some(&Token::Semicolon) {
                         self.position += 1;
                     }
-                    return Ok(ProofTactic::SimpUsing(ProofDerive { premises }));
+                    return Ok(ProofTactic::SimpUsing(ProofSimpUsing { premises }));
                 }
                 ProofTactic::Simp
             }

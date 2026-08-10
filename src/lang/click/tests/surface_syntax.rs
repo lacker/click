@@ -916,7 +916,7 @@ fn restricted_simp_premises_retain_declared_resource_argument_types() {
     else {
         panic!("expected have proof");
     };
-    let ProofTactic::SimpUsing(ProofDerive { premises }) = &have_tactics[0] else {
+    let ProofTactic::SimpUsing(ProofSimpUsing { premises }) = &have_tactics[0] else {
         panic!("expected restricted simp");
     };
     assert!(matches!(

@@ -1698,6 +1698,7 @@ pub(super) fn finish_ordered_proof_replay(
                                     "`{proof_label}` path {path_index}, tactic {tactic_index}: {message}"
                                 ))
                                 })?;
+                            let is_restricted_simp = restricted_simp_pairs.is_some();
                             let certificate_planning_available = restricted_simp_pairs
                                 .as_ref()
                                 .map(|pairs| {
@@ -1708,7 +1709,7 @@ pub(super) fn finish_ordered_proof_replay(
                                 })
                                 .unwrap_or_else(|| planning_available.clone());
                             let closing_tactics = if let Some(pairs) = &restricted_simp_pairs {
-                                lower_outcome_restricted_simp_tactics(&unfolded_goal, pairs)
+                                plan_restricted_simp_expansion(&unfolded_goal, pairs)
                             } else {
                                 lower_outcome_simp_tactics(
                                     &certificate_replay,
@@ -1789,6 +1790,18 @@ pub(super) fn finish_ordered_proof_replay(
                             let (surface_have, replayed_fact) = match replay_have(&surface_have) {
                                 Ok(replayed_fact) => (surface_have, replayed_fact),
                                 Err(initial_error) => {
+                                    if is_restricted_simp {
+                                        let failed_tactic = ProofTactic::Have(surface_have);
+                                        let failed_certificate = SimpleProof::from_proof_tactics(
+                                            std::slice::from_ref(&failed_tactic),
+                                        )
+                                        .expect("restricted simp must lower to simple tactics");
+                                        return Err(ClickError::new(format!(
+                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: `simp() using` explicit certificate failed replay:\n{}\n{}",
+                                            format_simple_proof(&failed_certificate),
+                                            initial_error.message(),
+                                        )));
+                                    }
                                     let Some(fallback) = surface_outcome_smart_have_derivation(
                                         &certificate_replay,
                                         &replay_available,

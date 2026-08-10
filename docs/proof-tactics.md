@@ -33,8 +33,9 @@ Condition-certificate search is one such heuristic: it tries individual
 ambient condition facts and pairs until it finds replayable premises or reaches
 the active smart-tactic deadline. It does not discard facts after an arbitrary
 context prefix. A normal miss reports the summarized target and recommends
-smaller execution steps or exact premises; `derive using { ... }` and
-`step() using { ... }` are the deterministic escape paths.
+smaller execution steps or exact premises; `simp() using { ... }` constrains
+pure search to named facts, while `step() using { ... }` names one exact
+execution transition.
 
 ## Execution
 
@@ -69,6 +70,7 @@ remains migration compatibility and should not be used in new proofs.
 | Surface form | Class | Meaning |
 | --- | --- | --- |
 | `simp()` | smart | Simplify the current proposition goal. It never executes C. |
+| `simp() using { P; ... }` | smart | Search for a proof using exactly the listed proposition facts. Expansion either emits named simple steps or reports the missing simple proof rule; it never emits `derive`. |
 | `assumption()` | simple | Close the goal from an exact available fact. |
 | `normalize()` | simple | Close a context-free normalization goal. |
 | `rewrite(P)` | simple | Rewrite with an exact available equality. |
@@ -76,7 +78,7 @@ remains migration compatibility and should not be used in new proofs.
 | `split()` | simple | Close a conjunction when both conjuncts are exact available facts. |
 | `left()` / `right()` | simple | Close the selected disjunct from an exact available fact. |
 | `contradiction(P)` | simple | Close from exact facts `P` and `not P`. |
-| `derive using { Q; ... }` | simple | Establish the current atomic proposition goal from exactly the listed premises using Click's deterministic atomic theories. |
+| `derive using { Q; ... }` | legacy simple | Compatibility for proofs awaiting migration. Its checker bundles several atomic theories and it is never emitted by `simp() using`; do not use it in new proofs. |
 | `apply(theorem(args))` | smart | Apply a theorem while selecting its premises from context. |
 | `apply(theorem(args)) using { P; ... }` | simple | Apply a theorem using exactly the listed premises. |
 | `induct(n) as ih` | simple | Start strong induction on a nonnegative `int32` theorem parameter. |
@@ -96,11 +98,11 @@ premises, applying the named induction hypothesis is a deterministic simple
 step with fixed nonnegative, strict-decrease, and substituted-requirement
 obligations.
 
-`derive` is the only public atomic-derivation tactic; `calculate` is not an
-alias. Its target is always the current pure goal; repeating that proposition
-inside the tactic is intentionally not accepted. The former `double_negation`
-and `vacuous` leaves are ordinary
-compositions: use `intro(); contradiction(P);`.
+`derive` remains only while existing proofs migrate. Its target is always the
+current pure goal, but its broad checker is not the model for new simple
+tactics. `calculate` is not an alias. The former `double_negation` and
+`vacuous` leaves are ordinary compositions: use
+`intro(); contradiction(P);`.
 
 `have` has two classifications for two different questions. Its AST shape is
 always control flow because it owns a nested goal. Its selectable source site

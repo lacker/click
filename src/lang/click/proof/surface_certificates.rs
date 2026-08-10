@@ -1013,8 +1013,9 @@ pub(super) fn lower_outcome_simp_tactics(
     }
 }
 
-pub(super) fn lower_outcome_restricted_simp_tactics(
+pub(super) fn lower_restricted_simp_plan(
     goal: &Proposition,
+    plan: &InternalProofPlan,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Result<Vec<ProofTactic>, ClickError> {
     let available = premise_pairs
@@ -1022,17 +1023,36 @@ pub(super) fn lower_outcome_restricted_simp_tactics(
         .map(|(kernel, _)| kernel.clone())
         .collect::<Vec<_>>();
     let assumptions = assumptions_from_propositions(&available);
-    let Some(plan) = plan_simp_certificate(goal, &assumptions) else {
-        return Err(ClickError::new(
-            "`simp() using` did not reproduce its verified plan from the listed premises",
-        ));
-    };
-    if !replay_simp_certificate(goal, &assumptions, &plan) {
-        return Err(ClickError::new(
-            "`simp() using` planned a certificate that did not replay",
-        ));
+    match plan.operations() {
+        [InternalProofOperation::Surface(ProofTactic::Assumption)] => {
+            if !pure_fact_is_replay_available(goal, &available) {
+                return Err(ClickError::new(
+                    "`simp() using` selected `assumption`, but the goal is not one of its listed premises",
+                ));
+            }
+        }
+        [InternalProofOperation::Surface(ProofTactic::Normalize)] => {
+            if !normalizes_context_free(goal) {
+                return Err(ClickError::new(
+                    "`simp() using` selected `normalize`, but the goal is not context-free",
+                ));
+            }
+        }
+        [InternalProofOperation::ExactPropositionDerivation(derivation)] => {
+            if derivation.conclusion() != goal || !derivation.replay(&assumptions) {
+                return Err(ClickError::new(
+                    "`simp() using` selected a derivation that does not replay from exactly its listed premises",
+                ));
+            }
+        }
+        _ => {
+            return Err(ClickError::new(
+                "`simp() using` selected an unsupported internal proof shape",
+            ));
+        }
     }
-    plan_explicit_equality_rewrites(goal, premise_pairs, &available).ok_or_else(|| {
+
+    let tactics = plan_explicit_equality_rewrites(goal, premise_pairs, &available).ok_or_else(|| {
         let initial_rewrites = premise_pairs
             .iter()
             .map(|(kernel, surface)| {
@@ -1044,9 +1064,33 @@ pub(super) fn lower_outcome_restricted_simp_tactics(
             .collect::<Vec<_>>()
             .join("\n    ");
         ClickError::new(format!(
-            "`simp() using` has no explicit simple certificate for its listed premises\n    {initial_rewrites}"
+            "`simp() using` proved the goal, but Click has no explicit simple proof rule for the selected derivation\n  goal: {}\n  listed premises: {}\n    {initial_rewrites}",
+            describe_pure_fact(goal, &[], &[]),
+            premise_pairs.len(),
         ))
-    })
+    })?;
+    SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ClickError::new(format!(
+            "`simp() using` produced a non-simple expansion: {error:?}"
+        ))
+    })?;
+    Ok(tactics)
+}
+
+pub(super) fn plan_restricted_simp_expansion(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Result<Vec<ProofTactic>, ClickError> {
+    let available = premise_pairs
+        .iter()
+        .map(|(kernel, _)| kernel.clone())
+        .collect::<Vec<_>>();
+    let derivation = plan_restricted_simp_goal(goal, available.clone(), goal, &available)
+        .map_err(ClickError::new)?;
+    let plan = InternalProofPlan::from_operations(vec![
+        InternalProofOperation::ExactPropositionDerivation(derivation),
+    ]);
+    lower_restricted_simp_plan(goal, &plan, premise_pairs)
 }
 
 fn collect_definable_predicate_names(

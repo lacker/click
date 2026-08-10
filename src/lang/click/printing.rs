@@ -325,8 +325,12 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::Derive(derive) if derive.premises.is_empty() => {
             line(output, &prefix, "normalize();")
         }
-        ProofTactic::Derive(derive) => write_derivation(output, "derive", derive, indent),
-        ProofTactic::SimpUsing(simp) => write_derivation(output, "simp()", simp, indent),
+        ProofTactic::Derive(derive) => {
+            write_using_premises(output, "derive", &derive.premises, indent)
+        }
+        ProofTactic::SimpUsing(simp) => {
+            write_using_premises(output, "simp()", &simp.premises, indent)
+        }
         ProofTactic::CloseInvariants => line(output, &prefix, "close_invariants();"),
         ProofTactic::Rewrite(equality) => line(
             output,
@@ -414,10 +418,15 @@ fn write_proof(output: &mut String, proof: &Proof, indent: usize) {
     output.push('}');
 }
 
-fn write_derivation(output: &mut String, name: &str, derive: &ProofDerive, indent: usize) {
+fn write_using_premises(
+    output: &mut String,
+    name: &str,
+    premises: &[ClickProposition],
+    indent: usize,
+) {
     let prefix = "    ".repeat(indent);
     line(output, &prefix, &format!("{name} using {{"));
-    write_premise_list(output, &derive.premises, indent + 1);
+    write_premise_list(output, premises, indent + 1);
     line(output, &prefix, "}");
 }
 

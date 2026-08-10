@@ -463,6 +463,7 @@ fn verify_theorem_ensure(
                 &goal,
                 source_tactics.as_deref(),
                 predicate_environment,
+                click_function_environment,
                 induction_setup.as_ref(),
             )
         },
@@ -498,8 +499,24 @@ fn pure_theorem_surface_certificate(
     goal: &Proposition,
     source_tactics: Option<&[ProofTactic]>,
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     induction_setup: Option<&PureInductionSetup>,
 ) -> Result<SimpleProof, ClickError> {
+    fn contains_restricted_simp(tactics: &[ProofTactic]) -> bool {
+        tactics.iter().any(|tactic| match tactic {
+            ProofTactic::SimpUsing(_) => true,
+            ProofTactic::If(proof_if) => {
+                contains_restricted_simp(&proof_if.then_tactics)
+                    || contains_restricted_simp(&proof_if.else_tactics)
+            }
+            ProofTactic::Have(have) => match &have.proof {
+                Proof::Script(tactics) => contains_restricted_simp(tactics),
+                _ => false,
+            },
+            _ => false,
+        })
+    }
+
     if let (Some(tactics), Some(setup)) = (source_tactics, induction_setup) {
         let lowered = lower_pure_induction_tactics(&setup.surface_requires, tactics, setup)?;
         return SimpleProof::from_proof_tactics(&lowered).map_err(|error| {
@@ -535,37 +552,85 @@ fn pure_theorem_surface_certificate(
             },
         );
     }
-    if let Some([ProofTactic::SimpUsing(simp)]) = source_tactics {
-        let exact = simp
+    let restricted_simp = source_tactics.and_then(|tactics| {
+        let (last, prefix) = tactics.split_last()?;
+        let ProofTactic::SimpUsing(simp) = last else {
+            return None;
+        };
+        let unfolded_predicates = prefix
+            .iter()
+            .map(|tactic| match tactic {
+                ProofTactic::UnfoldPredicate(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some((unfolded_predicates, simp))
+    });
+    if let Some((unfolded_predicates, simp)) = restricted_simp {
+        let available = unfold_available_predicate_facts(
+            predicate_environment,
+            click_function_environment,
+            &unfolded_predicates,
+            &context.requires,
+        )
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        let explicit_goal = unfold_predicates_in_proposition(
+            predicate_environment,
+            click_function_environment,
+            &unfolded_predicates,
+            goal,
+            &assumptions_from_propositions(&available),
+        )
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        let premise_pairs = simp
             .premises
             .iter()
             .map(|surface| {
-                theorem
-                    .requires()
-                    .iter()
-                    .position(|required| required.proposition() == Some(surface))
-                    .and_then(|index| context.requires.get(index))
-                    .cloned()
+                let kernel = lower_pure_theorem_proposition(
+                    claim_label,
+                    surface,
+                    &context.values,
+                    &context.array_refs,
+                    &context.memory,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "smart `simp() using` for `{claim_label}` could not lower listed premise `{}`: {message}",
+                        describe_click_proposition(surface)
+                    ))
+                })?;
+                if available.iter().any(|fact| {
+                    fact == &kernel || condition_polarity_equivalent(fact, &kernel)
+                }) {
+                    return Ok((kernel, surface.clone()));
+                }
+                if exact_fact_is_available(&kernel, &available) {
+                    return Err(ClickError::new(format!(
+                        "smart `simp() using` for `{claim_label}` has no explicit simple proof rule for extracting listed conjunct `{}` after predicate unfolding",
+                        describe_click_proposition(surface)
+                    )));
+                }
+                Err(ClickError::new(format!(
+                    "smart `simp() using` for `{claim_label}` lost exact listed premise `{}` during certificate generation",
+                    describe_click_proposition(surface)
+                )))
             })
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(|| {
+            .collect::<Result<Vec<_>, ClickError>>()?;
+        let explicit =
+            plan_restricted_simp_expansion(&explicit_goal, &premise_pairs).map_err(
+                |error| {
                 ClickError::new(format!(
-                    "smart `simp() using` for `{claim_label}` lost an exact listed premise during certificate generation"
+                    "smart `simp() using` for `{claim_label}` has no explicit simple certificate: {}",
+                    error.message()
                 ))
             })?;
-        let plan = plan_simp_certificate(goal, &assumptions_from_propositions(&exact)).ok_or_else(
-            || {
-                ClickError::new(format!(
-                    "smart `simp() using` for `{claim_label}` did not reproduce its verified plan"
-                ))
-            },
-        )?;
-        let tactics =
-            lower_pure_simp_certificate(theorem, context, goal, &plan).ok_or_else(|| {
-                ClickError::new(format!(
-                    "smart `simp() using` for `{claim_label}` has no surface certificate"
-                ))
-            })?;
+        let mut tactics = unfolded_predicates
+            .into_iter()
+            .map(ProofTactic::UnfoldPredicate)
+            .collect::<Vec<_>>();
+        tactics.extend(explicit);
         return SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "smart `simp() using` for `{claim_label}` produced an invalid surface certificate: {error:?}"
@@ -646,6 +711,12 @@ fn pure_theorem_surface_certificate(
                 "smart proof for `{claim_label}` produced an invalid rewrite certificate: {error:?}"
             ))
         });
+    }
+
+    if source_tactics.is_some_and(contains_restricted_simp) {
+        return Err(ClickError::new(format!(
+            "smart `simp() using` for `{claim_label}` is not yet lowerable with the surrounding proof structure; keep it as a standalone proof until Click has an explicit simple certificate for that structure"
+        )));
     }
 
     let unfolded_predicates = source_tactics

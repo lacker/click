@@ -194,8 +194,11 @@ control flow.
   this bare spelling is smart.
 - `transport(source, target) using { P; ... }`: the simple, exact-premise
   spelling of the same rule.
-- `derive using { Q; ... }`: close the current atomic goal using Click's
-  deterministic atomic theories and exactly the listed premises.
+- `simp() using { Q; ... }`: smart simplification restricted to exactly the
+  listed proposition facts. Expansion must produce named simple rules and
+  never `derive`.
+- `derive using { Q; ... }`: legacy compatibility for proofs awaiting
+  migration; do not use it in new proofs.
 
 - `intro();`, `split();`, `left();`, `right();`, `contradiction(P);`: one
   structural logical rule each. They are

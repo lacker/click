@@ -39,6 +39,24 @@ required for the explicit-fact form.
 migration diagnostic. Click is unreleased and supports this codebase, so every
 source, test, diagnostic, printer, and document can migrate together.
 
+## Current implementation boundary
+
+The `simp() using` foundation is now separate from legacy `derive`:
+
+- it has its own AST payload and is classified as smart;
+- planning checks availability but reasons from exactly the listed facts;
+- certificate lowering consumes the selected restricted plan rather than
+  checking the goal with `derive`;
+- supported equality and pointer-alias derivations expand to `rewrite`,
+  `assumption`, and `normalize`; and
+- an unsupported derivation fails locally with a bounded missing-simple-rule
+  diagnostic. It never falls back to `derive`, including after a generated
+  certificate fails replay.
+
+Legacy `derive` is intentionally still accepted so migrations can land one
+green proof or project at a time. Its removal is the final phase, not part of
+the foundation change.
+
 ## `auto`, `simp`, and simple replay
 
 The intended boundary is:
@@ -99,6 +117,10 @@ certificates before their old `derive using` blocks can be removed:
   project now passes repeated ordinary verification under its normal limit.
   Its remaining `derive using` sites can therefore be migrated as focused
   certificate-vocabulary work rather than treated as a baseline blocker.
+- A listed fact exposed as one conjunct of an unfolded predicate has no simple
+  conjunction-elimination rule yet. Restricted simplification now reports
+  that missing vocabulary directly instead of hiding the extraction inside a
+  generated `derive`.
 
 The input-cursor attempt also exposed and fixed a separate lowering bug:
 declaration expansion populated resource argument type metadata in `derive`
@@ -112,20 +134,19 @@ replay or performance failures.
 
 ## Implementation order
 
-1. Add `simp() using { ... }` with an exact listed-fact planning context and
-   classify it as smart everywhere: parser, profiler, expansion, audit, and
-   diagnostics.
-2. Teach proposition simplification to retain the actual replayable rule it
-   selected, adding focused simple certificate vocabulary where current
-   `derive` replay hides a search.
-3. Make expansion reject any result that still contains `simp` or depends on
-   unlisted ambient facts or effects.
-4. Migrate all `derive using` sources and generated certificates, then delete
-   the `derive` syntax, AST variant, printer, checker, diagnostics, tests, and
+1. Keep the strict `simp() using` foundation green. Its search uses exactly
+   the listed facts, and every success must lower to a replayable `SimpleProof`
+   without `derive`.
+2. Migrate one independently comprehensible `derive using` proof or small
+   project at a time. When a migration exposes missing certificate vocabulary,
+   add the smallest named simple rule and its focused regression before
+   continuing.
+3. Re-expand or directly migrate owned-string only after its unchanged-field
+   proofs select explicit transport/frame certificates rather than ambient
+   reconstruction.
+4. When no source or generated certificate depends on `derive`, delete its
+   syntax, AST variant, printer, checker, diagnostics, tests, and
    documentation.
-5. Re-expand or directly migrate the owned-string proof and verify that its
-   unchanged-field certificates replay by their explicit transport/frame
-   rules rather than ambient reconstruction.
 
 Each step must leave the repository green. Temporary coexistence during the
 implementation is acceptable inside an uncommitted or intermediate green
