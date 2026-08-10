@@ -60,7 +60,7 @@ int32 composite_resource_vector_fill_loop_snapshot(
             step();
             step();
             have i >= 0 by {
-                derive using {
+                simp() using {
                     at(statement(3).entry, i) >= 0;
                     at(statement(3).entry, i) < at(statement(3).entry, owner->len);
                 }
