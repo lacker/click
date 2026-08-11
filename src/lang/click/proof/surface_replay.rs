@@ -289,6 +289,22 @@ pub(super) fn checked_surface_comparison_fact_at_point(
                 .surface_propositions
                 .available_kernel(surface, available)
                 .is_some_and(&matches_kernel)
+            // A recorded pair can name a program point outside the current
+            // replay scope (for example a function-prefix statement inside a
+            // loop-region proof). The candidate lowering resolves recorded
+            // snapshots without demanding current loadability, so it is the
+            // right scope check here.
+            && lower_surface_candidate_at_point(
+                replay,
+                surface,
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            )
+            .is_ok()
         {
             return Ok(surface.clone());
         }
@@ -2063,6 +2079,43 @@ pub(super) fn surface_simp_plan_proof(
     Ok(Proof::Script(tactics))
 }
 
+/// How a restricted-`simp` premise's certificate spelling relates to the
+/// replay-visible fact set. Certificates may cite `ExactlyAvailable`
+/// spellings directly; a `SnapshotBridged` spelling denotes an available fact
+/// only through the kernel's certified snapshot bridge and must be
+/// materialized by an explicit transport step before simple replay can use it.
+enum PremiseSpelling {
+    ExactlyAvailable,
+    SnapshotBridged,
+}
+
+/// The snapshot-anchored reflexive spelling a transport re-anchors from when
+/// a listed premise equates one expression across two program points. For
+/// `x == at(P, x)` this is `at(P, x) == at(P, x)`: trivially derivable at the
+/// recorded point, with the certified bridge carrying one side to the current
+/// state.
+fn reflexive_snapshot_transport_source(surface: &ClickProposition) -> Option<ClickProposition> {
+    let ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::Equal,
+        right,
+    } = surface
+    else {
+        return None;
+    };
+    let anchored = [right, left].into_iter().find(|side| {
+        matches!(
+            side,
+            ContractExpression::At { .. } | ContractExpression::Old(_)
+        )
+    })?;
+    Some(ClickProposition::Comparison {
+        left: anchored.clone(),
+        operator: ComparisonOperator::Equal,
+        right: anchored.clone(),
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn surface_smart_have_certificate(
     replay: &mut TacticReplayState,
@@ -2092,7 +2145,7 @@ pub(super) fn surface_smart_have_certificate(
         })
         .transpose()?;
     let restricted_context_available = unfolded_available.as_deref().unwrap_or(available);
-    let restricted_available = match &have.proof {
+    let restricted_resolved = match &have.proof {
         Proof::Script(tactics) => tactics.last().and_then(|tactic| match tactic {
             ProofTactic::SimpUsing(simp) => Some(
                 simp.premises
@@ -2103,7 +2156,7 @@ pub(super) fn surface_smart_have_certificate(
                             .available_kernel(surface, restricted_context_available)
                             .cloned()
                         {
-                            return Ok(kernel);
+                            return Ok((kernel, PremiseSpelling::ExactlyAvailable));
                         }
                         let freshly_lowered = lower_point_proposition(
                             surface,
@@ -2123,7 +2176,7 @@ pub(super) fn surface_smart_have_certificate(
                                     || condition_polarity_equivalent(fact, lowered)
                             })
                         {
-                            return Ok(fact.clone());
+                            return Ok((fact.clone(), PremiseSpelling::ExactlyAvailable));
                         }
                         if let Ok(lowered) = &freshly_lowered
                             && exact_proper_conjunct_is_available(
@@ -2131,7 +2184,7 @@ pub(super) fn surface_smart_have_certificate(
                                 restricted_context_available,
                             )
                         {
-                            return Ok(lowered.clone());
+                            return Ok((lowered.clone(), PremiseSpelling::ExactlyAvailable));
                         }
                         if let Ok(lowered) = &freshly_lowered
                             && let Some(fact) =
@@ -2140,7 +2193,7 @@ pub(super) fn surface_smart_have_certificate(
                                     restricted_context_available,
                                 )
                         {
-                            return Ok(fact);
+                            return Ok((fact, PremiseSpelling::ExactlyAvailable));
                         }
                         if let Ok(lowered) = &freshly_lowered
                             && snapshot_bridged_fact_is_available(
@@ -2152,8 +2205,12 @@ pub(super) fn surface_smart_have_certificate(
                             // Retain the listed spelling after checking that
                             // it is the same available fact across certified
                             // snapshots. The restricted reasoning context is
-                            // still exactly the listed premise vector.
-                            return Ok(lowered.clone());
+                            // still exactly the listed premise vector — but
+                            // the spelling itself is not an exact replay-time
+                            // fact, so the certificate must materialize it
+                            // with an explicit snapshot transport before any
+                            // simple step may cite it as evidence.
+                            return Ok((lowered.clone(), PremiseSpelling::SnapshotBridged));
                         }
                         Err(ClickError::new(match freshly_lowered {
                             Ok(_) => format!(
@@ -2173,6 +2230,12 @@ pub(super) fn surface_smart_have_certificate(
         _ => None,
     }
     .transpose()?;
+    let restricted_available = restricted_resolved.as_ref().map(|resolved| {
+        resolved
+            .iter()
+            .map(|(kernel, _)| kernel.clone())
+            .collect::<Vec<_>>()
+    });
     let certificate_available = restricted_available.as_deref().unwrap_or(available);
     let proof = if let (Some(exact), Proof::Script(source_tactics)) =
         (restricted_available.as_ref(), &have.proof)
@@ -2232,6 +2295,30 @@ pub(super) fn surface_smart_have_certificate(
                 })
                 .map(|(_, surface)| ProofTactic::Extract(surface.clone())),
         );
+        // A snapshot-bridged premise is certified evidence, but its listed
+        // spelling is not an exact replay-time fact. Simple `rewrite` never
+        // searches, so the certificate must first materialize the spelling
+        // with an explicit snapshot transport; the premise then reaches the
+        // rewrite as an exact available fact.
+        let resolved = restricted_resolved
+            .as_ref()
+            .expect("restricted premises were resolved above");
+        for ((_, surface), (_, spelling)) in pairs.iter().zip(resolved) {
+            if !matches!(spelling, PremiseSpelling::SnapshotBridged) {
+                continue;
+            }
+            let Some(source) = reflexive_snapshot_transport_source(surface) else {
+                return Err(ClickError::new(format!(
+                    "`simp() using` premise `{}` holds only across certified snapshots and has no snapshot-anchored side to transport from",
+                    describe_click_proposition(surface)
+                )));
+            };
+            tactics.push(ProofTactic::TransportUsing {
+                source,
+                target: surface.clone(),
+                premises: Vec::new(),
+            });
+        }
         tactics.extend(explicit);
         Proof::Script(tactics)
     } else {

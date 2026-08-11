@@ -196,6 +196,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::ObserveResource(_)
             | ProofTactic::Transport { .. }
             | ProofTactic::TransportUsing { .. }
+            | ProofTactic::InstantiateUsing { .. }
             | ProofTactic::UnfoldResource(_)
             | ProofTactic::FoldResource(_)
             | ProofTactic::Have(_)
@@ -246,6 +247,7 @@ pub(in crate::lang::click) fn tactic_name(tactic: &ProofTactic) -> &'static str 
         ProofTactic::CloseInvariants => "close_invariants",
         ProofTactic::Rewrite(_) => "rewrite",
         ProofTactic::Transport { .. } | ProofTactic::TransportUsing { .. } => "transport",
+        ProofTactic::InstantiateUsing { .. } => "instantiate",
         ProofTactic::Simp => "simp",
         ProofTactic::SimpUsing(_) => "simp",
     }
