@@ -665,12 +665,7 @@ fn empty_derive_cannot_hide_an_ambient_premise() {
         ),
         true,
     );
-    let tactic = ProofTactic::Derive(ProofDerive {
-        premises: Vec::new(),
-    });
-
-    let error = check_atomic_derivation_goal(
-        &tactic,
+    let error = check_atomic_premise_derivation_goal(
         &target,
         Vec::new(),
         &target,

@@ -383,8 +383,7 @@ fn equal_by_premise_chain(
     })
 }
 
-pub(super) fn check_atomic_derivation_goal(
-    tactic: &ProofTactic,
+pub(super) fn check_atomic_premise_derivation_goal(
     target: &Proposition,
     premises: Vec<Proposition>,
     goal: &Proposition,
@@ -396,7 +395,7 @@ pub(super) fn check_atomic_derivation_goal(
     if !target_matches_goal {
         return Err(format!(
             "`{}` target does not match the current goal\n  target: {}\n  goal: {}",
-            tactic_name(tactic),
+            "derive",
             describe_pure_fact(target, &[], &[]),
             describe_pure_fact(goal, &[], &[]),
         ));
@@ -405,10 +404,7 @@ pub(super) fn check_atomic_derivation_goal(
     // empty derivation is printed as `normalize()`, so it is sound only for a
     // context-free goal. Any proof that needs frame or ambient facts must keep
     // at least one explicit premise in its certificate.
-    if matches!(tactic, ProofTactic::Derive(_))
-        && premises.is_empty()
-        && !normalizes_context_free(target)
-    {
+    if premises.is_empty() && !normalizes_context_free(target) {
         return Err("`derive` requires at least one explicit premise".to_string());
     }
     if snapshot_bridged_fact_is_available(target, available, &[]) {
@@ -441,7 +437,7 @@ pub(super) fn check_atomic_derivation_goal(
     }) {
         return Err(format!(
             "`{}` is missing an exact listed premise: {}",
-            tactic_name(tactic),
+            "derive",
             describe_pure_fact(missing, &[], &[]),
         ));
     }
@@ -457,12 +453,9 @@ pub(super) fn check_atomic_derivation_goal(
         return Ok(());
     }
     let premise_assumptions = assumptions_from_propositions(&premises);
-    let premise_only_derivation = match tactic {
-        ProofTactic::Derive(_) => premise_assumptions
-            .derive_atomic_proposition(target)
-            .or_else(|| premise_assumptions.derive_simp_atomic_proposition(target)),
-        _ => None,
-    };
+    let premise_only_derivation = premise_assumptions
+        .derive_atomic_proposition(target)
+        .or_else(|| premise_assumptions.derive_simp_atomic_proposition(target));
     if premise_only_derivation.is_some() {
         return Ok(());
     }
@@ -531,21 +524,15 @@ pub(super) fn check_atomic_derivation_goal(
     };
     let derive_from = |facts: &[Proposition], target: &Proposition| {
         let assumptions = assumptions_from_propositions(facts);
-        match tactic {
-            ProofTactic::Derive(_) => assumptions
-                .derive_atomic_proposition(target)
-                .or_else(|| assumptions.derive_proposition(target))
-                .or_else(|| assumptions.derive_simp_atomic_proposition(target))
-                .or_else(|| assumptions.derive_simp_proposition(target)),
-            _ => None,
-        }
+        assumptions
+            .derive_atomic_proposition(target)
+            .or_else(|| assumptions.derive_proposition(target))
+            .or_else(|| assumptions.derive_simp_atomic_proposition(target))
+            .or_else(|| assumptions.derive_simp_proposition(target))
     };
     // Try the premises as spelled before normalizing: snapshot-bridging
     // derivations can depend on the recorded load spellings that
     // normalization rewrites.
-    if !matches!(tactic, ProofTactic::Derive(_)) {
-        return Err("not a derivation tactic".to_string());
-    }
     let derivation = derive_from(&premises, target)
         .or_else(|| derive_from(&with_effect_context(&premises), target))
         .or_else(|| derive_from(&normalized_premises, &normalized_target))
@@ -586,7 +573,7 @@ pub(super) fn check_atomic_derivation_goal(
     if derivation.is_none() {
         return Err(format!(
             "`{}` could not check the target from exactly the listed premises: {}\n  premises: {}",
-            tactic_name(tactic),
+            "derive",
             describe_pure_fact(target, &[], &[]),
             describe_pure_facts(&normalized_premises),
         ));

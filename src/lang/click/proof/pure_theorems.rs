@@ -1905,7 +1905,7 @@ fn prove_pure_theorem_tactics(
                             tactic_name(tactic)
                         ))
                     })?;
-                check_atomic_derivation_goal(tactic, &target, premises, &goal, &available)
+                check_atomic_premise_derivation_goal(&target, premises, &goal, &available)
                     .map_err(|message| {
                         ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
                     })?;

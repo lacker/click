@@ -188,11 +188,7 @@ pub(super) fn lower_surface_atomic_derivation(
             })
             .collect::<Result<Vec<_>, _>>()
             .ok()?;
-        let tactic = ProofTactic::Derive(ProofDerive {
-            premises: pairs.iter().map(|(_, surface)| surface.clone()).collect(),
-        });
-        check_atomic_derivation_goal(
-            &tactic,
+        check_atomic_premise_derivation_goal(
             &lowered_conclusion,
             surface_premises,
             &lowered_conclusion,
@@ -428,16 +424,13 @@ fn select_outcome_simp_certificate(
     // Validate the actual surface premises before handing them to the
     // explicit-certificate planner below.
     let replayable_premises = |premises: Vec<ClickProposition>| {
-        let tactic = ProofTactic::Derive(ProofDerive {
-            premises: premises.clone(),
-        });
         let lowered = premises
             .iter()
             .map(&check)
             .collect::<Result<Vec<_>, _>>()
             .ok()?;
         let replayable =
-            check_atomic_derivation_goal(&tactic, goal, lowered, goal, available).is_ok();
+            check_atomic_premise_derivation_goal(goal, lowered, goal, available).is_ok();
         replayable.then_some(OutcomeSimpSelection::Premises(premises))
     };
     if check(surface_goal)
@@ -899,12 +892,8 @@ fn select_outcome_simp_certificate(
                 certified_context.push(equation.clone());
             }
         }
-        let candidate = ProofTactic::Derive(ProofDerive {
-            premises: surface_premises.clone(),
-        });
         check_verification_deadline()?;
-        if check_atomic_derivation_goal(
-            &candidate,
+        if check_atomic_premise_derivation_goal(
             goal,
             kernel_premises.clone(),
             goal,
@@ -948,12 +937,8 @@ fn select_outcome_simp_certificate(
                 .iter()
                 .map(|(_, surface)| surface.clone())
                 .collect::<Vec<_>>();
-            let candidate = ProofTactic::Derive(ProofDerive {
-                premises: surface_premises.clone(),
-            });
             check_verification_deadline()?;
-            let checked = check_atomic_derivation_goal(
-                &candidate,
+            let checked = check_atomic_premise_derivation_goal(
                 goal,
                 kernel_premises.clone(),
                 goal,
@@ -1067,14 +1052,10 @@ fn select_outcome_simp_certificate(
                 break;
             }
             if complete && !spelled_premises.is_empty() {
-                let candidate = ProofTactic::Derive(ProofDerive {
-                    premises: spelled_premises.clone(),
-                });
                 // Self-check with exactly the check the tactic replay runs,
                 // against the replay context (which carries the certified
                 // store equations).
-                if check_atomic_derivation_goal(
-                    &candidate,
+                if check_atomic_premise_derivation_goal(
                     goal,
                     kernel_premises,
                     goal,

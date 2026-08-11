@@ -1404,8 +1404,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                     tactic_name(tactic)
                                 ))
                             })?;
-                        check_atomic_derivation_goal(
-                            tactic,
+                        check_atomic_premise_derivation_goal(
                             &unfolded_goal,
                             premises,
                             &unfolded_goal,
