@@ -1312,6 +1312,16 @@ pub(super) fn lower_outcome_simp_tactics(
     if let Some(tactics) = plan_explicit_loadability_transport(goal, surface_goal, &premise_pairs) {
         return Ok(tactics);
     }
+    if let Some(tactics) =
+        plan_explicit_field_increment_lower_bound_transport(surface_goal, &premise_pairs)
+    {
+        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "increment transport produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok(tactics);
+    }
     if search(
         goal.clone(),
         &premise_pairs,
@@ -1331,6 +1341,80 @@ pub(super) fn lower_outcome_simp_tactics(
                 .join(", "),
         )))
     }
+}
+
+fn plan_explicit_field_increment_lower_bound_transport(
+    surface_goal: &ClickProposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    // A post-store field bound can be proved at the latest retained program
+    // point and then transported to the outcome. Keep those two proof steps
+    // explicit: the arithmetic theorem does not itself know about stores,
+    // and `transport using` is the simple rule that crosses the snapshots.
+    let (goal_lower, goal_value) = surface_nonstrict_parts(surface_goal)?;
+    if goal_lower != ContractExpression::CFragment(CExpression::Value(int32(0)))
+        || !matches!(goal_value, ContractExpression::Field { .. })
+    {
+        return None;
+    }
+    let normalized_pairs = premise_pairs
+        .iter()
+        .map(|(kernel, surface)| {
+            (
+                normalize_direct_atomic_memory_loads(kernel),
+                surface.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    for (lower_kernel, lower_surface) in &normalized_pairs {
+        let Some((_, base)) = signed_nonstrict_parts(lower_kernel) else {
+            continue;
+        };
+        let Some((surface_lower, surface_base)) = surface_nonstrict_parts(lower_surface) else {
+            continue;
+        };
+        for (upper_kernel, upper_surface) in &normalized_pairs {
+            let Some((upper_base, _)) = signed_strict_parts(upper_kernel) else {
+                continue;
+            };
+            if upper_base != base {
+                continue;
+            }
+            let Some((_, surface_upper)) = surface_strict_parts(upper_surface) else {
+                continue;
+            };
+            let intermediate_surface = ClickProposition::Comparison {
+                left: surface_lower.clone(),
+                operator: ComparisonOperator::LessEqual,
+                right: ContractExpression::Add(
+                    Box::new(surface_base.clone()),
+                    Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
+                ),
+            };
+            return Some(vec![
+                ProofTactic::Have(ProofHave {
+                    proposition: intermediate_surface.clone(),
+                    proof: Proof::Script(vec![
+                        ProofTactic::ApplyTheoremUsing {
+                            application: TheoremApplication {
+                                name: "int32_increment_lower_bound".to_string(),
+                                arguments: vec![surface_base, surface_lower, surface_upper],
+                            },
+                            premises: vec![lower_surface.clone(), upper_surface.clone()],
+                        },
+                        ProofTactic::Assumption,
+                    ]),
+                }),
+                ProofTactic::TransportUsing {
+                    source: intermediate_surface.clone(),
+                    target: surface_goal.clone(),
+                    premises: vec![intermediate_surface],
+                },
+                ProofTactic::Assumption,
+            ]);
+        }
+    }
+    None
 }
 
 fn plan_explicit_unchanged_load_transport(
