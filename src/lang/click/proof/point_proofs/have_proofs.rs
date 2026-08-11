@@ -852,7 +852,24 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     )));
                 }
 
-                let target = lower(surface_target, &available).map_err(|message| {
+                // A source spelling may intentionally identify a retained
+                // fact from an older snapshot. The target, however, denotes
+                // the fact being established at this proof frontier. Looking
+                // it up in the recorded-surface map can silently select the
+                // older source again when the two surface spellings coincide.
+                let target = lower_point_proposition_with_values(
+                    surface_target,
+                    &available,
+                    values.clone(),
+                    &array_refs,
+                    pre_state,
+                    state,
+                    result,
+                    program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
                     ClickError::new(format!(
                         "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `transport` target: {message}"
                     ))

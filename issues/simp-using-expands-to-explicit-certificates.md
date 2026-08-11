@@ -144,10 +144,6 @@ old `derive using` blocks can be removed:
   unavailable exact fact even while printing that same fact in the available
   context. Preserve a focused snapshot-identity regression and repair source
   selection; do not add ambient equality search to `transport(...) using`.
-- A copied-element equality can establish slice loadability, but restricted
-  simplification currently reports that it has no explicit rule for that
-  derivation. This needs a named range/loadability certificate rather than a
-  fallback to the legacy memory-DAG search.
 - The owned-string replay/certification instability has been fixed and the
   project now passes repeated ordinary verification under its normal limit.
   Post-execution transport now uses recorded store equations as its source,
