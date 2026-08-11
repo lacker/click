@@ -123,7 +123,14 @@ int32 buffer_push(struct buffer* owner, int32 value) {
         assumption();
     }
     have owner->cap == old(owner->cap) by {
-        derive using {
+        have at(statement(4).entry, owner->cap) == old(owner->cap) by {
+            normalize();
+        }
+        transport(
+            at(statement(4).entry, owner->cap) == old(owner->cap),
+            owner->cap == old(owner->cap)
+        ) using {
+            at(statement(4).entry, owner->cap) == old(owner->cap);
             at(statement(4).entry, (index + 1)) <
                 at(statement(4).entry, owner->cap);
             separate(
@@ -131,6 +138,7 @@ int32 buffer_push(struct buffer* owner, int32 value) {
                 memory(owner->data[0..owner->cap])
             );
         }
+        assumption();
     }
     have owner->data == old(owner->data) by {
         derive using {
