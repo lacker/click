@@ -488,8 +488,10 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                 Bitvector32Term::Subtract(left, right)
             }
             Bitvector32Term::Multiply(left, right) => {
-                let (left, right) = binary(left, right);
-                Bitvector32Term::Multiply(left, right)
+                Bitvector32Term::multiply(
+                    rewrite_term(left, from, to),
+                    rewrite_term(right, from, to),
+                )
             }
             Bitvector32Term::Divide(left, right) => {
                 let (left, right) = binary(left, right);
@@ -547,34 +549,28 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
         }
     }
 
+    fn rewrite_offset_term(
+        offset: &PointerOffsetTerm,
+        from: &Bitvector32Term,
+        to: &Bitvector32Term,
+    ) -> PointerOffsetTerm {
+        match offset {
+            PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
+                rewrite_offset_term(left, from, to),
+                rewrite_offset_term(right, from, to),
+            ),
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                PointerOffsetTerm::scale_int32(rewrite_term(value, from, to), *byte_width)
+            }
+            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
+        }
+    }
+
     let rewrite_resource_term = |resource: &CResource| match resource {
         CResource::Memory(range) => CResource::Memory(CMemoryRange::new(
             Pointer {
                 block: range.base().block.clone(),
-                offset: {
-                    fn rewrite_offset_term(
-                        offset: &PointerOffsetTerm,
-                        from: &Bitvector32Term,
-                        to: &Bitvector32Term,
-                    ) -> PointerOffsetTerm {
-                        match offset {
-                            PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
-                                rewrite_offset_term(left, from, to),
-                                rewrite_offset_term(right, from, to),
-                            ),
-                            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
-                                PointerOffsetTerm::scale_int32(
-                                    rewrite_term(value, from, to),
-                                    *byte_width,
-                                )
-                            }
-                            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {
-                                offset.clone()
-                            }
-                        }
-                    }
-                    rewrite_offset_term(&range.base().offset, left, right)
-                },
+                offset: rewrite_offset_term(&range.base().offset, left, right),
             },
             rewrite_term(range.start(), left, right),
             rewrite_term(range.end(), left, right),
@@ -630,6 +626,18 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
         Proposition::CResourceContains { parent, child } => Proposition::CResourceContains {
             parent: rewrite_resource_term(parent),
             child: rewrite_resource_term(child),
+        },
+        Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+        } => Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: Pointer {
+                block: base.block.clone(),
+                offset: rewrite_offset_term(&base.offset, left, right),
+            },
+            bytes: rewrite_term(bytes, left, right),
         },
         _ => return Err("`rewrite` int32 equality does not occur in this goal".to_string()),
     };
@@ -716,7 +724,7 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_then(
             tactics.push(ProofTactic::Assumption);
             return true;
         }
-        if matches!(normalize_proposition(&current), SimpProposition::True) {
+        if normalizes_context_free(&current) {
             tactics.push(ProofTactic::Normalize);
             return true;
         }

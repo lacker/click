@@ -646,7 +646,7 @@ pub(super) fn plan_restricted_simp_goal(
         .ok_or_else(|| "`simp() using` planned a derivation that did not replay".to_string())
 }
 
-fn normalizes_context_free(goal: &Proposition) -> bool {
+pub(in crate::lang::click) fn normalizes_context_free(goal: &Proposition) -> bool {
     matches!(normalize_proposition(goal), SimpProposition::True)
         || Assumptions::new()
             .derive_atomic_proposition(goal)

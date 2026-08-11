@@ -222,7 +222,7 @@ impl Bitvector32Term {
         }
     }
 
-    pub(in crate::kernel) fn multiply(left: Self, right: Self) -> Self {
+    pub(crate) fn multiply(left: Self, right: Self) -> Self {
         match (&left, &right) {
             (Self::Constant(left), Self::Constant(right)) => {
                 Self::Constant(left.wrapping_mul(*right))
