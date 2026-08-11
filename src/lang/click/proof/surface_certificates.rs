@@ -1124,174 +1124,6 @@ pub(super) fn lower_outcome_simp_tactics(
         .collect::<Result<Vec<_>, _>>()
         .map_err(ClickError::new)?;
 
-    fn search(
-        current: Proposition,
-        premises: &[(Proposition, ClickProposition)],
-        available: &[Proposition],
-        used: &mut [bool],
-        tactics: &mut Vec<ProofTactic>,
-    ) -> bool {
-        if pure_fact_is_replay_available(&current, available) {
-            tactics.push(ProofTactic::Assumption);
-            return true;
-        }
-        if normalizes_context_free(&current) {
-            tactics.push(ProofTactic::Normalize);
-            return true;
-        }
-        if let Some(suffix) = plan_explicit_strict_implies_nonstrict(&current, premises) {
-            tactics.extend(suffix);
-            return true;
-        }
-        if let Some(suffix) =
-            plan_explicit_greater_equal_to_reversed_less_equal(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if let Some(suffix) =
-            plan_explicit_not_strict_implies_greater_equal(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if let Some(suffix) = plan_explicit_greater_equal_transitive(&current, premises) {
-            tactics.extend(suffix);
-            return true;
-        }
-        if let Some(suffix) = plan_explicit_negated_strict_successor_bound(&current, premises) {
-            tactics.extend(suffix);
-            return true;
-        }
-        if let Some(suffix) =
-            plan_explicit_increment_greater_equal_lower_bound(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if let Some(suffix) =
-            plan_explicit_increment_strict_greater_lower_bound(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if matches!(
-            current,
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessThan(_, _),
-                true
-            )
-        ) && let Some(suffix) = plan_explicit_strict_transitive(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if matches!(
-            current,
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessThan(_, _),
-                true
-            )
-        ) && let Some(suffix) = plan_explicit_successor_le_implies_lt(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if matches!(
-            current,
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessThan(_, _),
-                true
-            )
-        ) && let Some(suffix) =
-            plan_explicit_increment_strictly_increases(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if matches!(
-            current,
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessEqual(_, _),
-                true
-            )
-        ) && let Some(suffix) = plan_explicit_increment_lower_bound(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if matches!(
-            current,
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessEqual(_, _),
-                true
-            )
-        ) && let Some(suffix) = plan_explicit_increment_preserves_order(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if matches!(
-            current,
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessEqual(_, _),
-                true
-            )
-        ) && let Some(suffix) = plan_explicit_increment_upper_bound(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if matches!(
-            current,
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessEqual(_, _),
-                true
-            )
-        ) && let Some(suffix) =
-            plan_explicit_le_transitive_constant_lower(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if matches!(
-            current,
-            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
-        ) && let Some(suffix) =
-            plan_explicit_le_and_not_lt_implies_eq(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if matches!(
-            current,
-            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
-        ) && let Some(suffix) =
-            plan_explicit_ge_and_not_gt_implies_eq(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        for (index, (kernel, surface)) in premises.iter().enumerate() {
-            if used[index] {
-                continue;
-            }
-            let Ok(rewritten) = rewrite_proposition_by_exact_equality(&current, kernel, available)
-            else {
-                continue;
-            };
-            used[index] = true;
-            tactics.push(ProofTactic::Rewrite(surface.clone()));
-            if search(rewritten, premises, available, used, tactics) {
-                return true;
-            }
-            tactics.pop();
-            used[index] = false;
-        }
-        false
-    }
-
-    let mut explicit = Vec::new();
     if let ClickProposition::PredicateCall { name, .. } = surface_goal {
         let unfolded_goal = unfold_predicates_in_proposition(
             predicate_environment,
@@ -1341,12 +1173,15 @@ pub(super) fn lower_outcome_simp_tactics(
             &mut extracted_surfaces,
         );
     }
-    if search(
-        goal.clone(),
+    // One search-time vocabulary: the shared explicit-certificate search with
+    // the full named-rule list. A derivation this cannot spell is a failure of
+    // the whole tactic, never a post-hoc translation gap.
+    if let Some(mut explicit) = plan_explicit_equality_rewrites_from(
+        goal,
         &search_pairs,
         available,
-        &mut vec![false; search_pairs.len()],
-        &mut explicit,
+        &|current| pure_fact_is_replay_available(current, available),
+        &|current| plan_explicit_named_signed_rule(current, &search_pairs),
     ) {
         explicit.splice(
             0..0,
@@ -1765,6 +1600,45 @@ fn signed_nonstrict_parts(
     }
 }
 
+/// The goal-side counterpart of [`signed_strict_parts`]. A named-rule
+/// certificate closes with `assumption` against the applied theorem's exact
+/// conclusion, so a rule whose theorem concludes `<` may only fire when the
+/// goal is spelled `<`; a reversed (`>`) goal needs the reversed-form rule.
+fn goal_exact_less_than_parts(goal: &Proposition) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
+    match goal {
+        Proposition::ConditionIs(ConditionTerm::Bitvector32SignedLessThan(left, right), true) => {
+            Some((left, right))
+        }
+        _ => None,
+    }
+}
+
+/// The goal-side counterpart of [`signed_nonstrict_parts`]; see
+/// [`goal_exact_less_than_parts`].
+fn goal_exact_less_equal_parts(goal: &Proposition) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
+    match goal {
+        Proposition::ConditionIs(ConditionTerm::Bitvector32SignedLessEqual(left, right), true) => {
+            Some((left, right))
+        }
+        _ => None,
+    }
+}
+
+/// Exact `>=`-shaped goal parts as `(lower, value)`; see
+/// [`goal_exact_less_than_parts`]. For a theorem whose conclusion is spelled
+/// with `>=` (for example `int32_strictly_positive_is_nonnegative`).
+fn goal_exact_greater_equal_parts(
+    goal: &Proposition,
+) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
+    match goal {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(value, lower),
+            true,
+        ) => Some((lower, value)),
+        _ => None,
+    }
+}
+
 fn increment_base(term: &Bitvector32Term) -> Option<&Bitvector32Term> {
     let Bitvector32Term::Add(left, right) = term else {
         return None;
@@ -1842,7 +1716,7 @@ fn plan_explicit_increment_upper_bound(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let (incremented, goal_upper) = signed_nonstrict_parts(goal)?;
+    let (incremented, goal_upper) = goal_exact_less_equal_parts(goal)?;
     let base = increment_base(incremented)?;
 
     for (kernel, surface) in premise_pairs {
@@ -1871,7 +1745,7 @@ fn plan_explicit_positive_is_nonnegative(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let (goal_lower, goal_value) = signed_nonstrict_parts(goal)?;
+    let (goal_lower, goal_value) = goal_exact_less_equal_parts(goal)?;
     if goal_lower != &Bitvector32Term::Constant(0) {
         return None;
     }
@@ -2336,7 +2210,7 @@ fn plan_explicit_strictly_positive_is_nonnegative(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let (goal_lower, goal_value) = signed_nonstrict_parts(goal)?;
+    let (goal_lower, goal_value) = goal_exact_greater_equal_parts(goal)?;
     if goal_lower != &Bitvector32Term::Constant(0) {
         return None;
     }
@@ -2404,7 +2278,7 @@ fn plan_explicit_positive_predecessor_is_nonnegative(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let (goal_lower, predecessor) = signed_nonstrict_parts(goal)?;
+    let (goal_lower, predecessor) = goal_exact_less_equal_parts(goal)?;
     if goal_lower != &Bitvector32Term::Constant(0) {
         return None;
     }
@@ -2441,7 +2315,7 @@ fn plan_explicit_one_le_predecessor(
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
     let (value, final_theorem) =
-        if let Some((goal_lower, predecessor)) = signed_nonstrict_parts(goal) {
+        if let Some((goal_lower, predecessor)) = goal_exact_less_equal_parts(goal) {
             if goal_lower != &Bitvector32Term::Constant(0) {
                 return None;
             }
@@ -2453,7 +2327,7 @@ fn plan_explicit_one_le_predecessor(
             }
             (value.as_ref(), "int32_positive_predecessor_is_nonnegative")
         } else {
-            let (predecessor, value) = signed_strict_parts(goal)?;
+            let (predecessor, value) = goal_exact_less_than_parts(goal)?;
             let Bitvector32Term::Subtract(predecessor_value, amount) = predecessor else {
                 return None;
             };
@@ -2509,7 +2383,7 @@ fn plan_explicit_positive_predecessor_strictly_decreases(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let (predecessor, value) = signed_strict_parts(goal)?;
+    let (predecessor, value) = goal_exact_less_than_parts(goal)?;
     let Bitvector32Term::Subtract(predecessor_value, amount) = predecessor else {
         return None;
     };
@@ -2643,7 +2517,7 @@ fn plan_explicit_increment_strictly_increases(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let (base, incremented) = signed_strict_parts(goal)?;
+    let (base, incremented) = goal_exact_less_than_parts(goal)?;
     if increment_base(incremented)? != base {
         return None;
     }
@@ -2674,7 +2548,7 @@ fn plan_explicit_successor_le_implies_lt(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let (lower, value) = signed_strict_parts(goal)?;
+    let (lower, value) = goal_exact_less_than_parts(goal)?;
     for (bound_kernel, bound_surface) in premise_pairs {
         let Some((successor, bound_value)) = signed_nonstrict_parts(bound_kernel) else {
             continue;
@@ -2769,7 +2643,7 @@ fn plan_explicit_increment_lower_bound(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let (goal_lower, incremented) = signed_nonstrict_parts(goal)?;
+    let (goal_lower, incremented) = goal_exact_less_equal_parts(goal)?;
     let base = increment_base(incremented)?;
 
     for (lower_kernel, lower_surface) in premise_pairs {

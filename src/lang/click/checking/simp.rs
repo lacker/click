@@ -670,6 +670,28 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_then(
     available: &[Proposition],
     closer: &impl Fn(&Proposition) -> Option<Vec<ProofTactic>>,
 ) -> Option<Vec<ProofTactic>> {
+    let normalized_available = |current: &Proposition| {
+        let normalized_current = normalize_direct_atomic_memory_loads(current);
+        available.iter().any(|fact| {
+            fact == current || normalize_direct_atomic_memory_loads(fact) == normalized_current
+        })
+    };
+    plan_explicit_equality_rewrites_from(goal, premises, available, &normalized_available, closer)
+}
+
+/// The single explicit-certificate search shared by every smart-simplification
+/// construction path. Both the point-proof `simp() using` chain and the
+/// post-execution outcome planner must call through here (directly or via
+/// [`plan_explicit_equality_rewrites_then`]), so a named simple rule available
+/// to one is available to the other. `is_available` is the caller's judgment
+/// of when the current goal closes by `assumption`.
+pub(in crate::lang::click) fn plan_explicit_equality_rewrites_from(
+    goal: &Proposition,
+    premises: &[(Proposition, ClickProposition)],
+    available: &[Proposition],
+    is_available: &impl Fn(&Proposition) -> bool,
+    closer: &impl Fn(&Proposition) -> Option<Vec<ProofTactic>>,
+) -> Option<Vec<ProofTactic>> {
     fn reverse_equality(
         kernel: &Proposition,
         surface: &ClickProposition,
@@ -719,12 +741,10 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_then(
         available: &[Proposition],
         used: &mut [bool],
         tactics: &mut Vec<ProofTactic>,
+        is_available: &impl Fn(&Proposition) -> bool,
         closer: &impl Fn(&Proposition) -> Option<Vec<ProofTactic>>,
     ) -> bool {
-        let normalized_current = normalize_direct_atomic_memory_loads(&current);
-        if available.iter().any(|fact| {
-            fact == &current || normalize_direct_atomic_memory_loads(fact) == normalized_current
-        }) {
+        if is_available(&current) {
             tactics.push(ProofTactic::Assumption);
             return true;
         }
@@ -752,7 +772,15 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_then(
                 };
                 used[index] = true;
                 tactics.push(ProofTactic::Rewrite(oriented_surface));
-                if search(rewritten, premises, available, used, tactics, closer) {
+                if search(
+                    rewritten,
+                    premises,
+                    available,
+                    used,
+                    tactics,
+                    is_available,
+                    closer,
+                ) {
                     return true;
                 }
                 tactics.pop();
@@ -770,6 +798,7 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_then(
         available,
         &mut used,
         &mut tactics,
+        is_available,
         closer,
     )
     .then_some(tactics)
