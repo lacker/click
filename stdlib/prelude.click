@@ -6,6 +6,12 @@ theorem int32_increment_upper_bound(value: int32, upper: int32) {
     ensures value + 1 <= upper;
 }
 
+theorem int32_increment_strictly_increases(value: int32, upper: int32) {
+    requires value < upper;
+
+    ensures value < value + 1;
+}
+
 theorem int32_increment_lower_bound(value: int32, lower: int32, upper: int32) {
     requires lower <= value;
     requires value < upper;

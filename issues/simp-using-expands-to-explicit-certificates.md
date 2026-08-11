@@ -110,10 +110,13 @@ Completed source migrations now include the equality chains in
 `examples/owned-split-buffer`, and the final result equality in
 `examples/owned-string`. Signed increment bounds in the composite-vector loop
 regression and `examples/input-cursor`, plus the shifted increment order in
-`examples/vector-push`, have also migrated. Equality cases expand to explicit
+`examples/vector-push`, have also migrated. The remaining vector-push
+strict-increment proof now names its statement-entry premise and expands
+through `int32_increment_strictly_increases`. Equality cases expand to explicit
 `rewrite`, `assumption`, and `normalize` steps; signed-order cases expand to
 applications of the standard theorems `int32_increment_upper_bound`,
-`int32_increment_lower_bound`, `int32_increment_preserves_order`, and
+`int32_increment_strictly_increases`, `int32_increment_lower_bound`,
+`int32_increment_preserves_order`, and
 `int32_successor_le_implies_lt`, followed by `assumption`. Other source shapes
 still need principled surface certificates before their old `derive using`
 blocks can be removed:

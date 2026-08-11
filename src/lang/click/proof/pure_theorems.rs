@@ -395,6 +395,7 @@ fn verify_theorem_ensure(
     if matches!(
         theorem.name(),
         "int32_increment_upper_bound"
+            | "int32_increment_strictly_increases"
             | "int32_increment_lower_bound"
             | "int32_increment_preserves_order"
             | "int32_successor_le_implies_lt"
@@ -518,7 +519,7 @@ fn verify_kernel_standard_theorem_axiom(
     goal: Proposition,
 ) -> Result<VerifiedPureTheorem, ClickError> {
     let (parameter_count, requirement_count) = match theorem.name() {
-        "int32_increment_upper_bound" => (2, 1),
+        "int32_increment_upper_bound" | "int32_increment_strictly_increases" => (2, 1),
         "int32_increment_lower_bound" | "int32_increment_preserves_order" => (3, 2),
         "int32_successor_le_implies_lt" => (2, 2),
         _ => unreachable!("only registered kernel standard theorems call this verifier"),
@@ -547,6 +548,9 @@ fn verify_kernel_standard_theorem_axiom(
     let axiom = match theorem.name() {
         "int32_increment_upper_bound" => {
             prove_int32_increment_upper_bound(value, int32_parameter(1)?)
+        }
+        "int32_increment_strictly_increases" => {
+            prove_int32_increment_strictly_increases(value, int32_parameter(1)?)
         }
         "int32_increment_lower_bound" => {
             prove_int32_increment_lower_bound(value, int32_parameter(1)?, int32_parameter(2)?)

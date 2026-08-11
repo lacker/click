@@ -2087,6 +2087,27 @@ pub fn prove_int32_increment_upper_bound(
     ))
 }
 
+/// A signed int32 increment is strictly greater than its input when a strict
+/// upper bound rules out overflow.
+pub fn prove_int32_increment_strictly_increases(
+    value: Bitvector32Term,
+    upper: Bitvector32Term,
+) -> Theorem {
+    let premise =
+        Proposition::ConditionIs(ConditionTerm::signed_less_than(value.clone(), upper), true);
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            value.clone(),
+            Bitvector32Term::add(value, Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
 /// Signed int32 increment preserves a non-strict lower bound when a strict
 /// upper bound rules out signed overflow.
 pub fn prove_int32_increment_lower_bound(

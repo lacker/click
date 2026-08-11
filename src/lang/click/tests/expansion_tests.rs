@@ -1239,6 +1239,43 @@ fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
 }
 
 #[test]
+fn restricted_simp_expands_strict_increment_to_theorem_application() {
+    let click_source = r#"
+            theorem increment_is_greater(value: int32, upper: int32) {
+                requires value < upper;
+                ensures value < value + 1 by {
+                    simp() using {
+                        value < upper;
+                    }
+                }
+            }
+        "#;
+    let offset = click_source.find("simp() using").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("strict increment should expand");
+    assert!(
+        expanded.contains("apply(int32_increment_strictly_increases(value, upper)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("value < upper;"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[]).expect("strict increment certificate should replay");
+}
+
+#[test]
 fn restricted_simp_expands_increment_lower_bound_to_theorem_application() {
     let click_source = r#"
         theorem increment_preserves_lower_bound(

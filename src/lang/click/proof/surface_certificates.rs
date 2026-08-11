@@ -1052,7 +1052,8 @@ pub(super) fn lower_restricted_simp_plan(
         }
     }
 
-    let tactics = plan_explicit_successor_le_implies_lt(goal, premise_pairs)
+    let tactics = plan_explicit_increment_strictly_increases(goal, premise_pairs)
+        .or_else(|| plan_explicit_successor_le_implies_lt(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_preserves_order(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
@@ -1178,6 +1179,37 @@ fn plan_explicit_increment_upper_bound(
             ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
                     name: "int32_increment_upper_bound".to_string(),
+                    arguments: vec![value, upper],
+                },
+                premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
+}
+
+fn plan_explicit_increment_strictly_increases(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let (base, incremented) = signed_strict_parts(goal)?;
+    if increment_base(incremented)? != base {
+        return None;
+    }
+
+    for (kernel, surface) in premise_pairs {
+        let Some((premise_base, _)) = signed_strict_parts(kernel) else {
+            continue;
+        };
+        if premise_base != base {
+            continue;
+        }
+        let (value, upper) = surface_strict_parts(surface)?;
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_increment_strictly_increases".to_string(),
                     arguments: vec![value, upper],
                 },
                 premises: vec![surface.clone()],

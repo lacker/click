@@ -24,6 +24,27 @@ fn int32_increment_upper_bound_axiom_has_the_exact_implication() {
 }
 
 #[test]
+fn int32_increment_strictly_increases_axiom_has_the_exact_implication() {
+    let value = Bitvector32Term::Variable(Variable(90_005));
+    let upper = Bitvector32Term::Variable(Variable(90_006));
+    let theorem = prove_int32_increment_strictly_increases(value.clone(), upper.clone());
+    let premise =
+        Proposition::ConditionIs(ConditionTerm::signed_less_than(value.clone(), upper), true);
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            value.clone(),
+            Bitvector32Term::add(value, Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
 fn int32_increment_lower_bound_axiom_has_the_exact_implications() {
     let value = Bitvector32Term::Variable(Variable(90_010));
     let lower = Bitvector32Term::Variable(Variable(90_011));

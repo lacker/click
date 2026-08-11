@@ -20,6 +20,12 @@ theorem int32_increment_upper_bound(value: int32, upper: int32) {
     ensures value + 1 <= upper;
 }
 
+theorem int32_increment_strictly_increases(value: int32, upper: int32) {
+    requires value < upper;
+
+    ensures value < value + 1;
+}
+
 theorem int32_increment_lower_bound(value: int32, lower: int32, upper: int32) {
     requires lower <= value;
     requires value < upper;
@@ -42,9 +48,10 @@ theorem int32_successor_le_implies_lt(lower: int32, value: int32) {
 }
 ```
 
-The strict upper premise rules out signed overflow. It either proves the
-resulting upper bound directly, lets an existing lower bound survive the
-increment, or lets both sides of an established order increment together.
+The strict upper premise rules out signed overflow. It proves that increment
+strictly increases the value, proves the resulting upper bound directly, lets
+an existing lower bound survive the increment, or lets both sides of an
+established order increment together.
 The successor theorem states its no-overflow condition separately, allowing a
 concrete condition such as `1 < 2` to be discharged by context-free kernel
 normalization while an adjacent non-strict bound is supplied explicitly.

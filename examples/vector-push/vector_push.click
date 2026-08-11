@@ -50,8 +50,8 @@ int32 vector_push(struct vector* owner, int32 value) {
         normalize();
     }
     have at(statement(5).entry, owner->len) < at(statement(5).entry, (owner->len + 1)) by {
-        derive using {
-            owner->len < owner->cap;
+        simp() using {
+            at(statement(5).entry, owner->len) < at(statement(5).entry, owner->cap);
         }
     }
     have 0 == 0 by {

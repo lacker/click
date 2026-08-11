@@ -40,6 +40,7 @@ are trusted theorem-producing operations. In Click terminology these are
 axioms, even when Rust names them `prove_*`.
 
 `prove_int32_increment_upper_bound`,
+`prove_int32_increment_strictly_increases`,
 `prove_int32_increment_lower_bound`,
 `prove_int32_increment_preserves_order`, and
 `prove_int32_successor_le_implies_lt` are kernel axioms exposed as named
