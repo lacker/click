@@ -436,7 +436,9 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         }
     }
     have owner->data[old(owner->len)] == value by {
-        derive using {
+        simp() using {
+            at(statement(2).exit, (at(statement(2).entry, owner->data) + 0)[at(statement(2).entry, index)]) == at(statement(2).entry, value);
+            at(statement(3).entry, index) == old(owner->len);
             owner->data == old(owner->data);
         }
     }
