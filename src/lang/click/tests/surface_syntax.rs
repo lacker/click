@@ -339,10 +339,10 @@ fn verifies_explicit_structural_logic_tactics() {
 fn verifies_atomic_derivation_from_explicit_premises() {
     let source = r#"
         theorem derives_nonnegative(x: int32) {
-            requires x > 0;
-            ensures x >= 0 by {
-                derive using {
-                    x > 0;
+            requires 1 <= x;
+            ensures 0 <= x by {
+                simp() using {
+                    1 <= x;
                 }
             }
         }
