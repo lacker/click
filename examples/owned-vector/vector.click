@@ -164,7 +164,7 @@ int32 vector_grow(struct vector* owner) {
     have owner->len <= new_capacity by simp;
     have new_capacity <= 536870911 by simp;
     have loadable(old_data[0..old_capacity]) by {
-        derive using {
+        simp() using {
             loadable(old(owner->data[0..owner->cap]));
         }
     }
