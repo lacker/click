@@ -248,6 +248,19 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
     }
+    if let Some(tactics) = plan_explicit_equality_rewrites_then(
+        &lowered_conclusion,
+        &premise_pairs,
+        available,
+        &|goal| plan_explicit_named_signed_rule(goal, &premise_pairs),
+    ) {
+        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "rewritten atomic derivation produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, Proof::Script(tactics)));
+    }
     let transport_recognition = assumptions_from_propositions(available);
     for (_, surface_source) in &premise_pairs {
         let source = replay
