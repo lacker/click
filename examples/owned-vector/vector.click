@@ -316,7 +316,7 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             step();
             execute();
             have not (old(owner->len) < old(owner->cap)) by {
-                derive using {
+                simp() using {
                     at(function.entry, owner->len == owner->cap);
                 }
             }
