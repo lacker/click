@@ -1281,7 +1281,6 @@ pub(super) fn lower_outcome_simp_tactics(
         false
     }
 
-    let mut used = vec![false; premise_pairs.len()];
     let mut explicit = Vec::new();
     if let ClickProposition::PredicateCall { name, .. } = surface_goal {
         let unfolded_goal = unfold_predicates_in_proposition(
@@ -1322,13 +1321,27 @@ pub(super) fn lower_outcome_simp_tactics(
         })?;
         return Ok(tactics);
     }
+    let mut search_pairs = premise_pairs.clone();
+    let mut extracted_surfaces = Vec::new();
+    for (kernel, surface) in &premise_pairs {
+        collect_surface_conjunct_pairs(
+            kernel,
+            surface,
+            &mut search_pairs,
+            &mut extracted_surfaces,
+        );
+    }
     if search(
         goal.clone(),
-        &premise_pairs,
+        &search_pairs,
         available,
-        &mut used,
+        &mut vec![false; search_pairs.len()],
         &mut explicit,
     ) {
+        explicit.splice(
+            0..0,
+            extracted_surfaces.into_iter().map(ProofTactic::Extract),
+        );
         Ok(explicit)
     } else {
         Err(ClickError::new(format!(
@@ -1340,6 +1353,34 @@ pub(super) fn lower_outcome_simp_tactics(
                 .collect::<Vec<_>>()
                 .join(", "),
         )))
+    }
+}
+
+fn collect_surface_conjunct_pairs(
+    kernel: &Proposition,
+    surface: &ClickProposition,
+    pairs: &mut Vec<(Proposition, ClickProposition)>,
+    extracted: &mut Vec<ClickProposition>,
+) {
+    let (
+        Proposition::And(kernel_left, kernel_right),
+        ClickProposition::And(surface_left, surface_right),
+    ) = (kernel, surface)
+    else {
+        return;
+    };
+    for (kernel_child, surface_child) in [
+        (kernel_left.as_ref(), surface_left.as_ref()),
+        (kernel_right.as_ref(), surface_right.as_ref()),
+    ] {
+        if !pairs
+            .iter()
+            .any(|(existing, _)| existing == kernel_child)
+        {
+            pairs.push((kernel_child.clone(), surface_child.clone()));
+            extracted.push(surface_child.clone());
+        }
+        collect_surface_conjunct_pairs(kernel_child, surface_child, pairs, extracted);
     }
 }
 
