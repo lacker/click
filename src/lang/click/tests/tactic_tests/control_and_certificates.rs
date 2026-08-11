@@ -389,9 +389,7 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
             condition: nonnegative.clone(),
             then_tactics: vec![ProofTactic::Have(ProofHave {
                 proposition: nonnegative.clone(),
-                proof: Proof::Script(vec![ProofTactic::Derive(ProofDerive {
-                    premises: vec![nonnegative.clone()],
-                })]),
+                proof: Proof::Script(vec![ProofTactic::Assumption]),
             })],
             else_tactics: vec![ProofTactic::Normalize],
         }),

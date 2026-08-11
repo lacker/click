@@ -1645,7 +1645,7 @@ impl Parser {
             "bounded_execute" => Some(
                 "`bounded_execute()` was removed; use `execute()` or `by auto;` and configure the tool budget",
             ),
-            "calculate" => Some("`calculate(...)` was merged into `derive using { ... }`"),
+            "calculate" => Some("use `simp() using { ... }` to constrain simplification"),
             "double_negation" => {
                 Some("`double_negation()` was removed; use `intro(); contradiction(P);`")
             }
@@ -1800,24 +1800,6 @@ impl Parser {
                 initialize_proof,
                 preserve_proof,
             }));
-        }
-        if name == "derive" {
-            if self.peek() == Some(&Token::LParen) {
-                return Err(
-                    self.error("`derive` now targets the current goal; use `derive using { ... }`")
-                );
-            }
-            let premises = self.parse_exact_premises()?;
-            if premises.is_empty() {
-                return Err(self.error(format!(
-                    "`{name}` requires at least one explicit premise; use `normalize()` for a context-free goal"
-                )));
-            }
-            if self.peek() == Some(&Token::Semicolon) {
-                self.position += 1;
-            }
-            let derivation = ProofDerive { premises };
-            return Ok(ProofTactic::Derive(derivation));
         }
         let tactic = match name.as_str() {
             "step" => {

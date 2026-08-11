@@ -430,7 +430,7 @@ fn rejects_retired_tactic_spellings_with_migrations() {
         ("execute_then_step", "step"),
         ("execute_else_step", "step"),
         ("bounded_execute", "execute"),
-        ("calculate", "derive"),
+        ("calculate", "simp() using"),
         ("double_negation", "intro"),
         ("vacuous", "intro"),
     ] {
@@ -457,12 +457,8 @@ fn rejects_redundant_exact_premise_spellings_with_migrations() {
             }
         }
     "#;
-    let error = parse(old_derive).expect_err("derive target should be rejected");
-    assert!(
-        error.message().contains("derive using"),
-        "{}",
-        error.message()
-    );
+    let error = parse(old_derive).expect_err("removed derive tactic should be rejected");
+    assert!(error.message().contains("unknown tactic `derive`"), "{}", error.message());
 
     let old_fact_prefix = r#"
         theorem legacy(x: int32) {
