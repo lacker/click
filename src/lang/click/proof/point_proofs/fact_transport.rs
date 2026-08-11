@@ -758,6 +758,34 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches(
         (Proposition::Not(source_body), Proposition::Not(target_body)) => {
             return equivalent(source_body, target_body);
         }
+        (
+            Proposition::CResourceSeparate {
+                left: source_left,
+                right: source_right,
+            },
+            Proposition::CResourceSeparate {
+                left: target_left,
+                right: target_right,
+            },
+        ) => {
+            return (c_resources_directly_match(source_left, target_left, assumptions)
+                && c_resources_directly_match(source_right, target_right, assumptions))
+                || (c_resources_directly_match(source_left, target_right, assumptions)
+                    && c_resources_directly_match(source_right, target_left, assumptions));
+        }
+        (
+            Proposition::CResourceContains {
+                parent: source_parent,
+                child: source_child,
+            },
+            Proposition::CResourceContains {
+                parent: target_parent,
+                child: target_child,
+            },
+        ) => {
+            return c_resources_directly_match(source_parent, target_parent, assumptions)
+                && c_resources_directly_match(source_child, target_child, assumptions);
+        }
         _ => {}
     }
     if matches!(target, Proposition::CMemoryLoadable { .. }) {
