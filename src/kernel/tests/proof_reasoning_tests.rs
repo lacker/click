@@ -115,6 +115,44 @@ fn int32_increment_greater_equal_lower_bound_axiom_has_exact_implications() {
 }
 
 #[test]
+fn int32_increment_strict_greater_lower_bound_axiom_has_exact_implications() {
+    let value = Bitvector32Term::Variable(Variable(90_016));
+    let lower = Bitvector32Term::Variable(Variable(90_017));
+    let upper = Bitvector32Term::Variable(Variable(90_018));
+    let theorem = prove_int32_increment_strict_greater_lower_bound(
+        value.clone(),
+        lower.clone(),
+        upper.clone(),
+    );
+    let lower_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(value.clone(), lower.clone()),
+        true,
+    );
+    let upper_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), upper),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_than(
+            Bitvector32Term::add(value, Bitvector32Term::Constant(1)),
+            lower,
+        ),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(lower_premise),
+            Box::new(Proposition::Implies(
+                Box::new(upper_premise),
+                Box::new(conclusion),
+            )),
+        )
+    );
+}
+
+#[test]
 fn int32_increment_preserves_order_axiom_has_the_exact_implications() {
     let value = Bitvector32Term::Variable(Variable(90_020));
     let lower = Bitvector32Term::Variable(Variable(90_021));

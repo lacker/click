@@ -43,6 +43,7 @@ axioms, even when Rust names them `prove_*`.
 `prove_int32_increment_strictly_increases`,
 `prove_int32_increment_lower_bound`,
 `prove_int32_increment_greater_equal_lower_bound`,
+`prove_int32_increment_strict_greater_lower_bound`,
 `prove_int32_increment_preserves_order`, and
 `prove_int32_successor_le_implies_lt`, and
 `prove_int32_positive_is_nonnegative`, and

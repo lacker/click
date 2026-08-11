@@ -1199,6 +1199,12 @@ pub(super) fn lower_outcome_simp_tactics(
             tactics.extend(suffix);
             return true;
         }
+        if let Some(suffix) =
+            plan_explicit_increment_strict_greater_lower_bound(&current, premises)
+        {
+            tactics.extend(suffix);
+            return true;
+        }
         if matches!(
             current,
             Proposition::ConditionIs(
@@ -1404,6 +1410,7 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_not_strict_implies_greater_equal(goal, premise_pairs))
         .or_else(|| plan_explicit_greater_equal_transitive(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_greater_equal_lower_bound(goal, premise_pairs))
+        .or_else(|| plan_explicit_increment_strict_greater_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_strict_transitive(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_strictly_positive_is_nonnegative(goal, premise_pairs))
@@ -1802,6 +1809,49 @@ fn plan_explicit_increment_greater_equal_lower_bound(
                 ProofTactic::ApplyTheoremUsing {
                     application: TheoremApplication {
                         name: "int32_increment_greater_equal_lower_bound".to_string(),
+                        arguments: vec![surface_value, surface_lower, surface_upper],
+                    },
+                    premises: vec![lower_surface.clone(), upper_surface.clone()],
+                },
+                ProofTactic::Assumption,
+            ]);
+        }
+    }
+    None
+}
+
+fn plan_explicit_increment_strict_greater_lower_bound(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedGreaterThan(incremented, goal_lower),
+        true,
+    ) = goal
+    else {
+        return None;
+    };
+    let base = increment_base(incremented)?;
+    for (lower_kernel, lower_surface) in premise_pairs {
+        let Some((premise_lower, lower_base)) = signed_nonstrict_parts(lower_kernel) else {
+            continue;
+        };
+        if premise_lower != goal_lower.as_ref() || lower_base != base {
+            continue;
+        }
+        let (surface_lower, surface_value) = surface_nonstrict_parts(lower_surface)?;
+        for (upper_kernel, upper_surface) in premise_pairs {
+            let Some((upper_base, _)) = signed_strict_parts(upper_kernel) else {
+                continue;
+            };
+            if upper_base != base {
+                continue;
+            }
+            let (_, surface_upper) = surface_strict_parts(upper_surface)?;
+            return Some(vec![
+                ProofTactic::ApplyTheoremUsing {
+                    application: TheoremApplication {
+                        name: "int32_increment_strict_greater_lower_bound".to_string(),
                         arguments: vec![surface_value, surface_lower, surface_upper],
                     },
                     premises: vec![lower_surface.clone(), upper_surface.clone()],
