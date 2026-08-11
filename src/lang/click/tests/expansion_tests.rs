@@ -2369,7 +2369,9 @@ fn source_expander_derives_separation_from_call_postconditions() {
     assert!(expanded.contains("left->len == length"), "{expanded}");
     assert!(expanded.contains("left->data == data"), "{expanded}");
     assert!(!expanded.contains("load_int32_pointer"), "{expanded}");
-    assert!(expanded.contains("derive using {"), "{expanded}");
+    assert!(expanded.contains("rewrite("), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &c_sources)
         .expect("the expanded separation derivation should replay");
 }

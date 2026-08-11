@@ -165,6 +165,18 @@ pub(super) fn lower_surface_atomic_derivation(
         }
     }
     let has_no_premises = premise_pairs.is_empty();
+    if let Some(tactics) = plan_explicit_equality_rewrites(
+        &lowered_conclusion,
+        &premise_pairs,
+        available,
+    ) {
+        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "atomic derivation produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, Proof::Script(tactics)));
+    }
     let surface_premises = premise_pairs
         .into_iter()
         .map(|(_, surface)| surface)
