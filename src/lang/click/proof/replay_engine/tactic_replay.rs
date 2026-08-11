@@ -2318,7 +2318,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         &fact,
                     )?
                 };
-                if let Some(mut certificate) = surface_certificate {
+                if let Some(certificate) = surface_certificate {
                     let replay_certificate = |certificate: &SimpleProof| {
                         replay_simple_proof(
                             ProofReplayContext {
@@ -2349,34 +2349,11 @@ fn replay_linear_tactics_without_frontier_loops(
                             certificate,
                         )
                     };
-                    let initial_replay = pure_goal_simple_proof_gateway(
+                    pure_goal_simple_proof_gateway(
                         claim_label,
                         || Ok(certificate.clone()),
                         replay_certificate,
-                    );
-                    if let Err(initial_error) = initial_replay {
-                        let fallback = smart_plan.as_ref().and_then(|_| {
-                            surface_smart_have_derivation_certificate(
-                                &replay,
-                                &state,
-                                &have_facts,
-                                parsed_function.parameters(),
-                                arguments,
-                                predicate_environment,
-                                click_function_environment,
-                                have,
-                            )
-                        });
-                        let Some(fallback) = fallback else {
-                            return Err(initial_error);
-                        };
-                        pure_goal_simple_proof_gateway(
-                            claim_label,
-                            || Ok(fallback.clone()),
-                            replay_certificate,
-                        )?;
-                        certificate = fallback;
-                    }
+                    )?;
                     for step in certificate.steps() {
                         replay.simple_proof_builder.push_step(step.clone());
                     }

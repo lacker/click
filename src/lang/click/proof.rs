@@ -29,7 +29,10 @@ pub(super) use execution_planning::{
     verify_loop_execution_proofs,
 };
 use fact_reasoning::*;
-pub(super) use fact_reasoning::{condition_polarity_equivalent, search_condition_derivation};
+pub(super) use fact_reasoning::{
+    condition_polarity_equivalent, materialization_equivalent_available_fact,
+    search_condition_derivation,
+};
 use point_proofs::*;
 #[cfg(test)]
 use pure_theorems::{

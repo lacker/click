@@ -454,7 +454,7 @@ pub(super) fn atomic_conjuncts<'a>(
     }
 }
 
-pub(super) fn materialization_equivalent_available_fact(
+pub(in crate::lang::click) fn materialization_equivalent_available_fact(
     required: &Proposition,
     available: &[Proposition],
 ) -> Option<Proposition> {

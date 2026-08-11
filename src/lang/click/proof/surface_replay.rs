@@ -1724,11 +1724,12 @@ pub(super) fn append_simple_proof_step_for_operation(
             }
         }
         (None, Some(InternalProofOperation::ExactPropositionDerivation(derivation))) => {
+            let anchor_point = replay.simple_proof_builder.last_step_entry.clone();
             match lower_surface_atomic_derivation(
                 replay,
                 derivation,
                 None,
-                None,
+                anchor_point.as_ref(),
                 available,
                 parameters,
                 arguments,
@@ -1736,40 +1737,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 predicate_environment,
                 click_function_environment,
             ) {
-                Ok((mut conclusion, mut proof)) => {
-                    // Exact facts emitted immediately after a certified step
-                    // describe that step's entry snapshot. An unqualified
-                    // field spelling is evaluated again in the post-step
-                    // state and can silently become a different proposition
-                    // (for example `len < len + 1` after `len` changes).
-                    // Preserve the snapshot in both the generated goal and
-                    // every listed premise.
-                    if let Some(point) = replay.simple_proof_builder.last_step_entry.clone() {
-                        let Ok(anchored) = surface_with_source_site(&conclusion, &point) else {
-                            replay.simple_proof_builder.block(
-                                "could not anchor an exact derivation conclusion at its statement-entry snapshot",
-                            );
-                            return;
-                        };
-                        conclusion = anchored;
-                        if let Proof::Script(tactics) = &mut proof {
-                            for tactic in tactics {
-                                if let ProofTactic::Derive(derive) = tactic {
-                                    for premise in &mut derive.premises {
-                                        let Ok(anchored) =
-                                            surface_with_source_site(premise, &point)
-                                        else {
-                                            replay.simple_proof_builder.block(
-                                                "could not anchor an exact derivation premise at its statement-entry snapshot",
-                                            );
-                                            return;
-                                        };
-                                        *premise = anchored;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                Ok((conclusion, proof)) => {
                     replay.simple_proof_builder.push_have(conclusion, proof);
                 }
                 Err(error) => replay.simple_proof_builder.block(format!(
@@ -2323,129 +2291,6 @@ pub(super) fn surface_smart_have_certificate(
         ClickError::new(format!(
             "smart `have` produced an invalid certificate: {error:?}"
         ))
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn surface_smart_have_derivation_certificate(
-    replay: &TacticReplayState,
-    state: &CState,
-    available: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    have: &ProofHave,
-) -> Option<SimpleProof> {
-    let mut premises = Vec::new();
-    for fact in available {
-        let relevant = matches!(fact, Proposition::CMemoryLoadable { .. })
-            || matches!(
-                fact,
-                Proposition::ConditionIs(
-                    ConditionTerm::Bitvector32SignedLessThan(_, _)
-                        | ConditionTerm::Bitvector32SignedLessEqual(_, _)
-                        | ConditionTerm::Bitvector32SignedGreaterThan(_, _)
-                        | ConditionTerm::Bitvector32SignedGreaterEqual(_, _),
-                    _,
-                )
-            );
-        if !relevant {
-            continue;
-        }
-        let Ok(surface) = checked_surface_fact_at_point(
-            replay,
-            fact,
-            available,
-            parameters,
-            arguments,
-            state,
-            predicate_environment,
-            click_function_environment,
-        ) else {
-            continue;
-        };
-        if !premises.contains(&surface) {
-            premises.push(surface);
-        }
-    }
-    if premises.is_empty() {
-        return None;
-    }
-    SimpleProof::from_proof_tactics(&[ProofTactic::Have(ProofHave {
-        proposition: have.proposition.clone(),
-        proof: Proof::Script(vec![ProofTactic::Derive(ProofDerive { premises })]),
-    })])
-    .ok()
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn surface_outcome_smart_have_derivation(
-    replay: &TacticReplayState,
-    available: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    post_state: &CState,
-    result: &CValue,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    have: &ProofHave,
-    unfolded_predicates: &[String],
-) -> Option<ProofHave> {
-    let mut atomic_available = Vec::new();
-    for fact in available {
-        atomic_conjuncts(fact, &mut atomic_available);
-    }
-    let mut premises = Vec::new();
-    for fact in atomic_available {
-        let relevant = matches!(fact, Proposition::CMemoryLoadable { .. })
-            || match fact {
-                Proposition::ConditionIs(
-                    ConditionTerm::Bitvector32SignedLessThan(left, right)
-                    | ConditionTerm::Bitvector32SignedLessEqual(left, right)
-                    | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
-                    | ConditionTerm::Bitvector32SignedGreaterEqual(left, right),
-                    _,
-                ) => [left.as_const(), right.as_const()]
-                    .into_iter()
-                    .flatten()
-                    .all(|constant| constant == 0),
-                _ => false,
-            };
-        if !relevant {
-            continue;
-        }
-        let Ok(surface) = checked_surface_fact_at_outcome(
-            replay,
-            fact,
-            SurfaceFactMatch::CanonicalExact,
-            available,
-            parameters,
-            arguments,
-            pre_state,
-            post_state,
-            result,
-            predicate_environment,
-            click_function_environment,
-        ) else {
-            continue;
-        };
-        if !premises.contains(&surface) {
-            premises.push(surface);
-        }
-    }
-    (!premises.is_empty()).then(|| {
-        let mut tactics = unfolded_predicates
-            .iter()
-            .cloned()
-            .map(ProofTactic::UnfoldPredicate)
-            .collect::<Vec<_>>();
-        tactics.push(ProofTactic::Derive(ProofDerive { premises }));
-        ProofHave {
-            proposition: have.proposition.clone(),
-            proof: Proof::Script(tactics),
-        }
     })
 }
 

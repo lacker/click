@@ -80,6 +80,10 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
     equality: &Proposition,
     available: &[Proposition],
 ) -> Result<Proposition, String> {
+    let is_available = |fact: &Proposition| {
+        available.contains(fact)
+            || materialization_equivalent_available_fact(fact, available).is_some()
+    };
     fn rewrite_child(
         child: &Proposition,
         equality: &Proposition,
@@ -168,7 +172,7 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
             ),
             true,
         );
-        if !available.contains(equality) && !available.contains(&reverse) {
+        if !is_available(equality) && !is_available(&reverse) {
             return Err(
                 "`rewrite` requires its equality to be an exact available fact".to_string(),
             );
@@ -397,7 +401,7 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
             ),
             true,
         );
-        if !available.contains(equality) && !available.contains(&reverse) {
+        if !is_available(equality) && !is_available(&reverse) {
             return Err(
                 "`rewrite` requires its equality to be an exact available fact".to_string(),
             );
@@ -442,7 +446,7 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
         ),
         true,
     );
-    if !available.contains(equality) && !available.contains(&reverse) {
+    if !is_available(equality) && !is_available(&reverse) {
         return Err("`rewrite` requires its equality to be an exact available fact".to_string());
     }
     fn rewrite_term(

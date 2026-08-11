@@ -184,7 +184,10 @@ fn instantiate_theorem_application(
         lowered = normalize_direct_atomic_memory_loads(&lowered);
         if !available
             .iter()
-            .any(|fact| normalize_direct_atomic_memory_loads(fact) == lowered)
+            .any(|fact| {
+                let fact = normalize_direct_atomic_memory_loads(fact);
+                fact == lowered || condition_polarity_equivalent(&fact, &lowered)
+            })
             && !matches!(normalize_proposition(&lowered), SimpProposition::True)
         {
             return Err(theorem_application_error(

@@ -1811,59 +1811,21 @@ pub(super) fn finish_ordered_proof_replay(
                             let (surface_have, replayed_fact) = match replay_have(&surface_have) {
                                 Ok(replayed_fact) => (surface_have, replayed_fact),
                                 Err(initial_error) => {
-                                    if is_restricted_simp {
-                                        let failed_tactic = ProofTactic::Have(surface_have);
-                                        let failed_certificate = SimpleProof::from_proof_tactics(
-                                            std::slice::from_ref(&failed_tactic),
-                                        )
-                                        .expect("restricted simp must lower to simple tactics");
-                                        return Err(ClickError::new(format!(
-                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: `simp() using` explicit certificate failed replay:\n{}\n{}",
-                                            format_simple_proof(&failed_certificate),
-                                            initial_error.message(),
-                                        )));
-                                    }
-                                    let Some(fallback) = surface_outcome_smart_have_derivation(
-                                        &certificate_replay,
-                                        &replay_available,
-                                        parsed_function.parameters(),
-                                        arguments,
-                                        pre_state,
-                                        post_state,
-                                        result,
-                                        predicate_environment,
-                                        click_function_environment,
-                                        have,
-                                        &smart_unfolds,
-                                    ) else {
-                                        let failed_tactic = ProofTactic::Have(surface_have);
-                                        let failed_certificate =
-                                            SimpleProof::from_proof_tactics(
-                                                std::slice::from_ref(&failed_tactic),
-                                            )
-                                            .expect("post-execution smart have must lower to a simple tactic");
-                                        return Err(ClickError::new(format!(
-                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: post-execution smart `have` certificate failed replay:\n{}\n{}",
-                                            format_simple_proof(&failed_certificate),
-                                            initial_error.message(),
-                                        )));
+                                    let failed_tactic = ProofTactic::Have(surface_have);
+                                    let failed_certificate = SimpleProof::from_proof_tactics(
+                                        std::slice::from_ref(&failed_tactic),
+                                    )
+                                    .expect("smart have must lower to simple tactics");
+                                    let kind = if is_restricted_simp {
+                                        "`simp() using`"
+                                    } else {
+                                        "post-execution smart `have`"
                                     };
-                                    match replay_have(&fallback) {
-                                        Ok(replayed_fact) => (fallback, replayed_fact),
-                                        Err(fallback_error) => {
-                                            let failed_tactic = ProofTactic::Have(fallback);
-                                            let failed_certificate =
-                                                SimpleProof::from_proof_tactics(
-                                                    std::slice::from_ref(&failed_tactic),
-                                                )
-                                                .expect("post-execution smart have fallback must be a simple tactic");
-                                            return Err(ClickError::new(format!(
-                                                "`{proof_label}` path {path_index}, tactic {tactic_index}: post-execution smart `have` fallback certificate failed replay:\n{}\n{}",
-                                                format_simple_proof(&failed_certificate),
-                                                fallback_error.message(),
-                                            )));
-                                        }
-                                    }
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: {kind} explicit certificate failed replay:\n{}\n{}",
+                                        format_simple_proof(&failed_certificate),
+                                        initial_error.message(),
+                                    )));
                                 }
                             };
                             if replayed_fact != fact {
