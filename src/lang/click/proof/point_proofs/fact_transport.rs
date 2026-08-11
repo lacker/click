@@ -702,6 +702,16 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches(
     if matches!(target, Proposition::CMemoryLoadable { .. }) {
         return assumptions.derive_atomic_proposition(target).is_some();
     }
+    if let Some(theorem) =
+        crate::kernel::prove_c_condition_fact_target_transport(source, target, assumptions)
+    {
+        let Proposition::Implies(theorem_source, theorem_target) = theorem.proposition() else {
+            unreachable!("target-directed condition transport must produce an implication")
+        };
+        if theorem_source.as_ref() == source && theorem_target.as_ref() == target {
+            return true;
+        }
+    }
     let Some(theorem) = prove_c_condition_fact_transport(source, after, assumptions) else {
         return false;
     };

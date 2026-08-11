@@ -632,6 +632,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
         contract_environment_at_state(&parameter_values, &array_refs, state);
     let mut fact = None;
     let mut goal = None;
+    let mut surface_logical_goal = proposition.clone();
     let mut goal_closed = false;
     let mut next_choice_variable = 3_000_000;
 
@@ -1209,6 +1210,36 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             _ => None,
                         };
                         let mut logical_goal = unfolded_goal;
+                        if matches!(tactic, ProofTactic::Intro) {
+                            match (&surface_logical_goal, &logical_goal) {
+                                (
+                                    ClickProposition::ForAll {
+                                        c_type: C0Type::Int32,
+                                        name,
+                                        body,
+                                    },
+                                    Proposition::ForAll {
+                                        var,
+                                        sort: Sort::CInt32,
+                                        ..
+                                    },
+                                ) => {
+                                    values.insert(
+                                        name.clone(),
+                                        CValue::Int32(Bitvector32Term::Variable(*var)),
+                                    );
+                                    surface_logical_goal = body.as_ref().clone();
+                                }
+                                (
+                                    ClickProposition::Implies(_, body),
+                                    Proposition::Implies(_, _),
+                                )
+                                | (ClickProposition::Not(body), Proposition::Not(_)) => {
+                                    surface_logical_goal = body.as_ref().clone();
+                                }
+                                _ => {}
+                            }
+                        }
                         goal_closed = apply_logical_goal_tactic(
                             tactic,
                             &mut logical_goal,

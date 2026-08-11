@@ -19,6 +19,29 @@ pub fn uint8(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::UInt8(bits.into())
 }
 
+/// Certifies a stated condition target from one explicit condition source and
+/// deterministic memory-resolution evidence. Unlike whole-fact transport,
+/// this permits a target to retain an old load on one side while transporting
+/// the other side to a newer snapshot.
+pub fn prove_c_condition_fact_target_transport(
+    source: &Proposition,
+    target: &Proposition,
+    assumptions: &Assumptions,
+) -> Option<Theorem> {
+    if !matches!(source, Proposition::ConditionIs(_, _))
+        || !matches!(target, Proposition::ConditionIs(_, _))
+    {
+        return None;
+    }
+    let with_source = assumptions.clone().assume_proposition(source.clone());
+    certification_proves_proposition(&with_source, target).then(|| {
+        Theorem::new(Proposition::Implies(
+            Box::new(source.clone()),
+            Box::new(target.clone()),
+        ))
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct CLoopPreservationContext {
     state: CState,

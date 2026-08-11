@@ -144,6 +144,40 @@ fn unrelated_external_cell_store_preserves_memory_load_with_stack_temporary() {
 }
 
 #[test]
+fn target_directed_transport_preserves_one_old_load_spelling() {
+    let old_memory = CMemory::new();
+    let written = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let preserved = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(4),
+    };
+    let current_memory = old_memory.clone().store(written, int32(7));
+    let old_load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(old_memory),
+        Box::new(preserved.clone()),
+    );
+    let current_load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(current_memory),
+        Box::new(preserved),
+    );
+    let source = Proposition::ConditionIs(
+        ConditionTerm::equal(old_load.clone(), old_load.clone()),
+        true,
+    );
+    let target = Proposition::ConditionIs(ConditionTerm::equal(current_load, old_load), true);
+
+    let theorem = prove_c_condition_fact_target_transport(&source, &target, &Assumptions::new())
+        .expect("the disjoint store should preserve one side of the target equality");
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(source), Box::new(target))
+    );
+}
+
+#[test]
 fn exact_changed_cell_frame_precedes_abstract_effect_search() {
     let queried = Pointer {
         block: "arg-memory".into(),

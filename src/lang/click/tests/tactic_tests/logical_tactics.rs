@@ -199,6 +199,38 @@ fn parses_local_have_proof_tactic() {
 }
 
 #[test]
+fn point_proof_intro_places_forall_binder_in_surface_scope() {
+    let c_source = r#"
+        int32 forall_scope(int32 value) {
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "forall_scope.c";
+
+        int32 forall_scope(int32 value) {
+            ensures forall (k: int32) {
+                (k == k and value == value) implies k == k
+            } by {
+                execute();
+                have forall (k: int32) {
+                    (k == k and value == value) implies k == k
+                } by {
+                    intro();
+                    intro();
+                    extract(k == k);
+                    assumption();
+                }
+                assumption();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("forall_scope.c", c_source)])
+        .expect("the introduced forall binder should be available to later surface tactics");
+}
+
+#[test]
 fn parses_proof_if_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",

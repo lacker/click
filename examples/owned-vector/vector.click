@@ -109,8 +109,17 @@ int32 vector_copy(
         assumption();
     }
     have forall (k: int32) { 0 <= k and k < length implies src[k] == old(src[k]) } by {
-        derive using {
+        intro();
+        intro();
+        extract(0 <= k);
+        extract(k < length);
+        transport(
+            old(src[k]) == old(src[k]),
+            src[k] == old(src[k])
+        ) using {
             0 <= length;
+            0 <= k;
+            k < length;
             length <= dst_capacity;
             length <= src_capacity;
             1 <= dst_capacity;
@@ -118,13 +127,8 @@ int32 vector_copy(
             at(statement(0).entry, loadable(dst[0..dst_capacity]));
             at(statement(0).entry, loadable(src[0..src_capacity]));
             separate(memory(dst[0..dst_capacity]), memory(src[0..src_capacity]));
-            at(loop(0).exit, 0) <= at(loop(0).exit, i);
-            at(loop(0).exit, i) <= at(loop(0).exit, length);
-            not at(loop(0).exit, i) < at(loop(0).exit, length);
-            at(statement(5).entry, i) == at(statement(5).entry, length);
-            forall (k: int32) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, dst[k]) == old(src[k]) };
-            forall (k: int32) { 0 <= k and k < length implies dst[k] == old(src[k]) };
         }
+        assumption();
     }
     have forall (k: int32) { 0 <= k and k < length implies dst[k] == old(src[k]) } by {
         assumption();

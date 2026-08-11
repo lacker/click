@@ -75,7 +75,7 @@ remains migration compatibility and should not be used in new proofs.
 | `extract(P)` | simple | Add `P` when it is a proper conjunct of an exact available conjunction. |
 | `normalize()` | simple | Close a context-free normalization goal. |
 | `rewrite(P)` | simple | Rewrite the current proposition, including memory-resource ranges, with an exact available equality. |
-| `intro()` | simple | Introduce an implication antecedent, negated proposition, or universal binder. |
+| `intro()` | simple | Introduce an implication antecedent, negated proposition, or universal binder; an introduced binder is available by its Click name to following tactics. |
 | `split()` | simple | Close a conjunction when both conjuncts are exact available facts. |
 | `left()` / `right()` | simple | Close the selected disjunct from an exact available fact. |
 | `contradiction(P)` | simple | Close from exact facts `P` and `not P`, including exact opposite polarities of the same C condition. |
