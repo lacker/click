@@ -84,7 +84,7 @@ int32 push_one(struct owner* owner, int32 value) {
         unfold(owned_buffer_with_room(owner));
         execute();
         have 0 <= owner->len by {
-            derive using {
+            simp() using {
                 at(statement(6).entry, separate(memory(owner->len), memory(owner->cap)));
                 at(statement(6).entry, separate(memory(owner->len), memory(owner->data)));
                 at(statement(6).entry, separate(memory(owner->len), memory(owner->data[0..owner->cap])));
