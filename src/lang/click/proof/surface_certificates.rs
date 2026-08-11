@@ -76,6 +76,37 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
     }
+    if let (Some(false_proof), ClickProposition::Implies(surface_antecedent, _)) =
+        (derivation.false_antecedent_proof(), &conclusion)
+    {
+        let negated_antecedent = ClickProposition::Not(surface_antecedent.clone());
+        let (negated_antecedent, proof) = lower_surface_atomic_derivation(
+            replay,
+            false_proof,
+            Some(&negated_antecedent),
+            anchor_point,
+            available,
+            parameters,
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        let tactics = vec![
+            ProofTactic::Have(ProofHave {
+                proposition: negated_antecedent.clone(),
+                proof,
+            }),
+            ProofTactic::Intro,
+            ProofTactic::Contradiction(negated_antecedent),
+        ];
+        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "false-antecedent derivation produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, Proof::Script(tactics)));
+    }
     let mut premise_pairs = Vec::new();
     let mut unexpressed_premises = Vec::new();
     for premise in derivation.context_premises() {
@@ -230,6 +261,23 @@ pub(super) fn lower_surface_atomic_derivation(
     if premise_pairs.is_empty() && surface_normalizes_context_free {
         return Ok((conclusion, Proof::Script(vec![ProofTactic::Normalize])));
     }
+    if let Proposition::Not(body) = &lowered_conclusion
+        && let Proposition::ConditionIs(condition, expected) = body.as_ref()
+        && let Some((_, surface)) = premise_pairs.iter().find(|(kernel, _)| {
+            kernel == &Proposition::ConditionIs(condition.clone(), !expected)
+        })
+    {
+        let tactics = vec![
+            ProofTactic::Intro,
+            ProofTactic::Contradiction(surface.clone()),
+        ];
+        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "negation derivation produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, Proof::Script(tactics)));
+    }
     if let Some(tactics) =
         plan_explicit_equality_rewrites(&lowered_conclusion, &premise_pairs, available)
     {
@@ -325,14 +373,10 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
     }
-    let premises = premise_pairs
-        .into_iter()
-        .map(|(_, surface)| surface)
-        .collect();
-    Ok((
-        conclusion,
-        Proof::Script(vec![ProofTactic::Derive(ProofDerive { premises })]),
-    ))
+    Err(ClickError::new(format!(
+        "smart reasoning found a derivation, but Click has no explicit simple certificate for {}",
+        describe_pure_fact(&lowered_conclusion, parameters, arguments),
+    )))
 }
 
 #[allow(clippy::too_many_arguments)]

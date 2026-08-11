@@ -25,6 +25,15 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the checked proof of a false antecedent when this derivation
+    /// concludes an implication by contradiction.
+    pub fn false_antecedent_proof(&self) -> Option<&Self> {
+        match &self.rule {
+            PropositionDerivationRule::ImpliesFalseAntecedent(proof) => Some(proof),
+            _ => None,
+        }
+    }
+
     pub fn context_premises(&self) -> Vec<Proposition> {
         let mut premises = BTreeSet::new();
         self.collect_context_premises(&mut premises);
