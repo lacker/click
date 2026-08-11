@@ -472,9 +472,8 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             assumption();
         }
         have result == 1 implies owner->data[old(owner->len)] == value by {
-            derive using {
-                owner->data[old(owner->len)] == value;
-            }
+            intro();
+            assumption();
         }
         have forall (k: int32) {
             0 <= k and k < old(owner->len) implies
