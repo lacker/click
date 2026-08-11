@@ -222,6 +222,37 @@ fn int32_lt_transitive_axiom_has_the_exact_implications() {
 }
 
 #[test]
+fn int32_ge_transitive_axiom_has_the_exact_implications() {
+    let last = Bitvector32Term::Variable(Variable(90_034));
+    let middle = Bitvector32Term::Variable(Variable(90_035));
+    let first = Bitvector32Term::Variable(Variable(90_036));
+    let theorem = prove_int32_ge_transitive(last.clone(), middle.clone(), first.clone());
+    let first_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(last.clone(), middle.clone()),
+        true,
+    );
+    let second_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(middle, first.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(last, first),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(first_premise),
+            Box::new(Proposition::Implies(
+                Box::new(second_premise),
+                Box::new(conclusion),
+            )),
+        )
+    );
+}
+
+#[test]
 fn int32_increment_below_max_is_defined_axiom_has_the_exact_implication() {
     let value = Bitvector32Term::Variable(Variable(90_024));
     let theorem = prove_int32_increment_below_max_is_defined(value.clone());

@@ -1189,6 +1189,10 @@ pub(super) fn lower_outcome_simp_tactics(
             tactics.extend(suffix);
             return true;
         }
+        if let Some(suffix) = plan_explicit_greater_equal_transitive(&current, premises) {
+            tactics.extend(suffix);
+            return true;
+        }
         if matches!(
             current,
             Proposition::ConditionIs(
@@ -1392,6 +1396,7 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_strict_implies_nonstrict(goal, premise_pairs))
         .or_else(|| plan_explicit_not_strict_implies_greater_equal(goal, premise_pairs))
+        .or_else(|| plan_explicit_greater_equal_transitive(goal, premise_pairs))
         .or_else(|| plan_explicit_strict_transitive(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_strictly_positive_is_nonnegative(goal, premise_pairs))
@@ -1712,6 +1717,48 @@ fn plan_explicit_not_strict_implies_greater_equal(
             },
             ProofTactic::Assumption,
         ]);
+    }
+    None
+}
+
+fn plan_explicit_greater_equal_transitive(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedGreaterEqual(goal_last, goal_first),
+        true,
+    ) = goal
+    else {
+        return None;
+    };
+    for (first_kernel, first_surface) in premise_pairs {
+        let Some((first, middle)) = signed_nonstrict_parts(first_kernel) else {
+            continue;
+        };
+        if first != goal_first.as_ref() {
+            continue;
+        }
+        for (second_kernel, second_surface) in premise_pairs {
+            let Some((second_middle, last)) = signed_nonstrict_parts(second_kernel) else {
+                continue;
+            };
+            if second_middle != middle || last != goal_last.as_ref() {
+                continue;
+            }
+            let (surface_first, surface_middle) = surface_nonstrict_parts(first_surface)?;
+            let (_, surface_last) = surface_nonstrict_parts(second_surface)?;
+            return Some(vec![
+                ProofTactic::ApplyTheoremUsing {
+                    application: TheoremApplication {
+                        name: "int32_ge_transitive".to_string(),
+                        arguments: vec![surface_last, surface_middle, surface_first],
+                    },
+                    premises: vec![second_surface.clone(), first_surface.clone()],
+                },
+                ProofTactic::Assumption,
+            ]);
+        }
     }
     None
 }

@@ -2451,6 +2451,33 @@ pub fn prove_int32_lt_transitive(
     ))
 }
 
+/// Signed non-strict greater-than order is transitive.
+pub fn prove_int32_ge_transitive(
+    last: Bitvector32Term,
+    middle: Bitvector32Term,
+    first: Bitvector32Term,
+) -> Theorem {
+    let first_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(last.clone(), middle.clone()),
+        true,
+    );
+    let second_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(middle, first.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(last, first),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(first_premise),
+        Box::new(Proposition::Implies(
+            Box::new(second_premise),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
 pub fn prove_memory_load(memory: CMemory, pointer: Pointer) -> Theorem {
     let outcome = memory.load(&pointer);
     Theorem::new(Proposition::CMemoryLoads {

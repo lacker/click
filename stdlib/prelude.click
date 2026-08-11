@@ -89,6 +89,13 @@ theorem int32_lt_transitive(first: int32, middle: int32, last: int32) {
     ensures first < last;
 }
 
+theorem int32_ge_transitive(last: int32, middle: int32, first: int32) {
+    requires last >= middle;
+    requires middle >= first;
+
+    ensures last >= first;
+}
+
 theorem int32_le_and_not_lt_implies_eq(left: int32, right: int32) {
     requires left <= right;
     requires not (left < right);
