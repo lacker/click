@@ -2116,6 +2116,57 @@ fn reflexive_snapshot_transport_source(surface: &ClickProposition) -> Option<Cli
     })
 }
 
+/// The single construction event for a smart `have`/`simp` at the current
+/// proof point: kernel search selects its evidence and the same call spells
+/// that evidence as a replayable [`SimpleProof`]. Search may only succeed
+/// through derivations the surface vocabulary can spell; there is no retained
+/// plan between the two, and no separate lowering pass to disagree with the
+/// search that already succeeded.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn construct_smart_have_certificate(
+    replay: &mut TacticReplayState,
+    state: &CState,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    have: &ProofHave,
+    claim_label: &str,
+    tactic_index: usize,
+    unfolded_predicates: &[String],
+) -> Result<(Proposition, SimpleProof), ClickError> {
+    let (fact, evidence) = plan_smart_have_at_current_point(
+        have,
+        claim_label,
+        tactic_index,
+        available,
+        parameters,
+        arguments,
+        replay.old_reference_state(state),
+        state,
+        &replay.program_point_states,
+        &replay.surface_propositions,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        None,
+    )?;
+    let certificate = surface_smart_have_certificate(
+        replay,
+        state,
+        available,
+        parameters,
+        arguments,
+        predicate_environment,
+        click_function_environment,
+        have,
+        &evidence,
+        unfolded_predicates,
+    )?;
+    Ok((fact, certificate))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn surface_smart_have_certificate(
     replay: &mut TacticReplayState,

@@ -2263,75 +2263,63 @@ fn replay_linear_tactics_without_frontier_loops(
                     }
                 }
                 let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
-                let smart_plan = if let Some(unfolded_predicates) = &smart_unfolds {
-                    let (fact, plan) = plan_smart_have_at_current_point(
-                        have,
-                        claim_label,
-                        tactic_index,
-                        &have_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        replay.old_reference_state(&state),
-                        &state,
-                        &replay.program_point_states,
-                        &replay.surface_propositions,
-                        predicate_environment,
-                        click_function_environment,
-                        unfolded_predicates,
-                        None,
-                    )?;
-                    Some((fact, plan))
-                } else {
-                    None
+                // Smart search and certificate construction are one event:
+                // the goal is proved exactly when its evidence has been
+                // spelled as a replayable SimpleProof.
+                let smart_result = match &smart_unfolds {
+                    Some(unfolded_predicates) => Some(
+                        construct_smart_have_certificate(
+                            &mut replay,
+                            &state,
+                            &have_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            predicate_environment,
+                            click_function_environment,
+                            have,
+                            claim_label,
+                            tactic_index,
+                            unfolded_predicates,
+                        )?,
+                    ),
+                    None => None,
                 };
-                let fact = match &smart_plan {
-                    Some((fact, _)) => fact.clone(),
-                    None => prove_have_at_current_point(
-                        have,
-                        theorem_environment,
-                        claim_label,
-                        tactic_index,
-                        &have_facts,
-                        &replay.effect_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        replay.old_reference_state(&state),
-                        &state,
-                        &replay.program_point_states,
-                        &replay.surface_propositions,
-                        predicate_environment,
-                        click_function_environment,
-                        function_block.requires(),
-                    )?,
-                };
-                let surface_certificate = if let Some((_, plan)) = &smart_plan {
-                    Some(surface_smart_have_certificate(
-                        &mut replay,
-                        &state,
-                        &have_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        predicate_environment,
-                        click_function_environment,
-                        have,
-                        plan,
-                        smart_unfolds.as_deref().unwrap_or(&[]),
-                    )?)
-                } else {
-                    surface_smart_apply_have_certificate(
-                        &mut replay,
-                        &state,
-                        &have_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        predicate_environment,
-                        click_function_environment,
-                        theorem_environment,
-                        claim_label,
-                        tactic_index,
-                        have,
-                        &fact,
-                    )?
+                let (fact, surface_certificate) = match smart_result {
+                    Some((fact, certificate)) => (fact, Some(certificate)),
+                    None => {
+                        let fact = prove_have_at_current_point(
+                            have,
+                            theorem_environment,
+                            claim_label,
+                            tactic_index,
+                            &have_facts,
+                            &replay.effect_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            replay.old_reference_state(&state),
+                            &state,
+                            &replay.program_point_states,
+                            &replay.surface_propositions,
+                            predicate_environment,
+                            click_function_environment,
+                            function_block.requires(),
+                        )?;
+                        let certificate = surface_smart_apply_have_certificate(
+                            &mut replay,
+                            &state,
+                            &have_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            predicate_environment,
+                            click_function_environment,
+                            theorem_environment,
+                            claim_label,
+                            tactic_index,
+                            have,
+                            &fact,
+                        )?;
+                        (fact, certificate)
+                    }
                 };
                 if let Some(certificate) = surface_certificate {
                     let replay_certificate = |certificate: &SimpleProof| {
