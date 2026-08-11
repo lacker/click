@@ -3366,7 +3366,7 @@ fn certify_outcome_simp_have(
         certified_available.push(obligation);
     }
 
-    let mut proof = lower_outcome_simp_proof(
+    let proof = lower_outcome_simp_proof(
         replay,
         surface_goal,
         goal,
@@ -3379,16 +3379,6 @@ fn certify_outcome_simp_have(
         predicate_environment,
         click_function_environment,
     )?;
-    if !quantified_memory_premises.is_empty()
-        && let Proof::Script(tactics) = &mut proof
-        && let Some(ProofTactic::Derive(derive)) = tactics.first_mut()
-    {
-        for (surface, _) in quantified_memory_premises {
-            if !derive.premises.contains(&surface) {
-                derive.premises.push(surface);
-            }
-        }
-    }
     let surface_have = ProofHave {
         proposition: certificate_surface_goal,
         proof,
