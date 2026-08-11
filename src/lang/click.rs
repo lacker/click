@@ -38,7 +38,7 @@ use crate::kernel::{
     prove_c_function_contract_execution_paths_with_environment,
     prove_c_function_satisfies_specification_from_symbolic_path, prove_forall_int32_application,
     prove_int32_ge_transitive, prove_int32_increment_below_max_is_defined,
-    prove_int32_increment_lower_bound,
+    prove_int32_increment_greater_equal_lower_bound, prove_int32_increment_lower_bound,
     prove_int32_increment_preserves_order,
     prove_int32_increment_strictly_increases, prove_int32_increment_upper_bound,
     prove_int32_le_and_not_lt_implies_eq, prove_int32_le_antisymmetric,

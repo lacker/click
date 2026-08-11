@@ -2168,6 +2168,36 @@ pub fn prove_int32_increment_lower_bound(
     ))
 }
 
+/// Increment preserves a signed lower bound, in greater-equal surface order.
+pub fn prove_int32_increment_greater_equal_lower_bound(
+    value: Bitvector32Term,
+    lower: Bitvector32Term,
+    upper: Bitvector32Term,
+) -> Theorem {
+    let lower_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(value.clone(), lower.clone()),
+        true,
+    );
+    let upper_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), upper),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(
+            Bitvector32Term::add(value, Bitvector32Term::Constant(1)),
+            lower,
+        ),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(lower_premise),
+        Box::new(Proposition::Implies(
+            Box::new(upper_premise),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
 /// Signed int32 increment preserves non-strict order when a strict upper
 /// bound rules out overflow. Since `lower <= value < upper`, neither increment
 /// can wrap past `INT_MAX`.

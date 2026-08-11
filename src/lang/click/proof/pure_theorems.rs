@@ -391,6 +391,7 @@ fn verify_theorem_ensure(
         "int32_increment_upper_bound"
             | "int32_increment_strictly_increases"
             | "int32_increment_lower_bound"
+            | "int32_increment_greater_equal_lower_bound"
             | "int32_increment_preserves_order"
             | "int32_le_lt_transitive"
             | "int32_lt_transitive"
@@ -526,7 +527,9 @@ fn verify_kernel_standard_theorem_axiom(
 ) -> Result<VerifiedPureTheorem, ClickError> {
     let (parameter_count, requirement_count) = match theorem.name() {
         "int32_increment_upper_bound" | "int32_increment_strictly_increases" => (2, 1),
-        "int32_increment_lower_bound" | "int32_increment_preserves_order" => (3, 2),
+        "int32_increment_lower_bound"
+        | "int32_increment_greater_equal_lower_bound"
+        | "int32_increment_preserves_order" => (3, 2),
         "int32_successor_le_implies_lt" => (2, 2),
         "int32_le_antisymmetric" => (2, 2),
         "int32_le_and_not_lt_implies_eq" => (2, 2),
@@ -569,6 +572,13 @@ fn verify_kernel_standard_theorem_axiom(
         }
         "int32_increment_lower_bound" => {
             prove_int32_increment_lower_bound(value, int32_parameter(1)?, int32_parameter(2)?)
+        }
+        "int32_increment_greater_equal_lower_bound" => {
+            prove_int32_increment_greater_equal_lower_bound(
+                value,
+                int32_parameter(1)?,
+                int32_parameter(2)?,
+            )
         }
         "int32_increment_preserves_order" => {
             prove_int32_increment_preserves_order(value, int32_parameter(1)?, int32_parameter(2)?)

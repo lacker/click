@@ -33,6 +33,13 @@ theorem int32_increment_lower_bound(value: int32, lower: int32, upper: int32) {
     ensures lower <= value + 1;
 }
 
+theorem int32_increment_greater_equal_lower_bound(value: int32, lower: int32, upper: int32) {
+    requires value >= lower;
+    requires value < upper;
+
+    ensures value + 1 >= lower;
+}
+
 theorem int32_increment_preserves_order(value: int32, lower: int32, upper: int32) {
     requires lower <= value;
     requires value < upper;
