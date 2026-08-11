@@ -2180,6 +2180,44 @@ fn restricted_simp_expands_adjacent_order_to_theorem_application() {
 }
 
 #[test]
+fn restricted_simp_expands_constant_order_weakening_to_theorem_application() {
+    let click_source = r#"
+        theorem three_at_least_implies_nonnegative(value: int32) {
+            requires 3 <= value;
+            ensures 0 <= value by {
+                simp() using {
+                    3 <= value;
+                }
+            }
+        }
+    "#;
+    let offset = click_source.find("simp() using").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("constant order weakening simp should expand");
+    assert!(
+        expanded.contains("apply(int32_le_transitive(0, 3, value)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("3 <= value;"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+}
+
+#[test]
 fn restricted_simp_composes_equality_rewrites_with_adjacent_order() {
     let click_source = r#"
         theorem aliased_positive_bound(

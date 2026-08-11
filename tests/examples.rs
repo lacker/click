@@ -26,10 +26,6 @@ const QUARANTINED: &[(&str, &str)] = &[
         "issues/bounded-pool-outcome-conjunction-certificate-missing.md: outcome conjunction with a resource count has no explicit simple certificate",
     ),
     (
-        "owned-segmented-buffer",
-        "issues/owned-segmented-buffer-order-weakening-certificate.md: order weakening derivation has no named simple certificate",
-    ),
-    (
         "owned-string",
         "issues/owned-string-pure-theorem-certificate-missing.md: pure theorem smart proof produces no pure surface certificate",
     ),

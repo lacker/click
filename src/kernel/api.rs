@@ -2538,6 +2538,33 @@ pub fn prove_int32_lt_transitive(
     ))
 }
 
+/// Signed non-strict order is transitive.
+pub fn prove_int32_le_transitive(
+    first: Bitvector32Term,
+    middle: Bitvector32Term,
+    last: Bitvector32Term,
+) -> Theorem {
+    let first_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(first.clone(), middle.clone()),
+        true,
+    );
+    let second_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(middle, last.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(first, last),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(first_premise),
+        Box::new(Proposition::Implies(
+            Box::new(second_premise),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
 /// Signed non-strict greater-than order is transitive.
 pub fn prove_int32_ge_transitive(
     last: Bitvector32Term,
