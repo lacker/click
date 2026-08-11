@@ -299,6 +299,37 @@ fn pure_simp_after_unfold_exposes_an_explicit_certificate() {
 }
 
 #[test]
+fn branching_pure_simp_exposes_explicit_branch_certificates() {
+    let source = r#"
+        theorem equality_is_decidable(x: int32) {
+            ensures x == 0 or not (x == 0) by {
+                if x == 0 {
+                    simp();
+                } else {
+                    simp();
+                }
+            }
+        }
+    "#;
+
+    let verified = verify_click_theorems(source).expect("branching simp theorem should verify");
+    let tactics = verified[0]
+        .proof_tactics()
+        .expect("branching simp should commit a surface certificate");
+    let [ProofTactic::If(proof_if)] = tactics.as_slice() else {
+        panic!("expected one explicit case split, got {tactics:?}");
+    };
+    for branch in [&proof_if.then_tactics, &proof_if.else_tactics] {
+        assert!(
+            branch
+                .iter()
+                .all(|tactic| !matches!(tactic, ProofTactic::Derive(_))),
+            "branch retained an opaque derive: {branch:?}"
+        );
+    }
+}
+
+#[test]
 fn verifies_explicit_structural_logic_tactics() {
     let source = r#"
         theorem conjunction_rule(x: int32) {

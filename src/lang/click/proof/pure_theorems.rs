@@ -959,7 +959,15 @@ fn pure_theorem_surface_certificate(
             .filter_map(Requirement::proposition)
             .cloned()
             .collect::<Vec<_>>();
-        if let Some(tactics) = lower_pure_branching_tactics(&premise_pool, tactics) {
+        if let Some(tactics) = lower_pure_branching_tactics(
+            claim_label,
+            context,
+            goal,
+            predicate_environment,
+            click_function_environment,
+            &premise_pool,
+            tactics,
+        ) {
             return SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
                 ClickError::new(format!(
                     "smart proof for `{claim_label}` produced an invalid branching certificate: {error:?}"
@@ -975,9 +983,14 @@ fn pure_theorem_surface_certificate(
 
 /// Lowers a branching pure proof script to deterministic tactics: each `if`
 /// keeps its shape while contributing its (negated) condition to the branch's
-/// premise pool, and each closing `simp` becomes a `derive` of the goal from
-/// exactly that pool.
+/// premise pool, and each closing `simp` becomes an explicit proof of the goal
+/// from exactly that pool.
 fn lower_pure_branching_tactics(
+    claim_label: &str,
+    context: &PureTheoremContext,
+    goal: &Proposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     premise_pool: &[ClickProposition],
     tactics: &[ProofTactic],
 ) -> Option<Vec<ProofTactic>> {
@@ -991,13 +1004,53 @@ fn lower_pure_branching_tactics(
                 else_pool.push(ClickProposition::Not(Box::new(proof_if.condition.clone())));
                 lowered.push(ProofTactic::If(ProofIf {
                     condition: proof_if.condition.clone(),
-                    then_tactics: lower_pure_branching_tactics(&then_pool, &proof_if.then_tactics)?,
-                    else_tactics: lower_pure_branching_tactics(&else_pool, &proof_if.else_tactics)?,
+                    then_tactics: lower_pure_branching_tactics(
+                        claim_label,
+                        context,
+                        goal,
+                        predicate_environment,
+                        click_function_environment,
+                        &then_pool,
+                        &proof_if.then_tactics,
+                    )?,
+                    else_tactics: lower_pure_branching_tactics(
+                        claim_label,
+                        context,
+                        goal,
+                        predicate_environment,
+                        click_function_environment,
+                        &else_pool,
+                        &proof_if.else_tactics,
+                    )?,
                 }));
             }
-            ProofTactic::Simp => lowered.push(ProofTactic::Derive(ProofDerive {
-                premises: premise_pool.to_vec(),
-            })),
+            ProofTactic::Simp => {
+                let premise_pairs = premise_pool
+                    .iter()
+                    .map(|surface| {
+                        let kernel = lower_pure_theorem_proposition(
+                            claim_label,
+                            surface,
+                            &context.values,
+                            &context.array_refs,
+                            &context.memory,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .ok()?;
+                        Some((kernel, surface.clone()))
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                let available = premise_pairs
+                    .iter()
+                    .map(|(kernel, _)| kernel.clone())
+                    .collect::<Vec<_>>();
+                let certificate =
+                    plan_simp_certificate(goal, &assumptions_from_propositions(&available))?;
+                lowered.extend(
+                    lower_restricted_simp_plan(goal, None, &certificate, &premise_pairs).ok()?,
+                );
+            }
             tactic if matches!(tactic.class(), TacticClass::Simple(_)) => {
                 lowered.push(tactic.clone());
             }

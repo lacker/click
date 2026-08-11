@@ -1256,6 +1256,27 @@ pub(super) fn lower_restricted_simp_plan(
         }
     };
 
+    if let Some((choose_left, child)) = exact_derivation.and_then(|proof| proof.disjunction_choice())
+    {
+        let Proposition::Or(left, right) = goal else {
+            return Err(ClickError::new(
+                "`simp() using` selected a disjunction proof for a non-disjunction goal",
+            ));
+        };
+        let child_goal = if choose_left { left.as_ref() } else { right.as_ref() };
+        if child.conclusion() != child_goal || !pure_fact_is_replay_available(child_goal, &available)
+        {
+            return Err(ClickError::new(
+                "`simp() using` selected a derived disjunct that needs an explicit intermediate `have`",
+            ));
+        }
+        return Ok(vec![if choose_left {
+            ProofTactic::Left
+        } else {
+            ProofTactic::Right
+        }]);
+    }
+
     let named_rule = |goal: &Proposition| plan_explicit_named_signed_rule(goal, premise_pairs);
     let loadability_transport = || {
         exact_derivation?;

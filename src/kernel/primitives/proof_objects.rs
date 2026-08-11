@@ -25,6 +25,15 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the checked selected disjunct and whether it is the left one.
+    pub fn disjunction_choice(&self) -> Option<(bool, &Self)> {
+        match &self.rule {
+            PropositionDerivationRule::OrLeft(proof) => Some((true, proof)),
+            PropositionDerivationRule::OrRight(proof) => Some((false, proof)),
+            _ => None,
+        }
+    }
+
     /// Return the checked proof of a false antecedent when this derivation
     /// concludes an implication by contradiction.
     pub fn false_antecedent_proof(&self) -> Option<&Self> {
