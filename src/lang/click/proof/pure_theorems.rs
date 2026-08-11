@@ -1678,7 +1678,8 @@ fn prove_pure_theorem_tactics(
             ProofTactic::Normalize => {
                 if !normalizes_context_free(&goal) {
                     return Err(ClickError::new(format!(
-                        "`normalize` failed for `{claim_label}`: goal did not normalize to true: {goal:?}"
+                        "`normalize` failed for `{claim_label}`: goal did not normalize to true: {}",
+                        describe_pure_fact(&goal, &[], &[])
                     )));
                 }
                 closed = true;

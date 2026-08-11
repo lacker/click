@@ -174,6 +174,42 @@ fn defined_rejects_concrete_undefined_expression() {
 }
 
 #[test]
+fn failed_point_normalize_does_not_dump_internal_memory() {
+    let c_source = r#"
+        int32 read(int32* data) {
+            return data[0];
+        }
+    "#;
+    let click_source = r#"
+        verifying "read.c";
+
+        int32 read(int32* data) {
+            requires loadable(data[0..1]);
+            ensures result == 1;
+        } by {
+            step();
+            have result == 1 by {
+                normalize();
+            }
+            assumption();
+        }
+    "#;
+
+    let error = verify_c0_sources(click_source, &[("read.c", c_source)])
+        .expect_err("an unknown loaded value must not normalize to one");
+    assert!(
+        error.message().contains("goal did not normalize to true"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        !error.message().contains("CMemory {"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn parses_local_have_proof_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",

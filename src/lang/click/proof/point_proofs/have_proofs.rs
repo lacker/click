@@ -1169,7 +1169,8 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     ProofTactic::Normalize => {
                         if !normalizes_context_free(&unfolded_goal) {
                             return Err(ClickError::new(format!(
-                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: `normalize` failed because the goal did not normalize to true: {unfolded_goal:?}"
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: `normalize` failed because the goal did not normalize to true: {}",
+                                describe_pure_fact(&unfolded_goal, parameters, arguments)
                             )));
                         }
                         goal_closed = true;
