@@ -468,7 +468,7 @@ fn rejects_redundant_exact_premise_spellings_with_migrations() {
         theorem legacy(x: int32) {
             requires x == x;
             ensures x == x by {
-                derive using {
+                simp() using {
                     fact x == x;
                 }
             }
