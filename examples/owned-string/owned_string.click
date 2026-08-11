@@ -661,7 +661,7 @@ int32 owned_string_pop(struct owned_string* owner) {
     fold(owned_string(owner));
     frame();
     have loadable(old((owner->data + (owner->len - 1))[0..1])) by {
-        derive using {
+        simp() using {
             at(statement(6).exit, index) < old(owner->len);
             old(owner->len) < owner->cap;
             0 <= at(statement(6).exit, index);
