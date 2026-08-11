@@ -72,7 +72,11 @@ int32 buffer_push(struct buffer* owner, int32 value) {
     execute();
     have 0 <= owner->len by simp;
     have owner->len < owner->cap by {
-        derive using {
+        transport(
+            at(statement(4).entry, (index + 1)) <
+                at(statement(4).entry, owner->cap),
+            owner->len < owner->cap
+        ) using {
             at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
             at(statement(5).entry, separate(memory(owner->len), memory(owner->cap)));
             at(statement(5).entry, separate(memory(owner->len), memory(owner->data)));
@@ -89,6 +93,7 @@ int32 buffer_push(struct buffer* owner, int32 value) {
             contains(owned_buffer(owner), memory(owner->data));
             0 <= owner->len;
         }
+        assumption();
     }
     have separate(memory(owner[0..4]), memory(owner->data[0..owner->cap])) by {
         derive using {
