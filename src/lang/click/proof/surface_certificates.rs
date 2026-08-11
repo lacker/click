@@ -1195,6 +1195,17 @@ pub(super) fn lower_outcome_simp_tactics(
                 ConditionTerm::Bitvector32SignedLessThan(_, _),
                 true
             )
+        ) && let Some(suffix) = plan_explicit_strict_transitive(&current, premises)
+        {
+            tactics.extend(suffix);
+            return true;
+        }
+        if matches!(
+            current,
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(_, _),
+                true
+            )
         ) && let Some(suffix) =
             plan_explicit_increment_strictly_increases(&current, premises)
         {
@@ -1381,6 +1392,7 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_strict_implies_nonstrict(goal, premise_pairs))
         .or_else(|| plan_explicit_not_strict_implies_greater_equal(goal, premise_pairs))
+        .or_else(|| plan_explicit_strict_transitive(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_strictly_positive_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_below_max_is_defined(goal, premise_pairs))
@@ -1700,6 +1712,48 @@ fn plan_explicit_not_strict_implies_greater_equal(
             },
             ProofTactic::Assumption,
         ]);
+    }
+    None
+}
+
+fn plan_explicit_strict_transitive(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessThan(goal_first, goal_last),
+        true,
+    ) = goal
+    else {
+        return None;
+    };
+    for (first_kernel, first_surface) in premise_pairs {
+        let Some((first, middle)) = signed_strict_parts(first_kernel) else {
+            continue;
+        };
+        if first != goal_first.as_ref() {
+            continue;
+        }
+        for (second_kernel, second_surface) in premise_pairs {
+            let Some((second_middle, last)) = signed_strict_parts(second_kernel) else {
+                continue;
+            };
+            if second_middle != middle || last != goal_last.as_ref() {
+                continue;
+            }
+            let (surface_first, surface_middle) = surface_strict_parts(first_surface)?;
+            let (_, surface_last) = surface_strict_parts(second_surface)?;
+            return Some(vec![
+                ProofTactic::ApplyTheoremUsing {
+                    application: TheoremApplication {
+                        name: "int32_lt_transitive".to_string(),
+                        arguments: vec![surface_first, surface_middle, surface_last],
+                    },
+                    premises: vec![first_surface.clone(), second_surface.clone()],
+                },
+                ProofTactic::Assumption,
+            ]);
+        }
     }
     None
 }

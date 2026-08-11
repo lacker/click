@@ -191,6 +191,37 @@ fn int32_not_lt_implies_ge_axiom_has_the_exact_implication() {
 }
 
 #[test]
+fn int32_lt_transitive_axiom_has_the_exact_implications() {
+    let first = Bitvector32Term::Variable(Variable(90_031));
+    let middle = Bitvector32Term::Variable(Variable(90_032));
+    let last = Bitvector32Term::Variable(Variable(90_033));
+    let theorem = prove_int32_lt_transitive(first.clone(), middle.clone(), last.clone());
+    let first_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(first.clone(), middle.clone()),
+        true,
+    );
+    let second_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(middle, last.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(first, last),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(first_premise),
+            Box::new(Proposition::Implies(
+                Box::new(second_premise),
+                Box::new(conclusion),
+            )),
+        )
+    );
+}
+
+#[test]
 fn int32_increment_below_max_is_defined_axiom_has_the_exact_implication() {
     let value = Bitvector32Term::Variable(Variable(90_024));
     let theorem = prove_int32_increment_below_max_is_defined(value.clone());

@@ -2424,6 +2424,33 @@ pub fn prove_int32_le_lt_transitive(
     ))
 }
 
+/// Signed strict order is transitive.
+pub fn prove_int32_lt_transitive(
+    first: Bitvector32Term,
+    middle: Bitvector32Term,
+    last: Bitvector32Term,
+) -> Theorem {
+    let first_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(first.clone(), middle.clone()),
+        true,
+    );
+    let second_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(middle, last.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(first, last),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(first_premise),
+        Box::new(Proposition::Implies(
+            Box::new(second_premise),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
 pub fn prove_memory_load(memory: CMemory, pointer: Pointer) -> Theorem {
     let outcome = memory.load(&pointer);
     Theorem::new(Proposition::CMemoryLoads {

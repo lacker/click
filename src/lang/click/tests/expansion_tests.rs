@@ -1515,6 +1515,54 @@ fn post_execution_simp_expands_increment_upper_bound() {
 }
 
 #[test]
+fn post_execution_simp_expands_strict_transitivity() {
+    let c_source = r#"
+        int32 return_first(int32 first, int32 middle, int32 last) {
+            return first;
+        }
+    "#;
+    let click_source = r#"
+        verifying "return_first.c";
+
+        int32 return_first(int32 first, int32 middle, int32 last) {
+            requires first < middle;
+            requires middle < last;
+            ensures result < last;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let offset = click_source.rfind("simp()").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("return_first.c", c_source)],
+        line,
+        column,
+    )
+    .expect("post-execution strict transitivity should expand");
+    assert!(
+        expanded.contains("apply(int32_lt_transitive("),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[("return_first.c", c_source)])
+        .expect("expanded strict-transitivity proof should replay");
+}
+
+#[test]
 fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
     let click_source = r#"
         theorem increment_stays_bounded(value: int32, upper: int32) {
