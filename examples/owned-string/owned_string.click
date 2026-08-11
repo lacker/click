@@ -292,16 +292,74 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         at(statement(0).entry, (owner->len + 1)) < at(statement(0).entry, owner->cap);
         at(statement(0).entry, owner->len) < at(statement(0).entry, owner->cap);
     }
+    have at(statement(4).entry, owner->data) == old(owner->data) by {
+        normalize();
+    }
+    have owner->data == old(owner->data) by {
+        transport(
+            at(statement(4).entry, owner->data) == old(owner->data),
+            owner->data == old(owner->data)
+        ) using {
+            at(statement(4).entry, owner->data) == old(owner->data);
+            at(statement(4).entry, separate(
+                memory(object(owner)),
+                memory(owner->data[0..owner->cap])
+            ));
+            at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
+            at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
+            at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
+            at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1));
+        }
+        assumption();
+    }
+    have owner->data == at(statement(4).entry, owner->data) by {
+        simp() using {
+            at(statement(4).entry, owner->data) == old(owner->data);
+            owner->data == old(owner->data);
+        }
+    }
+    have owner->len == at(statement(4).entry, (index + 1)) by {
+        transport(
+            at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1)),
+            owner->len == at(statement(4).entry, (index + 1))
+        ) using {
+            at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1));
+            at(statement(4).entry, separate(
+                memory(owner->len),
+                memory(owner->data[0..owner->cap])
+            ));
+            at(statement(4).entry, separate(memory(owner->len), memory(owner->data)));
+            at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
+            at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
+            at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
+        }
+        assumption();
+    }
+    have 0 <= at(statement(4).entry, index) by {
+        assumption();
+    }
+    have 0 <= owner->len by {
+        apply(int32_increment_lower_bound(
+            at(statement(4).entry, index),
+            0,
+            at(statement(4).entry, owner->cap)
+        )) using {
+            0 <= at(statement(4).entry, index);
+            at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
+        }
+        rewrite(owner->len == at(statement(4).entry, (index + 1)));
+        assumption();
+    }
+    have owner->data[owner->len] == 0 by {
+        rewrite(owner->data == at(statement(4).entry, owner->data));
+        rewrite(owner->len == at(statement(4).entry, (index + 1)));
+        assumption();
+    }
     step();
     have terminated_at(owner->data, owner->len) by {
         unfold(terminated_at);
-        derive using {
-            at(statement(2).exit, (at(statement(2).entry, owner->data) + 0)[at(statement(2).entry, index)]) == at(statement(2).entry, value);
-            at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1));
-            at(statement(4).exit, (at(statement(4).entry, owner->data) + 0)[at(statement(4).entry, (index + 1))]) == at(statement(4).entry, 0);
-        }
+        assumption();
     }
-    have 0 <= owner->len by simp;
     have owner->len < owner->cap by {
         have at(statement(4).entry, owner->len) ==
             at(statement(4).entry, (index + 1)) by {
@@ -381,26 +439,6 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
                 memory(owner->data[0..owner->cap])
             ));
             at(statement(4).entry, loadable(old(owner->cap)));
-        }
-        assumption();
-    }
-    have at(statement(4).entry, owner->data) == old(owner->data) by {
-        normalize();
-    }
-    have owner->data == old(owner->data) by {
-        transport(
-            at(statement(4).entry, owner->data) == old(owner->data),
-            owner->data == old(owner->data)
-        ) using {
-            at(statement(4).entry, owner->data) == old(owner->data);
-            at(statement(4).entry, separate(
-                memory(object(owner)),
-                memory(owner->data[0..owner->cap])
-            ));
-            at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
-            at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
-            at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
-            at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1));
         }
         assumption();
     }
