@@ -184,8 +184,16 @@ int32 buffer_push_preserves_first(
     have at(statement(1).entry, data[0]) == old(data[0]) by {
         normalize();
     }
-    have data[0] == at(statement(1).entry, data[0]) by {
-        derive using {
+    have data[0] == old(data[0]) by {
+        transport(
+            at(statement(1).entry, data[0]) == old(data[0]),
+            data[0] == old(data[0])
+        ) using {
+            at(statement(1).entry, data[0]) == old(data[0]);
+            at(statement(1).entry, 1) <=
+                at(statement(1).entry, owner->len);
+            at(statement(1).entry, owner->data) ==
+                at(statement(1).entry, data);
             at(statement(1).entry, (owner->len + 1)) < at(statement(1).entry, owner->cap);
             at(statement(2).entry, loadable(old(owner->len)));
             at(statement(2).entry, loadable(old(owner->cap)));
@@ -195,8 +203,8 @@ int32 buffer_push_preserves_first(
             at(statement(1).entry, owner->len) < at(statement(1).entry, owner->cap);
             0 <= owner->len;
         }
+        assumption();
     }
-    have data[0] == old(data[0]) by simp;
     assumption();
     assumption();
 }
