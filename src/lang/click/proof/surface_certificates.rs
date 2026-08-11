@@ -1214,6 +1214,17 @@ pub(super) fn lower_outcome_simp_tactics(
         }
         if matches!(
             current,
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(_, _),
+                true
+            )
+        ) && let Some(suffix) = plan_explicit_increment_upper_bound(&current, premises)
+        {
+            tactics.extend(suffix);
+            return true;
+        }
+        if matches!(
+            current,
             Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
         ) && let Some(suffix) =
             plan_explicit_le_and_not_lt_implies_eq(&current, premises)
