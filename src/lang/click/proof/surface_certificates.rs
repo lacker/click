@@ -1201,6 +1201,17 @@ pub(super) fn lower_outcome_simp_tactics(
             tactics.extend(suffix);
             return true;
         }
+        if matches!(
+            current,
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(_, _),
+                true
+            )
+        ) && let Some(suffix) = plan_explicit_increment_lower_bound(&current, premises)
+        {
+            tactics.extend(suffix);
+            return true;
+        }
         for (index, (kernel, surface)) in premises.iter().enumerate() {
             if used[index] {
                 continue;

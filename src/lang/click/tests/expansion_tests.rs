@@ -1372,6 +1372,54 @@ fn post_execution_simp_expands_successor_strict_increase() {
 }
 
 #[test]
+fn post_execution_simp_expands_increment_lower_bound() {
+    let c_source = r#"
+        int32 increment_nonnegative(int32 x) {
+            return x + 1;
+        }
+    "#;
+    let click_source = r#"
+        verifying "increment_nonnegative.c";
+
+        int32 increment_nonnegative(int32 x) {
+            requires 0 <= x;
+            requires x < 2147483647;
+            ensures 0 <= result;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let offset = click_source.rfind("simp()").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("increment_nonnegative.c", c_source)],
+        line,
+        column,
+    )
+    .expect("post-execution increment lower bound should expand");
+    assert!(
+        expanded.contains("apply(int32_increment_lower_bound("),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[("increment_nonnegative.c", c_source)])
+        .expect("expanded increment lower-bound proof should replay");
+}
+
+#[test]
 fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
     let click_source = r#"
         theorem increment_stays_bounded(value: int32, upper: int32) {
