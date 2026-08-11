@@ -180,10 +180,7 @@ pub(super) fn lower_surface_atomic_derivation(
     if let Some(tactics) =
         plan_explicit_positive_predecessor_is_nonnegative(&lowered_conclusion, &premise_pairs)
             .or_else(|| {
-                plan_explicit_one_le_predecessor_is_nonnegative(
-                    &lowered_conclusion,
-                    &premise_pairs,
-                )
+                plan_explicit_one_le_predecessor(&lowered_conclusion, &premise_pairs)
             })
             .or_else(|| {
                 plan_explicit_positive_predecessor_strictly_decreases(
@@ -1159,7 +1156,7 @@ pub(super) fn lower_restricted_simp_plan(
             .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
             .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
             .or_else(|| plan_explicit_positive_predecessor_is_nonnegative(goal, premise_pairs))
-            .or_else(|| plan_explicit_one_le_predecessor_is_nonnegative(goal, premise_pairs))
+            .or_else(|| plan_explicit_one_le_predecessor(goal, premise_pairs))
             .or_else(|| {
                 plan_explicit_positive_predecessor_strictly_decreases(goal, premise_pairs)
             })
@@ -1474,25 +1471,39 @@ fn plan_explicit_positive_predecessor_is_nonnegative(
     None
 }
 
-fn plan_explicit_one_le_predecessor_is_nonnegative(
+fn plan_explicit_one_le_predecessor(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let (goal_lower, predecessor) = signed_nonstrict_parts(goal)?;
-    if goal_lower != &Bitvector32Term::Constant(0) {
-        return None;
-    }
-    let Bitvector32Term::Subtract(value, amount) = predecessor else {
-        return None;
-    };
-    if amount.as_ref() != &Bitvector32Term::Constant(1) {
-        return None;
-    }
+    let (value, final_theorem) =
+        if let Some((goal_lower, predecessor)) = signed_nonstrict_parts(goal) {
+            if goal_lower != &Bitvector32Term::Constant(0) {
+                return None;
+            }
+            let Bitvector32Term::Subtract(value, amount) = predecessor else {
+                return None;
+            };
+            if amount.as_ref() != &Bitvector32Term::Constant(1) {
+                return None;
+            }
+            (value.as_ref(), "int32_positive_predecessor_is_nonnegative")
+        } else {
+            let (predecessor, value) = signed_strict_parts(goal)?;
+            let Bitvector32Term::Subtract(predecessor_value, amount) = predecessor else {
+                return None;
+            };
+            if predecessor_value.as_ref() != value
+                || amount.as_ref() != &Bitvector32Term::Constant(1)
+            {
+                return None;
+            }
+            (value, "int32_positive_predecessor_strictly_decreases")
+        };
     for (kernel, surface) in premise_pairs {
         let Some((premise_lower, premise_value)) = signed_nonstrict_parts(kernel) else {
             continue;
         };
-        if premise_lower != &Bitvector32Term::Constant(1) || premise_value != value.as_ref() {
+        if premise_lower != &Bitvector32Term::Constant(1) || premise_value != value {
             continue;
         }
         let (_, surface_value) = surface_nonstrict_parts(surface)?;
@@ -1518,7 +1529,7 @@ fn plan_explicit_one_le_predecessor_is_nonnegative(
             }),
             ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
-                    name: "int32_positive_predecessor_is_nonnegative".to_string(),
+                    name: final_theorem.to_string(),
                     arguments: vec![surface_value],
                 },
                 premises: vec![positive],
