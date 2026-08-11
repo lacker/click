@@ -305,7 +305,7 @@ int32 input_cursor_shared_pipeline(
     }
     have left->pos == 0 by simp;
     have left->pos < left->len by {
-        derive using {
+        simp() using {
             1 <= length;
             left->len == length;
             left->pos == 0;

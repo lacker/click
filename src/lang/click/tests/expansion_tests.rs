@@ -1404,6 +1404,52 @@ fn restricted_simp_expands_adjacent_order_to_theorem_application() {
 }
 
 #[test]
+fn restricted_simp_composes_equality_rewrites_with_adjacent_order() {
+    let click_source = r#"
+        theorem aliased_positive_bound(
+            position: int32,
+            bound: int32,
+            length: int32
+        ) {
+            requires 1 <= length;
+            requires bound == length;
+            requires position == 0;
+            ensures position < bound by {
+                simp() using {
+                    1 <= length;
+                    bound == length;
+                    position == 0;
+                }
+            }
+        }
+    "#;
+    let offset = click_source.find("simp() using").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("rewrites followed by adjacent order should expand");
+    assert!(expanded.contains("rewrite(bound == length);"), "{expanded}");
+    assert!(expanded.contains("rewrite(position == 0);"), "{expanded}");
+    assert!(
+        expanded.contains("apply(int32_successor_le_implies_lt(0, length)) using"),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("composed explicit certificate should replay");
+}
+
+#[test]
 fn restricted_simp_inside_have_expands_to_explicit_equality_rewrites() {
     let c_source = r#"
             int32 identity(int32 x, int32 y, int32 z) {

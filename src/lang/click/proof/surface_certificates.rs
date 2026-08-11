@@ -1052,12 +1052,22 @@ pub(super) fn lower_restricted_simp_plan(
         }
     }
 
-    let tactics = plan_explicit_increment_strictly_increases(goal, premise_pairs)
-        .or_else(|| plan_explicit_successor_le_implies_lt(goal, premise_pairs))
-        .or_else(|| plan_explicit_increment_preserves_order(goal, premise_pairs))
-        .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
-        .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
-        .or_else(|| plan_explicit_equality_rewrites(goal, premise_pairs, &available))
+    let named_rule = |goal: &Proposition| {
+        plan_explicit_increment_strictly_increases(goal, premise_pairs)
+            .or_else(|| plan_explicit_successor_le_implies_lt(goal, premise_pairs))
+            .or_else(|| plan_explicit_increment_preserves_order(goal, premise_pairs))
+            .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
+            .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
+    };
+    let tactics = named_rule(goal)
+        .or_else(|| {
+            plan_explicit_equality_rewrites_then(
+                goal,
+                premise_pairs,
+                &available,
+                &named_rule,
+            )
+        })
         .ok_or_else(|| {
         let initial_rewrites = premise_pairs
             .iter()

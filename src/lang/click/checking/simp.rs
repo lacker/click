@@ -569,6 +569,18 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites(
     premises: &[(Proposition, ClickProposition)],
     available: &[Proposition],
 ) -> Option<Vec<ProofTactic>> {
+    plan_explicit_equality_rewrites_then(goal, premises, available, &|_| None)
+}
+
+/// Plan exact equality substitutions, allowing a named simple rule to close
+/// the rewritten goal. The closer must itself return explicit tactics; this
+/// composes certificate steps rather than adding another proof search.
+pub(in crate::lang::click) fn plan_explicit_equality_rewrites_then(
+    goal: &Proposition,
+    premises: &[(Proposition, ClickProposition)],
+    available: &[Proposition],
+    closer: &impl Fn(&Proposition) -> Option<Vec<ProofTactic>>,
+) -> Option<Vec<ProofTactic>> {
     fn reverse_equality(
         kernel: &Proposition,
         surface: &ClickProposition,
@@ -618,6 +630,7 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites(
         available: &[Proposition],
         used: &mut [bool],
         tactics: &mut Vec<ProofTactic>,
+        closer: &impl Fn(&Proposition) -> Option<Vec<ProofTactic>>,
     ) -> bool {
         let normalized_current = normalize_direct_atomic_memory_loads(&current);
         if available.iter().any(|fact| {
@@ -628,6 +641,10 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites(
         }
         if matches!(normalize_proposition(&current), SimpProposition::True) {
             tactics.push(ProofTactic::Normalize);
+            return true;
+        }
+        if let Some(suffix) = closer(&current) {
+            tactics.extend(suffix);
             return true;
         }
         for (index, (kernel, surface)) in premises.iter().enumerate() {
@@ -646,7 +663,7 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites(
                 };
                 used[index] = true;
                 tactics.push(ProofTactic::Rewrite(oriented_surface));
-                if search(rewritten, premises, available, used, tactics) {
+                if search(rewritten, premises, available, used, tactics, closer) {
                     return true;
                 }
                 tactics.pop();
@@ -658,7 +675,15 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites(
 
     let mut used = vec![false; premises.len()];
     let mut tactics = Vec::new();
-    search(goal.clone(), premises, available, &mut used, &mut tactics).then_some(tactics)
+    search(
+        goal.clone(),
+        premises,
+        available,
+        &mut used,
+        &mut tactics,
+        closer,
+    )
+    .then_some(tactics)
 }
 
 pub(in crate::lang::click) fn normalize_direct_atomic_memory_loads(
