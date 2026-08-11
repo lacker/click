@@ -849,7 +849,7 @@ impl Assumptions {
         self
     }
 
-    pub(super) fn should_force_symbolic_external_loads(&self) -> bool {
+    pub(crate) fn should_force_symbolic_external_loads(&self) -> bool {
         self.force_symbolic_external_loads
     }
 

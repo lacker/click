@@ -263,6 +263,12 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
         base: pointer.clone(),
         bytes: Bitvector32Term::Constant(value_type.byte_width()),
     };
+    if assumptions.should_force_symbolic_external_loads() {
+        if !assumptions.proves(&required) {
+            record_surface_loadability_obligation(&required);
+        }
+        return symbolic_contract_memory_load(memory, pointer, value_type);
+    }
     let outcome = memory.load(&pointer);
     if assumptions.should_allow_symbolic_contract_loads()
         && matches!(outcome, crate::kernel::CExpressionOutcome::Value(_))

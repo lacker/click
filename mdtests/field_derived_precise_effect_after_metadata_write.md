@@ -141,7 +141,14 @@ int32 buffer_push(struct buffer* owner, int32 value) {
         assumption();
     }
     have owner->data == old(owner->data) by {
-        derive using {
+        have at(statement(4).entry, owner->data) == old(owner->data) by {
+            normalize();
+        }
+        transport(
+            at(statement(4).entry, owner->data) == old(owner->data),
+            owner->data == old(owner->data)
+        ) using {
+            at(statement(4).entry, owner->data) == old(owner->data);
             separate(memory(owner->len), memory(owner->cap));
             separate(memory(owner->len), memory(owner->data));
             separate(memory(owner->cap), memory(owner->data));
@@ -153,6 +160,7 @@ int32 buffer_push(struct buffer* owner, int32 value) {
             separate(memory(owner[0..4]), memory(owner->data[0..owner->cap]));
             owner->cap == old(owner->cap);
         }
+        assumption();
     }
     fold(owned_buffer(owner));
     frame();

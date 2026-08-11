@@ -809,7 +809,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             )
                         })
                 };
-                let explicit_premises = surface_premises
+                let mut explicit_premises = surface_premises
                     .iter()
                     .map(|premise| lower(premise, &available))
                     .collect::<Result<Vec<_>, _>>()
@@ -826,11 +826,46 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     }
                 }
 
-                let source = lower(surface_source, &available).map_err(|message| {
+                let ordinary_source = lower(surface_source, &available).map_err(|message| {
                     ClickError::new(format!(
                         "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `transport` source: {message}"
                     ))
                 })?;
+                let source = if matches!(normalize_proposition(&ordinary_source), SimpProposition::True)
+                    && (proposition_contains_at_expression(surface_source)
+                        || proposition_contains_old_expression(surface_source))
+                    && let Some(result) = result
+                {
+                    lower_outcome_proposition_symbolically_with_program_points(
+                        parameters,
+                        arguments,
+                        pre_state,
+                        state,
+                        result,
+                        &available,
+                        surface_source,
+                        predicate_environment,
+                        click_function_environment,
+                        program_point_states,
+                    )
+                    .unwrap_or_else(|_| ordinary_source.clone())
+                } else {
+                    ordinary_source.clone()
+                };
+                // Materialization proved the surface source, while the
+                // symbolic spelling retains the load identity required by
+                // the explicit frame transport. This is the same checked
+                // source fact, not an additional ambient premise.
+                if source != ordinary_source
+                    && matches!(normalize_proposition(&ordinary_source), SimpProposition::True)
+                {
+                    if !available.contains(&source) {
+                        available.push(source.clone());
+                    }
+                    if !explicit_premises.contains(&source) {
+                        explicit_premises.push(source.clone());
+                    }
+                }
                 let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
                 let resource_facts = state
                     .resources()
