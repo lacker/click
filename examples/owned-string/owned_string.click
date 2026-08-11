@@ -852,7 +852,7 @@ int32 owned_string_pipeline(
         assumption();
     }
     have result == first by {
-        derive using {
+        simp() using {
             result == at(statement(6).entry, observed);
             at(statement(6).entry, observed) == first;
         }
