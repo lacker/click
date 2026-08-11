@@ -116,6 +116,12 @@ theorem int32_ge_implies_reversed_le(greater: int32, lower: int32) {
     ensures lower <= greater;
 }
 
+theorem int32_le_implies_reversed_ge(lower: int32, greater: int32) {
+    requires lower <= greater;
+
+    ensures greater >= lower;
+}
+
 theorem int32_le_and_not_lt_implies_eq(left: int32, right: int32) {
     requires left <= right;
     requires not (left < right);

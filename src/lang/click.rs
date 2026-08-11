@@ -43,7 +43,7 @@ use crate::kernel::{
     prove_int32_increment_preserves_order, prove_int32_increment_strict_greater_lower_bound,
     prove_int32_increment_strictly_increases, prove_int32_increment_upper_bound,
     prove_int32_ge_and_not_gt_implies_eq, prove_int32_le_and_not_lt_implies_eq,
-    prove_int32_le_antisymmetric,
+    prove_int32_le_antisymmetric, prove_int32_le_implies_reversed_ge,
     prove_int32_le_lt_transitive, prove_int32_lt_implies_le, prove_int32_lt_transitive,
     prove_int32_not_lt_implies_ge,
     prove_int32_positive_is_nonnegative, prove_int32_positive_predecessor_is_nonnegative,

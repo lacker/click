@@ -398,6 +398,7 @@ fn verify_theorem_ensure(
             | "int32_lt_transitive"
             | "int32_ge_transitive"
             | "int32_ge_implies_reversed_le"
+            | "int32_le_implies_reversed_ge"
             | "int32_le_and_not_lt_implies_eq"
             | "int32_ge_and_not_gt_implies_eq"
             | "int32_le_antisymmetric"
@@ -538,6 +539,7 @@ fn verify_kernel_standard_theorem_axiom(
         "int32_le_antisymmetric" => (2, 2),
         "int32_le_and_not_lt_implies_eq" | "int32_ge_and_not_gt_implies_eq" => (2, 2),
         "int32_ge_implies_reversed_le" => (2, 1),
+        "int32_le_implies_reversed_ge" => (2, 1),
         "int32_lt_implies_le" | "int32_not_lt_implies_ge" => (2, 1),
         "int32_positive_is_nonnegative"
         | "int32_strictly_positive_is_nonnegative"
@@ -633,6 +635,9 @@ fn verify_kernel_standard_theorem_axiom(
         }
         "int32_ge_implies_reversed_le" => {
             prove_int32_ge_implies_reversed_le(value, int32_parameter(1)?)
+        }
+        "int32_le_implies_reversed_ge" => {
+            prove_int32_le_implies_reversed_ge(value, int32_parameter(1)?)
         }
         _ => unreachable!("checked above"),
     };

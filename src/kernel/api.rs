@@ -2584,6 +2584,25 @@ pub fn prove_int32_ge_implies_reversed_le(
     ))
 }
 
+/// Signed non-strict order is preserved when written in reversed greater-or-equal form.
+pub fn prove_int32_le_implies_reversed_ge(
+    lower: Bitvector32Term,
+    greater: Bitvector32Term,
+) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(lower.clone(), greater.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(greater, lower),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
 pub fn prove_memory_load(memory: CMemory, pointer: Pointer) -> Theorem {
     let outcome = memory.load(&pointer);
     Theorem::new(Proposition::CMemoryLoads {

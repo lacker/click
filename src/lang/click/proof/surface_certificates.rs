@@ -1319,8 +1319,13 @@ pub(super) fn lower_outcome_simp_tactics(
         Ok(explicit)
     } else {
         Err(ClickError::new(format!(
-            "post-execution simplification proved `{}`, but Click has no explicit simple certificate for that derivation",
+            "post-execution simplification proved `{}`, but Click has no explicit simple certificate for that derivation\n  selected premises: {}",
             describe_click_proposition(surface_goal),
+            premise_pairs
+                .iter()
+                .map(|(_, surface)| describe_click_proposition(surface))
+                .collect::<Vec<_>>()
+                .join(", "),
         )))
     }
 }
@@ -1477,6 +1482,8 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_increment_preserves_order(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
+        .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
+        .or_else(|| plan_explicit_strictly_positive_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_strict_implies_nonstrict(goal, premise_pairs))
         .or_else(|| plan_explicit_greater_equal_to_reversed_less_equal(goal, premise_pairs))
         .or_else(|| plan_explicit_not_strict_implies_greater_equal(goal, premise_pairs))
@@ -1485,8 +1492,6 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_increment_greater_equal_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_strict_greater_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_strict_transitive(goal, premise_pairs))
-        .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
-        .or_else(|| plan_explicit_strictly_positive_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_below_max_is_defined(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_predecessor_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_one_le_predecessor(goal, premise_pairs))
@@ -1733,31 +1738,45 @@ fn plan_explicit_strict_implies_nonstrict(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let Proposition::ConditionIs(
-        ConditionTerm::Bitvector32SignedLessEqual(goal_left, goal_right),
-        true,
-    ) = goal
-    else {
-        return None;
-    };
+    let reversed = matches!(
+        goal,
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(_, _),
+            true,
+        )
+    );
+    let (goal_left, goal_right) = signed_nonstrict_parts(goal)?;
     for (kernel, surface) in premise_pairs {
         let Some((premise_left, premise_right)) = signed_strict_parts(kernel) else {
             continue;
         };
-        if premise_left != goal_left.as_ref() || premise_right != goal_right.as_ref() {
+        if premise_left != goal_left || premise_right != goal_right {
             continue;
         }
         let (surface_left, surface_right) = surface_strict_parts(surface)?;
-        return Some(vec![
-            ProofTactic::ApplyTheoremUsing {
+        let surface_nonstrict = ClickProposition::Comparison {
+            left: surface_left.clone(),
+            operator: ComparisonOperator::LessEqual,
+            right: surface_right.clone(),
+        };
+        let mut tactics = vec![ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
                     name: "int32_lt_implies_le".to_string(),
-                    arguments: vec![surface_left, surface_right],
+                    arguments: vec![surface_left.clone(), surface_right.clone()],
                 },
                 premises: vec![surface.clone()],
-            },
-            ProofTactic::Assumption,
-        ]);
+            }];
+        if reversed {
+            tactics.push(ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_le_implies_reversed_ge".to_string(),
+                    arguments: vec![surface_left, surface_right],
+                },
+                premises: vec![surface_nonstrict],
+            });
+        }
+        tactics.push(ProofTactic::Assumption);
+        return Some(tactics);
     }
     None
 }
