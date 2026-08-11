@@ -488,9 +488,8 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             assumption();
         }
         have old(owner->len) < old(owner->cap) implies result == 1 by {
-            derive using {
-                result == 1;
-            }
+            intro();
+            assumption();
         }
         have old(owner->len) < old(owner->cap) implies
             owner->cap == old(owner->cap) by {
