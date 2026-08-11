@@ -19,7 +19,7 @@ const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const QUARANTINED: &[(&str, &str)] = &[
     (
         "binary-tree",
-        "issues/binary-tree-grouped-simp-transition-not-expressible.md: grouped simp transition has no expressible certificate since opaque outcome certificates were rejected",
+        "issues/binary-tree-verification-exceeds-slow-test-threshold.md: the tree_sum_root_and_children step sits at the 500ms simple wall-clock budget and fails under ordinary machine load",
     ),
     (
         "bounded-pool",

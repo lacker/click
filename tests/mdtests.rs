@@ -20,7 +20,7 @@ const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
 const QUARANTINED: &[(&str, &str)] = &[
     (
         "bubble_pass3_max_suffix.md",
-        "issues/binary-tree-grouped-simp-transition-not-expressible.md: expressible path facts do not replay the grouped transition's postcondition derivation",
+        "issues/universal-outcome-certificates-missing.md: universal loop-summary goal's expressible path facts do not replay its postcondition derivation",
     ),
     (
         "bubble_sort3_two_pass_sorted.md",

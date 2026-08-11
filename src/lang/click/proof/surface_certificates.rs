@@ -1139,6 +1139,10 @@ pub(super) fn lower_outcome_simp_tactics(
             tactics.push(ProofTactic::Normalize);
             return true;
         }
+        if let Some(suffix) = plan_explicit_implies_refuted_antecedent(&current, premises) {
+            tactics.extend(suffix);
+            return true;
+        }
         if let Some(suffix) = plan_explicit_strict_implies_nonstrict(&current, premises) {
             tactics.extend(suffix);
             return true;
@@ -1916,6 +1920,39 @@ fn plan_explicit_strict_implies_nonstrict(
         }
         tactics.push(ProofTactic::Assumption);
         return Some(tactics);
+    }
+    None
+}
+
+/// Plans a vacuous-implication certificate: an implication chain whose
+/// antecedent at some depth is refuted by a listed premise closes by
+/// introducing antecedents down to the refuted one, then naming the
+/// contradiction. Replay pushes each introduced antecedent exactly as the
+/// goal spells it, so the refuting premise must be that spelling's exact
+/// opposite (flipped condition polarity or a stripped `not`); anything looser
+/// would not survive the `contradiction` tactic's exact-match check.
+fn plan_explicit_implies_refuted_antecedent(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let mut tactics = Vec::new();
+    let mut current = goal;
+    while let Proposition::Implies(antecedent, consequent) = current {
+        tactics.push(ProofTactic::Intro);
+        let refutation = premise_pairs.iter().find(|(kernel, _)| {
+            match antecedent.as_ref() {
+                Proposition::ConditionIs(condition, expected) => {
+                    kernel == &Proposition::ConditionIs(condition.clone(), !expected)
+                }
+                Proposition::Not(inner) => kernel == inner.as_ref(),
+                _ => false,
+            }
+        });
+        if let Some((_, surface)) = refutation {
+            tactics.push(ProofTactic::Contradiction(surface.clone()));
+            return Some(tactics);
+        }
+        current = consequent;
     }
     None
 }

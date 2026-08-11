@@ -22,6 +22,22 @@ semantic budget. Direct CLI and already-built harness timings agree, so this
 is not a test-harness-only slowdown. The problem is the project's real
 aggregate verification cost.
 
+Update (2026-08-11): the `step` at `tree_sum_root_and_children` statement 2
+(source tactic 5, the bounded three-way sum) sits at the 500ms simple
+wall-clock budget and now blocks verification outright under ordinary machine
+load. On an idle machine it measures about 390ms and the project verifies; on
+the same machine under concurrent load it crosses the budget on every run and
+`click verify examples/binary-tree` fails with "a slow simple tactic is a
+Click engine bug". A build of the pre-`e9460ff` tree shows the same crossing,
+so this is long-standing cost, not a recent regression; it was masked while
+the project also failed earlier at `tree_is_leaf` (since fixed). The project
+is quarantined in `tests/examples.rs` against this issue until the step's
+verifier path is reduced. This is the same machine-speed-dependent
+enforcement problem tracked in `input-cursor-simple-step-crosses-budget.md`.
+Full-project wall time also varied between passing runs (one 3.9s outlier
+against a 14-19s norm on identical input), which suggests run-to-run variance
+in derivation memo hits worth capturing while profiling.
+
 ## Regression design
 
 Add sufficiently narrow profiling around ordered-proof finishing to separate
@@ -35,6 +51,9 @@ aggregate project is slow.
 
 - The unchanged binary-tree project verifies within a few seconds in the
   normal direct-CLI development workflow.
+- The `tree_sum_root_and_children` step clears its 500ms simple budget with
+  comfortable margin on a loaded machine, and the project leaves the
+  `tests/examples.rs` quarantine.
 - Profiles attribute ordered-proof finishing cost to actionable named phases
   rather than a broad `verifier core` bucket.
 - No tactic, project, or test budget is raised.

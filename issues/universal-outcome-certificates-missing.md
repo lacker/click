@@ -16,6 +16,12 @@ the success cannot become a `SimpleProof`. This blocks `examples/owned-vector`
 and the quarantined mdtests `bubble_sort3_two_pass_sorted.md`,
 `composite_resource_vector_fill_loop_snapshot.md`, and `copy3_array_demo.md`.
 
+`bubble_pass3_max_suffix.md` shows the same gap through the grouped `simp`
+transition: the loop-exit universal claim (`all_le_range` transported through
+`j == 2`) reports "expressible path facts do not replay the postcondition
+derivation" because the grouped certificate has no simple steps for the
+quantified goal either.
+
 The related "no explicit simple certificate for that derivation" failures in
 `fill_n_segment_invariant.md` and
 `shifted_copy_effect_uses_covering_separate.md` also have universally
