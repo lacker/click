@@ -389,11 +389,33 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             have c(grown) == 1 by simp;
             have owner->len == old(owner->len) by simp;
             have owner->cap == old(owner->cap) + 1 by simp;
+            have at(function.entry, owner->cap) <= 536870911 by {
+                assumption();
+            }
+            have 536870911 < 2147483647 by {
+                normalize();
+            }
+            apply(int32_le_lt_transitive(
+                at(function.entry, owner->cap),
+                536870911,
+                2147483647
+            )) using {
+                at(function.entry, owner->cap) <= 536870911;
+                536870911 < 2147483647;
+            }
+            apply(int32_increment_strictly_increases(
+                at(function.entry, owner->cap),
+                2147483647
+            )) using {
+                at(function.entry, owner->cap) < 2147483647;
+            }
             have owner->len < owner->cap by {
-                derive using {
+                simp() using {
                     at(function.entry, owner->len == owner->cap);
                     owner->len == old(owner->len);
                     owner->cap == old(owner->cap) + 1;
+                    at(function.entry, owner->cap) <
+                        at(function.entry, owner->cap) + 1;
                 }
             }
             fold(vector_storage(owner));

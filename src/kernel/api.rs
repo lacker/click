@@ -2209,6 +2209,28 @@ pub fn prove_int32_positive_is_nonnegative(value: Bitvector32Term) -> Theorem {
     ))
 }
 
+/// Signed non-strict order followed by strict order is strict order.
+pub fn prove_int32_le_lt_transitive(
+    first: Bitvector32Term,
+    middle: Bitvector32Term,
+    last: Bitvector32Term,
+) -> Theorem {
+    let first_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(first.clone(), middle.clone()),
+        true,
+    );
+    let second_premise =
+        Proposition::ConditionIs(ConditionTerm::signed_less_than(middle, last.clone()), true);
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_than(first, last), true);
+    Theorem::new(Proposition::Implies(
+        Box::new(first_premise),
+        Box::new(Proposition::Implies(
+            Box::new(second_premise),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
 pub fn prove_memory_load(memory: CMemory, pointer: Pointer) -> Theorem {
     let outcome = memory.load(&pointer);
     Theorem::new(Proposition::CMemoryLoads {

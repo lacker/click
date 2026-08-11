@@ -52,6 +52,13 @@ theorem int32_positive_is_nonnegative(value: int32) {
 
     ensures 0 <= value;
 }
+
+theorem int32_le_lt_transitive(first: int32, middle: int32, last: int32) {
+    requires first <= middle;
+    requires middle < last;
+
+    ensures first < last;
+}
 ```
 
 The strict upper premise rules out signed overflow. It proves that increment
@@ -63,6 +70,8 @@ concrete condition such as `1 < 2` to be discharged by context-free kernel
 normalization while an adjacent non-strict bound is supplied explicitly.
 The positivity theorem records the common signed-order weakening from
 `1 <= value` to `0 <= value`.
+The transitivity theorem combines a non-strict bound with a following strict
+bound without asking simplification to rediscover the order chain.
 Smart simplification may select these theorems, while expansion records an
 ordinary simple `apply(...) using { ... }` step with the exact premises. Each
 declaration is checked against its fixed kernel axiom; users cannot introduce

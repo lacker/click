@@ -39,6 +39,13 @@ theorem int32_positive_is_nonnegative(value: int32) {
     ensures 0 <= value;
 }
 
+theorem int32_le_lt_transitive(first: int32, middle: int32, last: int32) {
+    requires first <= middle;
+    requires middle < last;
+
+    ensures first < last;
+}
+
 function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 {
     (lo..hi).fold(0, |acc, k| {
         acc + if p[k] == x { 1 } else { 0 }
