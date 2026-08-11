@@ -297,7 +297,7 @@ int32 input_cursor_shared_pipeline(
 } by {
     execute_until(statement(4));
     have separate(memory(object(right)), memory(left->data[0..left->len])) by {
-        derive using {
+        simp() using {
             left->len == length;
             left->data == data;
             separate(memory(object(right)), memory(data[0..length]));

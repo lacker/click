@@ -117,9 +117,14 @@ through `int32_increment_strictly_increases`. Equality cases expand to explicit
 applications of the standard theorems `int32_increment_upper_bound`,
 `int32_increment_strictly_increases`, `int32_increment_lower_bound`,
 `int32_increment_preserves_order`, and
-`int32_successor_le_implies_lt`, followed by `assumption`. Other source shapes
-still need principled surface certificates before their old `derive using`
-blocks can be removed:
+`int32_successor_le_implies_lt`, followed by `assumption`. The shared
+input-cursor pipeline's separation proof has also migrated. Exact
+`rewrite` steps now substitute scalar lengths and pointer bases inside
+memory-resource `separate` and `contains` propositions, so the expansion names
+both substitutions before its final `assumption`.
+
+Other source shapes still need principled surface certificates before their
+old `derive using` blocks can be removed:
 
 - The owned-string replay/certification instability has been fixed and the
   project now passes repeated ordinary verification under its normal limit.

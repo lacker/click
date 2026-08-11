@@ -199,6 +199,24 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                 | Bitvector32Term::Variable(_) => term.clone(),
             }
         }
+        fn rewrite_resource_offset(
+            resource: &CResource,
+            left: &PointerOffsetTerm,
+            normalized_left: &PointerOffsetTerm,
+            right: &PointerOffsetTerm,
+        ) -> CResource {
+            match resource {
+                CResource::Memory(range) => CResource::Memory(CMemoryRange::new(
+                    Pointer {
+                        block: range.base().block.clone(),
+                        offset: rewrite_offset(&range.base().offset, left, normalized_left, right),
+                    },
+                    rewrite_term_offset(range.start(), left, normalized_left, right),
+                    rewrite_term_offset(range.end(), left, normalized_left, right),
+                )),
+                CResource::Composite { .. } | CResource::Token { .. } => resource.clone(),
+            }
+        }
         let rewritten = match goal {
             Proposition::ConditionIs(
                 ConditionTerm::PointerOffsetEqual(goal_left, goal_right),
@@ -270,6 +288,17 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                 };
                 Proposition::ConditionIs(rewritten, *expected)
             }
+            Proposition::CResourceSeparate {
+                left: goal_left,
+                right: goal_right,
+            } => Proposition::CResourceSeparate {
+                left: rewrite_resource_offset(goal_left, left, &normalized_left, right),
+                right: rewrite_resource_offset(goal_right, left, &normalized_left, right),
+            },
+            Proposition::CResourceContains { parent, child } => Proposition::CResourceContains {
+                parent: rewrite_resource_offset(parent, left, &normalized_left, right),
+                child: rewrite_resource_offset(child, left, &normalized_left, right),
+            },
             _ => {
                 return Err(
                     "`rewrite` pointer-offset equality does not occur in this goal".to_string(),
@@ -441,41 +470,92 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
         }
     }
 
-    let Proposition::ConditionIs(condition, expected) = goal else {
-        return Err("`rewrite` currently expects an atomic condition goal".to_string());
+    let rewrite_resource_term = |resource: &CResource| match resource {
+        CResource::Memory(range) => CResource::Memory(CMemoryRange::new(
+            Pointer {
+                block: range.base().block.clone(),
+                offset: {
+                    fn rewrite_offset_term(
+                        offset: &PointerOffsetTerm,
+                        from: &Bitvector32Term,
+                        to: &Bitvector32Term,
+                    ) -> PointerOffsetTerm {
+                        match offset {
+                            PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
+                                rewrite_offset_term(left, from, to),
+                                rewrite_offset_term(right, from, to),
+                            ),
+                            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                                PointerOffsetTerm::scale_int32(
+                                    rewrite_term(value, from, to),
+                                    *byte_width,
+                                )
+                            }
+                            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {
+                                offset.clone()
+                            }
+                        }
+                    }
+                    rewrite_offset_term(&range.base().offset, left, right)
+                },
+            },
+            rewrite_term(range.start(), left, right),
+            rewrite_term(range.end(), left, right),
+        )),
+        CResource::Composite { .. } | CResource::Token { .. } => resource.clone(),
     };
-    let rewritten_condition = match condition {
-        ConditionTerm::Bitvector32SignedLessThan(goal_left, goal_right) => {
-            ConditionTerm::Bitvector32SignedLessThan(
-                Box::new(rewrite_term(goal_left, left, right)),
-                Box::new(rewrite_term(goal_right, left, right)),
-            )
+    let rewritten = match goal {
+        Proposition::ConditionIs(condition, expected) => {
+            let rewritten_condition = match condition {
+                ConditionTerm::Bitvector32SignedLessThan(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector32SignedLessThan(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector32SignedLessEqual(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector32SignedLessEqual(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector32SignedGreaterThan(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector32SignedGreaterThan(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector32SignedGreaterEqual(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector32SignedGreaterEqual(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::Bitvector32Equal(goal_left, goal_right) => {
+                    ConditionTerm::Bitvector32Equal(
+                        Box::new(rewrite_term(goal_left, left, right)),
+                        Box::new(rewrite_term(goal_right, left, right)),
+                    )
+                }
+                _ => {
+                    return Err("`rewrite` currently expects an int32 comparison goal".to_string());
+                }
+            };
+            Proposition::ConditionIs(rewritten_condition, *expected)
         }
-        ConditionTerm::Bitvector32SignedLessEqual(goal_left, goal_right) => {
-            ConditionTerm::Bitvector32SignedLessEqual(
-                Box::new(rewrite_term(goal_left, left, right)),
-                Box::new(rewrite_term(goal_right, left, right)),
-            )
-        }
-        ConditionTerm::Bitvector32SignedGreaterThan(goal_left, goal_right) => {
-            ConditionTerm::Bitvector32SignedGreaterThan(
-                Box::new(rewrite_term(goal_left, left, right)),
-                Box::new(rewrite_term(goal_right, left, right)),
-            )
-        }
-        ConditionTerm::Bitvector32SignedGreaterEqual(goal_left, goal_right) => {
-            ConditionTerm::Bitvector32SignedGreaterEqual(
-                Box::new(rewrite_term(goal_left, left, right)),
-                Box::new(rewrite_term(goal_right, left, right)),
-            )
-        }
-        ConditionTerm::Bitvector32Equal(goal_left, goal_right) => ConditionTerm::Bitvector32Equal(
-            Box::new(rewrite_term(goal_left, left, right)),
-            Box::new(rewrite_term(goal_right, left, right)),
-        ),
-        _ => return Err("`rewrite` currently expects an int32 comparison goal".to_string()),
+        Proposition::CResourceSeparate {
+            left: goal_left,
+            right: goal_right,
+        } => Proposition::CResourceSeparate {
+            left: rewrite_resource_term(goal_left),
+            right: rewrite_resource_term(goal_right),
+        },
+        Proposition::CResourceContains { parent, child } => Proposition::CResourceContains {
+            parent: rewrite_resource_term(parent),
+            child: rewrite_resource_term(child),
+        },
+        _ => return Err("`rewrite` int32 equality does not occur in this goal".to_string()),
     };
-    let rewritten = Proposition::ConditionIs(rewritten_condition, *expected);
     if &rewritten == goal {
         return Err("`rewrite` equality does not occur in the current goal".to_string());
     }
@@ -958,6 +1038,60 @@ mod tests {
         let aliased =
             rewrite_proposition_by_exact_equality(&indexed, &data_is_alias, &available).unwrap();
         assert_eq!(normalize_proposition(&aliased), SimpProposition::True);
+    }
+
+    #[test]
+    fn rewrite_substitutes_length_and_base_equalities_inside_memory_resources() {
+        let source = Bitvector32Term::Variable(Variable(61));
+        let target = Bitvector32Term::Variable(Variable(62));
+        let source_len = Bitvector32Term::Variable(Variable(63));
+        let target_len = Bitvector32Term::Variable(Variable(64));
+        let fixed = CResource::Memory(CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(65)), 4),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+        ));
+        let range = |base: Bitvector32Term, end: Bitvector32Term| {
+            CResource::Memory(CMemoryRange::new(
+                Pointer {
+                    block: PointerBlock::ExternalArgument,
+                    offset: PointerOffsetTerm::scale_int32(base, 4),
+                },
+                Bitvector32Term::Constant(0),
+                end,
+            ))
+        };
+        let goal = Proposition::CResourceSeparate {
+            left: fixed.clone(),
+            right: range(source.clone(), source_len.clone()),
+        };
+        let length_equality = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(source_len), Box::new(target_len.clone())),
+            true,
+        );
+        let base_equality = Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(
+                Box::new(PointerOffsetTerm::scale_int32(source, 4)),
+                Box::new(PointerOffsetTerm::scale_int32(target.clone(), 4)),
+            ),
+            true,
+        );
+        let available = [length_equality.clone(), base_equality.clone()];
+
+        let resized =
+            rewrite_proposition_by_exact_equality(&goal, &length_equality, &available).unwrap();
+        let replaced =
+            rewrite_proposition_by_exact_equality(&resized, &base_equality, &available).unwrap();
+        assert_eq!(
+            replaced,
+            Proposition::CResourceSeparate {
+                left: fixed,
+                right: range(target, target_len),
+            }
+        );
     }
 }
 

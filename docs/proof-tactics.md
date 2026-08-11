@@ -74,7 +74,7 @@ remains migration compatibility and should not be used in new proofs.
 | `assumption()` | simple | Close the goal from an exact available fact. |
 | `extract(P)` | simple | Add `P` when it is a proper conjunct of an exact available conjunction. |
 | `normalize()` | simple | Close a context-free normalization goal. |
-| `rewrite(P)` | simple | Rewrite with an exact available equality. |
+| `rewrite(P)` | simple | Rewrite the current proposition, including memory-resource ranges, with an exact available equality. |
 | `intro()` | simple | Introduce an implication antecedent, negated proposition, or universal binder. |
 | `split()` | simple | Close a conjunction when both conjuncts are exact available facts. |
 | `left()` / `right()` | simple | Close the selected disjunct from an exact available fact. |
