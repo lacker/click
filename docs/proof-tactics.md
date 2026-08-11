@@ -70,7 +70,7 @@ remains migration compatibility and should not be used in new proofs.
 | Surface form | Class | Meaning |
 | --- | --- | --- |
 | `simp()` | smart | Simplify the current proposition goal. It never executes C. |
-| `simp() using { P; ... }` | smart | Search for a proof using exactly the listed proposition facts. Expansion either emits named simple steps or reports the missing simple proof rule; it never emits `derive`. |
+| `simp() using { P; ... }` | smart | Search for a proof using exactly the listed proposition facts. Expansion either emits named simple steps or reports the missing simple proof rule. |
 | `assumption()` | simple | Close the goal from an exact available fact. |
 | `extract(P)` | simple | Add `P` when it is a proper conjunct of an exact available conjunction. |
 | `normalize()` | simple | Close a context-free normalization goal. |
@@ -79,7 +79,6 @@ remains migration compatibility and should not be used in new proofs.
 | `split()` | simple | Close a conjunction when both conjuncts are exact available facts. |
 | `left()` / `right()` | simple | Close the selected disjunct from an exact available fact. |
 | `contradiction(P)` | simple | Close from exact facts `P` and `not P`, including exact opposite polarities of the same C condition. |
-| `derive using { Q; ... }` | legacy simple | Compatibility for proofs awaiting migration. Its checker bundles several atomic theories and it is never emitted by `simp() using`; do not use it in new proofs. |
 | `apply(theorem(args))` | smart | Apply a theorem while selecting its premises from context. |
 | `apply(theorem(args)) using { P; ... }` | simple | Apply a theorem using exactly the listed premises. |
 | `induct(n) as ih` | simple | Start strong induction on a nonnegative `int32` theorem parameter. |
@@ -99,10 +98,9 @@ premises, applying the named induction hypothesis is a deterministic simple
 step with fixed nonnegative, strict-decrease, and substituted-requirement
 obligations.
 
-`derive` remains only while existing proofs migrate. Its target is always the
-current pure goal, but its broad checker is not the model for new simple
-tactics. `calculate` is not an alias. The former `double_negation` and
-`vacuous` leaves are ordinary compositions: use
+The retired `calculate` tactic is not an alias for simplification; use
+`simp() using` to constrain smart search to named facts. The former
+`double_negation` and `vacuous` leaves are ordinary compositions: use
 `intro(); contradiction(P);`.
 
 `have` has two classifications for two different questions. Its AST shape is
@@ -112,11 +110,12 @@ simple body, and is CONTROL otherwise. Profiling, smart-site discovery, and
 expansion all use this source-site class.
 
 When a smart `have` needs memory permissions merely to lower its goal, its
-surface certificate retains the relevant loadability and order facts in an
-explicit `derive using` block. A context-free-looking result such as a
-normalized equality is not emitted as bare `normalize()` if replay still needs
-those premises to interpret an indexed load. Verification checks the emitted
-certificate immediately, and expansion/audit replay the same surface proof.
+surface certificate retains the relevant loadability and order facts through
+explicit transports, rewrites, extracts, or named theorem applications. A
+context-free-looking result such as a normalized equality is not emitted as
+bare `normalize()` if replay still needs those premises to interpret an
+indexed load. Verification checks the emitted certificate immediately, and
+expansion/audit replay the same surface proof.
 
 ## Effects, resources, and snapshots
 
@@ -151,7 +150,8 @@ rewrite when a later tactic in the same proof is failing.
 `click profile` reports smart and simple work under the same concepts:
 statement transitions are `step`, checked loop transitions are `loop`,
 fact transports are `transport`, frame certificates are `frame`, and atomic
-derivations are `derive`. A slow simple leaf is a Click performance bug. A
+reasoning uses rules such as `assumption`, `normalize`, `rewrite`, and named
+theorem applications. A slow simple leaf is a Click performance bug. A
 successful slow smart tactic is an expansion candidate. An unsuccessful smart
 tactic has nothing to expand; decompose that proof unless its search failed to
 respect its bound or expose an actionable next step.
@@ -174,5 +174,5 @@ focused migration message:
 | `execute_step()` | `step()` |
 | `execute_then_step()` / `execute_else_step()` | frontier-local `branch` |
 | `bounded_execute()` | `execute()` or `by auto;` |
-| `calculate(...)` | `derive using { ... }` |
+| `calculate(...)` | `simp() using { ... }` |
 | `double_negation()` / `vacuous()` | `intro()` followed by `contradiction(...)` |
