@@ -2823,7 +2823,10 @@ fn certify_outcome_simp_have(
     tactic_index: usize,
     path_index: usize,
 ) -> Result<Vec<ProofTactic>, ClickError> {
-    let initial_proof = lower_outcome_simp_proof(
+    // First require an explicit proof plan for the claim itself. The final
+    // proof is rebuilt below after its separately certified loadability
+    // obligations have been added to the replay context.
+    lower_outcome_simp_proof(
         replay,
         surface_goal,
         goal,
@@ -2837,40 +2840,6 @@ fn certify_outcome_simp_have(
         click_function_environment,
     )?;
     let mut goal_lowering_facts = available.to_vec();
-    if let Proof::Script(tactics) = &initial_proof
-        && let Some(ProofTactic::Derive(derive)) = tactics.first()
-    {
-        goal_lowering_facts = facts_for_direct_derivation_lowering(available);
-        for premise in &derive.premises {
-            let lowered = replay
-                .surface_propositions
-                .available_kernel(premise, available)
-                .cloned()
-                .map(Ok)
-                .unwrap_or_else(|| {
-                    lower_outcome_proposition_with_program_points(
-                        parameters,
-                        arguments,
-                        pre_state,
-                        post_state,
-                        result,
-                        available,
-                        premise,
-                        predicate_environment,
-                        click_function_environment,
-                        &replay.program_point_states,
-                    )
-                })
-                .map_err(|error| {
-                    ClickError::new(format!(
-                        "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` could not lower a generated explicit premise while certifying its goal context: {error}"
-                    ))
-                })?;
-            if !goal_lowering_facts.contains(&lowered) {
-                goal_lowering_facts.push(lowered);
-            }
-        }
-    }
     let lowered = lower_outcome_proposition_with_obligations(
         parameters,
         arguments,
