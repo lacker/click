@@ -46,8 +46,8 @@ retain, nonfinal release, final release, and free across opaque calls.
 - `mdtests/pure_theorem_apply.md`: pure theorem proof script applying an
   earlier theorem.
 - `mdtests/condition_search_explicit_decomposition.md`: an explicit
-  `derive using` proof remains available when smart condition search is not the
-  right tool.
+  `simp() using` proof constrains smart condition search to named premises and
+  expands to explicit rewrites.
 - `mdtests/pure_theorem_rejects_execution_tactic.md`: theorem proofs reject C
   execution tactics.
 - `mdtests/pure_theorem_rejects_observe_tactic.md`: theorem proofs reject
