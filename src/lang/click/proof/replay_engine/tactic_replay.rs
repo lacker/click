@@ -1575,10 +1575,17 @@ fn replay_linear_tactics_without_frontier_loops(
                     replay = result.replay;
                     branch_path = result.branch_path;
                     assumptions = assumptions_from_propositions(&requirement_pure_facts);
-                    end_tactic_surface_scope(
+                    let slice = end_tactic_surface_scope(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
                     );
+                    if capture_this_tactic {
+                        finish_tactic_expansion_capture(
+                            expansion_capture.as_deref_mut(),
+                            &slice,
+                            false,
+                        );
+                    }
                     continue;
                 }
                 require_function_exit(&replay, claim_label, tactic_index, "frame")?;

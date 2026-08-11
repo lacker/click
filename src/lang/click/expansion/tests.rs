@@ -1700,3 +1700,32 @@ fn pure_theorem_expansion_is_certificate_backed_and_idempotent() {
         .proof_certificate()
         .expect("expanded theorem should retain a surface certificate");
 }
+
+#[test]
+fn expands_qualified_frame_tactic() {
+    let c_source = r#"int32 set_cell(int32 p[], int32 value) {
+    p[0] = value;
+    return value;
+}"#;
+    let click_source = r#"verifying "set_cell.c";
+int32 set_cell(int32 p[], int32 value) {
+    owns p[0..1] by auto;
+    mutable p[0..1] by { execute(); frame(function); }
+}
+"#;
+    let sources = [("set_cell.c", c_source)];
+    verify_c0_sources(click_source, &sources).expect("qualified frame baseline should verify");
+    let selected_offset = click_source
+        .find("frame(function)")
+        .expect("qualified frame should exist");
+    let position = position_at_offset(click_source, selected_offset);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("qualified frame should expand");
+
+    assert!(!expanded.contains("frame(function);"), "{expanded}");
+    assert!(expanded.contains("frame(function) using {"), "{expanded}");
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!("expanded qualified frame should replay:\n{error:?}\n{expanded}")
+    });
+}
