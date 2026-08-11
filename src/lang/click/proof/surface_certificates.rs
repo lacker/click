@@ -1333,6 +1333,9 @@ pub(super) fn lower_outcome_simp_tactics(
             return Ok(tactics);
         }
     }
+    if let Some(tactics) = plan_explicit_unchanged_load_transport(surface_goal, &premise_pairs) {
+        return Ok(tactics);
+    }
     if search(
         goal.clone(),
         &premise_pairs,
@@ -1344,6 +1347,45 @@ pub(super) fn lower_outcome_simp_tactics(
     } else {
         Ok(vec![tactic])
     }
+}
+
+fn plan_explicit_unchanged_load_transport(
+    surface_goal: &ClickProposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let ClickProposition::Comparison {
+        operator: ComparisonOperator::Equal,
+        right,
+        ..
+    } = surface_goal
+    else {
+        return None;
+    };
+    if !contains_old_expression(right) {
+        return None;
+    }
+    let separation = premise_pairs
+        .iter()
+        .find(|(kernel, _)| matches!(kernel, Proposition::CResourceSeparate { .. }))?
+        .1
+        .clone();
+    let source = ClickProposition::Comparison {
+        left: right.clone(),
+        operator: ComparisonOperator::Equal,
+        right: right.clone(),
+    };
+    Some(vec![
+        ProofTactic::Have(ProofHave {
+            proposition: source.clone(),
+            proof: Proof::Script(vec![ProofTactic::Normalize]),
+        }),
+        ProofTactic::TransportUsing {
+            source,
+            target: surface_goal.clone(),
+            premises: vec![separation],
+        },
+        ProofTactic::Assumption,
+    ])
 }
 
 pub(super) fn lower_restricted_simp_plan(

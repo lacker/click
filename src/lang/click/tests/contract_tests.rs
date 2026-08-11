@@ -400,6 +400,22 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
         .expect("separate singleton ranges should prove symbolic unwritten read");
 
     assert_eq!(verified.len(), 2);
+
+    let offset = click_source.find("auto").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("write_i_read_j.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("unwritten read should expand through explicit transport");
+    assert!(expanded.contains("normalize();"), "{expanded}");
+    assert!(expanded.contains("transport("), "{expanded}");
+    assert!(expanded.contains("separate("), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[("write_i_read_j.c", c_source)])
+        .expect("expanded unwritten-read transport should replay");
 }
 
 #[test]
