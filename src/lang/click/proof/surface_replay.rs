@@ -1232,6 +1232,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     replay,
                     derivation,
                     None,
+                    None,
                     &surface_available,
                     parameters,
                     arguments,
@@ -1727,6 +1728,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 replay,
                 derivation,
                 None,
+                None,
                 available,
                 parameters,
                 arguments,
@@ -1808,17 +1810,6 @@ pub(super) fn append_simple_proof_step_for_operation(
                     }
                     for derivation in derivations {
                         check_verification_deadline()?;
-                        let (mut conclusion, proof) = lower_surface_atomic_derivation(
-                            replay,
-                            derivation,
-                            None,
-                            available,
-                            parameters,
-                            arguments,
-                            state,
-                            predicate_environment,
-                            click_function_environment,
-                        )?;
                         let memories = c_condition_fact_memories(derivation.conclusion());
                         // Prefer the stable function-entry selector when it
                         // names the certified snapshot. Statement-entry
@@ -1842,38 +1833,27 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 .rev()
                                 .map(|(point, state)| (point.clone(), state.clone())),
                         );
-                        for (point, point_state) in candidate_points {
-                            if memories.is_empty()
-                                || !memories.iter().any(|memory| {
-                                    memory.has_same_snapshot_markers(point_state.memory())
-                                })
-                            {
-                                continue;
-                            }
-                            let Ok(candidate) = surface_with_source_site(&conclusion, &point)
-                            else {
-                                continue;
-                            };
-                            let lowered = lower_point_proposition(
-                                &candidate,
-                                available,
-                                parameters,
-                                arguments,
-                                replay.old_reference_state(state),
-                                state,
-                                None,
-                                &replay.program_point_states,
-                                predicate_environment,
-                                click_function_environment,
-                            );
-                            if lowered.as_ref().is_ok_and(|lowered| {
-                                normalize_direct_atomic_memory_loads(lowered)
-                                    == normalize_direct_atomic_memory_loads(derivation.conclusion())
-                            }) {
-                                conclusion = candidate;
-                                break;
-                            }
-                        }
+                        let anchor_point = candidate_points
+                            .into_iter()
+                            .find(|(_, point_state)| {
+                                !memories.is_empty()
+                                    && memories.iter().any(|memory| {
+                                        memory.has_same_snapshot_markers(point_state.memory())
+                                    })
+                            })
+                            .map(|(point, _)| point);
+                        let (conclusion, proof) = lower_surface_atomic_derivation(
+                            replay,
+                            derivation,
+                            None,
+                            anchor_point.as_ref(),
+                            available,
+                            parameters,
+                            arguments,
+                            state,
+                            predicate_environment,
+                            click_function_environment,
+                        )?;
                         if !premises.contains(&conclusion) {
                             premises.push(conclusion.clone());
                             tactics.push(ProofTactic::Have(ProofHave {
@@ -2108,6 +2088,7 @@ pub(super) fn surface_simp_plan_proof(
                 replay,
                 derivation,
                 Some(&active_surface_goal),
+                None,
                 available,
                 parameters,
                 arguments,

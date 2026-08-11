@@ -5,6 +5,7 @@ pub(super) fn lower_surface_atomic_derivation(
     replay: &TacticReplayState,
     derivation: &PropositionDerivation,
     preferred_conclusion: Option<&ClickProposition>,
+    anchor_point: Option<&ProgramPointRef>,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -12,7 +13,7 @@ pub(super) fn lower_surface_atomic_derivation(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(ClickProposition, Proof), ClickError> {
-    let conclusion = match preferred_conclusion {
+    let mut conclusion = match preferred_conclusion {
         Some(conclusion) => conclusion.clone(),
         None => checked_surface_fact_at_point(
             replay,
@@ -25,6 +26,9 @@ pub(super) fn lower_surface_atomic_derivation(
             click_function_environment,
         )?,
     };
+    if let Some(point) = anchor_point {
+        conclusion = surface_with_source_site(&conclusion, point)?;
+    }
     if let (
         Some((left_derivation, right_derivation)),
         ClickProposition::And(surface_left, surface_right),
@@ -34,6 +38,7 @@ pub(super) fn lower_surface_atomic_derivation(
             replay,
             left_derivation,
             Some(surface_left),
+            anchor_point,
             available,
             parameters,
             arguments,
@@ -45,6 +50,7 @@ pub(super) fn lower_surface_atomic_derivation(
             replay,
             right_derivation,
             Some(surface_right),
+            anchor_point,
             available,
             parameters,
             arguments,
@@ -84,7 +90,13 @@ pub(super) fn lower_surface_atomic_derivation(
             predicate_environment,
             click_function_environment,
         ) {
-            Ok(surface) => premise_pairs.push((premise, surface)),
+            Ok(surface) => {
+                let surface = match anchor_point {
+                    Some(point) => surface_with_source_site(&surface, point)?,
+                    None => surface,
+                };
+                premise_pairs.push((premise, surface));
+            }
             Err(error) => unexpressed_premises.push((premise, error)),
         }
     }
@@ -180,11 +192,17 @@ pub(super) fn lower_surface_atomic_derivation(
                 state,
                 predicate_environment,
                 click_function_environment,
-            ) && !premise_pairs
-                .iter()
-                .any(|(_, existing)| existing == &surface)
-            {
-                premise_pairs.push((premise.clone(), surface));
+            ) {
+                let surface = match anchor_point {
+                    Some(point) => surface_with_source_site(&surface, point)?,
+                    None => surface,
+                };
+                if !premise_pairs
+                    .iter()
+                    .any(|(_, existing)| existing == &surface)
+                {
+                    premise_pairs.push((premise.clone(), surface));
+                }
             }
         }
         if replay_kind(&premise_pairs).is_none() {
@@ -222,19 +240,7 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
     }
-    if let Some(tactics) =
-        plan_explicit_positive_predecessor_is_nonnegative(&lowered_conclusion, &premise_pairs)
-            .or_else(|| {
-                plan_explicit_one_le_predecessor(&lowered_conclusion, &premise_pairs)
-            })
-            .or_else(|| {
-                plan_explicit_positive_predecessor_strictly_decreases(
-                    &lowered_conclusion,
-                    &premise_pairs,
-                )
-            })
-            .or_else(|| plan_explicit_le_and_not_lt_implies_eq(&lowered_conclusion, &premise_pairs))
-    {
+    if let Some(tactics) = plan_explicit_named_signed_rule(&lowered_conclusion, &premise_pairs) {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "atomic predecessor derivation produced a non-simple expansion: {error:?}"
@@ -1193,20 +1199,7 @@ pub(super) fn lower_restricted_simp_plan(
         }
     };
 
-    let named_rule = |goal: &Proposition| {
-        plan_explicit_increment_strictly_increases(goal, premise_pairs)
-            .or_else(|| plan_explicit_successor_le_implies_lt(goal, premise_pairs))
-            .or_else(|| plan_explicit_increment_preserves_order(goal, premise_pairs))
-            .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
-            .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
-            .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
-            .or_else(|| plan_explicit_positive_predecessor_is_nonnegative(goal, premise_pairs))
-            .or_else(|| plan_explicit_one_le_predecessor(goal, premise_pairs))
-            .or_else(|| {
-                plan_explicit_positive_predecessor_strictly_decreases(goal, premise_pairs)
-            })
-            .or_else(|| plan_explicit_le_and_not_lt_implies_eq(goal, premise_pairs))
-    };
+    let named_rule = |goal: &Proposition| plan_explicit_named_signed_rule(goal, premise_pairs);
     let loadability_transport = || {
         exact_derivation?;
         plan_explicit_loadability_transport(goal, surface_goal?, premise_pairs)
@@ -1244,6 +1237,22 @@ pub(super) fn lower_restricted_simp_plan(
         ))
     })?;
     Ok(tactics)
+}
+
+fn plan_explicit_named_signed_rule(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    plan_explicit_increment_strictly_increases(goal, premise_pairs)
+        .or_else(|| plan_explicit_successor_le_implies_lt(goal, premise_pairs))
+        .or_else(|| plan_explicit_increment_preserves_order(goal, premise_pairs))
+        .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
+        .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
+        .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
+        .or_else(|| plan_explicit_positive_predecessor_is_nonnegative(goal, premise_pairs))
+        .or_else(|| plan_explicit_one_le_predecessor(goal, premise_pairs))
+        .or_else(|| plan_explicit_positive_predecessor_strictly_decreases(goal, premise_pairs))
+        .or_else(|| plan_explicit_le_and_not_lt_implies_eq(goal, premise_pairs))
 }
 
 fn plan_explicit_loadability_transport(
@@ -2575,6 +2584,7 @@ fn certify_outcome_simp_have(
                 replay,
                 &source_derivation,
                 Some(&surface_source),
+                None,
                 &certified_available,
                 parameters,
                 arguments,
