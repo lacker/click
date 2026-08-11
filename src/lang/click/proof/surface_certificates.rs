@@ -507,9 +507,8 @@ fn select_outcome_simp_certificate(
     // derivation context is the complete dependency boundary; eagerly
     // translating every ambient fact is both unnecessary and pathologically
     // expensive when facts contain symbolic memory snapshots.
-    if let Some(plan) =
+    if let Some(SimpEvidence::Derivation(derivation)) =
         plan_simp_certificate(goal, &assumptions_from_propositions(&atomic_available))
-        && let [InternalProofOperation::ExactPropositionDerivation(derivation)] = plan.operations()
     {
         let ambient = assumptions_from_propositions(&atomic_available);
         let context = derivation
@@ -827,8 +826,8 @@ fn select_outcome_simp_certificate(
     let assumptions = assumptions_from_propositions(&normalized_kernel_premises);
     let exact_assumptions = assumptions_from_propositions(&kernel_premises);
     check_verification_deadline()?;
-    if let Some(plan) = plan_simp_certificate(goal, &assumptions_from_propositions(available))
-        && let [InternalProofOperation::ExactPropositionDerivation(derivation)] = plan.operations()
+    if let Some(SimpEvidence::Derivation(derivation)) =
+        plan_simp_certificate(goal, &assumptions_from_propositions(available))
     {
         let context = derivation.context_premises();
         let selected = premise_pairs
@@ -1345,7 +1344,7 @@ fn plan_explicit_unchanged_load_transport(
 pub(super) fn lower_restricted_simp_plan(
     goal: &Proposition,
     surface_goal: Option<&ClickProposition>,
-    plan: &InternalProofPlan,
+    plan: &SimpEvidence,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Result<Vec<ProofTactic>, ClickError> {
     let available = premise_pairs
@@ -1353,8 +1352,8 @@ pub(super) fn lower_restricted_simp_plan(
         .map(|(kernel, _)| kernel.clone())
         .collect::<Vec<_>>();
     let assumptions = assumptions_from_propositions(&available);
-    let exact_derivation = match plan.operations() {
-        [InternalProofOperation::Surface(ProofTactic::Assumption)] => {
+    let exact_derivation = match plan {
+        SimpEvidence::Assumption => {
             if !pure_fact_is_replay_available(goal, &available) {
                 return Err(ClickError::new(
                     "`simp() using` selected `assumption`, but the goal is not one of its listed premises",
@@ -1362,7 +1361,7 @@ pub(super) fn lower_restricted_simp_plan(
             }
             None
         }
-        [InternalProofOperation::Surface(ProofTactic::Normalize)] => {
+        SimpEvidence::Normalize => {
             if !normalizes_context_free(goal) {
                 return Err(ClickError::new(
                     "`simp() using` selected `normalize`, but the goal is not context-free",
@@ -1370,18 +1369,13 @@ pub(super) fn lower_restricted_simp_plan(
             }
             None
         }
-        [InternalProofOperation::ExactPropositionDerivation(derivation)] => {
+        SimpEvidence::Derivation(derivation) => {
             if derivation.conclusion() != goal || !derivation.replay(&assumptions) {
                 return Err(ClickError::new(
                     "`simp() using` selected a derivation that does not replay from exactly its listed premises",
                 ));
             }
             Some(derivation)
-        }
-        _ => {
-            return Err(ClickError::new(
-                "`simp() using` selected an unsupported internal proof shape",
-            ));
         }
     };
 
@@ -2692,10 +2686,12 @@ pub(super) fn plan_restricted_simp_expansion(
         .collect::<Vec<_>>();
     let derivation = plan_restricted_simp_goal(goal, available.clone(), goal, &available)
         .map_err(ClickError::new)?;
-    let plan = InternalProofPlan::from_operations(vec![
-        InternalProofOperation::ExactPropositionDerivation(derivation),
-    ]);
-    lower_restricted_simp_plan(goal, surface_goal, &plan, premise_pairs)
+    lower_restricted_simp_plan(
+        goal,
+        surface_goal,
+        &SimpEvidence::Derivation(derivation),
+        premise_pairs,
+    )
 }
 
 fn collect_definable_predicate_names(

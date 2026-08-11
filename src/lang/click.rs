@@ -1045,23 +1045,12 @@ struct SimpleStructuralItem {
     effect_proof: Option<Box<SimpleProof>>,
 }
 
-/// Point-proof evidence for a smart `have`/`simp` at a single proof point.
-/// This is not a smart-tactic result and cannot cross the smart/simple
-/// boundary; execution-shaped smart tactics construct [`SimpleProofStep`]
-/// values directly during search instead of recording a plan.
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[doc(hidden)]
-pub struct InternalProofPlan {
-    operations: Vec<InternalProofOperation>,
-}
-
 /// Checked kernel evidence used as the input to constructing one
 /// [`SimpleProofStep`]. An operation never forms an ordered replayable
 /// program of its own: search consumes it transiently to spell the surface
 /// step, and the resulting `SimpleProof` is what replays.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum InternalProofOperation {
-    Surface(ProofTactic),
     CertifiedStatementStep {
         prerequisite_derivations: Vec<PropositionDerivation>,
         exact_premises: Vec<Proposition>,
@@ -1072,7 +1061,6 @@ pub(crate) enum InternalProofOperation {
         exact_premises: Vec<Proposition>,
         planned_transition: Option<usize>,
     },
-    ExactPropositionDerivation(PropositionDerivation),
     CertifiedFactTransport {
         source: Proposition,
         target: Proposition,
@@ -1104,12 +1092,6 @@ pub enum CertificatePathSegment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CertificateError {
     tactic_class: TacticClass,
-    path: Vec<CertificatePathSegment>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct InternalPlanError {
-    smart_tactic: SmartTacticKind,
     path: Vec<CertificatePathSegment>,
 }
 
@@ -1411,33 +1393,6 @@ impl CertificateError {
     }
 }
 
-impl InternalProofPlan {
-    pub(crate) fn from_operations(operations: Vec<InternalProofOperation>) -> Self {
-        Self { operations }
-    }
-
-    fn from_surface_tactics(tactics: &[ProofTactic]) -> Result<Self, InternalPlanError> {
-        validate_internal_plan_tactics(tactics, &mut Vec::new())?;
-        Ok(Self {
-            operations: tactics
-                .iter()
-                .cloned()
-                .map(InternalProofOperation::from_planned_tactic)
-                .collect(),
-        })
-    }
-
-    pub(crate) fn operations(&self) -> &[InternalProofOperation] {
-        &self.operations
-    }
-}
-
-impl InternalProofOperation {
-    fn from_planned_tactic(tactic: ProofTactic) -> Self {
-        Self::Surface(tactic)
-    }
-}
-
 fn validate_certificate_tactics(
     tactics: &[ProofTactic],
     path: &mut Vec<CertificatePathSegment>,
@@ -1546,129 +1501,6 @@ fn validate_certificate_tactics(
         result?;
     }
     Ok(())
-}
-
-fn validate_internal_plan_tactics(
-    tactics: &[ProofTactic],
-    path: &mut Vec<CertificatePathSegment>,
-) -> Result<(), InternalPlanError> {
-    for (index, tactic) in tactics.iter().enumerate() {
-        path.push(CertificatePathSegment::Tactic(index));
-        let result = match tactic.class() {
-            TacticClass::Simple(_) => Ok(()),
-            TacticClass::Smart(smart_tactic) => Err(InternalPlanError {
-                smart_tactic,
-                path: path.clone(),
-            }),
-            TacticClass::ControlFlow(ControlFlowTactic::Have) => {
-                let ProofTactic::Have(proof_have) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                path.push(CertificatePathSegment::HaveBody);
-                let result = validate_internal_plan_proof(&proof_have.proof, path);
-                path.pop();
-                result
-            }
-            TacticClass::ControlFlow(ControlFlowTactic::Open) => {
-                let ProofTactic::Open(proof_open) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                path.push(CertificatePathSegment::OpenBody);
-                let result = validate_internal_plan_tactics(&proof_open.tactics, path);
-                path.pop();
-                result
-            }
-            TacticClass::ControlFlow(ControlFlowTactic::If) => {
-                let ProofTactic::If(proof_if) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                path.push(CertificatePathSegment::ThenBranch);
-                let then_result = validate_internal_plan_tactics(&proof_if.then_tactics, path);
-                path.pop();
-                if then_result.is_err() {
-                    then_result
-                } else {
-                    path.push(CertificatePathSegment::ElseBranch);
-                    let else_result = validate_internal_plan_tactics(&proof_if.else_tactics, path);
-                    path.pop();
-                    else_result
-                }
-            }
-            TacticClass::ControlFlow(ControlFlowTactic::Branch) => {
-                let ProofTactic::Branch(proof_branch) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                path.push(CertificatePathSegment::ThenBranch);
-                let then_result = validate_internal_plan_tactics(&proof_branch.then_tactics, path);
-                path.pop();
-                if then_result.is_err() {
-                    then_result
-                } else {
-                    path.push(CertificatePathSegment::ElseBranch);
-                    let else_result =
-                        validate_internal_plan_tactics(&proof_branch.else_tactics, path);
-                    path.pop();
-                    else_result
-                }
-            }
-            TacticClass::ControlFlow(ControlFlowTactic::Loop) => {
-                let ProofTactic::Loop(loop_clause) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                path.push(CertificatePathSegment::LoopInitialize);
-                match loop_clause.initialize_proof() {
-                    Some(proof) => validate_internal_plan_proof(proof, path)?,
-                    None => {
-                        return Err(InternalPlanError {
-                            smart_tactic: SmartTacticKind::Auto,
-                            path: path.clone(),
-                        });
-                    }
-                }
-                path.pop();
-                path.push(CertificatePathSegment::LoopPreserve);
-                match loop_clause.preserve_proof() {
-                    Some(proof) => validate_internal_plan_proof(proof, path)?,
-                    None => {
-                        return Err(InternalPlanError {
-                            smart_tactic: SmartTacticKind::Auto,
-                            path: path.clone(),
-                        });
-                    }
-                }
-                path.pop();
-                for (item_index, item) in loop_clause.items().iter().enumerate() {
-                    if !item.is_effect_kind() {
-                        continue;
-                    }
-                    path.push(CertificatePathSegment::LoopItem(item_index));
-                    validate_internal_plan_proof(item.proof(), path)?;
-                    path.pop();
-                }
-                Ok(())
-            }
-        };
-        path.pop();
-        result?;
-    }
-    Ok(())
-}
-
-fn validate_internal_plan_proof(
-    proof: &Proof,
-    path: &mut Vec<CertificatePathSegment>,
-) -> Result<(), InternalPlanError> {
-    match proof {
-        Proof::Default => Err(InternalPlanError {
-            smart_tactic: SmartTacticKind::Auto,
-            path: path.clone(),
-        }),
-        Proof::Tactic(smart_tactic) => Err(InternalPlanError {
-            smart_tactic: smart_tactic.kind(),
-            path: path.clone(),
-        }),
-        Proof::Script(tactics) => validate_internal_plan_tactics(tactics, path),
-    }
 }
 
 fn validate_certificate_proof(

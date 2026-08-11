@@ -1723,29 +1723,6 @@ pub(super) fn append_simple_proof_step_for_operation(
                     .block(format!("could not lower control-flow tactic: {error:?}")),
             }
         }
-        (None, Some(InternalProofOperation::ExactPropositionDerivation(derivation))) => {
-            let anchor_point = replay.simple_proof_builder.last_step_entry.clone();
-            match lower_surface_atomic_derivation(
-                replay,
-                derivation,
-                None,
-                anchor_point.as_ref(),
-                available,
-                parameters,
-                arguments,
-                state,
-                predicate_environment,
-                click_function_environment,
-            ) {
-                Ok((conclusion, proof)) => {
-                    replay.simple_proof_builder.push_have(conclusion, proof);
-                }
-                Err(error) => replay.simple_proof_builder.block(format!(
-                    "could not lower exact proposition derivation: {}",
-                    error.message()
-                )),
-            }
-        }
         (None, Some(InternalProofOperation::CertifiedFrame(path_derivations))) => {
             let lowered = path_derivations
                 .iter()
@@ -1873,7 +1850,7 @@ pub(super) fn append_simple_proof_step_for_operation(
             }
             TacticClass::Smart(_) => {}
         },
-        (None, Some(InternalProofOperation::Surface(_))) | (Some(_), Some(_)) | (None, None) => {
+        (Some(_), Some(_)) | (None, None) => {
             unreachable!("invalid simple-proof construction operation")
         }
     }
@@ -2027,7 +2004,7 @@ pub(super) fn surface_simp_plan_proof(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     surface_goal: &ClickProposition,
-    plan: &InternalProofPlan,
+    plan: &SimpEvidence,
     unfolded_predicates: &[String],
 ) -> Result<Proof, ClickError> {
     let active_surface_goal = if unfolded_predicates.is_empty() {
@@ -2044,14 +2021,10 @@ pub(super) fn surface_simp_plan_proof(
             ))
         })?
     };
-    let proof = match plan.operations() {
-        [InternalProofOperation::Surface(ProofTactic::Assumption)] => {
-            Proof::Script(vec![ProofTactic::Assumption])
-        }
-        [InternalProofOperation::Surface(ProofTactic::Normalize)] => {
-            Proof::Script(vec![ProofTactic::Normalize])
-        }
-        [InternalProofOperation::ExactPropositionDerivation(derivation)] => {
+    let proof = match plan {
+        SimpEvidence::Assumption => Proof::Script(vec![ProofTactic::Assumption]),
+        SimpEvidence::Normalize => Proof::Script(vec![ProofTactic::Normalize]),
+        SimpEvidence::Derivation(derivation) => {
             let (_, proof) = lower_surface_atomic_derivation(
                 replay,
                 derivation,
@@ -2071,11 +2044,6 @@ pub(super) fn surface_simp_plan_proof(
                 ))
             })?;
             proof
-        }
-        _ => {
-            return Err(ClickError::new(
-                "smart proof planned an unexpected simp certificate",
-            ));
         }
     };
     if unfolded_predicates.is_empty() {
@@ -2105,7 +2073,7 @@ pub(super) fn surface_smart_have_certificate(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     have: &ProofHave,
-    plan: &InternalProofPlan,
+    plan: &SimpEvidence,
     unfolded_predicates: &[String],
 ) -> Result<SimpleProof, ClickError> {
     let restricted_simp = matches!(
@@ -2245,13 +2213,10 @@ pub(super) fn surface_smart_have_certificate(
         let restricted_derivation =
             plan_restricted_simp_goal(&explicit_goal, exact.clone(), &explicit_goal, exact)
                 .map_err(ClickError::new)?;
-        let restricted_plan = InternalProofPlan::from_operations(vec![
-            InternalProofOperation::ExactPropositionDerivation(restricted_derivation),
-        ]);
         let explicit = lower_restricted_simp_plan(
             &explicit_goal,
             Some(&active_surface_goal),
-            &restricted_plan,
+            &SimpEvidence::Derivation(restricted_derivation),
             &pairs,
         )?;
         let mut tactics = unfolded_predicates

@@ -1067,33 +1067,47 @@ fn normalize_direct_atomic_memory_load_uncached(term: &Bitvector32Term) -> Bitve
     }
 }
 
+/// The checked kernel evidence behind one successful smart simplification.
+/// Search produces this at the moment it succeeds and immediately spells it
+/// as explicit surface tactics; it is never stored, ordered into a plan, or
+/// replayed as a private operation program. A derivation the surface
+/// vocabulary cannot spell is a search failure, not a lowering error.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::lang::click) enum SimpEvidence {
+    /// The goal is (an exact equivalent of) an available fact.
+    Assumption,
+    /// The goal normalizes to true without consulting any context.
+    Normalize,
+    /// A kernel derivation of the goal from its context premises.
+    Derivation(PropositionDerivation),
+}
+
 pub(in crate::lang::click) fn plan_simp_certificate(
     proposition: &Proposition,
     assumptions: &Assumptions,
-) -> Option<InternalProofPlan> {
-    let operation = if matches!(normalize_proposition(proposition), SimpProposition::True) {
-        InternalProofOperation::Surface(ProofTactic::Normalize)
+) -> Option<SimpEvidence> {
+    if matches!(normalize_proposition(proposition), SimpProposition::True) {
+        Some(SimpEvidence::Normalize)
     } else {
-        InternalProofOperation::ExactPropositionDerivation(
+        Some(SimpEvidence::Derivation(
             assumptions.derive_simp_proposition(proposition)?,
-        )
-    };
-    Some(InternalProofPlan::from_operations(vec![operation]))
+        ))
+    }
 }
 
 pub(in crate::lang::click) fn replay_simp_certificate(
     proposition: &Proposition,
     assumptions: &Assumptions,
-    certificate: &InternalProofPlan,
+    certificate: &SimpEvidence,
 ) -> bool {
-    match certificate.operations() {
-        [InternalProofOperation::Surface(ProofTactic::Normalize)] => {
+    match certificate {
+        SimpEvidence::Assumption => assumptions.proves(proposition),
+        SimpEvidence::Normalize => {
             matches!(normalize_proposition(proposition), SimpProposition::True)
         }
-        [InternalProofOperation::ExactPropositionDerivation(derivation)] => {
+        SimpEvidence::Derivation(derivation) => {
             derivation.conclusion() == proposition && derivation.replay(assumptions)
         }
-        _ => false,
     }
 }
 

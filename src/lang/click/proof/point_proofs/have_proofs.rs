@@ -292,7 +292,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
     prelowered_goal: Option<&Proposition>,
-) -> Result<(Proposition, InternalProofPlan), ClickError> {
+) -> Result<(Proposition, SimpEvidence), ClickError> {
     // Plan and replay this proof once. Surface expansion must lower this exact
     // plan; it must not search for a different proof if lowering is incomplete.
     // Snapshot transport belongs to the statement transition that changed the
@@ -447,19 +447,13 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     };
     let assumptions = assumptions_from_propositions(&reasoning_available);
     if reasoning_available.contains(&goal) {
-        let plan = InternalProofPlan::from_surface_tactics(&[ProofTactic::Assumption])
-            .expect("assumption is a simple replay tactic");
-        return Ok((fact, plan));
+        return Ok((fact, SimpEvidence::Assumption));
     }
     if matches!(normalize_proposition(&goal), SimpProposition::True) {
-        let plan = InternalProofPlan::from_surface_tactics(&[ProofTactic::Normalize])
-            .expect("normalize is a simple replay tactic");
-        return Ok((fact, plan));
+        return Ok((fact, SimpEvidence::Normalize));
     }
     if quantified_replay_equivalent_available_fact(&goal, &reasoning_available).is_some() {
-        let plan = InternalProofPlan::from_surface_tactics(&[ProofTactic::Assumption])
-            .expect("assumption is a simple replay tactic");
-        return Ok((fact, plan));
+        return Ok((fact, SimpEvidence::Assumption));
     }
     let normalized_fact = normalize_direct_atomic_memory_loads(&goal);
     if let Some(equivalent) = reasoning_available
@@ -468,16 +462,10 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
         && let Some(derivation) =
             minimal_proposition_derivation(&goal, std::slice::from_ref(equivalent))?
     {
-        let plan = InternalProofPlan::from_operations(vec![
-            InternalProofOperation::ExactPropositionDerivation(derivation),
-        ]);
-        return Ok((fact, plan));
+        return Ok((fact, SimpEvidence::Derivation(derivation)));
     }
     if let Some(derivation) = search_condition_derivation(&goal, &reasoning_available)? {
-        let plan = InternalProofPlan::from_operations(vec![
-            InternalProofOperation::ExactPropositionDerivation(derivation),
-        ]);
-        return Ok((fact, plan));
+        return Ok((fact, SimpEvidence::Derivation(derivation)));
     }
 
     let Some(plan) = plan_simp_certificate(&goal, &assumptions) else {

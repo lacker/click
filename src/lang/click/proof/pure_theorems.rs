@@ -320,11 +320,12 @@ fn lower_pure_simp_certificate(
     theorem: &TheoremDefinition,
     context: &PureTheoremContext,
     goal: &Proposition,
-    certificate: &InternalProofPlan,
+    certificate: &SimpEvidence,
 ) -> Option<Vec<ProofTactic>> {
-    let tactic = match certificate.operations() {
-        [InternalProofOperation::Surface(ProofTactic::Normalize)] => ProofTactic::Normalize,
-        [InternalProofOperation::ExactPropositionDerivation(derivation)] => {
+    let tactic = match certificate {
+        SimpEvidence::Assumption => ProofTactic::Assumption,
+        SimpEvidence::Normalize => ProofTactic::Normalize,
+        SimpEvidence::Derivation(derivation) => {
             let premise_pairs = derivation
                 .context_premises()
                 .iter()
@@ -349,7 +350,6 @@ fn lower_pure_simp_certificate(
                 return None;
             }
         }
-        _ => return None,
     };
     SimpleProof::from_proof_tactics(std::slice::from_ref(&tactic)).ok()?;
     Some(vec![tactic])
