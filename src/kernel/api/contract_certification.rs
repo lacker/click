@@ -1842,6 +1842,21 @@ fn pointer_offsets_equal_with_resolved_atoms(
         left == right
             || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
             || assumptions.memory_loads_proven_equal(left, right)
+            || matches!((left, right), (
+                Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+                Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+            ) if left_pointer == right_pointer
+                && (crate::kernel::c_memory_load_is_unchanged(
+                    left_memory,
+                    right_memory,
+                    left_pointer,
+                    assumptions,
+                ) || crate::kernel::c_memory_load_is_unchanged(
+                    right_memory,
+                    left_memory,
+                    right_pointer,
+                    assumptions,
+                )))
     };
     let atoms_match = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
         if left == right
@@ -2206,6 +2221,7 @@ pub(super) fn certification_proves_proposition(
         }
         Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) => {
             pointer_offsets_proven_equal_for_memory_resolution(left, right, assumptions)
+                || pointer_offsets_equal_with_resolved_atoms(left, right, assumptions)
         }
         Proposition::Equal(Term::CValue(left), Term::CValue(right)) => {
             c_values_proven_equal_for_memory_resolution(left, right, assumptions)

@@ -110,6 +110,55 @@ fn mutable_frame_transports_load_across_certified_effect_chain() {
 }
 
 #[test]
+fn target_directed_transport_preserves_pointer_field_across_disjoint_buffer_write() {
+    let base = Bitvector32Term::Variable(Variable(90_001));
+    let buffer = Bitvector32Term::Variable(Variable(90_002));
+    let index = Bitvector32Term::Variable(Variable(90_003));
+    let field_pointer = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::add(
+            PointerOffsetTerm::scale_int32(base.clone(), 4),
+            PointerOffsetTerm::Constant(8),
+        ),
+    };
+    let written_pointer = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::add(
+            PointerOffsetTerm::scale_int32(buffer, 4),
+            PointerOffsetTerm::scale_int32(index, 4),
+        ),
+    };
+    let old_memory = CMemory::new();
+    let current_memory = old_memory.clone().store(written_pointer.clone(), int32(7));
+    let old_offset = PointerOffsetTerm::scale_int32(
+        Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(old_memory),
+            Box::new(field_pointer.clone()),
+        ),
+        4,
+    );
+    let current_offset = PointerOffsetTerm::scale_int32(
+        Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(current_memory),
+            Box::new(field_pointer.clone()),
+        ),
+        4,
+    );
+    let assumptions = Assumptions::new().assume_proposition(Proposition::CResourceSeparate {
+        left: CResource::Memory(memory_range(field_pointer, 0, 1)),
+        right: CResource::Memory(memory_range(written_pointer, 0, 1)),
+    });
+    let source = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    let target = Proposition::ConditionIs(
+        ConditionTerm::pointer_offset_equal(current_offset, old_offset),
+        true,
+    );
+
+    prove_c_condition_fact_target_transport(&source, &target, &assumptions)
+        .expect("an explicit frame should preserve the pointer-valued field load");
+}
+
+#[test]
 fn unrelated_external_cell_store_preserves_memory_load_with_stack_temporary() {
     let old_memory = CMemory::new();
     let p0 = Pointer {

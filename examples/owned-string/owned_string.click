@@ -371,10 +371,25 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         }
         assumption();
     }
+    have at(statement(4).entry, owner->data) == old(owner->data) by {
+        normalize();
+    }
     have owner->data == old(owner->data) by {
-        derive using {
+        transport(
+            at(statement(4).entry, owner->data) == old(owner->data),
+            owner->data == old(owner->data)
+        ) using {
+            at(statement(4).entry, owner->data) == old(owner->data);
+            at(statement(4).entry, separate(
+                memory(object(owner)),
+                memory(owner->data[0..owner->cap])
+            ));
+            at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
+            at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
+            at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
             at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1));
         }
+        assumption();
     }
     fold(owned_string(owner));
     frame();
