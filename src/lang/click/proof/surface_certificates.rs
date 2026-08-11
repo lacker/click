@@ -3547,38 +3547,14 @@ pub(super) fn certify_outcome_existential_simp(
     }
     let mut unfolds = replay.unfolded_predicates.clone();
     unfolds.retain(|name| predicate_environment.get(name).is_some());
-    // A `calculate` whose surface proposition is the have's own goal takes
-    // the *current* goal as its target (`prove_pure_proposition_case_at_point`
-    // short-circuits the re-lowering when the spellings are identical), so it
-    // discharges the witness-instantiated goal without needing a surface
-    // spelling for it. Its premises are the ambient facts that have one.
-    let mut derivation_premises = Vec::new();
-    for fact in available {
-        if let Ok(surface) = checked_surface_fact_at_outcome(
-            replay,
-            fact,
-            SurfaceFactMatch::CanonicalExact,
-            available,
-            parameters,
-            arguments,
-            pre_state,
-            post_state,
-            result,
-            predicate_environment,
-            click_function_environment,
-        ) && !derivation_premises.contains(&surface)
-        {
-            derivation_premises.push(surface);
-        }
-    }
-    let try_closer = |closer: ProofTactic| -> Result<SimpleProof, String> {
+    let try_closer = |closers: Vec<ProofTactic>| -> Result<SimpleProof, String> {
         let mut tactics = unfolds
             .iter()
             .cloned()
             .map(ProofTactic::UnfoldPredicate)
             .collect::<Vec<_>>();
         tactics.extend(existence_tactics.iter().cloned());
-        tactics.push(closer);
+        tactics.extend(closers);
         let surface_have = ProofHave {
             proposition: surface_goal.clone(),
             proof: Proof::Script(tactics),
@@ -3635,35 +3611,126 @@ pub(super) fn certify_outcome_existential_simp(
     };
     let mut last_error = None;
     for closer in [ProofTactic::Assumption, ProofTactic::Normalize] {
-        match try_closer(closer) {
+        match try_closer(vec![closer]) {
             Ok(certificate) => return Ok(certificate),
             Err(message) => last_error = Some(message),
         }
     }
-    if !derivation_premises.is_empty() {
-        let calculate = |premises: &[ClickProposition]| {
-            ProofTactic::Derive(ProofDerive {
-                premises: premises.to_vec(),
-            })
+    // A choice introduces a proof-local name that outcome lowering cannot
+    // spell outside the replay scope; the ordinary `assumption` attempt above
+    // handles the supported choose-and-witness shape directly. Witness-only
+    // goals have no such name: instantiate both representations and lower the
+    // remaining proposition through the same explicit certificate planner as
+    // every other post-execution `simp`.
+    if existence_tactics
+        .iter()
+        .all(|tactic| matches!(tactic, ProofTactic::Witness(_)))
+    {
+        let parameter_values = parameter_values(parameters, arguments)
+            .map_err(|error| ClickError::new(error.message))?;
+        let array_refs =
+            array_refs_for_parameters(parameters, &parameter_values, post_state.memory());
+        let (values, array_refs) =
+            contract_environment_at_state(&parameter_values, &array_refs, post_state);
+        let mut instantiated_goal = goal.clone();
+        let mut instantiated_surface = if unfolds.is_empty() {
+            surface_goal.clone()
+        } else {
+            unfold_structural_invariant_proposition(
+                predicate_environment,
+                surface_goal,
+                &unfolds,
+            )
+            .map_err(ClickError::new)?
         };
-        match try_closer(calculate(&derivation_premises)) {
-            Ok(certificate) => {
-                // Emit the premises the derivation actually needs rather
-                // than every ambient fact: drop one at a time and keep the
-                // reduction whenever replay still accepts it.
-                let mut index = 0;
-                while index < derivation_premises.len() {
-                    let mut reduced = derivation_premises.clone();
-                    reduced.remove(index);
-                    if !reduced.is_empty() && try_closer(calculate(&reduced)).is_ok() {
-                        derivation_premises = reduced;
-                    } else {
-                        index += 1;
-                    }
-                }
-                return try_closer(calculate(&derivation_premises)).or(Ok(certificate));
+        for (index, tactic) in existence_tactics.iter().enumerate() {
+            let ProofTactic::Witness(witness) = tactic else {
+                unreachable!();
+            };
+            instantiated_goal = unfold_predicates_in_proposition(
+                predicate_environment,
+                click_function_environment,
+                &unfolds,
+                &instantiated_goal,
+                &assumptions_from_propositions(&replay_available),
+            )
+            .map_err(ClickError::new)?;
+            let witness_value = evaluate_witness_tactic_value(
+                witness,
+                claim_label,
+                path_index,
+                index,
+                &values,
+                &array_refs,
+                pre_state,
+                post_state,
+                Some(result),
+                &assumptions_from_propositions(&replay_available),
+                predicate_environment,
+                click_function_environment,
+                &replay.program_point_states,
+            )?;
+            instantiated_goal = apply_witness_tactic(
+                witness,
+                witness_value,
+                instantiated_goal,
+                claim_label,
+                path_index,
+                index,
+            )?;
+            if !matches!(instantiated_surface, ClickProposition::Exists { .. }) {
+                instantiated_surface = synthesize_surface_proposition(
+                    &unfold_predicates_in_proposition(
+                        predicate_environment,
+                        click_function_environment,
+                        &unfolds,
+                        goal,
+                        &assumptions_from_propositions(&replay_available),
+                    )
+                    .map_err(ClickError::new)?,
+                    parameters,
+                    arguments,
+                    post_state,
+                )
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{claim_label}` path {path_index}, tactic {tactic_index}: existential `simp` could not synthesize an explicit witness goal"
+                    ))
+                })?;
             }
-            Err(message) => last_error = Some(message),
+            let ClickProposition::Exists { name, body, .. } = instantiated_surface else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path {path_index}, tactic {tactic_index}: existential `simp` could not expose witness `{}` in its surface goal",
+                    witness.name,
+                )));
+            };
+            instantiated_surface = crate::lang::click::lowering::substitute_click_proposition(
+                &body,
+                &BTreeMap::from([(name, witness.value.clone())]),
+            )
+            .map_err(ClickError::new)?;
+        }
+        match lower_outcome_simp_proof(
+            replay,
+            &instantiated_surface,
+            &instantiated_goal,
+            &replay_available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            predicate_environment,
+            click_function_environment,
+        ) {
+            Ok(Proof::Script(tactics)) => match try_closer(tactics) {
+                Ok(certificate) => return Ok(certificate),
+                Err(message) => last_error = Some(message),
+            },
+            Ok(_) => {
+                last_error = Some("explicit existential closer was not a script".to_string())
+            }
+            Err(error) => last_error = Some(error.message().to_string()),
         }
     }
     Err(ClickError::new(format!(
