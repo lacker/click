@@ -68,10 +68,11 @@ of grow-then-append.
 ## Proof Style
 
 The sidecar mixes concise smart proofs with expanded exact certificates. Read
-the `vector_len` and other short accessor proofs first. Long `step() using` and
-`derive using` blocks are checked replay artifacts retained for predictable
-performance and expansion coverage; ordinary authoring should begin with the
-corresponding smart tactic and expand only after profiling.
+the `vector_len` and other short accessor proofs first. Long `step() using`,
+explicit transports, and named theorem applications are checked replay
+artifacts retained for predictable performance and expansion coverage;
+ordinary authoring should begin with the corresponding smart tactic and
+expand only after profiling.
 
 ## Current Boundary
 
