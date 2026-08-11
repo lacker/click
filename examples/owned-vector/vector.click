@@ -641,7 +641,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
         }
     }
     have loadable(owner->cap) by {
-        derive using {
+        simp() using {
             loadable(old(owner->cap));
         }
     }
