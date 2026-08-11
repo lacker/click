@@ -19,6 +19,14 @@ pub fn uint8(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::UInt8(bits.into())
 }
 
+pub(crate) fn c_pointers_proven_equal_for_memory_resolution(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    super::reasoning::pointers_proven_equal_for_memory_resolution(left, right, assumptions)
+}
+
 /// Certifies a stated condition target from one explicit condition source and
 /// deterministic memory-resolution evidence. Unlike whole-fact transport,
 /// this permits a target to retain an old load on one side while transporting

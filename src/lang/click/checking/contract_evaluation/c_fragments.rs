@@ -298,10 +298,9 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
                 return symbolic_contract_memory_load(memory, pointer, value_type);
             }
             if value_type == CType::Int32
-                && assumptions
-                    .pure_facts()
-                    .iter()
-                    .any(|fact| proposition_certifies_contract_load(fact, memory, &pointer))
+                && assumptions.pure_facts().iter().any(|fact| {
+                    proposition_certifies_contract_load(fact, memory, &pointer, assumptions)
+                })
             {
                 return symbolic_contract_memory_load(memory, pointer, value_type);
             }
@@ -330,17 +329,19 @@ fn proposition_certifies_contract_load(
     proposition: &Proposition,
     memory: &CMemory,
     pointer: &Pointer,
+    assumptions: &Assumptions,
 ) -> bool {
     let Proposition::ConditionIs(condition, _) = proposition else {
         return false;
     };
-    condition_contains_contract_load(condition, memory, pointer)
+    condition_contains_contract_load(condition, memory, pointer, assumptions)
 }
 
 fn condition_contains_contract_load(
     condition: &ConditionTerm,
     memory: &CMemory,
     pointer: &Pointer,
+    assumptions: &Assumptions,
 ) -> bool {
     match condition {
         ConditionTerm::Bitvector32SignedLessThan(left, right)
@@ -353,16 +354,21 @@ fn condition_contains_contract_load(
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
         | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
-            bitvector_contains_contract_load(left, memory, pointer)
-                || bitvector_contains_contract_load(right, memory, pointer)
+            bitvector_contains_contract_load(left, memory, pointer, assumptions)
+                || bitvector_contains_contract_load(right, memory, pointer, assumptions)
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
-            pointer_offset_contains_contract_load(left, memory, pointer)
-                || pointer_offset_contains_contract_load(right, memory, pointer)
+            pointer_offset_contains_contract_load(left, memory, pointer, assumptions)
+                || pointer_offset_contains_contract_load(right, memory, pointer, assumptions)
         }
         ConditionTerm::PointerEqual(left, right) => {
-            pointer_offset_contains_contract_load(&left.offset, memory, pointer)
-                || pointer_offset_contains_contract_load(&right.offset, memory, pointer)
+            pointer_offset_contains_contract_load(&left.offset, memory, pointer, assumptions)
+                || pointer_offset_contains_contract_load(
+                    &right.offset,
+                    memory,
+                    pointer,
+                    assumptions,
+                )
         }
         ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => false,
     }
@@ -372,15 +378,16 @@ fn pointer_offset_contains_contract_load(
     term: &PointerOffsetTerm,
     memory: &CMemory,
     pointer: &Pointer,
+    assumptions: &Assumptions,
 ) -> bool {
     match term {
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
         PointerOffsetTerm::Add(left, right) => {
-            pointer_offset_contains_contract_load(left, memory, pointer)
-                || pointer_offset_contains_contract_load(right, memory, pointer)
+            pointer_offset_contains_contract_load(left, memory, pointer, assumptions)
+                || pointer_offset_contains_contract_load(right, memory, pointer, assumptions)
         }
         PointerOffsetTerm::Int32Scaled { value, .. } => {
-            bitvector_contains_contract_load(value, memory, pointer)
+            bitvector_contains_contract_load(value, memory, pointer, assumptions)
         }
     }
 }
@@ -389,15 +396,30 @@ fn bitvector_contains_contract_load(
     term: &Bitvector32Term,
     memory: &CMemory,
     pointer: &Pointer,
+    assumptions: &Assumptions,
 ) -> bool {
     match term {
         Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
         Bitvector32Term::MemoryLoad(load_memory, load_pointer) => {
-            load_memory.has_same_snapshot_markers(memory)
+            (load_memory.has_same_snapshot_markers(memory)
                 && load_pointer.block == pointer.block
                 && normalize_direct_atomic_pointer_offset_loads(&load_pointer.offset)
-                    == normalize_direct_atomic_pointer_offset_loads(&pointer.offset)
-                || pointer_offset_contains_contract_load(&load_pointer.offset, memory, pointer)
+                    == normalize_direct_atomic_pointer_offset_loads(&pointer.offset))
+                || (crate::kernel::c_memories_connected_by_effects(
+                    load_memory,
+                    memory,
+                    assumptions,
+                ) && crate::kernel::c_pointers_proven_equal_for_memory_resolution(
+                    load_pointer,
+                    pointer,
+                    assumptions,
+                ))
+                || pointer_offset_contains_contract_load(
+                    &load_pointer.offset,
+                    memory,
+                    pointer,
+                    assumptions,
+                )
         }
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)
@@ -409,20 +431,20 @@ fn bitvector_contains_contract_load(
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {
-            bitvector_contains_contract_load(left, memory, pointer)
-                || bitvector_contains_contract_load(right, memory, pointer)
+            bitvector_contains_contract_load(left, memory, pointer, assumptions)
+                || bitvector_contains_contract_load(right, memory, pointer, assumptions)
         }
         Bitvector32Term::BitwiseNot(value) => {
-            bitvector_contains_contract_load(value, memory, pointer)
+            bitvector_contains_contract_load(value, memory, pointer, assumptions)
         }
         Bitvector32Term::If {
             condition,
             then_term,
             else_term,
         } => {
-            condition_contains_contract_load(condition, memory, pointer)
-                || bitvector_contains_contract_load(then_term, memory, pointer)
-                || bitvector_contains_contract_load(else_term, memory, pointer)
+            condition_contains_contract_load(condition, memory, pointer, assumptions)
+                || bitvector_contains_contract_load(then_term, memory, pointer, assumptions)
+                || bitvector_contains_contract_load(else_term, memory, pointer, assumptions)
         }
         Bitvector32Term::RangeFold {
             start,
@@ -431,14 +453,16 @@ fn bitvector_contains_contract_load(
             body,
             ..
         } => {
-            bitvector_contains_contract_load(start, memory, pointer)
-                || bitvector_contains_contract_load(end, memory, pointer)
-                || bitvector_contains_contract_load(initial, memory, pointer)
-                || bitvector_contains_contract_load(body, memory, pointer)
+            bitvector_contains_contract_load(start, memory, pointer, assumptions)
+                || bitvector_contains_contract_load(end, memory, pointer, assumptions)
+                || bitvector_contains_contract_load(initial, memory, pointer, assumptions)
+                || bitvector_contains_contract_load(body, memory, pointer, assumptions)
         }
-        Bitvector32Term::PureFunctionApplication { arguments, .. } => arguments
-            .iter()
-            .any(|argument| bitvector_contains_contract_load(argument, memory, pointer)),
+        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().any(|argument| {
+                bitvector_contains_contract_load(argument, memory, pointer, assumptions)
+            })
+        }
     }
 }
 
@@ -452,6 +476,60 @@ pub(in crate::lang::click) fn c_value_matches_kernel_type(value: &CValue, c_type
                 CType::Int32Pointer | CType::UInt8Pointer
             )
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn certified_load_spelling_transports_through_pointer_alias_and_store() {
+        let source_pointer = Pointer {
+            block: "data".into(),
+            offset: PointerOffsetTerm::Variable(Variable(70_001)),
+        };
+        let target_pointer = Pointer {
+            block: "data".into(),
+            offset: PointerOffsetTerm::Variable(Variable(70_002)),
+        };
+        let written_pointer = Pointer {
+            block: "data".into(),
+            offset: PointerOffsetTerm::Constant(8),
+        };
+        let before = CMemory::new();
+        let after = before.clone().store(written_pointer.clone(), int32(1));
+        let certified_load = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory(before.clone()),
+                    Box::new(source_pointer.clone()),
+                )),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let assumptions = Assumptions::new()
+            .assume_proposition(certified_load.clone())
+            .assume_proposition(Proposition::ConditionIs(
+                ConditionTerm::PointerEqual(
+                    Box::new(source_pointer),
+                    Box::new(target_pointer.clone()),
+                ),
+                true,
+            ))
+            .assume_proposition(Proposition::CMemoryMutatesOnly {
+                before,
+                after: after.clone(),
+                pointers: vec![written_pointer],
+            });
+
+        assert!(proposition_certifies_contract_load(
+            &certified_load,
+            &after,
+            &target_pointer,
+            &assumptions,
+        ));
+    }
 }
 
 pub(in crate::lang::click) fn symbolic_contract_memory_load(

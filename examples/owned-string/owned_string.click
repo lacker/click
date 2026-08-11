@@ -441,7 +441,8 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         }
     }
     have owner->data[owner->len] == 0 by {
-        derive using {
+        simp() using {
+            at(statement(4).exit, (at(statement(4).entry, owner->data) + 0)[at(statement(4).entry, (index + 1))]) == at(statement(4).entry, 0);
             owner->len == (old(owner->len) + 1);
             owner->data == old(owner->data);
         }

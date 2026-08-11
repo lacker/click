@@ -94,6 +94,45 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_program_points(
     )
 }
 
+/// Lowers an explicit proof target while permitting its certified loadability
+/// facts to be matched through exact pointer/index equalities. This does not
+/// defer or synthesize an obligation: every memory load must still be covered
+/// by the supplied proof context.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click) fn lower_outcome_proposition_with_memory_resolution(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    available_pure_facts: &[Proposition],
+    proposition: &ClickProposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    program_point_states: &ProgramPointStates,
+) -> Result<Proposition, String> {
+    let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
+    let assumptions = assumptions_from_propositions(available_pure_facts)
+        .defer_non_exact_loadability_obligations();
+    let mut next_variable = 2_000_000;
+    let mut active_functions = BTreeSet::new();
+    lower_outcome_proposition_with_environment(
+        &mut values,
+        &array_refs,
+        pre_state,
+        post_state,
+        Some(result),
+        &assumptions,
+        proposition,
+        &mut next_variable,
+        predicate_environment,
+        click_function_environment,
+        program_point_states,
+        &mut active_functions,
+    )
+}
+
 /// Lowers a proposition while retaining symbolic external-memory loads even
 /// when the selected snapshot already materializes their values.
 ///

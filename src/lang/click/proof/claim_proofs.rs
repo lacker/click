@@ -1583,12 +1583,26 @@ pub(super) fn finish_ordered_proof_replay(
                                 pre_state,
                                 post_state,
                                 result,
-                                &path_requirements,
+                                &certificate_available,
                                 &have.proposition,
                                 predicate_environment,
                                 click_function_environment,
                                 &replay.program_point_states,
                             )
+                            .or_else(|_| {
+                                lower_outcome_proposition_with_memory_resolution(
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    post_state,
+                                    result,
+                                    &certificate_available,
+                                    &have.proposition,
+                                    predicate_environment,
+                                    click_function_environment,
+                                    &replay.program_point_states,
+                                )
+                            })
                             .map_err(|message| {
                                 ClickError::new(format!(
                                     "`{proof_label}` path {path_index}, tactic {tactic_index}: could not lower smart `have` goal: {message}"
@@ -1771,8 +1785,11 @@ pub(super) fn finish_ordered_proof_replay(
                                 }
                             }
                             let replay_have = |candidate: &ProofHave| {
-                                prove_have_at_point(
-                                    candidate,
+                                prove_pure_proposition_at_point(
+                                    &candidate.proposition,
+                                    Some(&fact),
+                                    &candidate.proof,
+                                    "have",
                                     theorem_environment,
                                     &proof_label,
                                     *tactic_index,

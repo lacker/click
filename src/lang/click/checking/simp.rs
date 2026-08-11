@@ -169,9 +169,9 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
             true,
         );
         if !available.contains(equality) && !available.contains(&reverse) {
-            return Err(format!(
-                "`rewrite` requires an exact available equality, missing {equality:?}"
-            ));
+            return Err(
+                "`rewrite` requires its equality to be an exact available fact".to_string(),
+            );
         }
         let normalized_left = normalize_direct_atomic_pointer_offset_loads(left);
         fn rewrite_offset(
@@ -398,9 +398,9 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
             true,
         );
         if !available.contains(equality) && !available.contains(&reverse) {
-            return Err(format!(
-                "`rewrite` requires an exact available equality, missing {equality:?}"
-            ));
+            return Err(
+                "`rewrite` requires its equality to be an exact available fact".to_string(),
+            );
         }
         let Proposition::ConditionIs(ConditionTerm::PointerEqual(goal_left, goal_right), expected) =
             goal
@@ -443,9 +443,7 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
         true,
     );
     if !available.contains(equality) && !available.contains(&reverse) {
-        return Err(format!(
-            "`rewrite` requires an exact available equality, missing {equality:?}"
-        ));
+        return Err("`rewrite` requires its equality to be an exact available fact".to_string());
     }
     fn rewrite_term(
         term: &Bitvector32Term,

@@ -174,6 +174,70 @@ fn lower_point_proposition_with_values(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn lower_point_proposition_with_memory_resolution(
+    proposition: &ClickProposition,
+    available: &[Proposition],
+    mut values: BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
+    let assumptions =
+        assumptions_from_propositions(available).defer_non_exact_loadability_obligations();
+    let mut next_variable = 2_000_000;
+    let mut active_functions = BTreeSet::new();
+    lower_outcome_proposition_with_environment(
+        &mut values,
+        array_refs,
+        pre_state,
+        state,
+        result,
+        &assumptions,
+        proposition,
+        &mut next_variable,
+        predicate_environment,
+        click_function_environment,
+        program_point_states,
+        &mut active_functions,
+    )
+}
+
+fn reverse_surface_equality(proposition: &ClickProposition) -> Option<ClickProposition> {
+    let ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::Equal,
+        right,
+    } = proposition
+    else {
+        return None;
+    };
+    Some(ClickProposition::Comparison {
+        left: right.clone(),
+        operator: ComparisonOperator::Equal,
+        right: left.clone(),
+    })
+}
+
+fn reverse_kernel_equality(proposition: Proposition) -> Option<Proposition> {
+    match proposition {
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => Some(
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(right, left), true),
+        ),
+        Proposition::ConditionIs(ConditionTerm::PointerEqual(left, right), true) => Some(
+            Proposition::ConditionIs(ConditionTerm::PointerEqual(right, left), true),
+        ),
+        Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) => Some(
+            Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(right, left), true),
+        ),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn prove_have_at_current_point(
     have: &ProofHave,
     theorem_environment: &TheoremEnvironment,
@@ -1133,12 +1197,13 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     let lowered = if let Some(prelowered_goal) = prelowered_goal {
                         prelowered_goal.clone()
                     } else {
+                        let lowering_facts = prepared_derivation_lowering_facts
+                            .as_deref()
+                            .or(direct_goal_lowering_facts.as_deref())
+                            .unwrap_or(&available);
                         lower_point_proposition_with_values(
                             proposition,
-                            prepared_derivation_lowering_facts
-                                .as_deref()
-                                .or(direct_goal_lowering_facts.as_deref())
-                                .unwrap_or(&available),
+                            lowering_facts,
                             values.clone(),
                             &array_refs,
                             pre_state,
@@ -1148,6 +1213,20 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             predicate_environment,
                             click_function_environment,
                         )
+                        .or_else(|_| {
+                            lower_point_proposition_with_memory_resolution(
+                                proposition,
+                                lowering_facts,
+                                values.clone(),
+                                &array_refs,
+                                pre_state,
+                                state,
+                                result,
+                                program_point_states,
+                                predicate_environment,
+                                click_function_environment,
+                            )
+                        })
                         .map_err(|message| {
                             ClickError::new(format!(
                                 "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
@@ -1388,18 +1467,35 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         goal_closed = true;
                     }
                     ProofTactic::Rewrite(surface_equality) => {
-                        let equality = lower_point_proposition_with_values(
-                            surface_equality,
-                            &available,
-                            values.clone(),
-                            &array_refs,
-                            pre_state,
-                            state,
-                            result,
-                            program_point_states,
-                            predicate_environment,
-                            click_function_environment,
-                        )
+                        let equality = surface_propositions
+                            .and_then(|propositions| {
+                                propositions
+                                    .available_kernel(surface_equality, &available)
+                                    .cloned()
+                                    .or_else(|| {
+                                        let reverse =
+                                            reverse_surface_equality(surface_equality)?;
+                                        let kernel = propositions
+                                            .available_kernel(&reverse, &available)?
+                                            .clone();
+                                        reverse_kernel_equality(kernel)
+                                    })
+                            })
+                            .map(Ok)
+                            .unwrap_or_else(|| {
+                                lower_point_proposition_with_values(
+                                    surface_equality,
+                                    &available,
+                                    values.clone(),
+                                    &array_refs,
+                                    pre_state,
+                                    state,
+                                    result,
+                                    program_point_states,
+                                    predicate_environment,
+                                    click_function_environment,
+                                )
+                            })
                         .map_err(|message| {
                             ClickError::new(format!(
                                 "`{claim_label}` {proof_name} proof {outer_tactic_index}: `rewrite` could not lower equality: {message}"
@@ -1456,7 +1552,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 lower_point_proposition_with_values(
                     proposition,
                     &available,
-                    values,
+                    values.clone(),
                     &array_refs,
                     pre_state,
                     state,
@@ -1465,6 +1561,20 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     predicate_environment,
                     click_function_environment,
                 )
+                .or_else(|_| {
+                    lower_point_proposition_with_memory_resolution(
+                        proposition,
+                        &available,
+                        values,
+                        &array_refs,
+                        pre_state,
+                        state,
+                        result,
+                        program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                })
                 .map_err(|message| {
                     ClickError::new(format!(
                         "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
