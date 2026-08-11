@@ -498,9 +498,8 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
         }
         have old(owner->len) < old(owner->cap) implies
             owner->data == old(owner->data) by {
-            derive using {
-                owner->data == old(owner->data);
-            }
+            intro();
+            assumption();
         }
         assumption();
         assumption();
