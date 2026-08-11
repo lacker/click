@@ -929,6 +929,55 @@ fn restricted_simp_premises_retain_declared_resource_argument_types() {
 }
 
 #[test]
+fn transport_using_retains_declared_resource_argument_types() {
+    let source = r#"
+        resource wrapper(owner: int32*) {}
+
+        int32 inspect(int32* owner) {
+            ensures result == 0;
+        } by {
+            have contains(wrapper(owner), memory(owner[0..1])) by {
+                transport(
+                    contains(wrapper(owner), memory(owner[0..1])),
+                    contains(wrapper(owner), memory(owner[0..1]))
+                ) using {
+                    contains(wrapper(owner), memory(owner[0..1]));
+                }
+                assumption();
+            }
+        }
+    "#;
+    let file = parse(source).expect("transport resource premises should parse");
+    let Proof::Script(tactics) = file.function_blocks()[0].grouped_proof().unwrap() else {
+        panic!("expected grouped proof script");
+    };
+    let ProofTactic::Have(ProofHave {
+        proof: Proof::Script(have_tactics),
+        ..
+    }) = &tactics[0]
+    else {
+        panic!("expected have proof");
+    };
+    let ProofTactic::TransportUsing {
+        source,
+        target,
+        premises,
+    } = &have_tactics[0]
+    else {
+        panic!("expected explicit transport");
+    };
+    for proposition in [source, target, &premises[0]] {
+        assert!(matches!(
+            proposition,
+            ClickProposition::Contains {
+                parent: ResourceSubject::Declared { parameter_types, .. },
+                ..
+            } if parameter_types == &[C0Type::Int32Pointer]
+        ));
+    }
+}
+
+#[test]
 fn rejects_reversed_constant_loadable_segment() {
     let c_source = r#"
             int32 read_second(int32* p) {

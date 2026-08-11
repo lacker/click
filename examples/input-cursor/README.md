@@ -31,10 +31,11 @@ programs that actually clone cursor state. The pipeline's mutable footprint
 contains only the two cursor structs; the shared input remains viewed.
 
 The sidecar mixes concise smart proofs with expanded exact certificates. Read
-the small `by auto;` accessors first. The longer `step() using` and
-`derive using` blocks are checked replay artifacts retained for predictable
-performance and expansion coverage; they are not the recommended first draft
-of a Click proof.
+the small `by auto;` accessors first. The longer `step() using`, `rewrite`,
+`transport(...) using`, and named-theorem applications are checked simple
+certificates retained for predictable performance and expansion coverage; they
+are not the recommended first draft of a Click proof. All restricted
+simplifications in this project expand to those explicit rules.
 
 The caller supplies both cursor structs and the backing array. Allocation,
 deallocation, and ownership of the backing array are outside this example's

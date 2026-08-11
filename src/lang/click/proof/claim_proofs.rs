@@ -1709,7 +1709,11 @@ pub(super) fn finish_ordered_proof_replay(
                                 })
                                 .unwrap_or_else(|| planning_available.clone());
                             let closing_tactics = if let Some(pairs) = &restricted_simp_pairs {
-                                plan_restricted_simp_expansion(&unfolded_goal, pairs)
+                                plan_restricted_simp_expansion(
+                                    &unfolded_goal,
+                                    Some(&surface_goal),
+                                    pairs,
+                                )
                             } else {
                                 lower_outcome_simp_tactics(
                                     &certificate_replay,

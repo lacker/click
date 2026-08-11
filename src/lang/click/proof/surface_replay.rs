@@ -2293,7 +2293,18 @@ pub(super) fn surface_smart_have_certificate(
             .cloned()
             .zip(simp.premises.iter().cloned())
             .collect::<Vec<_>>();
-        let explicit = lower_restricted_simp_plan(&explicit_goal, plan, &pairs)?;
+        let restricted_derivation =
+            plan_restricted_simp_goal(&explicit_goal, exact.clone(), &explicit_goal, exact)
+                .map_err(ClickError::new)?;
+        let restricted_plan = InternalProofPlan::from_operations(vec![
+            InternalProofOperation::ExactPropositionDerivation(restricted_derivation),
+        ]);
+        let explicit = lower_restricted_simp_plan(
+            &explicit_goal,
+            Some(&active_surface_goal),
+            &restricted_plan,
+            &pairs,
+        )?;
         let mut tactics = unfolded_predicates
             .iter()
             .cloned()

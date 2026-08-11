@@ -124,7 +124,11 @@ memory-resource `separate` and `contains` propositions, so the expansion names
 both substitutions before its final `assumption`. Its left- and right-cursor
 bound proofs have also migrated: exact equality rewrites can feed their rewritten goal
 into an existing named simple rule, producing two `rewrite` steps followed by
-`int32_successor_le_implies_lt`.
+`int32_successor_le_implies_lt`. The project's final indexed-loadability proof
+has now migrated as well: restricted simplification selects the covering
+loadable range and its two index bounds, then expands to
+`transport(...) using` followed by `assumption`. The input-cursor project no
+longer contains `derive using`.
 
 Other source shapes still need principled surface certificates before their
 old `derive using` blocks can be removed:
@@ -146,7 +150,10 @@ The input-cursor attempt also exposed and fixed a separate lowering bug:
 declaration expansion populated resource argument type metadata in `derive`
 premises but omitted `simp() using` premises. A focused syntax regression now
 keeps that metadata, and the affected arithmetic proofs now expand through the
-named increment theorems instead of failing resource lowering.
+named increment theorems instead of failing resource lowering. Declaration
+expansion now also preserves that metadata in the source, target, and premises
+of explicit `transport`, so an expanded certificate cannot fail merely because
+one of its propositions mentions a composite resource.
 
 Keep affected proof sites unchanged until their focused regressions expand and
 replay. Do not count retaining `derive using` as a workaround for either

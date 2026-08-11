@@ -1015,6 +1015,7 @@ pub(super) fn lower_outcome_simp_tactics(
 
 pub(super) fn lower_restricted_simp_plan(
     goal: &Proposition,
+    surface_goal: Option<&ClickProposition>,
     plan: &InternalProofPlan,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Result<Vec<ProofTactic>, ClickError> {
@@ -1023,13 +1024,14 @@ pub(super) fn lower_restricted_simp_plan(
         .map(|(kernel, _)| kernel.clone())
         .collect::<Vec<_>>();
     let assumptions = assumptions_from_propositions(&available);
-    match plan.operations() {
+    let exact_derivation = match plan.operations() {
         [InternalProofOperation::Surface(ProofTactic::Assumption)] => {
             if !pure_fact_is_replay_available(goal, &available) {
                 return Err(ClickError::new(
                     "`simp() using` selected `assumption`, but the goal is not one of its listed premises",
                 ));
             }
+            None
         }
         [InternalProofOperation::Surface(ProofTactic::Normalize)] => {
             if !normalizes_context_free(goal) {
@@ -1037,6 +1039,7 @@ pub(super) fn lower_restricted_simp_plan(
                     "`simp() using` selected `normalize`, but the goal is not context-free",
                 ));
             }
+            None
         }
         [InternalProofOperation::ExactPropositionDerivation(derivation)] => {
             if derivation.conclusion() != goal || !derivation.replay(&assumptions) {
@@ -1044,13 +1047,14 @@ pub(super) fn lower_restricted_simp_plan(
                     "`simp() using` selected a derivation that does not replay from exactly its listed premises",
                 ));
             }
+            Some(derivation)
         }
         _ => {
             return Err(ClickError::new(
                 "`simp() using` selected an unsupported internal proof shape",
             ));
         }
-    }
+    };
 
     let named_rule = |goal: &Proposition| {
         plan_explicit_increment_strictly_increases(goal, premise_pairs)
@@ -1059,7 +1063,12 @@ pub(super) fn lower_restricted_simp_plan(
             .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
             .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
     };
-    let tactics = named_rule(goal)
+    let loadability_transport = || {
+        exact_derivation?;
+        plan_explicit_loadability_transport(goal, surface_goal?, premise_pairs)
+    };
+    let tactics = loadability_transport()
+        .or_else(|| named_rule(goal))
         .or_else(|| {
             plan_explicit_equality_rewrites_then(
                 goal,
@@ -1091,6 +1100,104 @@ pub(super) fn lower_restricted_simp_plan(
         ))
     })?;
     Ok(tactics)
+}
+
+fn plan_explicit_loadability_transport(
+    goal: &Proposition,
+    surface_goal: &ClickProposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    if !matches!(goal, Proposition::CMemoryLoadable { .. }) {
+        return None;
+    }
+    let Proposition::CMemoryLoadable {
+        bytes: goal_bytes, ..
+    } = goal
+    else {
+        unreachable!()
+    };
+    let mut sources = premise_pairs
+        .iter()
+        .filter(|(kernel, _)| matches!(kernel, Proposition::CMemoryLoadable { .. }))
+        .collect::<Vec<_>>();
+    let surface_is_range = |surface: &ClickProposition| match surface {
+        ClickProposition::At { proposition, .. } => {
+            matches!(
+                proposition.as_ref(),
+                ClickProposition::Loadable { segment }
+                    if matches!(segment.surface, ContractSegmentSurface::Range { .. })
+            )
+        }
+        ClickProposition::Loadable { segment } => {
+            matches!(segment.surface, ContractSegmentSurface::Range { .. })
+        }
+        _ => false,
+    };
+    sources.sort_by_key(|(kernel, surface)| match kernel {
+        Proposition::CMemoryLoadable { bytes, .. } => (
+            (!surface_is_range(surface)) as u8,
+            (bytes == goal_bytes) as u8,
+        ),
+        _ => unreachable!(),
+    });
+    for (source, surface_source) in sources {
+        let mut selected = premise_pairs
+            .iter()
+            .filter(|(kernel, _)| {
+                matches!(
+                    kernel,
+                    Proposition::CMemoryLoadable { .. } | Proposition::ConditionIs(_, _)
+                )
+            })
+            .collect::<Vec<_>>();
+        let proves_goal = |pairs: &[&(Proposition, ClickProposition)]| {
+            let propositions = pairs
+                .iter()
+                .map(|(kernel, _)| kernel.clone())
+                .collect::<Vec<_>>();
+            assumptions_from_propositions(&propositions)
+                .derive_simp_proposition(goal)
+                .is_some()
+        };
+        if !proves_goal(&selected) {
+            continue;
+        }
+        let mut index = 0;
+        while index < selected.len() {
+            if selected[index].0 == *source {
+                index += 1;
+                continue;
+            }
+            let mut reduced = selected.clone();
+            reduced.remove(index);
+            if proves_goal(&reduced) {
+                selected = reduced;
+            } else {
+                index += 1;
+            }
+        }
+        let selected_kernel = selected
+            .iter()
+            .map(|(kernel, _)| kernel.clone())
+            .collect::<Vec<_>>();
+        debug_assert!(
+            assumptions_from_propositions(&selected_kernel)
+                .derive_simp_proposition(goal)
+                .is_some()
+        );
+        return Some(vec![
+            ProofTactic::TransportUsing {
+                source: surface_source.clone(),
+                target: surface_goal.clone(),
+                premises: selected
+                    .into_iter()
+                    .map(|(_, surface)| surface.clone())
+                    .collect(),
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
 }
 
 fn signed_strict_parts(proposition: &Proposition) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
@@ -1369,6 +1476,7 @@ fn plan_explicit_increment_lower_bound(
 
 pub(super) fn plan_restricted_simp_expansion(
     goal: &Proposition,
+    surface_goal: Option<&ClickProposition>,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Result<Vec<ProofTactic>, ClickError> {
     let available = premise_pairs
@@ -1380,7 +1488,7 @@ pub(super) fn plan_restricted_simp_expansion(
     let plan = InternalProofPlan::from_operations(vec![
         InternalProofOperation::ExactPropositionDerivation(derivation),
     ]);
-    lower_restricted_simp_plan(goal, &plan, premise_pairs)
+    lower_restricted_simp_plan(goal, surface_goal, &plan, premise_pairs)
 }
 
 fn collect_definable_predicate_names(

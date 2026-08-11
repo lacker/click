@@ -1506,6 +1506,72 @@ fn restricted_simp_inside_have_expands_to_explicit_equality_rewrites() {
 }
 
 #[test]
+fn restricted_simp_expands_loadable_subrange_to_explicit_transport() {
+    let c_source = r#"
+        int32 read_at(int32 data[], int32 index, int32 length) {
+            return data[index];
+        }
+    "#;
+    let click_source = r#"
+        verifying "read_at.c";
+
+        int32 read_at(int32 data[], int32 index, int32 length) {
+            requires 0 <= index;
+            requires index < length;
+            requires loadable(data[0..length]);
+            views data[0..length];
+            ensures result == old(data[index]);
+        } by {
+            have loadable(data[index..index + 1]) by {
+                simp() using {
+                    loadable(data[0..length]);
+                    0 <= index;
+                    index < length;
+                }
+            }
+            execute();
+            simp();
+        }
+    "#;
+    let offset = click_source
+        .find("have loadable(data[index..index + 1])")
+        .unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let sources = [("read_at.c", c_source)];
+
+    let expanded = expand_c0_tactic_source_at(click_source, &sources, line, column)
+        .expect("restricted simp loadability proof should expand");
+    let expanded_have_start = expanded.find("have loadable(").unwrap();
+    let expanded_have_end = expanded[expanded_have_start..]
+        .find("execute();")
+        .map(|relative| expanded_have_start + relative)
+        .unwrap();
+    let expanded_have = &expanded[expanded_have_start..expanded_have_end];
+    assert!(
+        expanded_have.contains(
+            "transport(loadable(data[0..length]), loadable(data[index..(index + 1)])) using"
+        ),
+        "{expanded_have}"
+    );
+    assert!(expanded_have.contains("0 <= index;"), "{expanded_have}");
+    assert!(expanded_have.contains("index < length;"), "{expanded_have}");
+    assert!(expanded_have.contains("assumption();"), "{expanded_have}");
+    assert!(!expanded_have.contains("simp() using"), "{expanded_have}");
+    assert!(!expanded_have.contains("derive using"), "{expanded_have}");
+    verify_c0_sources(&expanded, &sources).expect("explicit loadability transport should replay");
+}
+
+#[test]
 fn restricted_simp_rewrites_pointer_aliases_inside_memory_loads() {
     let c_source = r#"
         int32 alias_value(

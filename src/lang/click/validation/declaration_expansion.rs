@@ -320,6 +320,28 @@ fn expand_declared_resource_tactic(
         ProofTactic::Contradiction(proposition) => Ok(ProofTactic::Contradiction(
             expand_declared_resource_proposition(proposition, resource_definitions)?,
         )),
+        ProofTactic::Extract(proposition) => Ok(ProofTactic::Extract(
+            expand_declared_resource_proposition(proposition, resource_definitions)?,
+        )),
+        ProofTactic::Rewrite(proposition) => Ok(ProofTactic::Rewrite(
+            expand_declared_resource_proposition(proposition, resource_definitions)?,
+        )),
+        ProofTactic::Transport { source, target } => Ok(ProofTactic::Transport {
+            source: expand_declared_resource_proposition(source, resource_definitions)?,
+            target: expand_declared_resource_proposition(target, resource_definitions)?,
+        }),
+        ProofTactic::TransportUsing {
+            source,
+            target,
+            premises,
+        } => Ok(ProofTactic::TransportUsing {
+            source: expand_declared_resource_proposition(source, resource_definitions)?,
+            target: expand_declared_resource_proposition(target, resource_definitions)?,
+            premises: premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
         ProofTactic::Derive(derive) => Ok(ProofTactic::Derive(ProofDerive {
             premises: derive
                 .premises

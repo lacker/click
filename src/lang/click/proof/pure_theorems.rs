@@ -714,7 +714,7 @@ fn pure_theorem_surface_certificate(
             .map(|(kernel, surface, _)| (kernel.clone(), surface.clone()))
             .collect::<Vec<_>>();
         let explicit =
-            plan_restricted_simp_expansion(&explicit_goal, &premise_pairs).map_err(
+            plan_restricted_simp_expansion(&explicit_goal, None, &premise_pairs).map_err(
                 |error| {
                 ClickError::new(format!(
                     "smart `simp() using` for `{claim_label}` has no explicit simple certificate: {}",
