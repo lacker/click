@@ -161,6 +161,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::ApplyTheorem(_)
             | ProofTactic::ApplyTheoremUsing { .. }
             | ProofTactic::Assumption
+            | ProofTactic::Extract(_)
             | ProofTactic::Normalize
             | ProofTactic::Intro
             | ProofTactic::Split
@@ -236,6 +237,7 @@ pub(in crate::lang::click) fn tactic_name(tactic: &ProofTactic) -> &'static str 
         ProofTactic::Witness(_) => "witness",
         ProofTactic::Choose(_) => "choose",
         ProofTactic::Assumption => "assumption",
+        ProofTactic::Extract(_) => "extract",
         ProofTactic::Normalize => "normalize",
         ProofTactic::Intro => "intro",
         ProofTactic::Split => "split",

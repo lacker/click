@@ -672,7 +672,7 @@ fn pure_theorem_surface_certificate(
             &assumptions_from_propositions(&available),
         )
         .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
-        let premise_pairs = simp
+        let premise_entries = simp
             .premises
             .iter()
             .map(|surface| {
@@ -694,13 +694,10 @@ fn pure_theorem_surface_certificate(
                 if available.iter().any(|fact| {
                     fact == &kernel || condition_polarity_equivalent(fact, &kernel)
                 }) {
-                    return Ok((kernel, surface.clone()));
+                    return Ok((kernel, surface.clone(), false));
                 }
                 if exact_fact_is_available(&kernel, &available) {
-                    return Err(ClickError::new(format!(
-                        "smart `simp() using` for `{claim_label}` has no explicit simple proof rule for extracting listed conjunct `{}` after predicate unfolding",
-                        describe_click_proposition(surface)
-                    )));
+                    return Ok((kernel, surface.clone(), true));
                 }
                 Err(ClickError::new(format!(
                     "smart `simp() using` for `{claim_label}` lost exact listed premise `{}` during certificate generation",
@@ -708,6 +705,10 @@ fn pure_theorem_surface_certificate(
                 )))
             })
             .collect::<Result<Vec<_>, ClickError>>()?;
+        let premise_pairs = premise_entries
+            .iter()
+            .map(|(kernel, surface, _)| (kernel.clone(), surface.clone()))
+            .collect::<Vec<_>>();
         let explicit =
             plan_restricted_simp_expansion(&explicit_goal, &premise_pairs).map_err(
                 |error| {
@@ -720,6 +721,13 @@ fn pure_theorem_surface_certificate(
             .into_iter()
             .map(ProofTactic::UnfoldPredicate)
             .collect::<Vec<_>>();
+        tactics.extend(
+            premise_entries
+                .into_iter()
+                .filter_map(|(_, surface, extract)| {
+                    extract.then_some(ProofTactic::Extract(surface))
+                }),
+        );
         tactics.extend(explicit);
         return SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
@@ -1619,6 +1627,41 @@ fn prove_pure_theorem_tactics(
                     )));
                 }
                 closed = true;
+            }
+            ProofTactic::Extract(surface_proposition) => {
+                let mut proposition = lower_pure_theorem_proposition(
+                    claim_label,
+                    surface_proposition,
+                    &context.values,
+                    &context.array_refs,
+                    &context.memory,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`extract` failed for `{claim_label}`: could not lower proposition: {message}"
+                    ))
+                })?;
+                proposition = unfold_predicates_in_proposition(
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                    &proposition,
+                    &assumptions_from_propositions(&available),
+                )
+                .map_err(|message| {
+                    ClickError::new(format!("`extract` failed for `{claim_label}`: {message}"))
+                })?;
+                if !exact_proper_conjunct_is_available(&proposition, &available) {
+                    return Err(ClickError::new(format!(
+                        "`extract` failed for `{claim_label}`: proposition is not a proper conjunct of an exact available fact: {}",
+                        describe_pure_fact(&proposition, &[], &[])
+                    )));
+                }
+                if !available.contains(&proposition) {
+                    available.push(proposition);
+                }
             }
             ProofTactic::Normalize => {
                 if !normalizes_context_free(&goal) {

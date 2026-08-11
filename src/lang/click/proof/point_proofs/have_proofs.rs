@@ -355,6 +355,10 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
                 .iter()
                 .find(|fact| *fact == &lowered || condition_polarity_equivalent(fact, &lowered))
                 .cloned()
+                .or_else(|| {
+                    exact_proper_conjunct_is_available(&lowered, &available)
+                        .then_some(lowered.clone())
+                })
                 .or_else(|| materialization_equivalent_available_fact(&lowered, &available))
                 .or_else(|| {
                     // A listed `at(...)` fact can denote an available kernel
@@ -960,6 +964,34 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     path_index.unwrap_or(0),
                     inner_tactic_index,
                 )?);
+            }
+            ProofTactic::Extract(surface_proposition) => {
+                let proposition = lower_point_proposition_with_values(
+                    surface_proposition,
+                    &available,
+                    values.clone(),
+                    &array_refs,
+                    pre_state,
+                    state,
+                    result,
+                    program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: `extract` could not lower proposition: {message}"
+                    ))
+                })?;
+                if !exact_proper_conjunct_is_available(&proposition, &available) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: `extract` proposition is not a proper conjunct of an exact available fact: {}",
+                        describe_pure_fact(&proposition, parameters, arguments)
+                    )));
+                }
+                if !available.contains(&proposition) {
+                    available.push(proposition);
+                }
             }
             ProofTactic::Assumption
             | ProofTactic::Normalize

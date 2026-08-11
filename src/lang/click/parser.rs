@@ -1926,6 +1926,12 @@ impl Parser {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::Assumption
             }
+            "extract" => {
+                self.expect(Token::LParen)?;
+                let proposition = self.parse_proposition()?;
+                self.expect(Token::RParen)?;
+                ProofTactic::Extract(proposition)
+            }
             "normalize" => {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::Normalize

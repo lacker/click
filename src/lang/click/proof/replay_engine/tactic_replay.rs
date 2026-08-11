@@ -2463,6 +2463,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 }
             }
             ProofTactic::Intro
+            | ProofTactic::Extract(_)
             | ProofTactic::Split
             | ProofTactic::Left
             | ProofTactic::Right

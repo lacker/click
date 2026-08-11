@@ -312,6 +312,11 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             ),
         ),
         ProofTactic::Assumption => line(output, &prefix, "assumption();"),
+        ProofTactic::Extract(proposition) => line(
+            output,
+            &prefix,
+            &format!("extract({});", source_click_proposition(proposition)),
+        ),
         ProofTactic::Normalize => line(output, &prefix, "normalize();"),
         ProofTactic::Intro => line(output, &prefix, "intro();"),
         ProofTactic::Split => line(output, &prefix, "split();"),

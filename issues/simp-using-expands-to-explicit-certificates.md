@@ -126,10 +126,10 @@ blocks can be removed:
   transport before they can even be lowered in the restricted context. Keep
   these sites unchanged until expansion selects that evidence explicitly;
   do not restore ambient lowering or derivation fallbacks.
-- A listed fact exposed as one conjunct of an unfolded predicate has no simple
-  conjunction-elimination rule yet. Restricted simplification now reports
-  that missing vocabulary directly instead of hiding the extraction inside a
-  generated `derive`.
+- Listed facts exposed as conjuncts of an unfolded predicate now expand
+  through the simple `extract(P)` rule. The certificate names each extracted
+  fact before using it; neither `assumption` nor `rewrite` silently searches a
+  conjunction.
 
 The input-cursor attempt also exposed and fixed a separate lowering bug:
 declaration expansion populated resource argument type metadata in `derive`

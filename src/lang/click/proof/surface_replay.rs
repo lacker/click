@@ -2159,6 +2159,22 @@ pub(super) fn surface_smart_have_certificate(
     plan: &InternalProofPlan,
     unfolded_predicates: &[String],
 ) -> Result<SimpleProof, ClickError> {
+    let restricted_simp = matches!(
+        &have.proof,
+        Proof::Script(tactics) if matches!(tactics.last(), Some(ProofTactic::SimpUsing(_)))
+    );
+    let unfolded_available = (restricted_simp && !unfolded_predicates.is_empty())
+        .then(|| {
+            unfold_available_predicate_facts(
+                predicate_environment,
+                click_function_environment,
+                unfolded_predicates,
+                available,
+            )
+            .map_err(ClickError::new)
+        })
+        .transpose()?;
+    let restricted_context_available = unfolded_available.as_deref().unwrap_or(available);
     let restricted_available = match &have.proof {
         Proof::Script(tactics) => tactics.last().and_then(|tactic| match tactic {
             ProofTactic::SimpUsing(simp) => Some(
@@ -2167,14 +2183,14 @@ pub(super) fn surface_smart_have_certificate(
                     .map(|surface| {
                         if let Some(kernel) = replay
                             .surface_propositions
-                            .available_kernel(surface, available)
+                            .available_kernel(surface, restricted_context_available)
                             .cloned()
                         {
                             return Ok(kernel);
                         }
                         let freshly_lowered = lower_point_proposition(
                             surface,
-                            &facts_for_restricted_simp_lowering(available),
+                            &facts_for_restricted_simp_lowering(restricted_context_available),
                             parameters,
                             arguments,
                             replay.old_reference_state(state),
@@ -2185,7 +2201,7 @@ pub(super) fn surface_smart_have_certificate(
                             click_function_environment,
                         );
                         if let Ok(lowered) = &freshly_lowered
-                            && let Some(fact) = available.iter().find(|fact| {
+                            && let Some(fact) = restricted_context_available.iter().find(|fact| {
                                 *fact == lowered
                                     || condition_polarity_equivalent(fact, lowered)
                             })
@@ -2193,13 +2209,28 @@ pub(super) fn surface_smart_have_certificate(
                             return Ok(fact.clone());
                         }
                         if let Ok(lowered) = &freshly_lowered
+                            && exact_proper_conjunct_is_available(
+                                lowered,
+                                restricted_context_available,
+                            )
+                        {
+                            return Ok(lowered.clone());
+                        }
+                        if let Ok(lowered) = &freshly_lowered
                             && let Some(fact) =
-                                materialization_equivalent_available_fact(lowered, available)
+                                materialization_equivalent_available_fact(
+                                    lowered,
+                                    restricted_context_available,
+                                )
                         {
                             return Ok(fact);
                         }
                         if let Ok(lowered) = &freshly_lowered
-                            && snapshot_bridged_fact_is_available(lowered, available, &[])
+                            && snapshot_bridged_fact_is_available(
+                                lowered,
+                                restricted_context_available,
+                                &[],
+                            )
                         {
                             // Retain the listed spelling after checking that
                             // it is the same available fact across certified
@@ -2268,6 +2299,14 @@ pub(super) fn surface_smart_have_certificate(
             .cloned()
             .map(ProofTactic::UnfoldPredicate)
             .collect::<Vec<_>>();
+        tactics.extend(
+            pairs
+                .iter()
+                .filter(|(kernel, _)| {
+                    exact_proper_conjunct_is_available(kernel, restricted_context_available)
+                })
+                .map(|(_, surface)| ProofTactic::Extract(surface.clone())),
+        );
         tactics.extend(explicit);
         Proof::Script(tactics)
     } else {

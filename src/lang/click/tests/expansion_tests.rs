@@ -1118,7 +1118,7 @@ fn restricted_simp_expands_to_explicit_equality_rewrites() {
 }
 
 #[test]
-fn restricted_simp_after_unfold_does_not_hide_conjunction_extraction_in_derive() {
+fn restricted_simp_after_unfold_expands_explicit_conjunction_extraction() {
     let click_source = r#"
             predicate equality_chain(x: int32, y: int32, z: int32) {
                 x == y and y == z
@@ -1148,20 +1148,15 @@ fn restricted_simp_after_unfold_does_not_hide_conjunction_extraction_in_derive()
             .unwrap_or(0)
         + 1;
 
-    let error = expand_c0_tactic_source_at(click_source, &[], line, column)
-        .expect_err("missing conjunction elimination must not fall back to derive");
-    assert!(
-        error
-            .message()
-            .contains("no explicit simple proof rule for extracting listed conjunct"),
-        "{}",
-        error.message()
-    );
-    assert!(
-        !error.message().contains("derive using"),
-        "{}",
-        error.message()
-    );
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("conjunction elimination should have an explicit expansion");
+    assert!(expanded.contains("extract(x == y);"), "{expanded}");
+    assert!(expanded.contains("extract(y == z);"), "{expanded}");
+    assert!(expanded.contains("rewrite(x == y);"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[])
+        .expect("explicit conjunction-elimination certificate should replay");
 }
 
 #[test]
@@ -1671,6 +1666,59 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
     assert!(!expanded_have.contains("simp();"), "{expanded_have}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
         .expect("the expanded unfolded smart have should replay");
+}
+
+#[test]
+fn source_expander_extracts_unfolded_conjuncts_inside_have() {
+    let c_source = r#"
+            int32 identity(int32 x, int32 y, int32 z) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            predicate equality_chain(x: int32, y: int32, z: int32) {
+                x == y and y == z
+            }
+
+            verifying "identity.c";
+
+            int32 identity(int32 x, int32 y, int32 z) {
+                requires equality_chain(x, y, z);
+                ensures result == x;
+            } by {
+                have x == z by {
+                    unfold(equality_chain);
+                    simp() using {
+                        x == y;
+                        y == z;
+                    }
+                }
+                execute();
+                simp();
+            }
+        "#;
+    let offset = click_source.find("have x == z").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("identity.c", c_source)], line, column)
+            .expect("restricted simp should extract its unfolded conjunct premises");
+    assert!(expanded.contains("extract(x == y);"), "{expanded}");
+    assert!(expanded.contains("extract(y == z);"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("expanded point-proof conjunction extraction should replay");
 }
 
 #[test]
