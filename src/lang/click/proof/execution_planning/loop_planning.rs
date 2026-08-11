@@ -834,7 +834,14 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                     .to_vec(),
                 ..SimpleProofBuilder::default()
             };
-            finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &capture, false);
+            // A region whose invariants are already closed has a
+            // legitimately empty closer: the selected `simp` contributes no
+            // surface tactics and its exact expansion removes it.
+            finish_tactic_expansion_capture(
+                expansion_capture.as_deref_mut(),
+                &capture,
+                closer_tactics.is_empty(),
+            );
         }
         let surface_tactics =
             SimpleProof::from_steps(context.replay.simple_proof_builder.steps.clone())

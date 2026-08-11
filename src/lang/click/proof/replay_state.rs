@@ -211,11 +211,14 @@ pub(in crate::lang::click) fn capture_c0_proof_site_expansion(
         Err(error) => Err(error),
         Ok(_) if matches!(site, ProofSite::LoopPhase { .. }) => {
             // A loop phase nested under an unreachable C path can have no
-            // initialization/preservation obligations at all.  There is no
-            // path certificate to retain in that case; emit a canonical
-            // simple proof.  Reverification remains the authority and will
-            // reject `assumption` if the phase was actually reachable.
-            Ok(vec![ProofTactic::Assumption])
+            // initialization/preservation obligations at all. There is no
+            // path certificate to retain, and a synthesized stand-in proof
+            // would present itself as verified evidence; report the empty
+            // obligation set instead of inventing one.
+            Err(ClickError::new(format!(
+                "verification retained no certificate for {}: the phase produced no proof obligations (its loop may sit under an unreachable path), so there is no proof to expand",
+                site.description()
+            )))
         }
         Ok(_) => Err(ClickError::new(format!(
             "verification did not retain a certificate for {}",
