@@ -71,6 +71,13 @@ theorem int32_le_lt_transitive(first: int32, middle: int32, last: int32) {
 
     ensures first < last;
 }
+
+theorem int32_le_and_not_lt_implies_eq(left: int32, right: int32) {
+    requires left <= right;
+    requires not (left < right);
+
+    ensures left == right;
+}
 ```
 
 The strict upper premise rules out signed overflow. It proves that increment
@@ -88,6 +95,8 @@ Its strict-decrease companion records `value - 1 < value` under the same
 no-underflow premise.
 The transitivity theorem combines a non-strict bound with a following strict
 bound without asking simplification to rediscover the order chain.
+The loop-exit equality theorem combines an upper bound with the negation of
+the corresponding strict loop condition.
 Smart simplification may select these theorems, while expansion records an
 ordinary simple `apply(...) using { ... }` step with the exact premises. Each
 declaration is checked against its fixed kernel axiom; users cannot introduce

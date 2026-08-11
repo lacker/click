@@ -185,6 +185,7 @@ pub(super) fn lower_surface_atomic_derivation(
                     &premise_pairs,
                 )
             })
+            .or_else(|| plan_explicit_le_and_not_lt_implies_eq(&lowered_conclusion, &premise_pairs))
     {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
@@ -1155,6 +1156,7 @@ pub(super) fn lower_restricted_simp_plan(
             .or_else(|| {
                 plan_explicit_positive_predecessor_strictly_decreases(goal, premise_pairs)
             })
+            .or_else(|| plan_explicit_le_and_not_lt_implies_eq(goal, premise_pairs))
     };
     let loadability_transport = || {
         exact_derivation?;
@@ -1494,6 +1496,45 @@ fn plan_explicit_positive_predecessor_strictly_decreases(
             },
             ProofTactic::Assumption,
         ]);
+    }
+    None
+}
+
+fn plan_explicit_le_and_not_lt_implies_eq(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = goal else {
+        return None;
+    };
+    for (le_kernel, le_surface) in premise_pairs {
+        let Some((le_left, le_right)) = signed_nonstrict_parts(le_kernel) else {
+            continue;
+        };
+        if le_left != left.as_ref() || le_right != right.as_ref() {
+            continue;
+        }
+        for (not_lt_kernel, not_lt_surface) in premise_pairs {
+            if not_lt_kernel
+                != &Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(left.clone(), right.clone()),
+                    false,
+                )
+            {
+                continue;
+            }
+            let (surface_left, surface_right) = surface_nonstrict_parts(le_surface)?;
+            return Some(vec![
+                ProofTactic::ApplyTheoremUsing {
+                    application: TheoremApplication {
+                        name: "int32_le_and_not_lt_implies_eq".to_string(),
+                        arguments: vec![surface_left, surface_right],
+                    },
+                    premises: vec![le_surface.clone(), not_lt_surface.clone()],
+                },
+                ProofTactic::Assumption,
+            ]);
+        }
     }
     None
 }

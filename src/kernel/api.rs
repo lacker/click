@@ -2248,6 +2248,33 @@ pub fn prove_int32_le_antisymmetric(left: Bitvector32Term, right: Bitvector32Ter
     ))
 }
 
+/// A signed int32 value at most another is equal to it when it is not
+/// strictly smaller.
+pub fn prove_int32_le_and_not_lt_implies_eq(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+) -> Theorem {
+    let le_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+        true,
+    );
+    let not_lt_premise = Proposition::Not(Box::new(Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(left.clone(), right.clone()),
+        true,
+    )));
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(le_premise),
+        Box::new(Proposition::Implies(
+            Box::new(not_lt_premise),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
 /// Any signed int32 value that is at least one is nonnegative.
 pub fn prove_int32_positive_is_nonnegative(value: Bitvector32Term) -> Theorem {
     let premise = Proposition::ConditionIs(

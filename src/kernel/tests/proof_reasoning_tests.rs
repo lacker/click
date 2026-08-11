@@ -185,6 +185,36 @@ fn int32_successor_le_implies_lt_axiom_has_the_exact_implications() {
 }
 
 #[test]
+fn int32_le_and_not_lt_implies_eq_axiom_has_the_exact_implications() {
+    let left = Bitvector32Term::Variable(Variable(90_032));
+    let right = Bitvector32Term::Variable(Variable(90_033));
+    let theorem = prove_int32_le_and_not_lt_implies_eq(left.clone(), right.clone());
+    let le_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+        true,
+    );
+    let not_lt_premise = Proposition::Not(Box::new(Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(left.clone(), right.clone()),
+        true,
+    )));
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(le_premise),
+            Box::new(Proposition::Implies(
+                Box::new(not_lt_premise),
+                Box::new(conclusion),
+            )),
+        )
+    );
+}
+
+#[test]
 fn int32_le_antisymmetric_axiom_has_the_exact_implications() {
     let left = Bitvector32Term::Variable(Variable(90_040));
     let right = Bitvector32Term::Variable(Variable(90_041));

@@ -58,6 +58,13 @@ theorem int32_le_lt_transitive(first: int32, middle: int32, last: int32) {
     ensures first < last;
 }
 
+theorem int32_le_and_not_lt_implies_eq(left: int32, right: int32) {
+    requires left <= right;
+    requires not (left < right);
+
+    ensures left == right;
+}
+
 function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 {
     (lo..hi).fold(0, |acc, k| {
         acc + if p[k] == x { 1 } else { 0 }
