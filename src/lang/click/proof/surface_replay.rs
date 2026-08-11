@@ -505,7 +505,7 @@ pub(super) fn construct_simple_step_for_planned_operation(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     environments: ConstructionEnvironments<'_>,
-    operation: &InternalProofOperation,
+    operation: &ConstructionEvidence,
 ) {
     let mut builder = std::mem::take(&mut replay.simple_proof_builder);
     let available = std::mem::take(&mut builder.certificate_facts);
@@ -540,7 +540,7 @@ pub(super) fn append_simple_proof_step_for_operation(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     surface_tactic: Option<&ProofTactic>,
-    internal_operation: Option<&InternalProofOperation>,
+    internal_operation: Option<&ConstructionEvidence>,
     _statement_uses_memory_context: Option<bool>,
 ) {
     if replay.simple_proof_builder.blocker.is_some() {
@@ -553,7 +553,7 @@ pub(super) fn append_simple_proof_step_for_operation(
     match (surface_tactic, internal_operation) {
         (
             None,
-            Some(InternalProofOperation::CertifiedStatementStep {
+            Some(ConstructionEvidence::CertifiedStatementStep {
                 prerequisite_derivations,
                 exact_premises,
                 planned_transition: Some(planned_transition),
@@ -576,7 +576,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 predicate_environment,
                 click_function_environment,
                 None,
-                Some(&InternalProofOperation::CertifiedStatementStep {
+                Some(&ConstructionEvidence::CertifiedStatementStep {
                     prerequisite_derivations: prerequisite_derivations.clone(),
                     exact_premises: exact_premises.clone(),
                     planned_transition: None,
@@ -686,7 +686,7 @@ pub(super) fn append_simple_proof_step_for_operation(
         }
         (
             None,
-            Some(InternalProofOperation::CertifiedLoopSummaryStep {
+            Some(ConstructionEvidence::CertifiedLoopSummaryStep {
                 prerequisite_derivations,
                 exact_premises,
                 planned_transition: Some(planned_transition),
@@ -708,7 +708,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 predicate_environment,
                 click_function_environment,
                 None,
-                Some(&InternalProofOperation::CertifiedLoopSummaryStep {
+                Some(&ConstructionEvidence::CertifiedLoopSummaryStep {
                     prerequisite_derivations: prerequisite_derivations.clone(),
                     exact_premises: exact_premises.clone(),
                     planned_transition: None,
@@ -719,7 +719,7 @@ pub(super) fn append_simple_proof_step_for_operation(
         }
         (
             None,
-            Some(InternalProofOperation::CertifiedStatementStep {
+            Some(ConstructionEvidence::CertifiedStatementStep {
                 prerequisite_derivations: derivations,
                 exact_premises,
                 ..
@@ -948,7 +948,7 @@ pub(super) fn append_simple_proof_step_for_operation(
         }
         (
             None,
-            Some(InternalProofOperation::CertifiedLoopSummaryStep {
+            Some(ConstructionEvidence::CertifiedLoopSummaryStep {
                 prerequisite_derivations: derivations,
                 exact_premises,
                 ..
@@ -1336,7 +1336,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 ),
             });
         }
-        (None, Some(InternalProofOperation::CertifiedFactTransport { source, target, .. })) => {
+        (None, Some(ConstructionEvidence::CertifiedFactTransport { source, target, .. })) => {
             let Some(step_entry) = replay.simple_proof_builder.last_step_entry.clone() else {
                 replay
                     .simple_proof_builder
@@ -1630,10 +1630,10 @@ pub(super) fn append_simple_proof_step_for_operation(
                 )),
             }
         }
-        (None, Some(InternalProofOperation::FinishCertifiedFactTransports(_))) => {}
+        (None, Some(ConstructionEvidence::FinishCertifiedFactTransports(_))) => {}
         (
             None,
-            Some(InternalProofOperation::CertifiedPathAssumption {
+            Some(ConstructionEvidence::CertifiedPathAssumption {
                 occurrence,
                 condition,
                 value,
@@ -1723,7 +1723,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     .block(format!("could not lower control-flow tactic: {error:?}")),
             }
         }
-        (None, Some(InternalProofOperation::CertifiedFrame(path_derivations))) => {
+        (None, Some(ConstructionEvidence::CertifiedFrame(path_derivations))) => {
             let lowered = path_derivations
                 .iter()
                 .map(|derivations| {

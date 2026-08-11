@@ -1704,7 +1704,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         predicate_environment,
                         click_function_environment,
                     },
-                    &InternalProofOperation::CertifiedFrame(path_derivations),
+                    &ConstructionEvidence::CertifiedFrame(path_derivations),
                 );
                 let construction = std::mem::take(&mut construction_replay.simple_proof_builder);
                 let result = complete_smart_tactic(

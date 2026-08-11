@@ -57,6 +57,38 @@ use theorem_application::*;
 pub(super) use timing::{SourceTacticClass, source_tactic_class};
 use timing::{TacticTiming, has_independent_source_timing};
 
+/// Checked kernel evidence used as the input to constructing one
+/// [`SimpleProofStep`]. Evidence never forms an ordered replayable program of
+/// its own: search consumes it transiently to spell the surface step, and the
+/// resulting `SimpleProof` is what replays.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::lang::click::proof) enum ConstructionEvidence {
+    CertifiedStatementStep {
+        prerequisite_derivations: Vec<PropositionDerivation>,
+        exact_premises: Vec<Proposition>,
+        planned_transition: Option<usize>,
+    },
+    CertifiedLoopSummaryStep {
+        prerequisite_derivations: Vec<PropositionDerivation>,
+        exact_premises: Vec<Proposition>,
+        planned_transition: Option<usize>,
+    },
+    CertifiedFactTransport {
+        source: Proposition,
+        target: Proposition,
+        theorem: Theorem,
+    },
+    FinishCertifiedFactTransports(Vec<Proposition>),
+    CertifiedPathAssumption {
+        occurrence: usize,
+        condition: ClickProposition,
+        value: bool,
+        facts: Vec<Proposition>,
+        theorem: Theorem,
+    },
+    CertifiedFrame(Vec<Vec<PropositionDerivation>>),
+}
+
 type NextTopLevelStatement = (CState, CState, CStatement, Option<CStatement>);
 
 fn check_verification_deadline() -> Result<(), ClickError> {

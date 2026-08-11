@@ -1045,38 +1045,6 @@ struct SimpleStructuralItem {
     effect_proof: Option<Box<SimpleProof>>,
 }
 
-/// Checked kernel evidence used as the input to constructing one
-/// [`SimpleProofStep`]. An operation never forms an ordered replayable
-/// program of its own: search consumes it transiently to spell the surface
-/// step, and the resulting `SimpleProof` is what replays.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum InternalProofOperation {
-    CertifiedStatementStep {
-        prerequisite_derivations: Vec<PropositionDerivation>,
-        exact_premises: Vec<Proposition>,
-        planned_transition: Option<usize>,
-    },
-    CertifiedLoopSummaryStep {
-        prerequisite_derivations: Vec<PropositionDerivation>,
-        exact_premises: Vec<Proposition>,
-        planned_transition: Option<usize>,
-    },
-    CertifiedFactTransport {
-        source: Proposition,
-        target: Proposition,
-        theorem: Theorem,
-    },
-    FinishCertifiedFactTransports(Vec<Proposition>),
-    CertifiedPathAssumption {
-        occurrence: usize,
-        condition: ClickProposition,
-        value: bool,
-        facts: Vec<Proposition>,
-        theorem: Theorem,
-    },
-    CertifiedFrame(Vec<Vec<PropositionDerivation>>),
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CertificatePathSegment {
     Tactic(usize),
