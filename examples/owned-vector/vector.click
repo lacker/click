@@ -678,7 +678,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
                 }
             }
             have i <= owner->len by {
-                derive using {
+                simp() using {
                     at(statement(3).entry, i) < at(statement(3).entry, owner->len);
                 }
             }
