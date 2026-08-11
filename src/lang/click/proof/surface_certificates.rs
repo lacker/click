@@ -379,8 +379,13 @@ pub(super) fn lower_surface_atomic_derivation(
     )))
 }
 
+enum OutcomeSimpSelection {
+    Simple(ProofTactic),
+    Premises(Vec<ClickProposition>),
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(super) fn lower_outcome_simp_tactic(
+fn select_outcome_simp_certificate(
     replay: &TacticReplayState,
     surface_goal: &ClickProposition,
     goal: &Proposition,
@@ -392,7 +397,7 @@ pub(super) fn lower_outcome_simp_tactic(
     result: &CValue,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-) -> Result<ProofTactic, ClickError> {
+) -> Result<OutcomeSimpSelection, ClickError> {
     check_verification_deadline()?;
     let check = |surface: &ClickProposition| {
         lower_outcome_proposition_with_program_points(
@@ -416,13 +421,13 @@ pub(super) fn lower_outcome_simp_tactic(
     if matches!(normalize_proposition(goal), SimpProposition::True)
         && check(surface_goal).is_ok_and(|lowered| normalizes_context_free(&lowered))
     {
-        return Ok(ProofTactic::Normalize);
+        return Ok(OutcomeSimpSelection::Simple(ProofTactic::Normalize));
     }
-    // A kernel derivation is not yet a usable Surface Click certificate: a
-    // synthesized premise can lower to a different snapshot spelling when
-    // the emitted `derive` is replayed. Validate the actual surface premises
-    // against the current goal before returning them.
-    let replayable_derive = |premises: Vec<ClickProposition>| {
+    // A kernel derivation is not yet usable surface evidence: a synthesized
+    // premise can lower to a different snapshot spelling during replay.
+    // Validate the actual surface premises before handing them to the
+    // explicit-certificate planner below.
+    let replayable_premises = |premises: Vec<ClickProposition>| {
         let tactic = ProofTactic::Derive(ProofDerive {
             premises: premises.clone(),
         });
@@ -433,12 +438,12 @@ pub(super) fn lower_outcome_simp_tactic(
             .ok()?;
         let replayable =
             check_atomic_derivation_goal(&tactic, goal, lowered, goal, available).is_ok();
-        replayable.then_some(tactic)
+        replayable.then_some(OutcomeSimpSelection::Premises(premises))
     };
     if check(surface_goal)
         .is_ok_and(|surface_goal| pure_fact_is_replay_available(&surface_goal, available))
     {
-        return Ok(ProofTactic::Assumption);
+        return Ok(OutcomeSimpSelection::Simple(ProofTactic::Assumption));
     }
     let normalized_goal = normalize_direct_atomic_memory_loads(goal);
     let mut atomic_available = Vec::new();
@@ -560,8 +565,8 @@ pub(super) fn lower_outcome_simp_tactic(
                     .into_iter()
                     .map(|(_, surface)| surface)
                     .collect();
-                if let Some(tactic) = replayable_derive(premises) {
-                    return Ok(tactic);
+                if let Some(selection) = replayable_premises(premises) {
+                    return Ok(selection);
                 }
             }
         }
@@ -601,9 +606,9 @@ pub(super) fn lower_outcome_simp_tactic(
                 })
                 .collect::<Result<Vec<_>, _>>();
             if let Ok(surface_premises) = surface_premises
-                && let Some(tactic) = replayable_derive(surface_premises)
+                && let Some(selection) = replayable_premises(surface_premises)
             {
-                return Ok(tactic);
+                return Ok(selection);
             }
         }
     }
@@ -627,9 +632,9 @@ pub(super) fn lower_outcome_simp_tactic(
             };
             let assumptions = assumptions_from_propositions(std::slice::from_ref(&available_fact));
             if assumptions.derive_simp_proposition(goal).is_some()
-                && let Some(tactic) = replayable_derive(vec![candidate])
+                && let Some(selection) = replayable_premises(vec![candidate])
             {
-                return Ok(tactic);
+                return Ok(selection);
             }
         }
     }
@@ -657,17 +662,17 @@ pub(super) fn lower_outcome_simp_tactic(
             .derive_atomic_proposition(goal)
             .or_else(|| assumptions.derive_proposition(goal))
             .is_some()
-            && let Some(tactic) = replayable_derive(vec![surface.clone()])
+            && let Some(selection) = replayable_premises(vec![surface.clone()])
         {
-            return Ok(tactic);
+            return Ok(selection);
         }
         if assumptions
             .derive_simp_atomic_proposition(goal)
             .or_else(|| assumptions.derive_simp_proposition(goal))
             .is_some()
-            && let Some(tactic) = replayable_derive(vec![surface])
+            && let Some(selection) = replayable_premises(vec![surface])
         {
-            return Ok(tactic);
+            return Ok(selection);
         }
     }
     let mut premise_pairs = Vec::new();
@@ -848,8 +853,8 @@ pub(super) fn lower_outcome_simp_tactic(
             .collect::<Vec<_>>();
         if derivation.replay(&assumptions_from_propositions(&selected_kernel)) {
             let premises = selected.into_iter().map(|(_, surface)| surface).collect();
-            if let Some(tactic) = replayable_derive(premises) {
-                return Ok(tactic);
+            if let Some(selection) = replayable_premises(premises) {
+                return Ok(selection);
             }
         }
     }
@@ -869,9 +874,9 @@ pub(super) fn lower_outcome_simp_tactic(
                 .derive_simp_atomic_proposition(&normalized_goal)
                 .or_else(|| assumptions.derive_simp_proposition(&normalized_goal))
                 .is_some()))
-        && let Some(tactic) = replayable_derive(surface_premises.clone())
+        && let Some(selection) = replayable_premises(surface_premises.clone())
     {
-        return Ok(tactic);
+        return Ok(selection);
     }
     {
         // Effect-backed postconditions derive from kernel-certified facts
@@ -894,26 +899,20 @@ pub(super) fn lower_outcome_simp_tactic(
                 certified_context.push(equation.clone());
             }
         }
-        for candidate in [
-            ProofTactic::Derive(ProofDerive {
-                premises: surface_premises.clone(),
-            }),
-            ProofTactic::Derive(ProofDerive {
-                premises: surface_premises.clone(),
-            }),
-        ] {
-            check_verification_deadline()?;
-            if check_atomic_derivation_goal(
-                &candidate,
-                goal,
-                kernel_premises.clone(),
-                goal,
-                &certified_context,
-            )
-            .is_ok()
-            {
-                return Ok(candidate);
-            }
+        let candidate = ProofTactic::Derive(ProofDerive {
+            premises: surface_premises.clone(),
+        });
+        check_verification_deadline()?;
+        if check_atomic_derivation_goal(
+            &candidate,
+            goal,
+            kernel_premises.clone(),
+            goal,
+            &certified_context,
+        )
+        .is_ok()
+        {
+            return Ok(OutcomeSimpSelection::Premises(surface_premises.clone()));
         }
         let spelled_store_equations = certified_store_equations
             .iter()
@@ -949,25 +948,19 @@ pub(super) fn lower_outcome_simp_tactic(
                 .iter()
                 .map(|(_, surface)| surface.clone())
                 .collect::<Vec<_>>();
-            for candidate in [
-                ProofTactic::Derive(ProofDerive {
-                    premises: surface_premises.clone(),
-                }),
-                ProofTactic::Derive(ProofDerive {
-                    premises: surface_premises.clone(),
-                }),
-            ] {
-                check_verification_deadline()?;
-                let checked = check_atomic_derivation_goal(
-                    &candidate,
-                    goal,
-                    kernel_premises.clone(),
-                    goal,
-                    &certified_context,
-                );
-                if checked.is_ok() {
-                    return Ok(candidate);
-                }
+            let candidate = ProofTactic::Derive(ProofDerive {
+                premises: surface_premises.clone(),
+            });
+            check_verification_deadline()?;
+            let checked = check_atomic_derivation_goal(
+                &candidate,
+                goal,
+                kernel_premises.clone(),
+                goal,
+                &certified_context,
+            );
+            if checked.is_ok() {
+                return Ok(OutcomeSimpSelection::Premises(surface_premises));
             }
         }
         check_verification_deadline()?;
@@ -1074,10 +1067,9 @@ pub(super) fn lower_outcome_simp_tactic(
                 break;
             }
             if complete && !spelled_premises.is_empty() {
-                let derive = ProofDerive {
-                    premises: spelled_premises,
-                };
-                let candidate = ProofTactic::Derive(derive);
+                let candidate = ProofTactic::Derive(ProofDerive {
+                    premises: spelled_premises.clone(),
+                });
                 // Self-check with exactly the check the tactic replay runs,
                 // against the replay context (which carries the certified
                 // store equations).
@@ -1090,7 +1082,7 @@ pub(super) fn lower_outcome_simp_tactic(
                 )
                 .is_ok()
                 {
-                    return Ok(candidate);
+                    return Ok(OutcomeSimpSelection::Premises(spelled_premises));
                 }
             }
         }
@@ -1120,7 +1112,7 @@ pub(super) fn lower_outcome_simp_tactics(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<ProofTactic>, ClickError> {
-    let tactic = lower_outcome_simp_tactic(
+    let selection = select_outcome_simp_certificate(
         replay,
         surface_goal,
         goal,
@@ -1133,11 +1125,11 @@ pub(super) fn lower_outcome_simp_tactics(
         predicate_environment,
         click_function_environment,
     )?;
-    let ProofTactic::Derive(derive) = &tactic else {
-        return Ok(vec![tactic]);
+    let premises = match selection {
+        OutcomeSimpSelection::Simple(tactic) => return Ok(vec![tactic]),
+        OutcomeSimpSelection::Premises(premises) => premises,
     };
-    let premise_pairs = derive
-        .premises
+    let premise_pairs = premises
         .iter()
         .map(|surface| {
             replay
