@@ -890,11 +890,57 @@ fn pure_theorem_surface_certificate(
         for proposition in unfolded {
             flatten_surface_conjunction(proposition, &mut premises);
         }
+        let premise_pairs = premises
+            .into_iter()
+            .map(|surface| {
+                let kernel = lower_pure_theorem_proposition(
+                    claim_label,
+                    &surface,
+                    &context.values,
+                    &context.array_refs,
+                    &context.memory,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+                Ok((kernel, surface))
+            })
+            .collect::<Result<Vec<_>, ClickError>>()?;
+        let available = premise_pairs
+            .iter()
+            .map(|(kernel, _)| kernel.clone())
+            .collect::<Vec<_>>();
+        let explicit_goal = unfold_predicates_in_proposition(
+            predicate_environment,
+            click_function_environment,
+            &unfolded_predicates,
+            goal,
+            &assumptions_from_propositions(&available),
+        )
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        let plan = plan_simp_certificate(
+            &explicit_goal,
+            &assumptions_from_propositions(&available),
+        )
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "smart proof for `{claim_label}` has no explicit proof after unfolding"
+            ))
+        })?;
         let mut tactics = unfolded_predicates
             .into_iter()
             .map(ProofTactic::UnfoldPredicate)
             .collect::<Vec<_>>();
-        tactics.push(ProofTactic::Derive(ProofDerive { premises }));
+        tactics.extend(
+            lower_restricted_simp_plan(&explicit_goal, None, &plan, &premise_pairs).map_err(
+                |error| {
+                    ClickError::new(format!(
+                        "smart proof for `{claim_label}` has no explicit unfolded certificate: {}",
+                        error.message()
+                    ))
+                },
+            )?,
+        );
         return SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "smart proof for `{claim_label}` produced an invalid unfolded certificate: {error:?}"

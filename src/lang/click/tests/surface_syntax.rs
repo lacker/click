@@ -262,6 +262,43 @@ fn pure_simp_exposes_an_explicit_theorem_certificate() {
 }
 
 #[test]
+fn pure_simp_after_unfold_exposes_an_explicit_certificate() {
+    let source = r#"
+        predicate equality_chain(x: int32, y: int32, z: int32) {
+            x == y and y == z
+        }
+
+        theorem equality_transitive_after_unfold(x: int32, y: int32, z: int32) {
+            requires equality_chain(x, y, z);
+            ensures x == z by {
+                unfold(equality_chain);
+                simp();
+            }
+        }
+    "#;
+
+    let verified = verify_click_theorems(source).expect("unfolded simp theorem should verify");
+    let tactics = verified[0]
+        .proof_tactics()
+        .expect("unfolded simp should commit a surface certificate");
+    assert!(
+        tactics
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::UnfoldPredicate(name) if name == "equality_chain"))
+    );
+    assert!(
+        tactics
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::Rewrite(_)))
+    );
+    assert!(
+        tactics
+            .iter()
+            .all(|tactic| !matches!(tactic, ProofTactic::Derive(_)))
+    );
+}
+
+#[test]
 fn verifies_explicit_structural_logic_tactics() {
     let source = r#"
         theorem conjunction_rule(x: int32) {
