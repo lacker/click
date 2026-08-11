@@ -1212,6 +1212,15 @@ pub(super) fn lower_outcome_simp_tactics(
             tactics.extend(suffix);
             return true;
         }
+        if matches!(
+            current,
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
+        ) && let Some(suffix) =
+            plan_explicit_le_and_not_lt_implies_eq(&current, premises)
+        {
+            tactics.extend(suffix);
+            return true;
+        }
         for (index, (kernel, surface)) in premises.iter().enumerate() {
             if used[index] {
                 continue;
@@ -1905,12 +1914,22 @@ fn plan_explicit_le_and_not_lt_implies_eq(
             continue;
         }
         for (not_lt_kernel, not_lt_surface) in premise_pairs {
-            if not_lt_kernel
-                != &Proposition::ConditionIs(
-                    ConditionTerm::Bitvector32SignedLessThan(left.clone(), right.clone()),
+            let matches_not_lt = match not_lt_kernel {
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(not_left, not_right),
                     false,
-                )
-            {
+                ) => not_left.as_ref() == left.as_ref() && not_right.as_ref() == right.as_ref(),
+                Proposition::Not(body) => matches!(
+                    body.as_ref(),
+                    Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32SignedLessThan(not_left, not_right),
+                        true,
+                    ) if not_left.as_ref() == left.as_ref()
+                        && not_right.as_ref() == right.as_ref()
+                ),
+                _ => false,
+            };
+            if !matches_not_lt {
                 continue;
             }
             let (surface_left, surface_right) = surface_nonstrict_parts(le_surface)?;

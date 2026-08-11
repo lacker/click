@@ -1420,6 +1420,54 @@ fn post_execution_simp_expands_increment_lower_bound() {
 }
 
 #[test]
+fn post_execution_simp_expands_order_equality_closure() {
+    let c_source = r#"
+        int32 identity_at_bound(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "identity_at_bound.c";
+
+        int32 identity_at_bound(int32 x) {
+            requires x <= 1;
+            requires not (x < 1);
+            ensures result == 1;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let offset = click_source.rfind("simp()").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("identity_at_bound.c", c_source)],
+        line,
+        column,
+    )
+    .expect("post-execution order equality should expand");
+    assert!(
+        expanded.contains("apply(int32_le_and_not_lt_implies_eq("),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[("identity_at_bound.c", c_source)])
+        .expect("expanded order-equality proof should replay");
+}
+
+#[test]
 fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
     let click_source = r#"
         theorem increment_stays_bounded(value: int32, upper: int32) {
