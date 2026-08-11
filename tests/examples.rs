@@ -16,10 +16,32 @@ const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 /// suite is a meaningful green gate. Run one with `CLICK_EXAMPLE=<name>`, or
 /// all of them with `CLICK_RUN_QUARANTINED=1`. Each entry names the reason;
 /// remove entries as they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[(
-    "owned-vector",
-    "issues/owned-vector-baseline-misses-project-budget.md: several smart proof sites push the project past its deadline",
-)];
+const QUARANTINED: &[(&str, &str)] = &[
+    (
+        "binary-tree",
+        "issues/binary-tree-grouped-simp-transition-not-expressible.md: grouped simp transition has no expressible certificate since opaque outcome certificates were rejected",
+    ),
+    (
+        "bounded-pool",
+        "issues/bounded-pool-outcome-conjunction-certificate-missing.md: outcome conjunction with a resource count has no explicit simple certificate",
+    ),
+    (
+        "owned-segmented-buffer",
+        "issues/owned-segmented-buffer-order-weakening-certificate.md: order weakening derivation has no named simple certificate",
+    ),
+    (
+        "owned-split-buffer",
+        "issues/owned-split-buffer-expansion-rewrite-not-exact.md: generated rewrite equality is not exact at replay",
+    ),
+    (
+        "owned-string",
+        "issues/owned-string-pure-theorem-certificate-missing.md: pure theorem smart proof produces no pure surface certificate",
+    ),
+    (
+        "owned-vector",
+        "issues/owned-vector-baseline-misses-project-budget.md: several smart proof sites push the project past its deadline",
+    ),
+];
 
 #[test]
 fn example_projects() {

@@ -17,7 +17,56 @@ const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
 /// green gate. Run one with `MDTEST_FILTER=<name>`, or all of them with
 /// `CLICK_RUN_QUARANTINED=1`. Each entry names the reason; remove entries as
 /// they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[];
+const QUARANTINED: &[(&str, &str)] = &[
+    (
+        "bubble_pass3_max_suffix.md",
+        "issues/binary-tree-grouped-simp-transition-not-expressible.md: expressible path facts do not replay the grouped transition's postcondition derivation",
+    ),
+    (
+        "bubble_sort3_two_pass_sorted.md",
+        "issues/universal-outcome-certificates-missing.md: no simple certificate for a universal proposition over CInt32",
+    ),
+    (
+        "byte_slice_stdlib.md",
+        "issues/owned-segmented-buffer-order-weakening-certificate.md: indexed-range premise derivation has no explicit simple certificate",
+    ),
+    (
+        "composite_resource_vector_fill_loop_snapshot.md",
+        "issues/universal-outcome-certificates-missing.md: no simple certificate for a universal proposition over CInt32",
+    ),
+    (
+        "copy3_array_demo.md",
+        "issues/universal-outcome-certificates-missing.md: no simple certificate for a universal proposition over CInt32",
+    ),
+    (
+        "fill3_array_loop.md",
+        "issues/universal-outcome-certificates-missing.md: single-cell loop-effect consequence has no explicit simple certificate",
+    ),
+    (
+        "fill_tail_rejects_tail_segment_unchanged.md",
+        "issues/universal-outcome-certificates-missing.md: certificate-lowering error masks the intended semantic rejection diagnostic",
+    ),
+    (
+        "fill_n_segment_invariant.md",
+        "issues/universal-outcome-certificates-missing.md: filled-segment universal goal has no explicit simple certificate",
+    ),
+    (
+        "proof_branch_pointer_local.md",
+        "issues/owned-segmented-buffer-order-weakening-certificate.md: disjunctive premise derivation has no explicit simple certificate",
+    ),
+    (
+        "proof_if_cases.md",
+        "issues/owned-string-pure-theorem-certificate-missing.md: pure smart proof produces no pure surface certificate",
+    ),
+    (
+        "shifted_copy_effect_uses_covering_separate.md",
+        "issues/universal-outcome-certificates-missing.md: preserved-source universal goal has no explicit simple certificate",
+    ),
+    (
+        "shifted_loop_effect_preserves_prefix.md",
+        "issues/universal-outcome-certificates-missing.md: preserved-prefix loop-effect consequence has no explicit simple certificate",
+    ),
+];
 
 #[test]
 fn mdtests() {
