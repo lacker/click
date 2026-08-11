@@ -636,7 +636,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
         separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
     }
     have loadable(owner->len) by {
-        derive using {
+        simp() using {
             loadable(old(owner->len));
         }
     }
