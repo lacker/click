@@ -717,6 +717,16 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 .map_err(|message| ClickError::new(format!(
                     "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: {message}"
                 )))?;
+                // Later `intro` tactics track the surface goal to bind a
+                // universal binder's Click name; a goal that is itself the
+                // unfolded predicate call must expose its definition here.
+                if let Ok(unfolded) = unfold_structural_invariant_proposition(
+                    predicate_environment,
+                    &surface_logical_goal,
+                    std::slice::from_ref(name),
+                ) {
+                    surface_logical_goal = unfolded;
+                }
             }
             ProofTactic::ApplyTheorem(application) => {
                 let application_context = TheoremApplicationContext {

@@ -791,6 +791,12 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches(
     if matches!(target, Proposition::CMemoryLoadable { .. }) {
         return assumptions.derive_atomic_proposition(target).is_some();
     }
+    // Two spellings of the same condition fact — for example an element load
+    // whose symbolic index the listed order facts pin to a constant — match
+    // by the same bounded rule the atomic prover uses on context facts.
+    if crate::kernel::c_condition_facts_match_for_transport(source, target, assumptions) {
+        return true;
+    }
     if let Some(theorem) =
         crate::kernel::prove_c_condition_fact_target_transport(source, target, assumptions)
     {

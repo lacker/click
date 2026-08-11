@@ -289,6 +289,22 @@ pub(super) fn checked_surface_comparison_fact_at_point(
                 .surface_propositions
                 .available_kernel(surface, available)
                 .is_some_and(&matches_kernel)
+            // A recorded pair can name a program point outside the current
+            // replay scope (for example a function-prefix statement inside a
+            // loop-region proof). The candidate lowering resolves recorded
+            // snapshots without demanding current loadability, so it is the
+            // right scope check here.
+            && lower_surface_candidate_at_point(
+                replay,
+                surface,
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            )
+            .is_ok()
         {
             return Ok(surface.clone());
         }

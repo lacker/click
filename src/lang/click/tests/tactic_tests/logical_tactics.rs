@@ -1040,3 +1040,27 @@ fn instantiate_does_not_discharge_guards_from_ambient_facts() {
         error.message()
     );
 }
+
+#[test]
+fn constant_bound_weakenings_lower_to_named_theorem_chains() {
+    let c_source = r#"
+        int32 keep(int32 n) {
+            return n;
+        }
+    "#;
+    let click_source = r#"
+        verifying "keep.c";
+
+        int32 keep(int32 n) {
+            requires small: n <= 10;
+            ensures under_twenty: n < 20;
+            ensures next_under_fifteen: n + 1 <= 15;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("keep.c", c_source)])
+        .expect("constant bound weakenings should lower to named theorem chains");
+}
