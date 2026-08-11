@@ -133,12 +133,6 @@ longer contains `derive using`.
 Other source shapes still need principled surface certificates before their
 old `derive using` blocks can be removed:
 
-- A vacuous implication whose antecedent contradicts a listed snapshot fact is
-  provable by restricted simplification, but currently has no explicit simple
-  certificate. `intro(); contradiction(P);` also exposes that the two
-  source-identical spellings lower against different memory snapshots. The
-  fix must name the snapshot transport and false-elimination steps; it must not
-  make `contradiction` search equivalent facts.
 - Structural transport can select an earlier `separate(...)` fact and the
   matching current-frontier target, yet replay may reject the source as an
   unavailable exact fact even while printing that same fact in the available

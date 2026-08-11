@@ -78,7 +78,7 @@ remains migration compatibility and should not be used in new proofs.
 | `intro()` | simple | Introduce an implication antecedent, negated proposition, or universal binder. |
 | `split()` | simple | Close a conjunction when both conjuncts are exact available facts. |
 | `left()` / `right()` | simple | Close the selected disjunct from an exact available fact. |
-| `contradiction(P)` | simple | Close from exact facts `P` and `not P`. |
+| `contradiction(P)` | simple | Close from exact facts `P` and `not P`, including exact opposite polarities of the same C condition. |
 | `derive using { Q; ... }` | legacy simple | Compatibility for proofs awaiting migration. Its checker bundles several atomic theories and it is never emitted by `simp() using`; do not use it in new proofs. |
 | `apply(theorem(args))` | smart | Apply a theorem while selecting its premises from context. |
 | `apply(theorem(args)) using { P; ... }` | simple | Apply a theorem using exactly the listed premises. |

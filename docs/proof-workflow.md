@@ -201,7 +201,8 @@ control flow.
   migration; do not use it in new proofs.
 
 - `intro();`, `split();`, `left();`, `right();`, `contradiction(P);`: one
-  structural logical rule each. They are
+  structural logical rule each. `contradiction(P)` accepts either structural
+  `not P` or the exact opposite polarity of the same lowered C condition. They are
   accepted only while a pure goal is active, typically inside `have ... by` or
   a theorem proof.
 - `simp();`: request smart contextual simplification when the proof block is

@@ -318,10 +318,18 @@ fn verifies_explicit_structural_logic_tactics() {
                 contradiction(x == 0);
             }
         }
+
+        theorem condition_polarity_contradiction_rule(x: int32, y: int32) {
+            requires x < y;
+            requires not (x < y);
+            ensures x == 0 by {
+                contradiction(x < y);
+            }
+        }
     "#;
 
     let verified = verify_click_theorems(source).expect("logical tactics should verify");
-    assert_eq!(verified.len(), 8);
+    assert_eq!(verified.len(), 9);
     assert!(verified.iter().all(|theorem| {
         theorem.proof_kind == ProofKind::TacticScript && theorem.proof_certificate().is_ok()
     }));

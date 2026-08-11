@@ -134,9 +134,20 @@ fn apply_logical_goal_tactic(
             let fact = contradiction_fact
                 .ok_or_else(|| "`contradiction` is missing its lowered fact".to_string())?;
             let negated = Proposition::Not(Box::new(fact.clone()));
-            if !available.contains(&fact) || !available.contains(&negated) {
+            let opposite_condition = match &fact {
+                Proposition::ConditionIs(condition, polarity) => {
+                    Some(Proposition::ConditionIs(condition.clone(), !polarity))
+                }
+                _ => None,
+            };
+            if !available.contains(&fact)
+                || (!available.contains(&negated)
+                    && !opposite_condition
+                        .as_ref()
+                        .is_some_and(|opposite| available.contains(opposite)))
+            {
                 return Err(format!(
-                    "`contradiction` requires both exact facts: {fact:?} and {negated:?}"
+                    "`contradiction` requires an exact fact and its exact negation or opposite condition polarity: {fact:?}"
                 ));
             }
             Ok(true)

@@ -1180,23 +1180,31 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     | ProofTactic::Contradiction(_) => {
                         let contradiction_fact = match tactic {
                             ProofTactic::Contradiction(surface_fact) => Some(
-                                lower_point_proposition_with_values(
-                                    surface_fact,
-                                    &available,
-                                    values.clone(),
-                                    &array_refs,
-                                    pre_state,
-                                    state,
-                                    result,
-                                    program_point_states,
-                                    predicate_environment,
-                                    click_function_environment,
-                                )
-                                .map_err(|message| {
-                                    ClickError::new(format!(
-                                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: `contradiction` could not lower fact: {message}"
-                                    ))
-                                })?,
+                                if let Some(recorded) =
+                                    surface_propositions.and_then(|propositions| {
+                                        propositions.available_kernel(surface_fact, &available)
+                                    })
+                                {
+                                    recorded.clone()
+                                } else {
+                                    lower_point_proposition_with_values(
+                                        surface_fact,
+                                        &available,
+                                        values.clone(),
+                                        &array_refs,
+                                        pre_state,
+                                        state,
+                                        result,
+                                        program_point_states,
+                                        predicate_environment,
+                                        click_function_environment,
+                                    )
+                                    .map_err(|message| {
+                                        ClickError::new(format!(
+                                            "`{claim_label}` {proof_name} proof {outer_tactic_index}: `contradiction` could not lower fact: {message}"
+                                        ))
+                                    })?
+                                },
                             ),
                             _ => None,
                         };
