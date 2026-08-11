@@ -569,7 +569,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                 parameters,
                 arguments,
                 environments,
-                &InternalProofOperation::CertifiedPathAssumption {
+                &ConstructionEvidence::CertifiedPathAssumption {
                     occurrence,
                     condition,
                     value: condition_transition.is_true,
@@ -1311,7 +1311,7 @@ pub(super) fn execute_step_from_execution_point(
                 parameters,
                 arguments,
                 environments,
-                &InternalProofOperation::CertifiedStatementStep {
+                &ConstructionEvidence::CertifiedStatementStep {
                     prerequisite_derivations,
                     exact_premises,
                     planned_transition: None,
@@ -1757,12 +1757,12 @@ pub(super) fn execute_step_from_execution_point(
             }
             let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
             match operation {
-                InternalProofOperation::CertifiedFactTransport { target, .. } => {
+                ConstructionEvidence::CertifiedFactTransport { target, .. } => {
                     if !certificate_facts.contains(target) {
                         certificate_facts.push(target.clone());
                     }
                 }
-                InternalProofOperation::FinishCertifiedFactTransports(sources) => {
+                ConstructionEvidence::FinishCertifiedFactTransports(sources) => {
                     certificate_facts.retain(|fact| {
                         !sources.iter().any(|source| {
                             source == fact

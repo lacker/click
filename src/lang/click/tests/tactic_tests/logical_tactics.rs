@@ -1104,3 +1104,97 @@ fn mid_execution_proof_if_have_expands_to_a_simple_certificate() {
     SimpleProof::from_proof_tactics(&expanded)
         .expect("the proof-if have expansion should be a surface certificate");
 }
+
+#[test]
+fn instantiate_specializes_a_universal_fact_at_an_explicit_value() {
+    let c_source = r#"
+        int32 pick(int32 value) {
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "pick.c";
+
+        int32 pick(int32 value) {
+            requires bounded: forall (k: int32) {
+                0 <= k and k < 3 implies k <= value
+            };
+            ensures two_le: 2 <= value;
+        } by {
+            execute();
+            have 2 <= value by {
+                instantiate(forall (k: int32) {
+                    0 <= k and k < 3 implies k <= value
+                }, 2) using {}
+                assumption();
+            }
+            assumption();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("pick.c", c_source)])
+        .expect("instantiating the universal requirement at 2 should prove the bound");
+}
+
+#[test]
+fn instantiate_does_not_discharge_guards_from_ambient_facts() {
+    let c_source = r#"
+        int32 pick(int32 value, int32 n) {
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "pick.c";
+
+        int32 pick(int32 value, int32 n) {
+            requires wide: n >= 3;
+            requires bounded: forall (k: int32) {
+                0 <= k and k < n implies k <= value
+            };
+            ensures two_le: 2 <= value;
+        } by {
+            execute();
+            have 2 <= value by {
+                instantiate(forall (k: int32) {
+                    0 <= k and k < n implies k <= value
+                }, 2) using {}
+                assumption();
+            }
+            assumption();
+        }
+    "#;
+
+    let error = verify_c0_sources(click_source, &[("pick.c", c_source)])
+        .expect_err("the symbolic upper-bound guard must name its evidence");
+    assert!(
+        error
+            .message()
+            .contains("does not follow from the listed evidence"),
+        "unexpected error: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn constant_bound_weakenings_lower_to_named_theorem_chains() {
+    let c_source = r#"
+        int32 keep(int32 n) {
+            return n;
+        }
+    "#;
+    let click_source = r#"
+        verifying "keep.c";
+
+        int32 keep(int32 n) {
+            requires small: n <= 10;
+            ensures under_twenty: n < 20;
+            ensures next_under_fifteen: n + 1 <= 15;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("keep.c", c_source)])
+        .expect("constant bound weakenings should lower to named theorem chains");
+}

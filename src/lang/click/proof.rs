@@ -57,6 +57,38 @@ use theorem_application::*;
 pub(super) use timing::{SourceTacticClass, source_tactic_class};
 use timing::{TacticTiming, has_independent_source_timing};
 
+/// Checked kernel evidence used as the input to constructing one
+/// [`SimpleProofStep`]. Evidence never forms an ordered replayable program of
+/// its own: search consumes it transiently to spell the surface step, and the
+/// resulting `SimpleProof` is what replays.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::lang::click::proof) enum ConstructionEvidence {
+    CertifiedStatementStep {
+        prerequisite_derivations: Vec<PropositionDerivation>,
+        exact_premises: Vec<Proposition>,
+        planned_transition: Option<usize>,
+    },
+    CertifiedLoopSummaryStep {
+        prerequisite_derivations: Vec<PropositionDerivation>,
+        exact_premises: Vec<Proposition>,
+        planned_transition: Option<usize>,
+    },
+    CertifiedFactTransport {
+        source: Proposition,
+        target: Proposition,
+        theorem: Theorem,
+    },
+    FinishCertifiedFactTransports(Vec<Proposition>),
+    CertifiedPathAssumption {
+        occurrence: usize,
+        condition: ClickProposition,
+        value: bool,
+        facts: Vec<Proposition>,
+        theorem: Theorem,
+    },
+    CertifiedFrame(Vec<Vec<PropositionDerivation>>),
+}
+
 type NextTopLevelStatement = (CState, CState, CStatement, Option<CStatement>);
 
 fn check_verification_deadline() -> Result<(), ClickError> {
@@ -387,6 +419,53 @@ fn equal_by_premise_chain(
                 &frame_assumptions,
             ))
     })
+}
+
+/// Splits an instantiated universal body into its implication guards and its
+/// final conclusion, requiring each guard conjunct to discharge from exactly
+/// the listed premises: a context-free normalization, an exact listed premise
+/// (up to conjunct splitting and condition polarity), or one bounded atomic
+/// derivation from the listed premises alone. No proposition search runs.
+pub(super) fn discharge_instantiated_guards(
+    instantiated: Proposition,
+    premises: &[Proposition],
+) -> Result<(Vec<Proposition>, Proposition), String> {
+    let premise_assumptions = assumptions_from_propositions(premises);
+    let mut premise_conjuncts = Vec::new();
+    for premise in premises {
+        atomic_conjuncts(premise, &mut premise_conjuncts);
+    }
+    let premise_conjuncts = premise_conjuncts
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    let discharges = |conjunct: &Proposition| {
+        matches!(normalize_proposition(conjunct), SimpProposition::True)
+            || premise_conjuncts.iter().any(|premise| {
+                premise == conjunct || condition_polarity_equivalent(premise, conjunct)
+            })
+            || premise_assumptions
+                .derive_atomic_proposition(conjunct)
+                .is_some()
+            || premise_assumptions
+                .derive_simp_atomic_proposition(conjunct)
+                .is_some()
+    };
+    let mut guards = Vec::new();
+    let mut current = instantiated;
+    while let Proposition::Implies(guard, body) = current {
+        let mut conjuncts = Vec::new();
+        atomic_conjuncts(&guard, &mut conjuncts);
+        if let Some(missing) = conjuncts.iter().find(|conjunct| !discharges(conjunct)) {
+            return Err(format!(
+                "instantiated premise `{}` does not follow from the listed evidence",
+                describe_pure_fact(missing, &[], &[]),
+            ));
+        }
+        guards.push(*guard);
+        current = *body;
+    }
+    Ok((guards, current))
 }
 
 pub(super) fn check_atomic_premise_derivation_goal(

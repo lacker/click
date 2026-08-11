@@ -320,11 +320,12 @@ fn lower_pure_simp_certificate(
     theorem: &TheoremDefinition,
     context: &PureTheoremContext,
     goal: &Proposition,
-    certificate: &InternalProofPlan,
+    certificate: &SimpEvidence,
 ) -> Option<Vec<ProofTactic>> {
-    let tactic = match certificate.operations() {
-        [InternalProofOperation::Surface(ProofTactic::Normalize)] => ProofTactic::Normalize,
-        [InternalProofOperation::ExactPropositionDerivation(derivation)] => {
+    let tactic = match certificate {
+        SimpEvidence::Assumption => ProofTactic::Assumption,
+        SimpEvidence::Normalize => ProofTactic::Normalize,
+        SimpEvidence::Derivation(derivation) => {
             let premise_pairs = derivation
                 .context_premises()
                 .iter()
@@ -349,7 +350,6 @@ fn lower_pure_simp_certificate(
                 return None;
             }
         }
-        _ => return None,
     };
     SimpleProof::from_proof_tactics(std::slice::from_ref(&tactic)).ok()?;
     Some(vec![tactic])
@@ -396,6 +396,7 @@ fn verify_theorem_ensure(
             | "int32_increment_preserves_order"
             | "int32_le_lt_transitive"
             | "int32_le_transitive"
+            | "int32_lt_le_transitive"
             | "int32_lt_transitive"
             | "int32_ge_transitive"
             | "int32_ge_implies_reversed_le"
@@ -547,7 +548,10 @@ fn verify_kernel_standard_theorem_axiom(
         | "int32_increment_below_max_is_defined"
         | "int32_positive_predecessor_is_nonnegative"
         | "int32_positive_predecessor_strictly_decreases" => (1, 1),
-        "int32_le_lt_transitive" | "int32_le_transitive" | "int32_lt_transitive"
+        "int32_le_lt_transitive"
+        | "int32_le_transitive"
+        | "int32_lt_le_transitive"
+        | "int32_lt_transitive"
         | "int32_ge_transitive" => (3, 2),
         _ => unreachable!("only registered kernel standard theorems call this verifier"),
     };
@@ -631,6 +635,9 @@ fn verify_kernel_standard_theorem_axiom(
         }
         "int32_le_transitive" => {
             prove_int32_le_transitive(value, int32_parameter(1)?, int32_parameter(2)?)
+        }
+        "int32_lt_le_transitive" => {
+            prove_int32_lt_le_transitive(value, int32_parameter(1)?, int32_parameter(2)?)
         }
         "int32_lt_transitive" => {
             prove_int32_lt_transitive(value, int32_parameter(1)?, int32_parameter(2)?)

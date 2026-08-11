@@ -608,6 +608,32 @@ fn int32_le_transitive_axiom_has_the_exact_implications() {
 }
 
 #[test]
+fn int32_lt_le_transitive_axiom_has_the_exact_implications() {
+    let first = Bitvector32Term::Variable(Variable(90_055));
+    let middle = Bitvector32Term::Variable(Variable(90_056));
+    let last = Bitvector32Term::Variable(Variable(90_057));
+    let theorem = prove_int32_lt_le_transitive(first.clone(), middle.clone(), last.clone());
+    let first_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(first.clone(), middle.clone()),
+        true,
+    );
+    let second_premise =
+        Proposition::ConditionIs(ConditionTerm::signed_less_equal(middle, last.clone()), true);
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_than(first, last), true);
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(first_premise),
+            Box::new(Proposition::Implies(
+                Box::new(second_premise),
+                Box::new(conclusion),
+            )),
+        )
+    );
+}
+
+#[test]
 fn proposition_derivation_honors_active_deadline() {
     let assumptions = Assumptions::new();
     let proposition = Proposition::ConditionIs(ConditionTerm::Constant(true), true);

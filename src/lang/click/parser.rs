@@ -1966,6 +1966,27 @@ impl Parser {
                     });
                 }
             }
+            "instantiate" => {
+                self.expect(Token::LParen)?;
+                let quantified = self.parse_proposition()?;
+                self.expect(Token::Comma)?;
+                let argument = self.parse_contract_expression()?;
+                self.expect(Token::RParen)?;
+                if self.peek_ident() != Some("using") {
+                    return Err(self.error(
+                        "`instantiate` requires explicit evidence: `instantiate(F, value) using { ... }`",
+                    ));
+                }
+                let premises = self.parse_exact_premises()?;
+                if self.peek() == Some(&Token::Semicolon) {
+                    self.position += 1;
+                }
+                return Ok(ProofTactic::InstantiateUsing {
+                    quantified,
+                    argument,
+                    premises,
+                });
+            }
             "simp" => {
                 self.expect_empty_tactic_args(&name)?;
                 if self.peek_ident() == Some("using") {
