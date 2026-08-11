@@ -133,6 +133,25 @@ longer contains `derive using`.
 Other source shapes still need principled surface certificates before their
 old `derive using` blocks can be removed:
 
+- A vacuous implication whose antecedent contradicts a listed snapshot fact is
+  provable by restricted simplification, but currently has no explicit simple
+  certificate. `intro(); contradiction(P);` also exposes that the two
+  source-identical spellings lower against different memory snapshots. The
+  fix must name the snapshot transport and false-elimination steps; it must not
+  make `contradiction` search equivalent facts.
+- Simple signed-order weakening is incomplete. In particular, restricted
+  simplification can prove `0 <= i <= owner->len` at loop initialization from
+  the normalized `i == 0` state and listed `1 <= owner->len`, but cannot emit a
+  named simple rule for `1 <= value` implying `0 <= value`.
+- Structural transport can select an earlier `separate(...)` fact and the
+  matching current-frontier target, yet replay may reject the source as an
+  unavailable exact fact even while printing that same fact in the available
+  context. Preserve a focused snapshot-identity regression and repair source
+  selection; do not add ambient equality search to `transport(...) using`.
+- A copied-element equality can establish slice loadability, but restricted
+  simplification currently reports that it has no explicit rule for that
+  derivation. This needs a named range/loadability certificate rather than a
+  fallback to the legacy memory-DAG search.
 - The owned-string replay/certification instability has been fixed and the
   project now passes repeated ordinary verification under its normal limit.
   Post-execution transport now uses recorded store equations as its source,
