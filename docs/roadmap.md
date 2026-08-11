@@ -188,9 +188,9 @@ Likely additions:
   theorems; next slices should cover better diagnostics, named conclusion
   selection, and eventually separate reusable resource-rule forms if repeated
   unfold/fold patterns justify them.
-- More reusable rewrite support: `rewrite(P)` and deterministic `derive using`
-  already provide explicit certificate steps; remaining work is better
-  theorem selection and reusable algebraic lemmas rather than another calc
+- More reusable rewrite support: `rewrite(P)` and named theorem applications
+  provide explicit certificate steps; remaining work is better theorem
+  selection and reusable algebraic lemmas rather than another calculation
   vocabulary.
 - Predicate/function namespaces that scale with modules.
 - A richer standard library:
