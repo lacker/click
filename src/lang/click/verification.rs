@@ -633,7 +633,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                     &resource_environment,
                     &theorem_environment,
                 )?,
-                Proof::Script(tactics) => prove_claims_by_grouped_tactics(
+                Proof::Script(tactics) => prove_claims_by_grouped_script(
                     expansion_capture.as_deref_mut(),
                     source_path,
                     &function_block,
@@ -645,7 +645,6 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                     &resource_environment,
                     &theorem_environment,
                     tactics,
-                    ProofTacticSource::SourceSyntax,
                 )?,
                 Proof::Default | Proof::Tactic(SmartTactic::Simp | SmartTactic::Frame) => {
                     return Err(ClickError::new(format!(
@@ -703,7 +702,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                         &resource_environment,
                         &theorem_environment,
                     )?,
-                    Proof::Script(tactics) => prove_claim_by_tactics(
+                    Proof::Script(tactics) => prove_claim_by_script(
                         expansion_capture.as_deref_mut(),
                         source_path,
                         &function_block,
@@ -716,7 +715,6 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                         &resource_environment,
                         &theorem_environment,
                         tactics,
-                        ProofTacticSource::SourceSyntax,
                     )?,
                 };
                 function_verified.extend(theorems.iter().cloned());

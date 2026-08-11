@@ -665,6 +665,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 source_index,
                 construction,
                 false,
+                true,
             )?;
             state = result.state;
             requirement_pure_facts = result.pure_facts;
@@ -732,6 +733,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 source_index,
                 construction,
                 false,
+                true,
             )?;
             state = result.state;
             requirement_pure_facts = result.pure_facts;
@@ -1046,6 +1048,20 @@ fn replay_linear_tactics_without_frontier_loops(
                 let tactic_name = "step() using";
                 let prerequisite_policy = StatementPrerequisitePolicy::Explicit;
                 let loop_step_policy = LoopStepPolicy::EnterBody;
+                // Resuming from a completed branch region reaches this
+                // statement without recording its entry snapshot; a premise
+                // spelled `at(statement(N).entry, ...)` for the statement this
+                // step crosses must still lower.
+                record_current_statement_entry(
+                    &mut replay,
+                    &state,
+                    function_block,
+                    function,
+                    arguments,
+                    claim_label,
+                    tactic_index,
+                    tactic_name,
+                )?;
                 let pre_state = replay.old_reference_state(&state).clone();
                 let mut explicit_premises = Vec::new();
                 for surface_premise in premises {
@@ -1165,7 +1181,12 @@ fn replay_linear_tactics_without_frontier_loops(
                             &replay.effect_facts,
                         ) || materialization_equivalent_available_fact(&premise, &all_pure_facts)
                             .is_some()
-                            || crate::kernel::loadable_covered_by_fact(&assumptions, &premise);
+                            || crate::kernel::loadable_covered_by_fact(&assumptions, &premise)
+                            // A premise spelled for a sibling execution path
+                            // can lower to a context-free truth on this path
+                            // (a shared post-branch step's premise after a
+                            // constant assignment); it demands no evidence.
+                            || Assumptions::new().proves(&premise);
                     if !premise_is_available {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise: {}",
@@ -1338,6 +1359,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     source_index,
                     construction,
                     false,
+                    true,
                 )?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
@@ -1421,6 +1443,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     source_index,
                     construction,
                     false,
+                    true,
                 )?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
@@ -1486,6 +1509,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     source_index,
                     construction,
                     false,
+                    true,
                 )?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
@@ -1527,6 +1551,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         source_index,
                         construction,
                         false,
+                        true,
                     )?;
                     state = result.state;
                     requirement_pure_facts = result.pure_facts;
@@ -1665,6 +1690,22 @@ fn replay_linear_tactics_without_frontier_loops(
                     &InternalProofOperation::CertifiedFrame(path_derivations),
                 );
                 let construction = std::mem::take(&mut construction_replay.simple_proof_builder);
+                // A branched contextual frame merges its synthesized branch
+                // with the existing surface branch here, and a frame inside
+                // an `open { ... }` block merges so its steps are captured
+                // into the block's nested proof. A flat top-level exit frame
+                // is recorded by the drain instead: its independent replay
+                // defers the frame work, the deferrals carry into this
+                // replay, and the drain spells the same steps in deferral
+                // order — merging here would misplace them before every
+                // earlier deferred tactic.
+                let merge_construction = replay.open_scopes > 0
+                    || matches!(construction.steps.as_slice(), [SimpleProofStep::If { .. }]);
+                // The construction is still the tactic's own standalone
+                // expansion even when the drain records the claim-level
+                // steps; a selected `frame()` capture takes it directly.
+                let capture_construction = (!merge_construction && capture_this_tactic)
+                    .then(|| construction.clone());
                 let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,
@@ -1687,12 +1728,20 @@ fn replay_linear_tactics_without_frontier_loops(
                     source_index,
                     construction,
                     true,
+                    merge_construction,
                 )?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
                 replay = result.replay;
                 branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                if let Some(construction) = capture_construction {
+                    finish_tactic_expansion_capture(
+                        expansion_capture.as_deref_mut(),
+                        &construction,
+                        false,
+                    );
+                }
             }
             ProofTactic::FrameUsing {
                 region: region_ref,

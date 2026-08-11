@@ -972,6 +972,44 @@ fn proof_sugar_and_bare_smart_tactics_have_the_same_frontier_semantics() {
 }
 
 #[test]
+fn every_claim_proof_form_carries_a_replayable_certificate() {
+    let c_source = r#"
+            int32 clamp(int32 p[1], int32 x) {
+                if (x < 0) {
+                    p[0] = 0;
+                } else {
+                    p[0] = x;
+                }
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "clamp.c";
+
+            int32 clamp(int32 p[1], int32 x) {
+                requires loadable(p[0..1]);
+                consumes p[0..1];
+                mutable p[0..1];
+                ensures result >= 0 by {
+                    execute();
+                    simp();
+                }
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("clamp.c", c_source)])
+        .expect("every claim proof form should verify");
+    for theorem in &verified {
+        theorem.expanded_proof_certificate().unwrap_or_else(|error| {
+            panic!(
+                "a verified claim must carry its whole-claim certificate: {}",
+                error.message()
+            )
+        });
+    }
+}
+
+#[test]
 fn mid_execution_witness_simp_have_expands_to_a_simple_certificate() {
     let c_source = "int32 current_have(int32 x) { return x; }";
     let click_source = r#"

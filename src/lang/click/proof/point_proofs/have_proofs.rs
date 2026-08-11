@@ -1231,7 +1231,11 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 };
                 match tactic {
                     ProofTactic::Assumption => {
+                        // A goal spelled for a sibling execution path can
+                        // lower to a context-free truth on this path (after a
+                        // constant assignment); it needs no ambient fact.
                         if !available.contains(&unfolded_goal)
+                            && !normalizes_context_free(&unfolded_goal)
                             && materialization_equivalent_available_fact(&unfolded_goal, &available)
                                 .is_none()
                             && quantified_replay_equivalent_available_fact(
@@ -1615,7 +1619,10 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
     let mut verified = Vec::new();
     let mut certification_cache = Vec::new();
     let mut captured_paths = Vec::new();
+    let mut context_count = 0;
+    let mut claim_surface_builders: Vec<(VerifiedClaim, Vec<SimpleProofBuilder>)> = Vec::new();
     for context in contexts {
+        context_count += 1;
         let path_choices = context.replay.deferred_expansion_path_choices.clone();
         resume_deferred_tactic_expansion_capture(
             expansion_capture.as_deref_mut(),
@@ -1625,6 +1632,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
         let result_before = expansion_capture
             .as_deref()
             .is_some_and(|capture| capture.result.is_some());
+        let mut context_surface_builders = Vec::new();
         let theorems = finish_ordered_proof_replay(
             expansion_capture.as_deref_mut(),
             context,
@@ -1642,7 +1650,17 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
             arguments,
             tactics,
             &mut certification_cache,
+            &mut context_surface_builders,
         )?;
+        for (claim, builder) in context_surface_builders {
+            match claim_surface_builders
+                .iter_mut()
+                .find(|(existing, _)| *existing == claim)
+            {
+                Some((_, builders)) => builders.push(builder),
+                None => claim_surface_builders.push((claim, vec![builder])),
+            }
+        }
         for theorem in theorems {
             if !verified.contains(&theorem) {
                 verified.push(theorem);
@@ -1667,6 +1685,48 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
                 path_choices,
                 ..SimpleProofBuilder::default()
             });
+        }
+    }
+    // A structured proof produced one replay context per logical case, and
+    // each context's claim-level surface record covers only the execution
+    // paths its case owns. The whole-claim certificate is their synthesis at
+    // the recorded branch choices; a per-context record must not survive as
+    // the claim's expansion.
+    if context_count > 1 {
+        for (claim, builders) in claim_surface_builders {
+            // Contexts that recorded branch choices keep their surface `if`
+            // even when every case produced the same steps: replay still
+            // needs the case split to cross the branch statement. Contexts
+            // without choices and identical records collapse to one record.
+            let merged = if builders
+                .iter()
+                .all(|builder| builder.path_choices.is_empty() && builder.steps == builders[0].steps)
+            {
+                builders
+                    .first()
+                    .and_then(|builder| builder.blocker.clone())
+                    .map(Err)
+                    .unwrap_or_else(|| Ok(builders[0].steps.clone()))
+            } else {
+                synthesize_surface_alternatives(builders)
+            };
+            for theorem in &mut verified {
+                if theorem.claim != claim {
+                    continue;
+                }
+                match &merged {
+                    Ok(steps) => {
+                        theorem.expanded_proof = Some(SimpleProof::from_steps(steps.clone()));
+                        theorem.expansion_blocker = None;
+                    }
+                    Err(message) => {
+                        theorem.expanded_proof = None;
+                        theorem.expansion_blocker = Some(format!(
+                            "could not merge the claim's surface record across branch contexts: {message}"
+                        ));
+                    }
+                }
+            }
         }
     }
     if !captured_paths.is_empty() {
