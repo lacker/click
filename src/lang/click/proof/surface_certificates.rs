@@ -25,6 +25,51 @@ pub(super) fn lower_surface_atomic_derivation(
             click_function_environment,
         )?,
     };
+    if let (
+        Some((left_derivation, right_derivation)),
+        ClickProposition::And(surface_left, surface_right),
+    ) = (derivation.conjunction_parts(), &conclusion)
+    {
+        let (left, left_proof) = lower_surface_atomic_derivation(
+            replay,
+            left_derivation,
+            Some(surface_left),
+            available,
+            parameters,
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        let (right, right_proof) = lower_surface_atomic_derivation(
+            replay,
+            right_derivation,
+            Some(surface_right),
+            available,
+            parameters,
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        let tactics = vec![
+            ProofTactic::Have(ProofHave {
+                proposition: left,
+                proof: left_proof,
+            }),
+            ProofTactic::Have(ProofHave {
+                proposition: right,
+                proof: right_proof,
+            }),
+            ProofTactic::Split,
+        ];
+        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "conjunction derivation produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, Proof::Script(tactics)));
+    }
     let mut premise_pairs = Vec::new();
     let mut unexpressed_premises = Vec::new();
     for premise in derivation.context_premises() {

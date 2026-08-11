@@ -15,6 +15,16 @@ impl PropositionDerivation {
         &self.conclusion
     }
 
+    /// Return the checked child derivations when this proof concludes a
+    /// conjunction. Certificate lowering can preserve this structure instead
+    /// of rediscovering it from a flattened premise set.
+    pub fn conjunction_parts(&self) -> Option<(&Self, &Self)> {
+        match &self.rule {
+            PropositionDerivationRule::And { left, right } => Some((left, right)),
+            _ => None,
+        }
+    }
+
     pub fn context_premises(&self) -> Vec<Proposition> {
         let mut premises = BTreeSet::new();
         self.collect_context_premises(&mut premises);
