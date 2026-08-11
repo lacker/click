@@ -146,9 +146,32 @@ old `derive using` blocks can be removed:
   replaces the dead local `index` with `old(owner->len)`. Migrate it by making
   that assignment/equality step explicit at a point where the local is still
   in scope, then transport the resulting local-free fact through the return.
-  Other indexed-load goals may still need named pointer/loadability transport
-  before they can be lowered in the restricted context. Do not restore ambient
-  lowering or derivation fallbacks.
+Other indexed-load goals may still need named pointer/loadability transport
+before they can be lowered in the restricted context. Do not restore ambient
+lowering or derivation fallbacks.
+
+The four remaining owned-string sites make that boundary concrete. A
+post-execution goal such as `owner->data[old(owner->len)] == value` requires
+loadability before its `simp() using` proof is planned, but the exact certified
+store-loadability fact is spelled with the earlier C local `index`. The surface
+cannot bridge this manually: memory-segment bases reject `old(...)` and
+`at(statement(...), ...)`, while `index` is no longer a current C expression
+after execution. Adding more alias facts to the proof does not help because
+goal lowering fails before those listed premises can form the certificate.
+The fix must let a named simple loadability/field-effect certificate transport
+the exact stored cell through explicit pointer and index equalities, or lower
+the smart goal under those exact listed aliases. It must not search ambient
+aliases or make legacy `derive` responsible for loadability. A focused
+regression should use the unchanged `owned_string_push` indexed postcondition
+and should distinguish failure to lower the goal from failure to prove it.
+
+The neighboring `terminated_at` proof also needs exact equality substitution
+inside an indexed load whose address contains statement-snapshot spellings;
+ordinary `rewrite` currently reports that the equality is absent. The
+structural separation proof can name its statement-entry `separate(...)`
+source and current-frontier target, but explicit `transport(...) using` still
+rejects that connection. Treat these as the same remaining certificate-family
+work, not invitations to reorder or weaken the C example.
 - Listed facts exposed as conjuncts of an unfolded predicate now expand
   through the simple `extract(P)` rule. The certificate names each extracted
   fact before using it; neither `assumption` nor `rewrite` silently searches a
