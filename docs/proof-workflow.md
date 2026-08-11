@@ -195,10 +195,9 @@ control flow.
 - `transport(source, target) using { P; ... }`: the simple, exact-premise
   spelling of the same rule.
 - `simp() using { Q; ... }`: smart simplification restricted to exactly the
-  listed proposition facts. Expansion must produce named simple rules and
-  never `derive`.
-- `derive using { Q; ... }`: legacy compatibility for proofs awaiting
-  migration; do not use it in new proofs.
+  listed proposition facts. Expansion must produce named simple rules; if no
+  explicit certificate vocabulary covers the selected proof, expansion fails
+  locally instead of retaining a hidden search step.
 
 - `intro();`, `split();`, `left();`, `right();`, `contradiction(P);`: one
   structural logical rule each. `contradiction(P)` accepts either structural
