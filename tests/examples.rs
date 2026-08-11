@@ -30,10 +30,6 @@ const QUARANTINED: &[(&str, &str)] = &[
         "issues/owned-segmented-buffer-order-weakening-certificate.md: order weakening derivation has no named simple certificate",
     ),
     (
-        "owned-split-buffer",
-        "issues/owned-split-buffer-expansion-rewrite-not-exact.md: generated rewrite equality is not exact at replay",
-    ),
-    (
         "owned-string",
         "issues/owned-string-pure-theorem-certificate-missing.md: pure theorem smart proof produces no pure surface certificate",
     ),

@@ -114,8 +114,13 @@ surface certificate retains the relevant loadability and order facts through
 explicit transports, rewrites, extracts, or named theorem applications. A
 context-free-looking result such as a normalized equality is not emitted as
 bare `normalize()` if replay still needs those premises to interpret an
-indexed load. Verification checks the emitted certificate immediately, and
-expansion/audit replay the same surface proof.
+indexed load. A `simp() using` premise that equates one expression across
+several execution snapshots may denote an available fact only through the
+kernel's certified snapshot bridge; the certificate then materializes that
+spelling with an explicit `transport` before citing it, because simple
+`rewrite` replay never searches for an equivalent equality. Verification
+checks the emitted certificate immediately, and expansion/audit replay the
+same surface proof.
 
 ## Effects, resources, and snapshots
 
