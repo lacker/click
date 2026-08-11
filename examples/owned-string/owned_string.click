@@ -334,7 +334,13 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         assumption();
     }
     have separate(memory(object(owner)), memory(owner->data[0..owner->cap])) by {
-        derive using {
+        transport(
+            at(statement(4).entry, separate(
+                memory(object(owner)),
+                memory(owner->data[0..owner->cap])
+            )),
+            separate(memory(object(owner)), memory(owner->data[0..owner->cap]))
+        ) using {
             at(statement(4).entry, separate(memory(owner->len), memory(owner->cap)));
             at(statement(4).entry, separate(memory(owner->len), memory(owner->data)));
             at(statement(4).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
@@ -358,6 +364,7 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
             0 <= owner->len;
             owner->len < owner->cap;
         }
+        assumption();
     }
     have at(statement(4).entry, owner->cap) == old(owner->cap) by {
         normalize();
