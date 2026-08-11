@@ -432,9 +432,25 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
         }
         have at(statement(0).entry, (owner->len + 1)) <=
             at(statement(0).entry, owner->cap) by {
-            derive using {
-                owner->len < owner->cap;
+            have at(statement(0).entry, owner->len) <
+                at(statement(0).entry, owner->cap) by {
+                transport(
+                    owner->len < owner->cap,
+                    at(statement(0).entry, owner->len) <
+                        at(statement(0).entry, owner->cap)
+                ) using {
+                    owner->len < owner->cap;
+                }
+                assumption();
             }
+            apply(int32_increment_upper_bound(
+                at(statement(0).entry, owner->len),
+                at(statement(0).entry, owner->cap)
+            )) using {
+                at(statement(0).entry, owner->len) <
+                    at(statement(0).entry, owner->cap);
+            }
+            assumption();
         }
         frame() using {
             at(statement(8).entry, owner->len) < at(statement(8).entry, owner->cap);
