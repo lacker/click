@@ -2264,6 +2264,25 @@ pub fn prove_int32_positive_is_nonnegative(value: Bitvector32Term) -> Theorem {
     ))
 }
 
+/// Decrementing a positive signed int32 value produces a nonnegative value.
+pub fn prove_int32_positive_predecessor_is_nonnegative(value: Bitvector32Term) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), value.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Subtract(Box::new(value), Box::new(Bitvector32Term::Constant(1))),
+        ),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
 /// Signed non-strict order followed by strict order is strict order.
 pub fn prove_int32_le_lt_transitive(
     first: Bitvector32Term,

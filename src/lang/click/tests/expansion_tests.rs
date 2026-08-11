@@ -1323,6 +1323,44 @@ fn restricted_simp_expands_positive_to_nonnegative_theorem_application() {
 }
 
 #[test]
+fn restricted_simp_expands_positive_predecessor_to_theorem_application() {
+    let click_source = r#"
+        theorem positive_predecessor_is_nonnegative(value: int32) {
+            requires 0 < value;
+            ensures 0 <= value - 1 by {
+                simp() using {
+                    0 < value;
+                }
+            }
+        }
+    "#;
+    let offset = click_source.find("simp() using").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("positive-predecessor simp should expand");
+    assert!(
+        expanded.contains("apply(int32_positive_predecessor_is_nonnegative(value)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("0 < value;"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+}
+
+#[test]
 fn restricted_simp_expands_strict_increment_to_theorem_application() {
     let click_source = r#"
             theorem increment_is_greater(value: int32, upper: int32) {

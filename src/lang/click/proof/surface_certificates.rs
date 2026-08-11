@@ -167,14 +167,22 @@ pub(super) fn lower_surface_atomic_derivation(
     if premise_pairs.is_empty() && surface_normalizes_context_free {
         return Ok((conclusion, Proof::Script(vec![ProofTactic::Normalize])));
     }
-    if let Some(tactics) = plan_explicit_equality_rewrites(
-        &lowered_conclusion,
-        &premise_pairs,
-        available,
-    ) {
+    if let Some(tactics) =
+        plan_explicit_equality_rewrites(&lowered_conclusion, &premise_pairs, available)
+    {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "atomic derivation produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, Proof::Script(tactics)));
+    }
+    if let Some(tactics) =
+        plan_explicit_positive_predecessor_is_nonnegative(&lowered_conclusion, &premise_pairs)
+    {
+        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "atomic predecessor derivation produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
@@ -204,12 +212,12 @@ pub(super) fn lower_surface_atomic_derivation(
             continue;
         };
         if !(propositions_match_up_to_canonical_loads(&source, &lowered_conclusion)
-                || condition_polarity_equivalent(&source, &lowered_conclusion)
-                || crate::kernel::c_condition_facts_equivalent_for_memory_resolution(
-                    &source,
-                    &lowered_conclusion,
-                    &transport_recognition,
-                ))
+            || condition_polarity_equivalent(&source, &lowered_conclusion)
+            || crate::kernel::c_condition_facts_equivalent_for_memory_resolution(
+                &source,
+                &lowered_conclusion,
+                &transport_recognition,
+            ))
         {
             continue;
         }
@@ -1137,6 +1145,7 @@ pub(super) fn lower_restricted_simp_plan(
             .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
             .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
             .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
+            .or_else(|| plan_explicit_positive_predecessor_is_nonnegative(goal, premise_pairs))
     };
     let loadability_transport = || {
         exact_derivation?;
@@ -1401,6 +1410,42 @@ fn plan_explicit_positive_is_nonnegative(
             ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
                     name: "int32_positive_is_nonnegative".to_string(),
+                    arguments: vec![surface_value],
+                },
+                premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
+}
+
+fn plan_explicit_positive_predecessor_is_nonnegative(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let (goal_lower, predecessor) = signed_nonstrict_parts(goal)?;
+    if goal_lower != &Bitvector32Term::Constant(0) {
+        return None;
+    }
+    let Bitvector32Term::Subtract(value, amount) = predecessor else {
+        return None;
+    };
+    if amount.as_ref() != &Bitvector32Term::Constant(1) {
+        return None;
+    }
+    for (kernel, surface) in premise_pairs {
+        let Some((premise_lower, premise_value)) = signed_strict_parts(kernel) else {
+            continue;
+        };
+        if premise_lower != &Bitvector32Term::Constant(0) || premise_value != value.as_ref() {
+            continue;
+        }
+        let (_, surface_value) = surface_strict_parts(surface)?;
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_positive_predecessor_is_nonnegative".to_string(),
                     arguments: vec![surface_value],
                 },
                 premises: vec![surface.clone()],
