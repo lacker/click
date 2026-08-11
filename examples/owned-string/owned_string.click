@@ -393,10 +393,29 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
     }
     fold(owned_string(owner));
     frame();
+    have at(statement(3).entry, index) == old(owner->len) by {
+        normalize();
+    }
     have owner->len == (old(owner->len) + 1) by {
-        derive using {
-            at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1));
+        have owner->len == at(statement(3).entry, (index + 1)) by {
+            transport(
+                at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1)),
+                owner->len == at(statement(3).entry, (index + 1))
+            ) using {
+                at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1));
+                at(statement(4).entry, separate(
+                    memory(owner->len),
+                    memory(owner->data[0..owner->cap])
+                ));
+                at(statement(4).entry, separate(memory(owner->len), memory(owner->data)));
+                at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
+                at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
+                at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
+            }
+            assumption();
         }
+        rewrite(owner->len == at(statement(3).entry, (index + 1)));
+        assumption();
     }
     have result == (old(owner->len) + 1) by {
         simp() using {
