@@ -1345,7 +1345,10 @@ pub(super) fn lower_outcome_simp_tactics(
     ) {
         Ok(explicit)
     } else {
-        Ok(vec![tactic])
+        Err(ClickError::new(format!(
+            "post-execution simplification proved `{}`, but Click has no explicit simple certificate for that derivation",
+            describe_click_proposition(surface_goal),
+        )))
     }
 }
 
