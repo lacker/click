@@ -185,6 +185,7 @@ fn failed_point_normalize_does_not_dump_internal_memory() {
 
         int32 read(int32* data) {
             requires loadable(data[0..1]);
+            views data[0..1];
             ensures result == 1;
         } by {
             step();
