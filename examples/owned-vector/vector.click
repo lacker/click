@@ -170,7 +170,7 @@ int32 vector_grow(struct vector* owner) {
     }
     if new_data == 0 {
         have loadable(owner->data[0..owner->cap]) by {
-            derive using {
+            simp() using {
                 loadable(old(owner->data[0..owner->cap]));
             }
         }
