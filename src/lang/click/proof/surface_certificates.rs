@@ -1309,6 +1309,9 @@ pub(super) fn lower_outcome_simp_tactics(
     if let Some(tactics) = plan_explicit_unchanged_load_transport(surface_goal, &premise_pairs) {
         return Ok(tactics);
     }
+    if let Some(tactics) = plan_explicit_loadability_transport(goal, surface_goal, &premise_pairs) {
+        return Ok(tactics);
+    }
     if search(
         goal.clone(),
         &premise_pairs,
