@@ -1804,6 +1804,64 @@ fn post_execution_simp_composes_negated_successor_bound() {
 }
 
 #[test]
+fn post_execution_simp_unfolds_predicate_goal_explicitly() {
+    let c_source = r#"
+        int32 compare_swap2(int32* p) {
+            int32 tmp;
+            if (p[1] < p[0]) {
+                tmp = p[0];
+                p[0] = p[1];
+                p[1] = tmp;
+            } else {
+                tmp = 0;
+            }
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "compare_swap2.c";
+
+        predicate sorted_pair(p: int32*) {
+            p[0] <= p[1]
+        }
+
+        int32 compare_swap2(int32* p) {
+            requires loadable(p[0..2]);
+            consumes p[0..2];
+            ensures sorted_pair(p);
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let offset = click_source.rfind("simp()").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("compare_swap2.c", c_source)],
+        line,
+        column,
+    )
+    .expect("post-execution predicate goal should expand");
+    assert!(expanded.contains("unfold(sorted_pair);"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[("compare_swap2.c", c_source)])
+        .expect("expanded predicate-goal proof should replay");
+}
+
+#[test]
 fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
     let click_source = r#"
         theorem increment_stays_bounded(value: int32, upper: int32) {

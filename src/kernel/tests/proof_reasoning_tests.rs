@@ -359,6 +359,26 @@ fn int32_ge_transitive_axiom_has_the_exact_implications() {
 }
 
 #[test]
+fn int32_ge_implies_reversed_le_axiom_has_the_exact_implication() {
+    let greater = Bitvector32Term::Variable(Variable(90_039));
+    let lower = Bitvector32Term::Variable(Variable(90_040));
+    let theorem = prove_int32_ge_implies_reversed_le(greater.clone(), lower.clone());
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(greater.clone(), lower.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(lower, greater),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
 fn int32_increment_below_max_is_defined_axiom_has_the_exact_implication() {
     let value = Bitvector32Term::Variable(Variable(90_024));
     let theorem = prove_int32_increment_below_max_is_defined(value.clone());

@@ -2565,6 +2565,25 @@ pub fn prove_int32_ge_transitive(
     ))
 }
 
+/// Signed greater-equal is the reversed spelling of signed less-equal.
+pub fn prove_int32_ge_implies_reversed_le(
+    greater: Bitvector32Term,
+    lower: Bitvector32Term,
+) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(greater.clone(), lower.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(lower, greater),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
 pub fn prove_memory_load(memory: CMemory, pointer: Pointer) -> Theorem {
     let outcome = memory.load(&pointer);
     Theorem::new(Proposition::CMemoryLoads {

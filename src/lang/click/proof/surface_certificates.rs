@@ -1184,6 +1184,12 @@ pub(super) fn lower_outcome_simp_tactics(
             return true;
         }
         if let Some(suffix) =
+            plan_explicit_greater_equal_to_reversed_less_equal(&current, premises)
+        {
+            tactics.extend(suffix);
+            return true;
+        }
+        if let Some(suffix) =
             plan_explicit_not_strict_implies_greater_equal(&current, premises)
         {
             tactics.extend(suffix);
@@ -1293,6 +1299,29 @@ pub(super) fn lower_outcome_simp_tactics(
 
     let mut used = vec![false; premise_pairs.len()];
     let mut explicit = Vec::new();
+    if let ClickProposition::PredicateCall { name, .. } = surface_goal {
+        let unfolded_goal = unfold_predicates_in_proposition(
+            predicate_environment,
+            click_function_environment,
+            std::slice::from_ref(name),
+            goal,
+            &assumptions_from_propositions(&available),
+        )
+        .map_err(ClickError::new)?;
+        if pure_fact_is_replay_available(&unfolded_goal, &available) {
+            return Ok(vec![
+                ProofTactic::UnfoldPredicate(name.clone()),
+                ProofTactic::Assumption,
+            ]);
+        }
+        if let Some(mut suffix) =
+            plan_explicit_greater_equal_to_reversed_less_equal(&unfolded_goal, &premise_pairs)
+        {
+            let mut tactics = vec![ProofTactic::UnfoldPredicate(name.clone())];
+            tactics.append(&mut suffix);
+            return Ok(tactics);
+        }
+    }
     if search(
         goal.clone(),
         &premise_pairs,
@@ -1420,6 +1449,7 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_strict_implies_nonstrict(goal, premise_pairs))
+        .or_else(|| plan_explicit_greater_equal_to_reversed_less_equal(goal, premise_pairs))
         .or_else(|| plan_explicit_not_strict_implies_greater_equal(goal, premise_pairs))
         .or_else(|| plan_explicit_greater_equal_transitive(goal, premise_pairs))
         .or_else(|| plan_explicit_negated_strict_successor_bound(goal, premise_pairs))
@@ -1694,6 +1724,43 @@ fn plan_explicit_strict_implies_nonstrict(
                 application: TheoremApplication {
                     name: "int32_lt_implies_le".to_string(),
                     arguments: vec![surface_left, surface_right],
+                },
+                premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
+}
+
+fn plan_explicit_greater_equal_to_reversed_less_equal(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessEqual(goal_lower, goal_greater),
+        true,
+    ) = goal
+    else {
+        return None;
+    };
+    for (kernel, surface) in premise_pairs {
+        let Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(greater, lower),
+            true,
+        ) = kernel
+        else {
+            continue;
+        };
+        if greater != goal_greater || lower != goal_lower {
+            continue;
+        }
+        let (surface_lower, surface_greater) = surface_nonstrict_parts(surface)?;
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_ge_implies_reversed_le".to_string(),
+                    arguments: vec![surface_greater, surface_lower],
                 },
                 premises: vec![surface.clone()],
             },

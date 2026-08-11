@@ -55,6 +55,7 @@ axioms, even when Rust names them `prove_*`.
 `prove_int32_positive_predecessor_strictly_decreases`,
 `prove_int32_le_lt_transitive`, `prove_int32_lt_transitive`,
 `prove_int32_ge_transitive`, and
+`prove_int32_ge_implies_reversed_le`, and
 `prove_int32_le_and_not_lt_implies_eq` and
 `prove_int32_ge_and_not_gt_implies_eq` are kernel axioms exposed as named standard
 theorems. They construct only the fixed signed-increment, successor-order,

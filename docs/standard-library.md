@@ -124,6 +124,12 @@ theorem int32_ge_transitive(last: int32, middle: int32, first: int32) {
     ensures last >= first;
 }
 
+theorem int32_ge_implies_reversed_le(greater: int32, lower: int32) {
+    requires greater >= lower;
+
+    ensures lower <= greater;
+}
+
 theorem int32_le_and_not_lt_implies_eq(left: int32, right: int32) {
     requires left <= right;
     requires not (left < right);
