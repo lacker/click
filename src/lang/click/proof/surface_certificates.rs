@@ -954,19 +954,6 @@ fn select_outcome_simp_certificate(
             None => minimal_simp_proposition_derivation(goal, &certified_context)?,
         };
         check_verification_deadline()?;
-        if minimized.is_none()
-            && let Ok(dir) = std::env::var("CLICK_DERIVE_DUMP_DIR")
-        {
-            let stamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.subsec_nanos())
-                .unwrap_or(0);
-            let _ = std::fs::write(format!("{dir}/goal-{stamp}.txt"), format!("{goal:#?}"));
-            let _ = std::fs::write(
-                format!("{dir}/context-{stamp}.txt"),
-                format!("{certified_context:#?}"),
-            );
-        }
         if let Some(derivation) = minimized {
             let entry_point = ProgramPointRef {
                 region: CodeRegionRef::Function,

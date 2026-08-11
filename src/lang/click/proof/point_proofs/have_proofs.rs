@@ -481,30 +481,6 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     }
 
     let Some(plan) = plan_simp_certificate(&goal, &assumptions) else {
-        if let Ok(dir) = std::env::var("CLICK_HAVE_DUMP_DIR") {
-            let _ = std::fs::write(format!("{dir}/have-goal.txt"), format!("{goal:#?}"));
-            if let Proposition::ForAll { body, .. } = &goal
-                && let Proposition::ConditionIs(
-                    crate::kernel::ConditionTerm::Bitvector32Equal(left, right),
-                    _,
-                ) = body.as_ref()
-            {
-                let canonical_left = crate::kernel::canonicalize_atomic_loads(left);
-                let canonical_right = crate::kernel::canonicalize_atomic_loads(right);
-                eprintln!(
-                    "HAVE PROBE canonical_eq={}",
-                    canonical_left == canonical_right
-                );
-                let _ = std::fs::write(
-                    format!("{dir}/canonical-left.txt"),
-                    format!("{canonical_left:#?}"),
-                );
-                let _ = std::fs::write(
-                    format!("{dir}/canonical-right.txt"),
-                    format!("{canonical_right:#?}"),
-                );
-            }
-        }
         let mut message = format!(
             "`{claim_label}` tactic {outer_tactic_index}: `have` failed: {}",
             describe_missing_pure_fact(
