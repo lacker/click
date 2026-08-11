@@ -1193,6 +1193,10 @@ pub(super) fn lower_outcome_simp_tactics(
             tactics.extend(suffix);
             return true;
         }
+        if let Some(suffix) = plan_explicit_negated_strict_successor_bound(&current, premises) {
+            tactics.extend(suffix);
+            return true;
+        }
         if let Some(suffix) =
             plan_explicit_increment_greater_equal_lower_bound(&current, premises)
         {
@@ -1418,6 +1422,7 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_strict_implies_nonstrict(goal, premise_pairs))
         .or_else(|| plan_explicit_not_strict_implies_greater_equal(goal, premise_pairs))
         .or_else(|| plan_explicit_greater_equal_transitive(goal, premise_pairs))
+        .or_else(|| plan_explicit_negated_strict_successor_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_greater_equal_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_strict_greater_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_strict_transitive(goal, premise_pairs))
@@ -1783,6 +1788,87 @@ fn plan_explicit_greater_equal_transitive(
                 ProofTactic::Assumption,
             ]);
         }
+    }
+    None
+}
+
+fn plan_explicit_negated_strict_successor_bound(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedGreaterEqual(goal_value, goal_lower),
+        true,
+    ) = goal
+    else {
+        return None;
+    };
+    let Bitvector32Term::Constant(lower) = goal_lower.as_ref() else {
+        return None;
+    };
+    let upper = (*lower as i32).checked_add(1)? as u32;
+    for (kernel, surface) in premise_pairs {
+        let (premise_value, premise_upper) = match kernel {
+            Proposition::Not(body) => match body.as_ref() {
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(value, upper),
+                    true,
+                ) => (value.as_ref(), upper.as_ref()),
+                _ => continue,
+            },
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(value, upper),
+                false,
+            ) => (value.as_ref(), upper.as_ref()),
+            _ => continue,
+        };
+        if premise_value != goal_value.as_ref()
+            || premise_upper != &Bitvector32Term::Constant(upper)
+        {
+            continue;
+        }
+        let ClickProposition::Not(inner) = surface else {
+            continue;
+        };
+        let (surface_value, surface_upper) = surface_strict_parts(inner)?;
+        let surface_lower = ContractExpression::CFragment(CExpression::Value(int32(*lower)));
+        let value_ge_upper = ClickProposition::Comparison {
+            left: surface_value.clone(),
+            operator: ComparisonOperator::GreaterEqual,
+            right: surface_upper.clone(),
+        };
+        let upper_ge_lower = ClickProposition::Comparison {
+            left: surface_upper.clone(),
+            operator: ComparisonOperator::GreaterEqual,
+            right: surface_lower.clone(),
+        };
+        return Some(vec![
+            ProofTactic::Have(ProofHave {
+                proposition: value_ge_upper.clone(),
+                proof: Proof::Script(vec![
+                    ProofTactic::ApplyTheoremUsing {
+                        application: TheoremApplication {
+                            name: "int32_not_lt_implies_ge".to_string(),
+                            arguments: vec![surface_value.clone(), surface_upper.clone()],
+                        },
+                        premises: vec![surface.clone()],
+                    },
+                    ProofTactic::Assumption,
+                ]),
+            }),
+            ProofTactic::Have(ProofHave {
+                proposition: upper_ge_lower.clone(),
+                proof: Proof::Script(vec![ProofTactic::Normalize]),
+            }),
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_ge_transitive".to_string(),
+                    arguments: vec![surface_value, surface_upper, surface_lower],
+                },
+                premises: vec![value_ge_upper, upper_ge_lower],
+            },
+            ProofTactic::Assumption,
+        ]);
     }
     None
 }

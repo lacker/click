@@ -1755,6 +1755,55 @@ fn post_execution_simp_expands_greater_order_equality() {
 }
 
 #[test]
+fn post_execution_simp_composes_negated_successor_bound() {
+    let c_source = r#"
+        int32 identity_at_least_one(int32 value) {
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "identity_at_least_one.c";
+
+        int32 identity_at_least_one(int32 value) {
+            requires not (value < 2);
+            ensures result >= 1;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let offset = click_source.rfind("simp()").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("identity_at_least_one.c", c_source)],
+        line,
+        column,
+    )
+    .expect("post-execution successor lower bound should expand");
+    assert!(
+        expanded.contains("apply(int32_not_lt_implies_ge("),
+        "{expanded}"
+    );
+    assert!(expanded.contains("apply(int32_ge_transitive("), "{expanded}");
+    assert!(expanded.contains("normalize();"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[("identity_at_least_one.c", c_source)])
+        .expect("expanded successor lower-bound proof should replay");
+}
+
+#[test]
 fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
     let click_source = r#"
         theorem increment_stays_bounded(value: int32, upper: int32) {
