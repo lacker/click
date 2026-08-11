@@ -1759,31 +1759,7 @@ pub(super) fn finish_ordered_proof_replay(
                                 proposition: have.proposition.clone(),
                                 proof: Proof::Script(proof_tactics),
                             };
-                            let uses_store_spelling = matches!(
-                                closing_tactics.as_slice(),
-                                [ProofTactic::Derive(derive)]
-                                    if derive.premises.iter().any(|premise| matches!(
-                                        premise,
-                                        ClickProposition::Comparison {
-                                            left: ContractExpression::At { .. },
-                                            ..
-                                        }
-                                    ))
-                            );
-                            let mut replay_available = certificate_available.clone();
-                            if uses_store_spelling {
-                                for effect in &replay.effect_facts {
-                                    if matches!(
-                                        effect.proposition(),
-                                        Proposition::CMemoryMutatesOnly { .. }
-                                            | Proposition::CMemoryEffectSummary { .. }
-                                            | Proposition::CHeapLifetimeRetired { .. }
-                                    ) && !replay_available.contains(effect.proposition())
-                                    {
-                                        replay_available.push(effect.proposition().clone());
-                                    }
-                                }
-                            }
+                            let replay_available = certificate_available.clone();
                             let replay_have = |candidate: &ProofHave| {
                                 prove_pure_proposition_at_point(
                                     &candidate.proposition,
