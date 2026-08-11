@@ -769,6 +769,69 @@ fn frontier_local_loop_keyword_expands_omitted_phases() {
 }
 
 #[test]
+fn loop_exit_simp_expands_invariant_conjuncts_explicitly() {
+    let c_source = r#"
+            int32 count_to_n(int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_n.c";
+
+            int32 count_to_n(int32 n) {
+                requires n >= 0 and n <= 2147483647;
+                ensures result == n and result >= 0;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0 and i <= n;
+                }
+                step();
+                simp();
+            }
+        "#;
+    let simp_offset = click_source
+        .rfind("simp();")
+        .expect("proof should contain its final simp");
+    let line = click_source[..simp_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = simp_offset
+        - click_source[..simp_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("count_to_n.c", c_source)], line, column)
+            .expect("loop-exit simp should expand through explicit invariant conjuncts");
+
+    assert!(
+        expanded.contains("extract(at(loop(0).exit, i) <= at(loop(0).exit, n));"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("apply(int32_le_and_not_lt_implies_eq("),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &[("count_to_n.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "the expanded loop-exit proof should freshly replay: {}\n{expanded}",
+            error.message()
+        )
+    });
+}
+
+#[test]
 fn frontier_local_loop_does_not_leak_phase_tactics_into_a_later_expansion() {
     let c_source = r#"
             int32 count_to_three() {
