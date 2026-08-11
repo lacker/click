@@ -659,7 +659,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
         normalize();
     }
     have i <= owner->len by {
-        derive using {
+        simp() using {
             1 <= owner->len;
         }
     }

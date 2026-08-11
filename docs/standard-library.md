@@ -46,6 +46,12 @@ theorem int32_successor_le_implies_lt(lower: int32, value: int32) {
 
     ensures lower < value;
 }
+
+theorem int32_positive_is_nonnegative(value: int32) {
+    requires 1 <= value;
+
+    ensures 0 <= value;
+}
 ```
 
 The strict upper premise rules out signed overflow. It proves that increment
@@ -55,6 +61,8 @@ established order increment together.
 The successor theorem states its no-overflow condition separately, allowing a
 concrete condition such as `1 < 2` to be discharged by context-free kernel
 normalization while an adjacent non-strict bound is supplied explicitly.
+The positivity theorem records the common signed-order weakening from
+`1 <= value` to `0 <= value`.
 Smart simplification may select these theorems, while expansion records an
 ordinary simple `apply(...) using { ... }` step with the exact premises. Each
 declaration is checked against its fixed kernel axiom; users cannot introduce

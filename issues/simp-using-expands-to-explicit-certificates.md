@@ -139,10 +139,6 @@ old `derive using` blocks can be removed:
   source-identical spellings lower against different memory snapshots. The
   fix must name the snapshot transport and false-elimination steps; it must not
   make `contradiction` search equivalent facts.
-- Simple signed-order weakening is incomplete. In particular, restricted
-  simplification can prove `0 <= i <= owner->len` at loop initialization from
-  the normalized `i == 0` state and listed `1 <= owner->len`, but cannot emit a
-  named simple rule for `1 <= value` implying `0 <= value`.
 - Structural transport can select an earlier `separate(...)` fact and the
   matching current-frontier target, yet replay may reject the source as an
   unavailable exact fact even while printing that same fact in the available

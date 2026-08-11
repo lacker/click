@@ -2193,6 +2193,22 @@ pub fn prove_int32_successor_le_implies_lt(
     ))
 }
 
+/// Any signed int32 value that is at least one is nonnegative.
+pub fn prove_int32_positive_is_nonnegative(value: Bitvector32Term) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), value.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), value),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
 pub fn prove_memory_load(memory: CMemory, pointer: Pointer) -> Theorem {
     let outcome = memory.load(&pointer);
     Theorem::new(Proposition::CMemoryLoads {

@@ -138,6 +138,25 @@ fn int32_successor_le_implies_lt_axiom_has_the_exact_implications() {
 }
 
 #[test]
+fn int32_positive_is_nonnegative_axiom_has_the_exact_implication() {
+    let value = Bitvector32Term::Variable(Variable(90_040));
+    let theorem = prove_int32_positive_is_nonnegative(value.clone());
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), value.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), value),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
 fn proposition_derivation_honors_active_deadline() {
     let assumptions = Assumptions::new();
     let proposition = Proposition::ConditionIs(ConditionTerm::Constant(true), true);

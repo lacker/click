@@ -1062,6 +1062,7 @@ pub(super) fn lower_restricted_simp_plan(
             .or_else(|| plan_explicit_increment_preserves_order(goal, premise_pairs))
             .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
             .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
+            .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
     };
     let loadability_transport = || {
         exact_derivation?;
@@ -1297,6 +1298,36 @@ fn plan_explicit_increment_upper_bound(
                 application: TheoremApplication {
                     name: "int32_increment_upper_bound".to_string(),
                     arguments: vec![value, upper],
+                },
+                premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
+}
+
+fn plan_explicit_positive_is_nonnegative(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let (goal_lower, goal_value) = signed_nonstrict_parts(goal)?;
+    if goal_lower != &Bitvector32Term::Constant(0) {
+        return None;
+    }
+    for (kernel, surface) in premise_pairs {
+        let Some((premise_lower, premise_value)) = signed_nonstrict_parts(kernel) else {
+            continue;
+        };
+        if premise_lower != &Bitvector32Term::Constant(1) || premise_value != goal_value {
+            continue;
+        }
+        let (_, surface_value) = surface_nonstrict_parts(surface)?;
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_positive_is_nonnegative".to_string(),
+                    arguments: vec![surface_value],
                 },
                 premises: vec![surface.clone()],
             },
