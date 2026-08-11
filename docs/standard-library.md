@@ -59,6 +59,12 @@ theorem int32_lt_implies_le(left: int32, right: int32) {
     ensures left <= right;
 }
 
+theorem int32_not_lt_implies_ge(left: int32, right: int32) {
+    requires not (left < right);
+
+    ensures left >= right;
+}
+
 theorem int32_strictly_positive_is_nonnegative(value: int32) {
     requires 0 < value;
 

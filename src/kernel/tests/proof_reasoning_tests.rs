@@ -171,6 +171,26 @@ fn int32_lt_implies_le_axiom_has_the_exact_implication() {
 }
 
 #[test]
+fn int32_not_lt_implies_ge_axiom_has_the_exact_implication() {
+    let left = Bitvector32Term::Variable(Variable(90_029));
+    let right = Bitvector32Term::Variable(Variable(90_030));
+    let theorem = prove_int32_not_lt_implies_ge(left.clone(), right.clone());
+    let premise = Proposition::Not(Box::new(Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(left.clone(), right.clone()),
+        true,
+    )));
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(left, right),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
 fn int32_increment_below_max_is_defined_axiom_has_the_exact_implication() {
     let value = Bitvector32Term::Variable(Variable(90_024));
     let theorem = prove_int32_increment_below_max_is_defined(value.clone());

@@ -1290,6 +1290,41 @@ fn post_execution_simp_applies_strict_order_rule() {
 }
 
 #[test]
+fn restricted_simp_expands_negated_strict_order_to_greater_equal() {
+    let click_source = r#"
+        theorem not_negative_is_nonnegative(x: int32) {
+            requires not (x < 0);
+            ensures x >= 0 by {
+                simp() using {
+                    not (x < 0);
+                }
+            }
+        }
+    "#;
+    let offset = click_source.find("simp() using").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("negated strict-order simp should expand");
+    assert!(
+        expanded.contains("apply(int32_not_lt_implies_ge(x, 0)) using"),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded negated-order proof should replay");
+}
+
+#[test]
 fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
     let click_source = r#"
         theorem increment_stays_bounded(value: int32, upper: int32) {

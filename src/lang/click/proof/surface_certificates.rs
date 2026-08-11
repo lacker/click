@@ -1183,6 +1183,12 @@ pub(super) fn lower_outcome_simp_tactics(
             tactics.extend(suffix);
             return true;
         }
+        if let Some(suffix) =
+            plan_explicit_not_strict_implies_greater_equal(&current, premises)
+        {
+            tactics.extend(suffix);
+            return true;
+        }
         for (index, (kernel, surface)) in premises.iter().enumerate() {
             if used[index] {
                 continue;
@@ -1331,6 +1337,7 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_strict_implies_nonstrict(goal, premise_pairs))
+        .or_else(|| plan_explicit_not_strict_implies_greater_equal(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_strictly_positive_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_below_max_is_defined(goal, premise_pairs))
@@ -1597,6 +1604,53 @@ fn plan_explicit_strict_implies_nonstrict(
             ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
                     name: "int32_lt_implies_le".to_string(),
+                    arguments: vec![surface_left, surface_right],
+                },
+                premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
+}
+
+fn plan_explicit_not_strict_implies_greater_equal(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedGreaterEqual(goal_left, goal_right),
+        true,
+    ) = goal
+    else {
+        return None;
+    };
+    for (kernel, surface) in premise_pairs {
+        let matches = match kernel {
+            Proposition::Not(body) => matches!(
+                body.as_ref(),
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(left, right),
+                    true,
+                ) if left == goal_left && right == goal_right
+            ),
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(left, right),
+                false,
+            ) => left == goal_left && right == goal_right,
+            _ => false,
+        };
+        if !matches {
+            continue;
+        }
+        let ClickProposition::Not(inner) = surface else {
+            continue;
+        };
+        let (surface_left, surface_right) = surface_strict_parts(inner)?;
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_not_lt_implies_ge".to_string(),
                     arguments: vec![surface_left, surface_right],
                 },
                 premises: vec![surface.clone()],
