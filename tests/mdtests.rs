@@ -28,7 +28,7 @@ const QUARANTINED: &[(&str, &str)] = &[
     ),
     (
         "byte_slice_stdlib.md",
-        "issues/byte-slice-indexed-range-premise-certificate-missing.md: indexed-range premise derivation has no explicit simple certificate",
+        "issues/owned-segmented-buffer-order-weakening-certificate.md: indexed-range premise derivation has no explicit simple certificate",
     ),
     (
         "composite_resource_vector_fill_loop_snapshot.md",
@@ -52,7 +52,7 @@ const QUARANTINED: &[(&str, &str)] = &[
     ),
     (
         "proof_branch_pointer_local.md",
-        "issues/branch-disjunctive-premise-certificate-missing.md: disjunctive premise derivation has no explicit simple certificate",
+        "issues/owned-segmented-buffer-order-weakening-certificate.md: disjunctive premise derivation has no explicit simple certificate",
     ),
     (
         "proof_if_cases.md",

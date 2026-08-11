@@ -10,9 +10,9 @@ Click has no explicit simple certificate for that derivation
   selected premises: at(statement(2).entry, 0) <= at(statement(2).entry, capacity)
 ```
 
-Like the owned-segmented-buffer order-weakening gap (fixed by the
-`int32_le_transitive` standard theorem), the failure surfaced when commit
-`e9460ff` rejected opaque outcome certificates. The
+Like the owned-segmented-buffer gap (see
+`owned-segmented-buffer-order-weakening-certificate.md`), the failure
+surfaced when commit `e9460ff` rejected opaque outcome certificates. The
 derivation here is wider than order weakening: the goal is a conjunction
 mixing scalar bounds with a resource-count equality
 (`count(pool_object(pool, _))`), and the certificate language has no simple

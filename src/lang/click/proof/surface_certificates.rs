@@ -1192,17 +1192,6 @@ pub(super) fn lower_outcome_simp_tactics(
                 ConditionTerm::Bitvector32SignedLessThan(_, _),
                 true
             )
-        ) && let Some(suffix) = plan_explicit_successor_le_implies_lt(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if matches!(
-            current,
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessThan(_, _),
-                true
-            )
         ) && let Some(suffix) =
             plan_explicit_increment_strictly_increases(&current, premises)
         {
@@ -1238,18 +1227,6 @@ pub(super) fn lower_outcome_simp_tactics(
                 true
             )
         ) && let Some(suffix) = plan_explicit_increment_upper_bound(&current, premises)
-        {
-            tactics.extend(suffix);
-            return true;
-        }
-        if matches!(
-            current,
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessEqual(_, _),
-                true
-            )
-        ) && let Some(suffix) =
-            plan_explicit_le_transitive_constant_lower(&current, premises)
         {
             tactics.extend(suffix);
             return true;
@@ -1621,7 +1598,6 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
-        .or_else(|| plan_explicit_le_transitive_constant_lower(goal, premise_pairs))
         .or_else(|| plan_explicit_strictly_positive_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_strict_implies_nonstrict(goal, premise_pairs))
         .or_else(|| plan_explicit_greater_equal_to_reversed_less_equal(goal, premise_pairs))
@@ -1888,59 +1864,6 @@ fn plan_explicit_positive_is_nonnegative(
                 application: TheoremApplication {
                     name: "int32_positive_is_nonnegative".to_string(),
                     arguments: vec![surface_value],
-                },
-                premises: vec![surface.clone()],
-            },
-            ProofTactic::Assumption,
-        ]);
-    }
-    None
-}
-
-fn plan_explicit_le_transitive_constant_lower(
-    goal: &Proposition,
-    premise_pairs: &[(Proposition, ClickProposition)],
-) -> Option<Vec<ProofTactic>> {
-    let Proposition::ConditionIs(
-        ConditionTerm::Bitvector32SignedLessEqual(goal_lower, goal_value),
-        true,
-    ) = goal
-    else {
-        return None;
-    };
-    let Bitvector32Term::Constant(goal_lower_bits) = goal_lower.as_ref() else {
-        return None;
-    };
-    for (kernel, surface) in premise_pairs {
-        let Some((premise_lower, premise_value)) = signed_nonstrict_parts(kernel) else {
-            continue;
-        };
-        let Bitvector32Term::Constant(premise_lower_bits) = premise_lower else {
-            continue;
-        };
-        if premise_value != goal_value.as_ref()
-            || (*goal_lower_bits as i32) >= (*premise_lower_bits as i32)
-        {
-            continue;
-        }
-        let constant_leg = Proposition::ConditionIs(
-            ConditionTerm::Bitvector32SignedLessEqual(
-                Box::new(goal_lower.as_ref().clone()),
-                Box::new(premise_lower.clone()),
-            ),
-            true,
-        );
-        if !normalizes_context_free(&constant_leg) {
-            continue;
-        }
-        let (surface_middle, surface_value) = surface_nonstrict_parts(surface)?;
-        let surface_lower =
-            ContractExpression::CFragment(CExpression::Value(int32(*goal_lower_bits)));
-        return Some(vec![
-            ProofTactic::ApplyTheoremUsing {
-                application: TheoremApplication {
-                    name: "int32_le_transitive".to_string(),
-                    arguments: vec![surface_lower, surface_middle, surface_value],
                 },
                 premises: vec![surface.clone()],
             },
