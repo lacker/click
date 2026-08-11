@@ -1255,6 +1255,17 @@ pub(super) fn lower_outcome_simp_tactics(
                 ConditionTerm::Bitvector32SignedLessEqual(_, _),
                 true
             )
+        ) && let Some(suffix) = plan_explicit_increment_preserves_order(&current, premises)
+        {
+            tactics.extend(suffix);
+            return true;
+        }
+        if matches!(
+            current,
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(_, _),
+                true
+            )
         ) && let Some(suffix) = plan_explicit_increment_upper_bound(&current, premises)
         {
             tactics.extend(suffix);

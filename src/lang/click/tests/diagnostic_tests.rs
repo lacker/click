@@ -116,8 +116,26 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
         }
     "#;
 
-    verify_c0_sources(click_source, &[("push.c", push_c), ("caller.c", caller_c)])
+    let sources = [("push.c", push_c), ("caller.c", caller_c)];
+    verify_c0_sources(click_source, &sources)
         .expect("a storage-only callee should preserve its caller's allocation authority");
+
+    let push_start = click_source.find("int32 push").unwrap();
+    let simp_offset = push_start + click_source[push_start..].find("simp();").unwrap();
+    let position = expansion::position_at_offset(click_source, simp_offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &sources,
+        position.line,
+        position.column,
+    )
+    .expect("push postconditions should expand explicitly");
+    assert!(
+        expanded.contains("apply(int32_increment_preserves_order("),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &sources).expect("expanded push proof should replay");
 }
 
 #[test]
