@@ -977,16 +977,16 @@ fn select_outcome_simp_certificate(
             let mut complete = true;
             'premises: for required in derivation.context_premises() {
                 check_verification_deadline()?;
-                // A recorded lowering round-trips exactly: replay resolves
-                // the spelling through the same map before re-lowering.
+                // A recorded spelling is only usable if it still lowers at
+                // the outcome. In particular, a bare branch-local name can
+                // remain in the planning map after the C local has left
+                // scope; the replay map then cannot rescue that dead name.
                 if let Ok(surface) = replay.surface_propositions.surface(&required)
-                    && replay
-                        .surface_propositions
-                        .available_kernel(surface, &certified_context)
-                        == Some(&required)
+                    && let Ok(lowered) = check(surface)
+                    && propositions_match_up_to_canonical_loads(&lowered, &required)
                 {
-                    if !kernel_premises.contains(&required) {
-                        kernel_premises.push(required.clone());
+                    if !kernel_premises.contains(&lowered) {
+                        kernel_premises.push(lowered);
                         spelled_premises.push(surface.clone());
                     }
                     continue;
@@ -1770,6 +1770,18 @@ fn increment_base(term: &Bitvector32Term) -> Option<&Bitvector32Term> {
 fn surface_strict_parts(
     proposition: &ClickProposition,
 ) -> Option<(ContractExpression, ContractExpression)> {
+    if let ClickProposition::At {
+        selector,
+        proposition,
+    } = proposition
+    {
+        let (left, right) = surface_strict_parts(proposition)?;
+        let at = |expression| ContractExpression::At {
+            selector: selector.clone(),
+            expression: Box::new(expression),
+        };
+        return Some((at(left), at(right)));
+    }
     let ClickProposition::Comparison {
         left,
         operator,
@@ -1788,6 +1800,18 @@ fn surface_strict_parts(
 fn surface_nonstrict_parts(
     proposition: &ClickProposition,
 ) -> Option<(ContractExpression, ContractExpression)> {
+    if let ClickProposition::At {
+        selector,
+        proposition,
+    } = proposition
+    {
+        let (left, right) = surface_nonstrict_parts(proposition)?;
+        let at = |expression| ContractExpression::At {
+            selector: selector.clone(),
+            expression: Box::new(expression),
+        };
+        return Some((at(left), at(right)));
+    }
     let ClickProposition::Comparison {
         left,
         operator,
