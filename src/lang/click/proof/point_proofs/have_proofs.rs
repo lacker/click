@@ -1117,7 +1117,6 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
             | ProofTactic::Left
             | ProofTactic::Right
             | ProofTactic::Contradiction(_)
-            | ProofTactic::Derive(_)
             | ProofTactic::SimpUsing(_)
             | ProofTactic::Rewrite(_) => {
                 let mut prepared_derivation_lowering_facts = None;
@@ -1125,7 +1124,6 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     matches!(tactic, ProofTactic::Assumption | ProofTactic::Normalize)
                         .then(|| facts_for_simple_goal_lowering(&available));
                 let explicit_premises = match tactic {
-                    ProofTactic::Derive(derive) => Some(&derive.premises),
                     ProofTactic::SimpUsing(simp) => Some(&simp.premises),
                     _ => None,
                 };
@@ -1367,55 +1365,6 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             ))
                         })?;
                         goal = Some(logical_goal);
-                    }
-                    ProofTactic::Derive(derive) => {
-                        let derivation_lowering_facts = prepared_derivation_lowering_facts
-                            .as_ref()
-                            .expect("derive lowering facts should be prepared");
-                        let premises = derive
-                            .premises
-                            .iter()
-                            .map(|premise| {
-                                if let Some(recorded) = surface_propositions.and_then(
-                                    |propositions| {
-                                        propositions.available_kernel(premise, &available)
-                                    },
-                                ) {
-                                    Ok(recorded.clone())
-                                } else {
-                                    lower_point_proposition_with_values(
-                                        premise,
-                                        derivation_lowering_facts,
-                                        values.clone(),
-                                        &array_refs,
-                                        pre_state,
-                                        state,
-                                        result,
-                                        program_point_states,
-                                        predicate_environment,
-                                        click_function_environment,
-                                    )
-                                }
-                            })
-                            .collect::<Result<Vec<_>, _>>()
-                            .map_err(|message| {
-                                ClickError::new(format!(
-                                    "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower `{}` premise: {message}",
-                                    tactic_name(tactic)
-                                ))
-                            })?;
-                        check_atomic_premise_derivation_goal(
-                            &unfolded_goal,
-                            premises,
-                            &unfolded_goal,
-                            &available,
-                        )
-                        .map_err(|message| {
-                            ClickError::new(format!(
-                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: {message}"
-                            ))
-                        })?;
-                        goal_closed = true;
                     }
                     ProofTactic::SimpUsing(simp) => {
                         let derivation_lowering_facts = prepared_derivation_lowering_facts

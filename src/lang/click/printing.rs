@@ -327,12 +327,6 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             &prefix,
             &format!("contradiction({});", source_click_proposition(fact)),
         ),
-        ProofTactic::Derive(derive) if derive.premises.is_empty() => {
-            line(output, &prefix, "normalize();")
-        }
-        ProofTactic::Derive(derive) => {
-            write_using_premises(output, "derive", &derive.premises, indent)
-        }
         ProofTactic::SimpUsing(simp) => {
             write_using_premises(output, "simp()", &simp.premises, indent)
         }

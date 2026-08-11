@@ -876,7 +876,6 @@ pub enum ProofTactic {
     Left,
     Right,
     Contradiction(ClickProposition),
-    Derive(ProofDerive),
     CloseInvariants,
     Rewrite(ClickProposition),
     Transport {
@@ -913,7 +912,6 @@ pub enum SimpleTactic {
     Left,
     Right,
     Contradiction,
-    Derive,
     CloseInvariants,
     Rewrite,
     FactTransport,
@@ -995,7 +993,6 @@ pub enum SimpleProofStep {
     Left,
     Right,
     Contradiction(ClickProposition),
-    Derive(ProofDerive),
     CloseInvariants,
     Rewrite(ClickProposition),
     TransportUsing {
@@ -1200,7 +1197,6 @@ impl SimpleProofStep {
             ProofTactic::Left => Self::Left,
             ProofTactic::Right => Self::Right,
             ProofTactic::Contradiction(proposition) => Self::Contradiction(proposition.clone()),
-            ProofTactic::Derive(derive) => Self::Derive(derive.clone()),
             ProofTactic::CloseInvariants => Self::CloseInvariants,
             ProofTactic::Rewrite(proposition) => Self::Rewrite(proposition.clone()),
             ProofTactic::TransportUsing {
@@ -1333,7 +1329,6 @@ impl SimpleProofStep {
             Self::Left => ProofTactic::Left,
             Self::Right => ProofTactic::Right,
             Self::Contradiction(proposition) => ProofTactic::Contradiction(proposition.clone()),
-            Self::Derive(derive) => ProofTactic::Derive(derive.clone()),
             Self::CloseInvariants => ProofTactic::CloseInvariants,
             Self::Rewrite(proposition) => ProofTactic::Rewrite(proposition.clone()),
             Self::TransportUsing {
@@ -1716,7 +1711,6 @@ impl ProofTactic {
             Self::Left => TacticClass::Simple(SimpleTactic::Left),
             Self::Right => TacticClass::Simple(SimpleTactic::Right),
             Self::Contradiction(_) => TacticClass::Simple(SimpleTactic::Contradiction),
-            Self::Derive(_) => TacticClass::Simple(SimpleTactic::Derive),
             Self::CloseInvariants => TacticClass::Simple(SimpleTactic::CloseInvariants),
             Self::Rewrite(_) => TacticClass::Simple(SimpleTactic::Rewrite),
             Self::Transport { .. } => TacticClass::Smart(SmartTacticKind::FactTransport),
@@ -1774,11 +1768,6 @@ pub struct ProofBranch {
     ensuring: Option<Vec<ProofAssertion>>,
     then_tactics: Vec<ProofTactic>,
     else_tactics: Vec<ProofTactic>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProofDerive {
-    premises: Vec<ClickProposition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

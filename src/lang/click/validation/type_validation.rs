@@ -168,7 +168,6 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Left
             | ProofTactic::Right
             | ProofTactic::Contradiction(_)
-            | ProofTactic::Derive(_)
             | ProofTactic::Rewrite(_)
             | ProofTactic::Simp
             | ProofTactic::SimpUsing(_) => {}
@@ -244,7 +243,6 @@ pub(in crate::lang::click) fn tactic_name(tactic: &ProofTactic) -> &'static str 
         ProofTactic::Left => "left",
         ProofTactic::Right => "right",
         ProofTactic::Contradiction(_) => "contradiction",
-        ProofTactic::Derive(_) => "derive",
         ProofTactic::CloseInvariants => "close_invariants",
         ProofTactic::Rewrite(_) => "rewrite",
         ProofTactic::Transport { .. } | ProofTactic::TransportUsing { .. } => "transport",

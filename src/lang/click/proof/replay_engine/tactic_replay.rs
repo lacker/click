@@ -2445,7 +2445,6 @@ fn replay_linear_tactics_without_frontier_loops(
             | ProofTactic::Left
             | ProofTactic::Right
             | ProofTactic::Contradiction(_)
-            | ProofTactic::Derive(_)
             | ProofTactic::SimpUsing(_) => {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `{}` is only available while proving a pure goal, such as inside `have ... by`",

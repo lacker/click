@@ -1882,35 +1882,6 @@ fn prove_pure_theorem_tactics(
                     ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
                 })?;
             }
-            ProofTactic::Derive(derive) => {
-                let target = goal.clone();
-                let premises = derive
-                    .premises
-                    .iter()
-                    .map(|premise| {
-                        lower_pure_theorem_proposition(
-                            claim_label,
-                            premise,
-                            &context.values,
-                            &context.array_refs,
-                            &context.memory,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: could not lower `{}` premise: {message}",
-                            tactic_name(tactic)
-                        ))
-                    })?;
-                check_atomic_premise_derivation_goal(&target, premises, &goal, &available)
-                    .map_err(|message| {
-                        ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
-                    })?;
-                closed = true;
-            }
             ProofTactic::SimpUsing(simp) => {
                 let target = goal.clone();
                 let premises = simp

@@ -394,18 +394,16 @@ pub(super) fn check_atomic_premise_derivation_goal(
             .is_some();
     if !target_matches_goal {
         return Err(format!(
-            "`{}` target does not match the current goal\n  target: {}\n  goal: {}",
-            "derive",
+            "atomic premise derivation target does not match the current goal\n  target: {}\n  goal: {}",
             describe_pure_fact(target, &[], &[]),
             describe_pure_fact(goal, &[], &[]),
         ));
     }
-    // Surface Click deliberately has no contextual `derive using {}`: an
-    // empty derivation is printed as `normalize()`, so it is sound only for a
-    // context-free goal. Any proof that needs frame or ambient facts must keep
-    // at least one explicit premise in its certificate.
+    // An empty premise derivation is sound only for a context-free goal. Any
+    // proof that needs frame or ambient facts must keep at least one explicit
+    // premise in the smart tactic's selected evidence.
     if premises.is_empty() && !normalizes_context_free(target) {
-        return Err("`derive` requires at least one explicit premise".to_string());
+        return Err("atomic derivation requires at least one explicit premise".to_string());
     }
     if snapshot_bridged_fact_is_available(target, available, &[]) {
         return Ok(());
@@ -436,8 +434,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
         !parts.into_iter().all(premise_part_available)
     }) {
         return Err(format!(
-            "`{}` is missing an exact listed premise: {}",
-            "derive",
+            "atomic derivation is missing an exact listed premise: {}",
             describe_pure_fact(missing, &[], &[]),
         ));
     }
@@ -572,8 +569,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
     }
     if derivation.is_none() {
         return Err(format!(
-            "`{}` could not check the target from exactly the listed premises: {}\n  premises: {}",
-            "derive",
+            "atomic derivation could not check the target from exactly the listed premises: {}\n  premises: {}",
             describe_pure_fact(target, &[], &[]),
             describe_pure_facts(&normalized_premises),
         ));

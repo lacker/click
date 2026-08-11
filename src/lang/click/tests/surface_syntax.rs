@@ -291,11 +291,6 @@ fn pure_simp_after_unfold_exposes_an_explicit_certificate() {
             .iter()
             .any(|tactic| matches!(tactic, ProofTactic::Rewrite(_)))
     );
-    assert!(
-        tactics
-            .iter()
-            .all(|tactic| !matches!(tactic, ProofTactic::Derive(_)))
-    );
 }
 
 #[test]
@@ -319,14 +314,8 @@ fn branching_pure_simp_exposes_explicit_branch_certificates() {
     let [ProofTactic::If(proof_if)] = tactics.as_slice() else {
         panic!("expected one explicit case split, got {tactics:?}");
     };
-    for branch in [&proof_if.then_tactics, &proof_if.else_tactics] {
-        assert!(
-            branch
-                .iter()
-                .all(|tactic| !matches!(tactic, ProofTactic::Derive(_))),
-            "branch retained an opaque derive: {branch:?}"
-        );
-    }
+    assert!(!proof_if.then_tactics.is_empty());
+    assert!(!proof_if.else_tactics.is_empty());
 }
 
 #[test]
@@ -649,15 +638,10 @@ fn proof_source_printing_preserves_proposition_precedence() {
         format!("int32 example(int32 x) {{ ensures result == x; }} by {{\n{source}\n}}");
     parser::parse(&proof_source).expect("printed quantified proof source should parse");
 
-    let context_free =
-        super::printing::format_partial_tactic_sequence(&[ProofTactic::Derive(ProofDerive {
-            premises: Vec::new(),
-        })]);
-    assert_eq!(context_free, "normalize();");
 }
 
 #[test]
-fn empty_derive_cannot_hide_an_ambient_premise() {
+fn empty_atomic_premise_derivation_cannot_hide_an_ambient_premise() {
     let target = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(Bitvector32Term::Variable(Variable(42))),
