@@ -110,6 +110,40 @@ fn mutable_frame_transports_load_across_certified_effect_chain() {
 }
 
 #[test]
+fn loadability_transports_across_long_certified_effect_chain() {
+    let loadable = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let written = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(4),
+    };
+    let before = CMemory::new();
+    let mut after = before.clone();
+    let mut assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryLoadable {
+        memory: before,
+        base: loadable.clone(),
+        bytes: Bitvector32Term::Constant(4),
+    });
+    for value in 0..12 {
+        let next = after.clone().store(written.clone(), int32(value));
+        assumptions = assumptions.assume_proposition(Proposition::CMemoryMutatesOnly {
+            before: after,
+            after: next.clone(),
+            pointers: vec![written.clone()],
+        });
+        after = next;
+    }
+
+    assert!(assumptions.proves(&Proposition::CMemoryLoadable {
+        memory: after,
+        base: loadable,
+        bytes: Bitvector32Term::Constant(4),
+    }));
+}
+
+#[test]
 fn target_directed_transport_preserves_pointer_field_across_disjoint_buffer_write() {
     let base = Bitvector32Term::Variable(Variable(90_001));
     let buffer = Bitvector32Term::Variable(Variable(90_002));

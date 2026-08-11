@@ -935,10 +935,8 @@ fn load_unchanged_via_effect_chain(
     assumptions: &Assumptions,
 ) -> bool {
     // Real allocator/copy/install/free paths routinely cross more than eight
-    // individually certified effects. Keep the search bounded, but leave
-    // enough room for an ordinary multi-call helper rather than treating it
-    // as an unrelated write merely because its proof is longer.
-    const EFFECT_CHAIN_HOP_LIMIT: usize = 8;
+    // individually certified effects. The effect graph is finite, so a proof
+    // must not fail merely because its certified chain is long.
     let mut steps = Vec::new();
     for proposition in &assumptions.prop_facts {
         match proposition {
@@ -997,48 +995,43 @@ fn load_unchanged_via_effect_chain(
     // Hops link pointer-relatively: two spellings of one snapshot may carry
     // different unrelated cells (deep-canonical equality then fails), but a
     // load-preservation chain only needs the pointed-at cell to agree at
-    // every junction. Each effect is traversed at most once.
+    // every junction. The effect graph is finite, so traverse it to a fixed
+    // point instead of rejecting valid chains after an arbitrary hop count.
     let joins = |expected: &CMemory, actual: &CMemory| {
         memory_matches_effect_summary_endpoint(expected, actual, pointer)
     };
-    let mut used = vec![false; steps.len()];
     let mut frontier: Vec<&CMemory> = vec![before];
-    for _ in 0..EFFECT_CHAIN_HOP_LIMIT {
+    let mut seen: Vec<&CMemory> = vec![before];
+    while !frontier.is_empty() {
         let mut next = Vec::new();
         for current in frontier {
-            for (index, (step_before, step_after)) in steps.iter().enumerate() {
-                if used[index] {
-                    continue;
-                }
+            for (step_before, step_after) in &steps {
                 for (from, to) in [(step_before, step_after), (step_after, step_before)] {
                     if joins(from, current) {
                         if joins(to, after) {
                             return true;
                         }
-                        used[index] = true;
-                        next.push(*to);
-                        break;
+                        if !seen.iter().any(|seen| joins(seen, to)) {
+                            seen.push(*to);
+                            next.push(*to);
+                        }
                     }
                 }
             }
-        }
-        if next.is_empty() {
-            return false;
         }
         frontier = next;
     }
     false
 }
 
-/// Bounded search for any chain of recorded effects connecting two memory
-/// snapshots, regardless of what the effects wrote. Used for properties
-/// that survive writes, such as loadability of a still-present range.
+/// Searches the finite graph of recorded effects connecting two memory
+/// snapshots, regardless of what the effects wrote. Used for properties that
+/// survive writes, such as loadability of a still-present range.
 pub(crate) fn c_memories_connected_by_effects(
     before: &CMemory,
     after: &CMemory,
     assumptions: &Assumptions,
 ) -> bool {
-    const EFFECT_CHAIN_HOP_LIMIT: usize = 8;
     let mut steps = Vec::new();
     for proposition in &assumptions.prop_facts {
         match proposition {
@@ -1070,7 +1063,7 @@ pub(crate) fn c_memories_connected_by_effects(
     }
     let mut seen = vec![start.clone()];
     let mut frontier = vec![start];
-    for _ in 0..EFFECT_CHAIN_HOP_LIMIT {
+    while !frontier.is_empty() {
         let mut next = Vec::new();
         for current in &frontier {
             for (step_before, step_after) in &steps {
@@ -1084,9 +1077,6 @@ pub(crate) fn c_memories_connected_by_effects(
                     }
                 }
             }
-        }
-        if next.is_empty() {
-            return false;
         }
         frontier = next;
     }
