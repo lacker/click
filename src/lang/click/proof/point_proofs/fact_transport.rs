@@ -699,6 +699,64 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches(
     after: &CMemory,
     assumptions: &Assumptions,
 ) -> bool {
+    let equivalent = |left: &Proposition, right: &Proposition| {
+        left == right
+            || crate::kernel::c_condition_facts_equivalent_for_memory_resolution(
+                left,
+                right,
+                assumptions,
+            )
+    };
+    match (source, target) {
+        (
+            Proposition::ForAll {
+                var: source_var,
+                sort: source_sort,
+                body: source_body,
+            },
+            Proposition::ForAll {
+                var: target_var,
+                sort: target_sort,
+                body: target_body,
+            },
+        ) if source_var == target_var && source_sort == target_sort => {
+            return certified_fact_transport_reaches(
+                source_body,
+                target_body,
+                after,
+                assumptions,
+            );
+        }
+        (
+            Proposition::Implies(source_antecedent, source_consequent),
+            Proposition::Implies(target_antecedent, target_consequent),
+        ) if equivalent(source_antecedent, target_antecedent) => {
+            return certified_fact_transport_reaches(
+                source_consequent,
+                target_consequent,
+                after,
+                assumptions,
+            );
+        }
+        (Proposition::And(source_left, source_right), Proposition::And(target_left, target_right))
+        | (Proposition::Or(source_left, source_right), Proposition::Or(target_left, target_right)) => {
+            return certified_fact_transport_reaches(
+                source_left,
+                target_left,
+                after,
+                assumptions,
+            ) && certified_fact_transport_reaches(
+                source_right,
+                target_right,
+                after,
+                assumptions,
+            );
+        }
+        (Proposition::Not(source_body), Proposition::Not(target_body)) => {
+            return equivalent(source_body, target_body);
+        }
+        _ => {}
+    }
     if matches!(target, Proposition::CMemoryLoadable { .. }) {
         return assumptions.derive_atomic_proposition(target).is_some();
     }

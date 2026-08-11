@@ -80,6 +80,85 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
     equality: &Proposition,
     available: &[Proposition],
 ) -> Result<Proposition, String> {
+    fn rewrite_child(
+        child: &Proposition,
+        equality: &Proposition,
+        available: &[Proposition],
+    ) -> Result<(Proposition, bool), String> {
+        match rewrite_proposition_by_exact_equality(child, equality, available) {
+            Ok(rewritten) => Ok((rewritten, true)),
+            Err(message) if message.contains("does not occur in") => Ok((child.clone(), false)),
+            Err(message) => Err(message),
+        }
+    }
+
+    let structural = match goal {
+        Proposition::And(left, right) => {
+            let (left, left_changed) = rewrite_child(left, equality, available)?;
+            let (right, right_changed) = rewrite_child(right, equality, available)?;
+            Some((
+                Proposition::And(Box::new(left), Box::new(right)),
+                left_changed || right_changed,
+            ))
+        }
+        Proposition::Or(left, right) => {
+            let (left, left_changed) = rewrite_child(left, equality, available)?;
+            let (right, right_changed) = rewrite_child(right, equality, available)?;
+            Some((
+                Proposition::Or(Box::new(left), Box::new(right)),
+                left_changed || right_changed,
+            ))
+        }
+        Proposition::Not(body) => {
+            let (body, changed) = rewrite_child(body, equality, available)?;
+            Some((Proposition::Not(Box::new(body)), changed))
+        }
+        Proposition::Implies(antecedent, consequent) => {
+            let (antecedent, antecedent_changed) =
+                rewrite_child(antecedent, equality, available)?;
+            let (consequent, consequent_changed) =
+                rewrite_child(consequent, equality, available)?;
+            Some((
+                Proposition::Implies(Box::new(antecedent), Box::new(consequent)),
+                antecedent_changed || consequent_changed,
+            ))
+        }
+        Proposition::ForAll { var, sort, body } => {
+            let (body, changed) = rewrite_child(body, equality, available)?;
+            Some((
+                Proposition::ForAll {
+                    var: *var,
+                    sort: sort.clone(),
+                    body: Box::new(body),
+                },
+                changed,
+            ))
+        }
+        Proposition::Exists {
+            name,
+            var,
+            sort,
+            body,
+        } => {
+            let (body, changed) = rewrite_child(body, equality, available)?;
+            Some((
+                Proposition::Exists {
+                    name: name.clone(),
+                    var: *var,
+                    sort: sort.clone(),
+                    body: Box::new(body),
+                },
+                changed,
+            ))
+        }
+        _ => None,
+    };
+    if let Some((rewritten, changed)) = structural {
+        return changed
+            .then_some(rewritten)
+            .ok_or_else(|| "`rewrite` equality does not occur in the current goal".to_string());
+    }
+
     if let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) = equality
     {
         let reverse = Proposition::ConditionIs(
