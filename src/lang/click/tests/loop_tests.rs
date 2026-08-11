@@ -1216,3 +1216,152 @@ fn frontier_effect_expansion_ignores_generated_preservation_suffix() {
     verify_c0_sources(&expanded, &[("count_to_three.c", c_source)])
         .expect("expanded effect certificate should freshly replay");
 }
+
+#[test]
+fn frame_loop_region_uses_frontier_loop_effect_summary_for_ensures() {
+    // `frame(loop(N))` in an ensures-only proof certifies memory-preservation
+    // goals from the loop's `mutable` effect summary.  With a symbolic loop
+    // bound the closing `simp` cannot certify `p[n] == old(p[n])` on its own,
+    // so the qualified frame is load-bearing here.
+    let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 100;
+                requires loadable(p[0..n + 1]);
+                consumes p[0..n + 1];
+                ensures preserved: p[n] == old(p[n]);
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= n;
+                    mutable p[0..n] by frame;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                frame(loop(0));
+                simp();
+            }
+        "#;
+
+    crate::instrumentation::with_deadline(std::time::Duration::from_secs(3), || {
+        verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+    })
+    .expect("a qualified frame should prove preservation from the loop effect summary");
+}
+
+#[test]
+fn frame_label_region_resolves_a_frontier_loop_label() {
+    // A `loop as <label>` tactic declares the only labeled code region the
+    // surface syntax can express; `frame(<label>)` must resolve it.
+    let c_source = r#"
+            int32 fill2(int32* p) {
+                int32 i;
+                i = 0;
+                while (i < 2) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return p[2];
+            }
+        "#;
+    let click_source = r#"
+            verifying "fill2.c";
+
+            int32 fill2(int32* p) {
+                requires loadable(p[0..3]);
+                consumes p[0..3];
+                ensures preserved: p[2] == old(p[2]);
+            } by {
+                step();
+                step();
+                loop as write_phase {
+                    invariant i >= 0;
+                    invariant i <= 2;
+                    mutable p[0..2] by frame;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                frame(write_phase);
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("fill2.c", c_source)])
+        .expect("a frame qualified by a loop label should resolve the frontier loop clause");
+}
+
+#[test]
+fn frame_loop_region_without_effect_clause_reports_missing_clause() {
+    let c_source = r#"
+            int32 fill2(int32* p) {
+                int32 i;
+                i = 0;
+                while (i < 2) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return p[2];
+            }
+        "#;
+    let click_source = r#"
+            verifying "fill2.c";
+
+            int32 fill2(int32* p) {
+                requires loadable(p[0..3]);
+                consumes p[0..3];
+                ensures preserved: p[2] == old(p[2]);
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 2;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                frame(loop(0));
+                simp();
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("fill2.c", c_source)])
+        .expect_err("a qualified frame without a loop effect clause should fail");
+    assert!(
+        error.message().contains(
+            "`frame(loop(0))` needs a loop effect clause such as `mutable` or `immutable`; \
+             declare one in this proof's `loop` tactic for loop(0)"
+        ),
+        "{}",
+        error.message()
+    );
+}

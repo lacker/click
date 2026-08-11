@@ -67,7 +67,7 @@ pub(super) fn validate_frame_code_region(
                     && clause.items().iter().any(StructuralItem::is_effect_kind)
             }) {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `frame(loop({loop_index}))` needs a loop effect clause such as `mutable` or `immutable`"
+                    "`{claim_label}` tactic {tactic_index}: `frame(loop({loop_index}))` needs a loop effect clause such as `mutable` or `immutable`; declare one in this proof's `loop` tactic for loop({loop_index})"
                 )));
             }
             Ok(())

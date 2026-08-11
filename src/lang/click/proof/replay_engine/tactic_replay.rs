@@ -1840,11 +1840,19 @@ fn replay_linear_tactics_without_frontier_loops(
                     continue;
                 }
                 require_function_exit(&replay, claim_label, tactic_index, "frame")?;
+                // A code region qualifying `frame` refers to loop effect
+                // clauses, which current syntax declares only through
+                // frontier-local `loop` tactics earlier in this proof; bind
+                // them so region resolution and validation see them.
+                let frame_function_block = (!replay.frontier_loop_clauses.is_empty()).then(|| {
+                    function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses)
+                });
+                let frame_function_block = frame_function_block.as_ref().unwrap_or(function_block);
                 let code_region = region_ref
                     .as_ref()
                     .map(|region_ref| {
                         resolve_code_region_ref(
-                            function_block,
+                            frame_function_block,
                             region_ref,
                             claim_label,
                             tactic_index,
@@ -1857,7 +1865,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 {
                     if !replay.grouped_contract {
                         validate_frame_code_region(
-                            function_block,
+                            frame_function_block,
                             parsed_function,
                             code_region,
                             &claims[0],
@@ -1874,7 +1882,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         )));
                     };
                     validate_frame_code_region(
-                        function_block,
+                        frame_function_block,
                         parsed_function,
                         code_region,
                         effect_claim,
@@ -1904,7 +1912,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     .collect::<Vec<_>>();
                 if effect_claims.is_empty() {
                     validate_frame_code_region(
-                        function_block,
+                        frame_function_block,
                         parsed_function,
                         code_region,
                         &claims[0],
@@ -1914,7 +1922,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 }
                 for claim in effect_claims {
                     validate_frame_code_region(
-                        function_block,
+                        frame_function_block,
                         parsed_function,
                         code_region,
                         claim,

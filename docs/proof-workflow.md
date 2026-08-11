@@ -546,6 +546,12 @@ Loop effect summaries are reusable. For example, if a loop mutates only
 use that effect summary to prove source-memory postconditions without a
 handwritten source-invariance invariant.
 
+In an explicit proof, `frame(loop(N))` after the `loop` tactic certifies
+memory-preservation `ensures` goals from that loop's effect summary before the
+closing `simp`. A labeled loop (`loop as fill { ... }`) can be named the same
+way with `frame(fill)`. The qualified frame requires the referenced `loop`
+tactic to declare a `mutable` or `immutable` clause.
+
 ## Debugging Failed Proofs
 
 Failure messages usually include:
