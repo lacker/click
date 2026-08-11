@@ -138,6 +138,36 @@ fn int32_successor_le_implies_lt_axiom_has_the_exact_implications() {
 }
 
 #[test]
+fn int32_le_antisymmetric_axiom_has_the_exact_implications() {
+    let left = Bitvector32Term::Variable(Variable(90_040));
+    let right = Bitvector32Term::Variable(Variable(90_041));
+    let theorem = prove_int32_le_antisymmetric(left.clone(), right.clone());
+    let le_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+        true,
+    );
+    let reverse_le_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(right.clone(), left.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(le_premise),
+            Box::new(Proposition::Implies(
+                Box::new(reverse_le_premise),
+                Box::new(conclusion),
+            )),
+        )
+    );
+}
+
+#[test]
 fn int32_positive_is_nonnegative_axiom_has_the_exact_implication() {
     let value = Bitvector32Term::Variable(Variable(90_040));
     let theorem = prove_int32_positive_is_nonnegative(value.clone());

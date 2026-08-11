@@ -21,6 +21,12 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
 ```click
 verifying "copy_n_segment_invariant.c";
 
+theorem int32_le_antisymmetric(left: int32, right: int32) {
+    requires left <= right;
+    requires right <= left;
+    ensures left == right;
+}
+
 int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
@@ -48,17 +54,16 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
         mutable dst[0..n] by frame;
     }
     step();
+    apply(int32_le_antisymmetric(
+        at(loop(0).exit, i),
+        at(loop(0).exit, n)
+    )) using {
+        at(loop(0).exit, i) <= at(loop(0).exit, n);
+        at(loop(0).exit, n) <= at(loop(0).exit, i);
+    }
     have result == n by {
-        derive using {
-            n >= 0;
-            n <= 2147483647;
-            at(statement(0).entry, loadable(dst[0..n]));
-            at(statement(0).entry, loadable(src[0..n]));
-            separate(memory(dst[0..n]), memory(src[0..n]));
-            at(loop(0).exit, i) >= at(loop(0).exit, 0);
-            at(loop(0).exit, i) <= at(loop(0).exit, n);
-            not at(loop(0).exit, i) < at(loop(0).exit, n);
-            forall (k: int32) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, dst[k]) == old(src[k]) };
+        simp() using {
+            at(loop(0).exit, i) == at(loop(0).exit, n);
         }
     }
     have forall (k: int32) { 0 <= k and k < n implies src[k] == old(src[k]) } by {
