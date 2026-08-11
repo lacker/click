@@ -218,7 +218,7 @@ int32 vector_grow(struct vector* owner) {
             }
         }
         have 1 <= owner->cap by {
-            derive using {
+            simp() using {
                 at(statement(9).entry, 1 <= new_capacity);
                 owner->cap == at(statement(9).entry, new_capacity);
             }
