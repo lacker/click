@@ -1707,6 +1707,54 @@ fn post_execution_simp_expands_strict_greater_increment_bound() {
 }
 
 #[test]
+fn post_execution_simp_expands_greater_order_equality() {
+    let c_source = r#"
+        int32 identity_zero(int32 value) {
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "identity_zero.c";
+
+        int32 identity_zero(int32 value) {
+            requires value >= 0;
+            requires not (value > 0);
+            ensures result == 0;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let offset = click_source.rfind("simp()").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("identity_zero.c", c_source)],
+        line,
+        column,
+    )
+    .expect("post-execution greater-order equality should expand");
+    assert!(
+        expanded.contains("apply(int32_ge_and_not_gt_implies_eq("),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[("identity_zero.c", c_source)])
+        .expect("expanded greater-order equality should replay");
+}
+
+#[test]
 fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
     let click_source = r#"
         theorem increment_stays_bounded(value: int32, upper: int32) {

@@ -1259,6 +1259,15 @@ pub(super) fn lower_outcome_simp_tactics(
             tactics.extend(suffix);
             return true;
         }
+        if matches!(
+            current,
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
+        ) && let Some(suffix) =
+            plan_explicit_ge_and_not_gt_implies_eq(&current, premises)
+        {
+            tactics.extend(suffix);
+            return true;
+        }
         for (index, (kernel, surface)) in premises.iter().enumerate() {
             if used[index] {
                 continue;
@@ -1419,6 +1428,7 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_one_le_predecessor(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_predecessor_strictly_decreases(goal, premise_pairs))
         .or_else(|| plan_explicit_le_and_not_lt_implies_eq(goal, premise_pairs))
+        .or_else(|| plan_explicit_ge_and_not_gt_implies_eq(goal, premise_pairs))
 }
 
 fn plan_explicit_loadability_transport(
@@ -2152,6 +2162,58 @@ fn plan_explicit_le_and_not_lt_implies_eq(
                         arguments: vec![surface_left, surface_right],
                     },
                     premises: vec![le_surface.clone(), not_lt_surface.clone()],
+                },
+                ProofTactic::Assumption,
+            ]);
+        }
+    }
+    None
+}
+
+fn plan_explicit_ge_and_not_gt_implies_eq(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = goal else {
+        return None;
+    };
+    for (ge_kernel, ge_surface) in premise_pairs {
+        let Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(ge_left, ge_right),
+            true,
+        ) = ge_kernel
+        else {
+            continue;
+        };
+        if ge_left != left || ge_right != right {
+            continue;
+        }
+        for (not_gt_kernel, not_gt_surface) in premise_pairs {
+            let matches_not_gt = match not_gt_kernel {
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedGreaterThan(not_left, not_right),
+                    false,
+                ) => not_left == left && not_right == right,
+                Proposition::Not(body) => matches!(
+                    body.as_ref(),
+                    Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32SignedGreaterThan(not_left, not_right),
+                        true,
+                    ) if not_left == left && not_right == right
+                ),
+                _ => false,
+            };
+            if !matches_not_gt {
+                continue;
+            }
+            let (surface_right, surface_left) = surface_nonstrict_parts(ge_surface)?;
+            return Some(vec![
+                ProofTactic::ApplyTheoremUsing {
+                    application: TheoremApplication {
+                        name: "int32_ge_and_not_gt_implies_eq".to_string(),
+                        arguments: vec![surface_left, surface_right],
+                    },
+                    premises: vec![ge_surface.clone(), not_gt_surface.clone()],
                 },
                 ProofTactic::Assumption,
             ]);

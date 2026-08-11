@@ -267,6 +267,36 @@ fn int32_not_lt_implies_ge_axiom_has_the_exact_implication() {
 }
 
 #[test]
+fn int32_ge_and_not_gt_implies_eq_axiom_has_exact_implications() {
+    let left = Bitvector32Term::Variable(Variable(90_037));
+    let right = Bitvector32Term::Variable(Variable(90_038));
+    let theorem = prove_int32_ge_and_not_gt_implies_eq(left.clone(), right.clone());
+    let ge_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+        true,
+    );
+    let not_gt_premise = Proposition::Not(Box::new(Proposition::ConditionIs(
+        ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+        true,
+    )));
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(ge_premise),
+            Box::new(Proposition::Implies(
+                Box::new(not_gt_premise),
+                Box::new(conclusion),
+            )),
+        )
+    );
+}
+
+#[test]
 fn int32_lt_transitive_axiom_has_the_exact_implications() {
     let first = Bitvector32Term::Variable(Variable(90_031));
     let middle = Bitvector32Term::Variable(Variable(90_032));

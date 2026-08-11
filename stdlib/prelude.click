@@ -117,6 +117,13 @@ theorem int32_le_and_not_lt_implies_eq(left: int32, right: int32) {
     ensures left == right;
 }
 
+theorem int32_ge_and_not_gt_implies_eq(left: int32, right: int32) {
+    requires left >= right;
+    requires not (left > right);
+
+    ensures left == right;
+}
+
 function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 {
     (lo..hi).fold(0, |acc, k| {
         acc + if p[k] == x { 1 } else { 0 }
