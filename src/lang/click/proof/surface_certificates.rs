@@ -2743,6 +2743,57 @@ fn lower_outcome_simp_proof_direct(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proof, ClickError> {
+    if let (
+        ClickProposition::Implies(_, surface_consequent),
+        Proposition::Implies(antecedent, consequent),
+    ) = (surface_goal, goal)
+        && !available.contains(goal)
+    {
+        if let Ok(tactics) = lower_outcome_simp_tactics(
+            replay,
+            surface_goal,
+            goal,
+            available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            predicate_environment,
+            click_function_environment,
+        ) {
+            return Ok(Proof::Script(tactics));
+        }
+        let mut consequent_available = available.to_vec();
+        if !consequent_available.contains(antecedent) {
+            consequent_available.push(antecedent.as_ref().clone());
+        }
+        let proof = lower_outcome_simp_proof(
+            replay,
+            surface_consequent,
+            consequent,
+            &consequent_available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        let Proof::Script(mut tactics) = proof else {
+            return Err(ClickError::new(
+                "implication certificate lowering produced a non-script proof",
+            ));
+        };
+        tactics.insert(0, ProofTactic::Intro);
+        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "implication derivation produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok(Proof::Script(tactics));
+    }
     if let (ClickProposition::And(surface_left, surface_right), Proposition::And(left, right)) =
         (surface_goal, goal)
         && !available.contains(goal)
