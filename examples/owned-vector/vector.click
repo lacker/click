@@ -672,7 +672,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
             step();
             step();
             have i >= 0 by {
-                derive using {
+                simp() using {
                     at(statement(3).entry, i) >= 0;
                     at(statement(3).entry, i) < at(statement(3).entry, owner->len);
                 }
