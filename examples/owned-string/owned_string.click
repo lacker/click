@@ -303,29 +303,35 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
     }
     have 0 <= owner->len by simp;
     have owner->len < owner->cap by {
-        derive using {
+        have at(statement(4).entry, owner->len) ==
+            at(statement(4).entry, (index + 1)) by {
+            normalize();
+        }
+        have at(statement(4).entry, owner->len) <
+            at(statement(4).entry, owner->cap) by {
+            assumption();
+        }
+        transport(
+            at(statement(4).entry, owner->len) <
+                at(statement(4).entry, owner->cap),
+            owner->len < owner->cap
+        ) using {
+            at(statement(4).entry, owner->len) <
+                at(statement(4).entry, owner->cap);
             at(statement(4).entry, separate(memory(owner->len), memory(owner->cap)));
-            at(statement(4).entry, separate(memory(owner->len), memory(owner->data)));
-            at(statement(4).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
-            at(statement(4).entry, separate(memory(owner->cap), memory(owner->data)));
-            at(statement(4).entry, loadable(old(owner->len)));
-            at(statement(4).entry, loadable(old(owner->cap)));
-            at(statement(4).entry, loadable(old(owner->data)));
-            at(statement(4).entry, loadable(old(owner->data[0..owner->cap])));
-            at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
+            at(statement(4).entry, separate(
+                memory(owner->len),
+                memory(owner->data[0..owner->cap])
+            ));
+            at(statement(4).entry, separate(
+                memory(owner->cap),
+                memory(owner->data[0..owner->cap])
+            ));
             at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
             at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
-            at(statement(4).entry, separate(memory(owner->len), memory(owner->data[0..owner->cap])));
-            at(statement(4).entry, separate(memory(owner->cap), memory(owner->data[0..owner->cap])));
-            at(statement(4).entry, separate(memory(owner->data), memory(owner->data[0..owner->cap])));
-            at(statement(4).entry, contains(owned_string(owner), memory(owner->len)));
-            at(statement(4).entry, contains(owned_string(owner), memory(owner->cap)));
-            at(statement(4).entry, contains(owned_string(owner), memory(owner->data)));
-            at(statement(4).entry, contains(owned_string(owner), memory(owner->data[0..owner->cap])));
-            terminated_at(at(statement(0).entry, owner->data), at(statement(0).entry, owner->len));
-            terminated_at(owner->data, owner->len);
-            0 <= owner->len;
+            at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
         }
+        assumption();
     }
     have separate(memory(object(owner)), memory(owner->data[0..owner->cap])) by {
         derive using {
