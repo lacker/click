@@ -980,6 +980,156 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     available.push(target);
                 }
             }
+            ProofTactic::InstantiateUsing {
+                quantified: surface_quantified,
+                argument,
+                premises: surface_premises,
+            } => {
+                let lower = |surface: &ClickProposition, facts: &[Proposition]| {
+                    surface_propositions
+                        .and_then(|propositions| {
+                            propositions.available_kernel(surface, facts).cloned()
+                        })
+                        .map(Ok)
+                        .unwrap_or_else(|| {
+                            lower_point_proposition_with_values(
+                                surface,
+                                facts,
+                                values.clone(),
+                                &array_refs,
+                                pre_state,
+                                state,
+                                result,
+                                program_point_states,
+                                predicate_environment,
+                                click_function_environment,
+                            )
+                        })
+                };
+                let explicit_premises = surface_premises
+                    .iter()
+                    .map(|premise| lower(premise, &available))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `instantiate using` premise: {message}"
+                        ))
+                    })?;
+                for premise in &explicit_premises {
+                    if !exact_fact_is_available(premise, &available) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate using` requires an exact available premise"
+                        )));
+                    }
+                }
+                let lowered_quantified =
+                    lower(surface_quantified, &available).map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `instantiate` quantified fact: {message}"
+                        ))
+                    })?;
+                let quantified_fact = if exact_fact_is_available(&lowered_quantified, &available)
+                {
+                    lowered_quantified
+                } else if let Some(matched) =
+                    quantified_replay_equivalent_available_fact(&lowered_quantified, &available)
+                {
+                    matched
+                } else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` quantified fact is not exactly available: {}",
+                        describe_click_proposition(surface_quantified)
+                    )));
+                };
+                let assumptions = assumptions_from_propositions(&available);
+                let mut active_functions = BTreeSet::new();
+                let argument_value = evaluate_contract_expression_with_environment(
+                    &values,
+                    &array_refs,
+                    pre_state,
+                    state,
+                    result,
+                    &assumptions,
+                    argument,
+                    predicate_environment,
+                    click_function_environment,
+                    program_point_states,
+                    &mut active_functions,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not evaluate `instantiate` argument: {message}"
+                    ))
+                })?;
+                let CValue::Int32(argument_term) = argument_value else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` argument did not evaluate to int32"
+                    )));
+                };
+                let Proposition::ForAll { var, sort, body } = &quantified_fact else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` requires a universally quantified fact"
+                    )));
+                };
+                if *sort != Sort::CInt32 {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` supports only int32 universals"
+                    )));
+                }
+                let instantiated = substitute_int32_variable_in_proposition(
+                    body,
+                    *var,
+                    argument_term.clone(),
+                );
+                let (guards, conclusion) =
+                    discharge_instantiated_guards(instantiated, &explicit_premises).map_err(
+                        |message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` failed: {message}"
+                            ))
+                        },
+                    )?;
+                let theorem =
+                    prove_forall_int32_application(&quantified_fact, argument_term, &guards)
+                        .ok_or_else(|| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: kernel rejected the `instantiate` application"
+                            ))
+                        })?;
+                let Proposition::Implies(theorem_quantified, mut theorem_body) =
+                    theorem.proposition().clone()
+                else {
+                    return Err(ClickError::new(
+                        "invalid universal instantiation theorem",
+                    ));
+                };
+                if theorem_quantified.as_ref() != &quantified_fact {
+                    return Err(ClickError::new(
+                        "universal instantiation changed its quantified premise",
+                    ));
+                }
+                for guard in &guards {
+                    let Proposition::Implies(theorem_guard, next) = theorem_body.as_ref() else {
+                        return Err(ClickError::new(
+                            "universal instantiation omitted a discharged premise",
+                        ));
+                    };
+                    if theorem_guard.as_ref() != guard {
+                        return Err(ClickError::new(
+                            "universal instantiation changed a discharged premise",
+                        ));
+                    }
+                    theorem_body = next.clone();
+                }
+                if theorem_body.as_ref() != &conclusion {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: universal instantiation produced an unexpected conclusion"
+                    )));
+                }
+                if !available.contains(&conclusion) {
+                    available.push(conclusion);
+                }
+            }
             ProofTactic::Choose(choice) => {
                 apply_choose_tactic(
                     choice,

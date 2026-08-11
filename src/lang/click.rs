@@ -888,6 +888,11 @@ pub enum ProofTactic {
         target: ClickProposition,
         premises: Vec<ClickProposition>,
     },
+    InstantiateUsing {
+        quantified: ClickProposition,
+        argument: ContractExpression,
+        premises: Vec<ClickProposition>,
+    },
     Simp,
     SimpUsing(ProofSimpUsing),
 }
@@ -916,6 +921,7 @@ pub enum SimpleTactic {
     CloseInvariants,
     Rewrite,
     FactTransport,
+    Instantiate,
     FoldResource,
     Frame,
 }
@@ -999,6 +1005,11 @@ pub enum SimpleProofStep {
     TransportUsing {
         source: ClickProposition,
         target: ClickProposition,
+        premises: Vec<ClickProposition>,
+    },
+    InstantiateUsing {
+        quantified: ClickProposition,
+        argument: ContractExpression,
         premises: Vec<ClickProposition>,
     },
     FrameUsing {
@@ -1209,6 +1220,15 @@ impl SimpleProofStep {
                 target: target.clone(),
                 premises: premises.clone(),
             },
+            ProofTactic::InstantiateUsing {
+                quantified,
+                argument,
+                premises,
+            } => Self::InstantiateUsing {
+                quantified: quantified.clone(),
+                argument: argument.clone(),
+                premises: premises.clone(),
+            },
             ProofTactic::FrameUsing { region, premises } => Self::FrameUsing {
                 region: region.clone(),
                 premises: premises.clone(),
@@ -1339,6 +1359,15 @@ impl SimpleProofStep {
             } => ProofTactic::TransportUsing {
                 source: source.clone(),
                 target: target.clone(),
+                premises: premises.clone(),
+            },
+            Self::InstantiateUsing {
+                quantified,
+                argument,
+                premises,
+            } => ProofTactic::InstantiateUsing {
+                quantified: quantified.clone(),
+                argument: argument.clone(),
                 premises: premises.clone(),
             },
             Self::FrameUsing { region, premises } => ProofTactic::FrameUsing {
@@ -1716,6 +1745,7 @@ impl ProofTactic {
             Self::Rewrite(_) => TacticClass::Simple(SimpleTactic::Rewrite),
             Self::Transport { .. } => TacticClass::Smart(SmartTacticKind::FactTransport),
             Self::TransportUsing { .. } => TacticClass::Simple(SimpleTactic::FactTransport),
+            Self::InstantiateUsing { .. } => TacticClass::Simple(SimpleTactic::Instantiate),
             Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
             Self::FrameUsing { .. } => TacticClass::Simple(SimpleTactic::Frame),
             Self::SmartStep => TacticClass::Smart(SmartTacticKind::SmartStep),

@@ -79,6 +79,7 @@ remains migration compatibility and should not be used in new proofs.
 | `split()` | simple | Close a conjunction when both conjuncts are exact available facts. |
 | `left()` / `right()` | simple | Close the selected disjunct from an exact available fact. |
 | `contradiction(P)` | simple | Close from exact facts `P` and `not P`, including exact opposite polarities of the same C condition. |
+| `instantiate(F, value) using { P; ... }` | simple | Specialize an exact available universal fact `F` at `value`, discharging each instantiated guard from the listed premises alone (by normalization or one bounded atomic derivation), and add the instantiated conclusion. |
 | `apply(theorem(args))` | smart | Apply a theorem while selecting its premises from context. |
 | `apply(theorem(args)) using { P; ... }` | simple | Apply a theorem using exactly the listed premises. |
 | `induct(n) as ih` | simple | Start strong induction on a nonnegative `int32` theorem parameter. |

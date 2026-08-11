@@ -342,6 +342,18 @@ fn expand_declared_resource_tactic(
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         }),
+        ProofTactic::InstantiateUsing {
+            quantified,
+            argument,
+            premises,
+        } => Ok(ProofTactic::InstantiateUsing {
+            quantified: expand_declared_resource_proposition(quantified, resource_definitions)?,
+            argument,
+            premises: premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
         ProofTactic::SimpUsing(simp) => Ok(ProofTactic::SimpUsing(ProofSimpUsing {
             premises: simp
                 .premises
