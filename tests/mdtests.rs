@@ -27,10 +27,6 @@ const QUARANTINED: &[(&str, &str)] = &[
         "issues/universal-outcome-certificates-missing.md: nested two-binder sorted postcondition needs finite case-split certificates",
     ),
     (
-        "byte_slice_stdlib.md",
-        "issues/byte-slice-indexed-range-premise-certificate-missing.md: indexed-range premise derivation has no explicit simple certificate",
-    ),
-    (
         "proof_branch_pointer_local.md",
         "issues/branch-disjunctive-premise-certificate-missing.md: disjunctive premise derivation has no explicit simple certificate",
     ),
