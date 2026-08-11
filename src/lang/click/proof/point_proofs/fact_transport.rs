@@ -731,11 +731,14 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches(
             Proposition::Implies(source_antecedent, source_consequent),
             Proposition::Implies(target_antecedent, target_consequent),
         ) if equivalent(source_antecedent, target_antecedent) => {
+            let consequent_assumptions = assumptions
+                .clone()
+                .assume_proposition(target_antecedent.as_ref().clone());
             return certified_fact_transport_reaches(
                 source_consequent,
                 target_consequent,
                 after,
-                assumptions,
+                &consequent_assumptions,
             );
         }
         (Proposition::And(source_left, source_right), Proposition::And(target_left, target_right))
