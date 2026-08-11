@@ -1325,6 +1325,53 @@ fn restricted_simp_expands_negated_strict_order_to_greater_equal() {
 }
 
 #[test]
+fn post_execution_simp_expands_successor_strict_increase() {
+    let c_source = r#"
+        int32 increment(int32 x) {
+            return x + 1;
+        }
+    "#;
+    let click_source = r#"
+        verifying "increment.c";
+
+        int32 increment(int32 x) {
+            requires x < 2147483647;
+            ensures x < result;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let offset = click_source.rfind("simp()").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("increment.c", c_source)],
+        line,
+        column,
+    )
+    .expect("post-execution successor proof should expand");
+    assert!(
+        expanded.contains("apply(int32_increment_strictly_increases("),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[("increment.c", c_source)])
+        .expect("expanded successor proof should replay");
+}
+
+#[test]
 fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
     let click_source = r#"
         theorem increment_stays_bounded(value: int32, upper: int32) {
