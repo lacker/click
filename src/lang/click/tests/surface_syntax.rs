@@ -348,10 +348,10 @@ fn verifies_atomic_derivation_from_explicit_premises() {
         }
 
         theorem calculates_nonnegative(x: int32) {
-            requires x > 0;
-            ensures x >= 0 by {
-                derive using {
-                    x > 0;
+            requires 1 <= x;
+            ensures 0 <= x by {
+                simp() using {
+                    1 <= x;
                 }
             }
         }
