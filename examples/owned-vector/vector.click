@@ -844,11 +844,7 @@ int32 vector_pipeline(
     have owner->len == 1 by simp;
     observe(nonempty_vector(owner));
     have owner->data[0] == replacement by simp;
-    have 0 < owner->len by {
-        derive using {
-            owner->len == 1;
-        }
-    }
+    have 0 < owner->len by simp;
     step() using {
         0 < owner->len;
         owner->len == 1;
