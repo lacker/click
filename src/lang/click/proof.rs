@@ -115,7 +115,10 @@ fn apply_logical_goal_tactic(
             let Proposition::Or(left, _) = goal else {
                 return Err(format!("`left` requires a disjunction goal, got {goal:?}"));
             };
-            if !available.contains(left.as_ref()) {
+            if !available
+                .iter()
+                .any(|fact| condition_polarity_equivalent(fact, left))
+            {
                 return Err(format!(
                     "`left` requires its selected disjunct as an exact fact: {left:?}"
                 ));
@@ -126,7 +129,10 @@ fn apply_logical_goal_tactic(
             let Proposition::Or(_, right) = goal else {
                 return Err(format!("`right` requires a disjunction goal, got {goal:?}"));
             };
-            if !available.contains(right.as_ref()) {
+            if !available
+                .iter()
+                .any(|fact| condition_polarity_equivalent(fact, right))
+            {
                 return Err(format!(
                     "`right` requires its selected disjunct as an exact fact: {right:?}"
                 ));

@@ -1706,21 +1706,18 @@ pub(super) fn append_simple_proof_step_for_operation(
                     tactic_offset: replay.simple_proof_builder.steps.len(),
                 });
         }
-        (Some(tactic @ ProofTactic::Have(have)), None) => {
+        (Some(tactic @ ProofTactic::Have(_)), None) => {
             match SimpleProof::from_proof_tactics(std::slice::from_ref(tactic)) {
                 Ok(_) => replay
                     .simple_proof_builder
                     .push_source_tactic(tactic.clone()),
-                Err(_)
-                    if smart_simp_unfold_prefix(&have.proof).is_some()
-                        || have_proof_contains_smart_apply(&have.proof) =>
-                {
-                    // The successful smart proof is lowered after it has
-                    // produced its checked kernel fact.
+                Err(_) => {
+                    // A `have` with a smart body records nothing here. The
+                    // `ProofTactic::Have` replay arm generates a simple
+                    // certificate for the body once the smart proof has
+                    // produced its checked kernel fact, independently replays
+                    // it, and pushes it — or fails the tactic.
                 }
-                Err(error) => replay
-                    .simple_proof_builder
-                    .block(format!("could not lower control-flow tactic: {error:?}")),
             }
         }
         (None, Some(InternalProofOperation::ExactPropositionDerivation(derivation))) => {
@@ -2006,6 +2003,118 @@ pub(super) fn lower_smart_simp_suffix_have(
         }
     }
     None
+}
+
+/// Candidate simple bodies for a smart `have` script: each trailing smart
+/// `simp` (including one inside a proof-level `if` case) is replaced by an
+/// explicit goal-closing simple tactic. Bounded by construction — one closer
+/// choice per `simp` occurrence over a fixed closer set.
+fn simple_have_body_candidates(tactics: &[ProofTactic]) -> Vec<Vec<ProofTactic>> {
+    const CANDIDATE_LIMIT: usize = 16;
+    let mut candidates = match tactics {
+        [] => Vec::new(),
+        [ProofTactic::If(proof_if)] => {
+            let then_candidates = simple_have_body_candidates(&proof_if.then_tactics);
+            let else_candidates = simple_have_body_candidates(&proof_if.else_tactics);
+            let mut candidates = Vec::new();
+            for then_tactics in &then_candidates {
+                for else_tactics in &else_candidates {
+                    candidates.push(vec![ProofTactic::If(ProofIf {
+                        condition: proof_if.condition.clone(),
+                        then_tactics: then_tactics.clone(),
+                        else_tactics: else_tactics.clone(),
+                    })]);
+                }
+            }
+            candidates
+        }
+        [prefix @ .., ProofTactic::Simp] => [
+            ProofTactic::Assumption,
+            ProofTactic::Normalize,
+            ProofTactic::Left,
+            ProofTactic::Right,
+        ]
+        .into_iter()
+        .map(|closer| {
+            let mut candidate = prefix.to_vec();
+            candidate.push(closer);
+            candidate
+        })
+        .collect(),
+        _ => Vec::new(),
+    };
+    candidates.truncate(CANDIDATE_LIMIT);
+    candidates
+}
+
+/// Constructs the simple certificate for a mid-execution smart `have` whose
+/// body is neither simple nor covered by the `[unfold*, simp]` or smart
+/// `apply` lowerings — a `witness`/`choose` prefix before its `simp`, or a
+/// proof-level `if` whose cases close by `simp`.
+///
+/// Every candidate is accepted only when the replay judgment
+/// (`prove_have_at_current_point`) proves it AND yields exactly the fact the
+/// smart script established. A smart `have` with no accepted candidate fails
+/// here instead of silently losing the enclosing proof's expansion.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn certify_general_smart_have(
+    have: &ProofHave,
+    fact: &Proposition,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+    available: &[Proposition],
+    transition_facts: &[ExecutionPureFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    surface_propositions: &SurfacePropositionMap,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    function_requires: &[Requirement],
+) -> Result<SimpleProof, ClickError> {
+    let Proof::Script(tactics) = &have.proof else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: smart `have` succeeded, but its non-script body has no simple certificate"
+        )));
+    };
+    for candidate_tactics in simple_have_body_candidates(tactics) {
+        let candidate = ProofHave {
+            proposition: have.proposition.clone(),
+            proof: Proof::Script(candidate_tactics),
+        };
+        let Ok(proof) = SimpleProof::from_proof_tactics(std::slice::from_ref(
+            &ProofTactic::Have(candidate.clone()),
+        )) else {
+            continue;
+        };
+        let replayed = prove_have_at_current_point(
+            &candidate,
+            theorem_environment,
+            claim_label,
+            tactic_index,
+            available,
+            transition_facts,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            program_point_states,
+            surface_propositions,
+            predicate_environment,
+            click_function_environment,
+            function_requires,
+        );
+        if replayed.is_ok_and(|replayed| replayed == *fact) {
+            return Ok(proof);
+        }
+    }
+    Err(ClickError::new(format!(
+        "`{claim_label}` tactic {tactic_index}: smart `have {}` succeeded, but no simple certificate for its proof body replayed; close each case with explicit simple tactics",
+        describe_click_proposition(&have.proposition)
+    )))
 }
 
 fn have_proof_contains_smart_apply(proof: &Proof) -> bool {

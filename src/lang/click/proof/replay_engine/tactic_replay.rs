@@ -2250,6 +2250,36 @@ fn replay_linear_tactics_without_frontier_loops(
                         &fact,
                     )?
                 };
+                // A body that is neither simple nor covered by the smart
+                // lowerings above (a `witness`/`choose` prefix before `simp`,
+                // or a proof-level `if` closing its cases by `simp`) must
+                // still yield a replayed simple certificate; otherwise the
+                // tactic fails instead of silently losing the enclosing
+                // proof's expansion.
+                let surface_certificate = match surface_certificate {
+                    Some(certificate) => Some(certificate),
+                    None if SimpleProof::from_proof_tactics(std::slice::from_ref(tactic)).is_err() => {
+                        Some(certify_general_smart_have(
+                            have,
+                            &fact,
+                            theorem_environment,
+                            claim_label,
+                            tactic_index,
+                            &have_facts,
+                            &replay.effect_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            replay.old_reference_state(&state),
+                            &state,
+                            &replay.program_point_states,
+                            &replay.surface_propositions,
+                            predicate_environment,
+                            click_function_environment,
+                            function_block.requires(),
+                        )?)
+                    }
+                    None => None,
+                };
                 if let Some(certificate) = surface_certificate {
                     let replay_certificate = |certificate: &SimpleProof| {
                         replay_simple_proof(

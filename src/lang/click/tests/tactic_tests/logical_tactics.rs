@@ -970,3 +970,99 @@ fn proof_sugar_and_bare_smart_tactics_have_the_same_frontier_semantics() {
     assert_eq!(frame_errors[0], frame_errors[1]);
     assert!(frame_errors[0].contains("requires execution to reach function exit first"));
 }
+
+#[test]
+fn mid_execution_witness_simp_have_expands_to_a_simple_certificate() {
+    let c_source = "int32 current_have(int32 x) { return x; }";
+    let click_source = r#"
+            verifying "current_have.c";
+
+            int32 current_have(int32 x) {
+                ensures exists (j: int32) { j == result };
+            } by {
+                have exists (j: int32) { j == x } by {
+                    witness(j = x);
+                    simp();
+                }
+                execute();
+                simp();
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("current_have.c", c_source)])
+        .expect("a witness/simp have should verify");
+    let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
+        panic!(
+            "a mid-execution witness/simp have should expand: {:?}",
+            verified[0].expansion_blocker()
+        )
+    });
+    let have = expanded
+        .iter()
+        .find_map(|tactic| match tactic {
+            ProofTactic::Have(have) => Some(have),
+            _ => None,
+        })
+        .expect("the expansion should retain the have");
+    let Proof::Script(body) = &have.proof else {
+        panic!("the expanded have should carry an explicit script: {have:?}");
+    };
+    assert!(
+        !body.iter().any(|tactic| matches!(tactic, ProofTactic::Simp)),
+        "the expanded have body should replace its smart simp: {body:?}"
+    );
+    SimpleProof::from_proof_tactics(&expanded)
+        .expect("the witness/simp have expansion should be a surface certificate");
+}
+
+#[test]
+fn mid_execution_proof_if_have_expands_to_a_simple_certificate() {
+    let c_source = r#"
+            int32 sign_partition(int32 x) {
+                int32 y;
+                y = x;
+                return y;
+            }
+        "#;
+    let click_source = r#"
+            verifying "sign_partition.c";
+
+            int32 sign_partition(int32 x) {
+                ensures result <= 0 or result > 0 by {
+                    step();
+                    step();
+                    have y <= 0 or y > 0 by {
+                        if y <= 0 {
+                            simp();
+                        } else {
+                            simp();
+                        }
+                    }
+                    step();
+                    simp();
+                }
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("sign_partition.c", c_source)])
+        .expect("a proof-if have should verify");
+    let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
+        panic!(
+            "a mid-execution proof-if have should expand: {:?}",
+            verified[0].expansion_blocker()
+        )
+    });
+    let have = expanded
+        .iter()
+        .find_map(|tactic| match tactic {
+            ProofTactic::Have(have) => Some(have),
+            _ => None,
+        })
+        .expect("the expansion should retain the have");
+    assert!(
+        !format!("{have:?}").contains("Simp"),
+        "the expanded have cases should close with simple tactics: {have:?}"
+    );
+    SimpleProof::from_proof_tactics(&expanded)
+        .expect("the proof-if have expansion should be a surface certificate");
+}
