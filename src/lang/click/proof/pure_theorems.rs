@@ -402,6 +402,7 @@ fn verify_theorem_ensure(
             | "int32_le_antisymmetric"
             | "int32_positive_is_nonnegative"
             | "int32_positive_predecessor_is_nonnegative"
+            | "int32_positive_predecessor_strictly_decreases"
             | "int32_successor_le_implies_lt"
     ) {
         return verify_kernel_standard_theorem_axiom(
@@ -527,7 +528,9 @@ fn verify_kernel_standard_theorem_axiom(
         "int32_increment_lower_bound" | "int32_increment_preserves_order" => (3, 2),
         "int32_successor_le_implies_lt" => (2, 2),
         "int32_le_antisymmetric" => (2, 2),
-        "int32_positive_is_nonnegative" | "int32_positive_predecessor_is_nonnegative" => (1, 1),
+        "int32_positive_is_nonnegative"
+        | "int32_positive_predecessor_is_nonnegative"
+        | "int32_positive_predecessor_strictly_decreases" => (1, 1),
         "int32_le_lt_transitive" => (3, 2),
         _ => unreachable!("only registered kernel standard theorems call this verifier"),
     };
@@ -572,6 +575,9 @@ fn verify_kernel_standard_theorem_axiom(
         "int32_positive_is_nonnegative" => prove_int32_positive_is_nonnegative(value),
         "int32_positive_predecessor_is_nonnegative" => {
             prove_int32_positive_predecessor_is_nonnegative(value)
+        }
+        "int32_positive_predecessor_strictly_decreases" => {
+            prove_int32_positive_predecessor_strictly_decreases(value)
         }
         "int32_le_lt_transitive" => {
             prove_int32_le_lt_transitive(value, int32_parameter(1)?, int32_parameter(2)?)

@@ -179,6 +179,12 @@ pub(super) fn lower_surface_atomic_derivation(
     }
     if let Some(tactics) =
         plan_explicit_positive_predecessor_is_nonnegative(&lowered_conclusion, &premise_pairs)
+            .or_else(|| {
+                plan_explicit_positive_predecessor_strictly_decreases(
+                    &lowered_conclusion,
+                    &premise_pairs,
+                )
+            })
     {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
@@ -1146,6 +1152,9 @@ pub(super) fn lower_restricted_simp_plan(
             .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
             .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
             .or_else(|| plan_explicit_positive_predecessor_is_nonnegative(goal, premise_pairs))
+            .or_else(|| {
+                plan_explicit_positive_predecessor_strictly_decreases(goal, premise_pairs)
+            })
     };
     let loadability_transport = || {
         exact_derivation?;
@@ -1446,6 +1455,39 @@ fn plan_explicit_positive_predecessor_is_nonnegative(
             ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
                     name: "int32_positive_predecessor_is_nonnegative".to_string(),
+                    arguments: vec![surface_value],
+                },
+                premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
+}
+
+fn plan_explicit_positive_predecessor_strictly_decreases(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let (predecessor, value) = signed_strict_parts(goal)?;
+    let Bitvector32Term::Subtract(predecessor_value, amount) = predecessor else {
+        return None;
+    };
+    if predecessor_value.as_ref() != value || amount.as_ref() != &Bitvector32Term::Constant(1) {
+        return None;
+    }
+    for (kernel, surface) in premise_pairs {
+        let Some((premise_lower, premise_value)) = signed_strict_parts(kernel) else {
+            continue;
+        };
+        if premise_lower != &Bitvector32Term::Constant(0) || premise_value != value {
+            continue;
+        }
+        let (_, surface_value) = surface_strict_parts(surface)?;
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_positive_predecessor_strictly_decreases".to_string(),
                     arguments: vec![surface_value],
                 },
                 premises: vec![surface.clone()],

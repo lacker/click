@@ -59,6 +59,12 @@ theorem int32_positive_predecessor_is_nonnegative(value: int32) {
     ensures 0 <= value - 1;
 }
 
+theorem int32_positive_predecessor_strictly_decreases(value: int32) {
+    requires 0 < value;
+
+    ensures value - 1 < value;
+}
+
 theorem int32_le_lt_transitive(first: int32, middle: int32, last: int32) {
     requires first <= middle;
     requires middle < last;
@@ -78,6 +84,8 @@ The positivity theorem records the common signed-order weakening from
 `1 <= value` to `0 <= value`.
 The positive-predecessor theorem records the corresponding safe signed
 decrement rule from `0 < value` to `0 <= value - 1`.
+Its strict-decrease companion records `value - 1 < value` under the same
+no-underflow premise.
 The transitivity theorem combines a non-strict bound with a following strict
 bound without asking simplification to rediscover the order chain.
 Smart simplification may select these theorems, while expansion records an

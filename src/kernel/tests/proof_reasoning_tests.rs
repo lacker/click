@@ -132,6 +132,31 @@ fn int32_positive_predecessor_is_nonnegative_axiom_has_the_exact_implication() {
 }
 
 #[test]
+fn int32_positive_predecessor_strictly_decreases_axiom_has_the_exact_implication() {
+    let value = Bitvector32Term::Variable(Variable(90_026));
+    let theorem = prove_int32_positive_predecessor_strictly_decreases(value.clone());
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), value.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            Bitvector32Term::Subtract(
+                Box::new(value.clone()),
+                Box::new(Bitvector32Term::Constant(1)),
+            ),
+            value,
+        ),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
 fn int32_successor_le_implies_lt_axiom_has_the_exact_implications() {
     let lower = Bitvector32Term::Variable(Variable(90_030));
     let value = Bitvector32Term::Variable(Variable(90_031));
