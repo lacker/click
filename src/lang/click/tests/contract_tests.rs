@@ -442,6 +442,10 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
             .iter()
             .any(|tactic| matches!(tactic, ProofTactic::Have(_)))
     );
+    assert!(
+        !format!("{expanded:?}").contains("Derive("),
+        "contextual frame expansion retained a legacy derive certificate: {expanded:?}"
+    );
     let Some(ProofTactic::FrameUsing {
         region: None,
         premises,

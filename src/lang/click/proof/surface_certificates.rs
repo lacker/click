@@ -164,7 +164,9 @@ pub(super) fn lower_surface_atomic_derivation(
             index += 1;
         }
     }
-    let has_no_premises = premise_pairs.is_empty();
+    if premise_pairs.is_empty() && surface_normalizes_context_free {
+        return Ok((conclusion, Proof::Script(vec![ProofTactic::Normalize])));
+    }
     if let Some(tactics) = plan_explicit_equality_rewrites(
         &lowered_conclusion,
         &premise_pairs,
@@ -177,18 +179,78 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
     }
-    let surface_premises = premise_pairs
+    let transport_recognition = assumptions_from_propositions(available);
+    for (_, surface_source) in &premise_pairs {
+        let source = replay
+            .surface_propositions
+            .available_kernel(surface_source, available)
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| {
+                lower_point_proposition(
+                    surface_source,
+                    available,
+                    parameters,
+                    arguments,
+                    replay.old_reference_state(state),
+                    state,
+                    None,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+            });
+        let Ok(source) = source else {
+            continue;
+        };
+        if !(propositions_match_up_to_canonical_loads(&source, &lowered_conclusion)
+                || condition_polarity_equivalent(&source, &lowered_conclusion)
+                || crate::kernel::c_condition_facts_equivalent_for_memory_resolution(
+                    &source,
+                    &lowered_conclusion,
+                    &transport_recognition,
+                ))
+        {
+            continue;
+        }
+        let Ok(premises) = plan_explicit_fact_transport(
+            surface_source,
+            &source,
+            &lowered_conclusion,
+            available,
+            &replay.effect_facts,
+            parameters,
+            arguments,
+            replay,
+            state,
+            predicate_environment,
+            click_function_environment,
+        ) else {
+            continue;
+        };
+        let tactics = vec![
+            ProofTactic::TransportUsing {
+                source: surface_source.clone(),
+                target: conclusion.clone(),
+                premises,
+            },
+            ProofTactic::Assumption,
+        ];
+        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "atomic transport produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, Proof::Script(tactics)));
+    }
+    let premises = premise_pairs
         .into_iter()
         .map(|(_, surface)| surface)
-        .collect::<Vec<_>>();
-    let proof_tactic = if has_no_premises && surface_normalizes_context_free {
-        ProofTactic::Normalize
-    } else {
-        ProofTactic::Derive(ProofDerive {
-            premises: surface_premises,
-        })
-    };
-    Ok((conclusion, Proof::Script(vec![proof_tactic])))
+        .collect();
+    Ok((
+        conclusion,
+        Proof::Script(vec![ProofTactic::Derive(ProofDerive { premises })]),
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
