@@ -1206,7 +1206,7 @@ fn restricted_simp_after_unfold_expands_explicit_conjunction_extraction() {
 }
 
 #[test]
-fn restricted_simp_without_simple_vocabulary_fails_instead_of_emitting_derive() {
+fn restricted_simp_expands_strict_order_to_nonstrict_theorem_application() {
     let click_source = r#"
             theorem strict_order_implies_nonstrict(x: int32, y: int32) {
                 requires x < y;
@@ -1230,20 +1230,63 @@ fn restricted_simp_without_simple_vocabulary_fails_instead_of_emitting_derive() 
             .unwrap_or(0)
         + 1;
 
-    let error = expand_c0_tactic_source_at(click_source, &[], line, column)
-        .expect_err("unsupported restricted simp must not fall back to derive");
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("strict-to-nonstrict simp should have an explicit certificate");
     assert!(
-        error
-            .message()
-            .contains("no explicit simple proof rule for the selected derivation"),
-        "{}",
-        error.message()
+        expanded.contains("apply(int32_lt_implies_le(x, y)) using"),
+        "{expanded}"
     );
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded strict-order proof should replay");
+}
+
+#[test]
+fn post_execution_simp_applies_strict_order_rule() {
+    let c_source = r#"
+        int32 identity(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "identity.c";
+
+        int32 identity(int32 x) {
+            requires x < 10;
+            ensures result <= 10;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let offset = click_source.rfind("simp()").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("identity.c", c_source)],
+        line,
+        column,
+    )
+    .expect("post-execution strict-order simp should expand");
     assert!(
-        !error.message().contains("derive using"),
-        "{}",
-        error.message()
+        expanded.contains("apply(int32_lt_implies_le("),
+        "{expanded}"
     );
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("expanded post-execution strict-order proof should replay");
 }
 
 #[test]

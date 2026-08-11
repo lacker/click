@@ -53,6 +53,12 @@ theorem int32_positive_is_nonnegative(value: int32) {
     ensures 0 <= value;
 }
 
+theorem int32_lt_implies_le(left: int32, right: int32) {
+    requires left < right;
+
+    ensures left <= right;
+}
+
 theorem int32_strictly_positive_is_nonnegative(value: int32) {
     requires 0 < value;
 

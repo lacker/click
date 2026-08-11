@@ -1179,6 +1179,10 @@ pub(super) fn lower_outcome_simp_tactics(
             tactics.push(ProofTactic::Normalize);
             return true;
         }
+        if let Some(suffix) = plan_explicit_strict_implies_nonstrict(&current, premises) {
+            tactics.extend(suffix);
+            return true;
+        }
         for (index, (kernel, surface)) in premises.iter().enumerate() {
             if used[index] {
                 continue;
@@ -1326,6 +1330,7 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_increment_preserves_order(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
+        .or_else(|| plan_explicit_strict_implies_nonstrict(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_strictly_positive_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_below_max_is_defined(goal, premise_pairs))
@@ -1560,6 +1565,39 @@ fn plan_explicit_positive_is_nonnegative(
                 application: TheoremApplication {
                     name: "int32_positive_is_nonnegative".to_string(),
                     arguments: vec![surface_value],
+                },
+                premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
+}
+
+fn plan_explicit_strict_implies_nonstrict(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessEqual(goal_left, goal_right),
+        true,
+    ) = goal
+    else {
+        return None;
+    };
+    for (kernel, surface) in premise_pairs {
+        let Some((premise_left, premise_right)) = signed_strict_parts(kernel) else {
+            continue;
+        };
+        if premise_left != goal_left.as_ref() || premise_right != goal_right.as_ref() {
+            continue;
+        }
+        let (surface_left, surface_right) = surface_strict_parts(surface)?;
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_lt_implies_le".to_string(),
+                    arguments: vec![surface_left, surface_right],
                 },
                 premises: vec![surface.clone()],
             },

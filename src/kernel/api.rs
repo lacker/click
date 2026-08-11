@@ -2291,6 +2291,22 @@ pub fn prove_int32_positive_is_nonnegative(value: Bitvector32Term) -> Theorem {
     ))
 }
 
+/// Signed strict order implies signed non-strict order.
+pub fn prove_int32_lt_implies_le(left: Bitvector32Term, right: Bitvector32Term) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(left.clone(), right.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(left, right),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
 /// Any strictly positive signed int32 value is nonnegative.
 pub fn prove_int32_strictly_positive_is_nonnegative(value: Bitvector32Term) -> Theorem {
     let premise = Proposition::ConditionIs(
