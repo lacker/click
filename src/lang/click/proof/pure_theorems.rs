@@ -341,18 +341,12 @@ fn lower_pure_simp_certificate(
                 .collect::<Option<Vec<_>>>()?;
             if premise_pairs.is_empty() {
                 ProofTactic::Normalize
-            } else if let Some(tactics) =
-                plan_explicit_equality_rewrites(goal, &premise_pairs, &context.requires)
+            } else if let Ok(tactics) =
+                lower_restricted_simp_plan(goal, None, certificate, &premise_pairs)
             {
                 return Some(tactics);
             } else {
-                let derivation = ProofDerive {
-                    premises: premise_pairs
-                        .into_iter()
-                        .map(|(_, surface)| surface)
-                        .collect(),
-                };
-                ProofTactic::Derive(derivation)
+                return None;
             }
         }
         _ => return None,
@@ -402,6 +396,8 @@ fn verify_theorem_ensure(
             | "int32_le_and_not_lt_implies_eq"
             | "int32_le_antisymmetric"
             | "int32_positive_is_nonnegative"
+            | "int32_strictly_positive_is_nonnegative"
+            | "int32_increment_below_max_is_defined"
             | "int32_positive_predecessor_is_nonnegative"
             | "int32_positive_predecessor_strictly_decreases"
             | "int32_successor_le_implies_lt"
@@ -531,6 +527,8 @@ fn verify_kernel_standard_theorem_axiom(
         "int32_le_antisymmetric" => (2, 2),
         "int32_le_and_not_lt_implies_eq" => (2, 2),
         "int32_positive_is_nonnegative"
+        | "int32_strictly_positive_is_nonnegative"
+        | "int32_increment_below_max_is_defined"
         | "int32_positive_predecessor_is_nonnegative"
         | "int32_positive_predecessor_strictly_decreases" => (1, 1),
         "int32_le_lt_transitive" => (3, 2),
@@ -578,6 +576,12 @@ fn verify_kernel_standard_theorem_axiom(
             prove_int32_le_and_not_lt_implies_eq(value, int32_parameter(1)?)
         }
         "int32_positive_is_nonnegative" => prove_int32_positive_is_nonnegative(value),
+        "int32_strictly_positive_is_nonnegative" => {
+            prove_int32_strictly_positive_is_nonnegative(value)
+        }
+        "int32_increment_below_max_is_defined" => {
+            prove_int32_increment_below_max_is_defined(value)
+        }
         "int32_positive_predecessor_is_nonnegative" => {
             prove_int32_positive_predecessor_is_nonnegative(value)
         }

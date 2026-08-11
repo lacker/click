@@ -53,6 +53,18 @@ theorem int32_positive_is_nonnegative(value: int32) {
     ensures 0 <= value;
 }
 
+theorem int32_strictly_positive_is_nonnegative(value: int32) {
+    requires 0 < value;
+
+    ensures value >= 0;
+}
+
+theorem int32_increment_below_max_is_defined(value: int32) {
+    requires value < 2147483647;
+
+    ensures defined(value + 1);
+}
+
 theorem int32_positive_predecessor_is_nonnegative(value: int32) {
     requires 0 < value;
 

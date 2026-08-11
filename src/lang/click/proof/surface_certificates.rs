@@ -1306,6 +1306,8 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_increment_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_upper_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_is_nonnegative(goal, premise_pairs))
+        .or_else(|| plan_explicit_strictly_positive_is_nonnegative(goal, premise_pairs))
+        .or_else(|| plan_explicit_increment_below_max_is_defined(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_predecessor_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_one_le_predecessor(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_predecessor_strictly_decreases(goal, premise_pairs))
@@ -1536,6 +1538,74 @@ fn plan_explicit_positive_is_nonnegative(
             ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
                     name: "int32_positive_is_nonnegative".to_string(),
+                    arguments: vec![surface_value],
+                },
+                premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
+}
+
+fn plan_explicit_strictly_positive_is_nonnegative(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let (goal_lower, goal_value) = signed_nonstrict_parts(goal)?;
+    if goal_lower != &Bitvector32Term::Constant(0) {
+        return None;
+    }
+    for (kernel, surface) in premise_pairs {
+        let Some((premise_lower, premise_value)) = signed_strict_parts(kernel) else {
+            continue;
+        };
+        if premise_lower != &Bitvector32Term::Constant(0) || premise_value != goal_value {
+            continue;
+        }
+        let (_, surface_value) = surface_strict_parts(surface)?;
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_strictly_positive_is_nonnegative".to_string(),
+                    arguments: vec![surface_value],
+                },
+                premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
+}
+
+fn plan_explicit_increment_below_max_is_defined(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedAddOverflows(value, amount),
+        false,
+    ) = goal
+    else {
+        return None;
+    };
+    if amount.as_ref() != &Bitvector32Term::Constant(1) {
+        return None;
+    }
+    for (kernel, surface) in premise_pairs {
+        let Some((premise_value, upper)) = signed_strict_parts(kernel) else {
+            continue;
+        };
+        if premise_value != value.as_ref()
+            || upper != &Bitvector32Term::Constant(i32::MAX as u32)
+        {
+            continue;
+        }
+        let (surface_value, _) = surface_strict_parts(surface)?;
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_increment_below_max_is_defined".to_string(),
                     arguments: vec![surface_value],
                 },
                 premises: vec![surface.clone()],

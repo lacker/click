@@ -132,6 +132,50 @@ fn int32_positive_predecessor_is_nonnegative_axiom_has_the_exact_implication() {
 }
 
 #[test]
+fn int32_strictly_positive_is_nonnegative_axiom_has_the_exact_implication() {
+    let value = Bitvector32Term::Variable(Variable(90_023));
+    let theorem = prove_int32_strictly_positive_is_nonnegative(value.clone());
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), value.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(value, Bitvector32Term::Constant(0)),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
+fn int32_increment_below_max_is_defined_axiom_has_the_exact_implication() {
+    let value = Bitvector32Term::Variable(Variable(90_024));
+    let theorem = prove_int32_increment_below_max_is_defined(value.clone());
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            value.clone(),
+            Bitvector32Term::Constant(i32::MAX as u32),
+        ),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedAddOverflows(
+            Box::new(value),
+            Box::new(Bitvector32Term::Constant(1)),
+        ),
+        false,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
 fn int32_positive_predecessor_strictly_decreases_axiom_has_the_exact_implication() {
     let value = Bitvector32Term::Variable(Variable(90_026));
     let theorem = prove_int32_positive_predecessor_strictly_decreases(value.clone());

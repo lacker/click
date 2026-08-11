@@ -2291,6 +2291,44 @@ pub fn prove_int32_positive_is_nonnegative(value: Bitvector32Term) -> Theorem {
     ))
 }
 
+/// Any strictly positive signed int32 value is nonnegative.
+pub fn prove_int32_strictly_positive_is_nonnegative(value: Bitvector32Term) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), value.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(value, Bitvector32Term::Constant(0)),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
+/// Incrementing a signed int32 value below `INT_MAX` is defined.
+pub fn prove_int32_increment_below_max_is_defined(value: Bitvector32Term) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            value.clone(),
+            Bitvector32Term::Constant(i32::MAX as u32),
+        ),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedAddOverflows(
+            Box::new(value),
+            Box::new(Bitvector32Term::Constant(1)),
+        ),
+        false,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
 /// Decrementing a positive signed int32 value produces a nonnegative value.
 pub fn prove_int32_positive_predecessor_is_nonnegative(value: Bitvector32Term) -> Theorem {
     let premise = Proposition::ConditionIs(

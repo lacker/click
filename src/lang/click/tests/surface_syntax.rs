@@ -242,7 +242,7 @@ fn verifies_pure_theorem_definition() {
 }
 
 #[test]
-fn pure_simp_exposes_a_surface_derivation_certificate() {
+fn pure_simp_exposes_an_explicit_theorem_certificate() {
     let source = r#"
         theorem positive_is_nonnegative(x: int32) {
             requires x > 0;
@@ -253,7 +253,11 @@ fn pure_simp_exposes_a_surface_derivation_certificate() {
     let verified = verify_click_theorems(source).expect("simp theorem should verify");
     assert!(matches!(
         verified[0].proof_tactics().as_deref(),
-        Some([ProofTactic::Derive(ProofDerive { premises, .. })]) if premises.len() == 1
+        Some([
+            ProofTactic::ApplyTheoremUsing { application, premises },
+            ProofTactic::Assumption,
+        ]) if application.name == "int32_strictly_positive_is_nonnegative"
+            && premises.len() == 1
     ));
 }
 

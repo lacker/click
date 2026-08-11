@@ -45,6 +45,8 @@ axioms, even when Rust names them `prove_*`.
 `prove_int32_increment_preserves_order`, and
 `prove_int32_successor_le_implies_lt`, and
 `prove_int32_positive_is_nonnegative`, and
+`prove_int32_strictly_positive_is_nonnegative`,
+`prove_int32_increment_below_max_is_defined`,
 `prove_int32_positive_predecessor_is_nonnegative`, and
 `prove_int32_positive_predecessor_strictly_decreases`,
 `prove_int32_le_lt_transitive`, and
