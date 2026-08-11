@@ -631,10 +631,56 @@ fn marked_constant_store_transport_retains_load_identity() {
     assert!(
         error
             .message()
-            .contains("post-execution fact transport has no explicit surface-premise certificate"),
+            .contains("no certified frame transport applies to the exact source fact"),
         "{}",
         error.message()
     );
+}
+
+#[test]
+fn post_execution_store_transport_expands_from_the_recorded_store_equation() {
+    let c_source = r#"
+        int32 store_both(int32 p[2]) {
+            p[0] = 7;
+            p[1] = 9;
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "store_both.c";
+
+        int32 store_both(int32 p[2]) {
+            consumes p[0..2];
+            mutable p[0..2];
+            produces p[0..2];
+            ensures p[0] == 7;
+        } by {
+            execute();
+            transport(
+                at(statement(0).exit, p[0]) == 7,
+                p[0] == 7
+            );
+            frame();
+            simp();
+        }
+    "#;
+    let sources = [("store_both.c", c_source)];
+
+    verify_c0_sources(click_source, &sources)
+        .expect("the post-execution store transport should verify");
+    let selected = click_source.find("transport(").unwrap();
+    let position = expansion::position_at_offset(click_source, selected);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("the store transport should expand from its recorded equation");
+    assert!(expanded.contains("transport(") && expanded.contains("using {"));
+    assert_eq!(
+        expanded.matches("at(statement(0).exit, p[0]) == 7").count(),
+        1,
+        "the transport source must not be duplicated as an auxiliary premise:\n{expanded}"
+    );
+    verify_c0_sources(&expanded, &sources)
+        .expect("the expanded store transport certificate should replay from a fresh parse");
 }
 
 #[test]

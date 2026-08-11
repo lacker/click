@@ -135,12 +135,15 @@ old `derive using` blocks can be removed:
 
 - The owned-string replay/certification instability has been fixed and the
   project now passes repeated ordinary verification under its normal limit.
-  Its remaining `derive using` sites expose implicit execution-history and
-  loadability dependencies: several listed equality sets do not prove their
-  goals alone, and indexed-load goals need a named pointer/loadability
-  transport before they can even be lowered in the restricted context. Keep
-  these sites unchanged until expansion selects that evidence explicitly;
-  do not restore ambient lowering or derivation fallbacks.
+  Post-execution transport now uses recorded store equations as its source,
+  emits only exact auxiliary premises, and freshly replays its expansion. The
+  remaining `terminated_at` derivation is not one frame transport: it also
+  replaces the dead local `index` with `old(owner->len)`. Migrate it by making
+  that assignment/equality step explicit at a point where the local is still
+  in scope, then transport the resulting local-free fact through the return.
+  Other indexed-load goals may still need named pointer/loadability transport
+  before they can be lowered in the restricted context. Do not restore ambient
+  lowering or derivation fallbacks.
 - Listed facts exposed as conjuncts of an unfolded predicate now expand
   through the simple `extract(P)` rule. The certificate names each extracted
   fact before using it; neither `assumption` nor `rewrite` silently searches a

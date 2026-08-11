@@ -342,6 +342,25 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
     if let Ok(surface) = replay.surface_propositions.checked_surface(kernel, check) {
         return Ok(surface);
     }
+    // A statement-indexed spelling denotes the recorded proposition at that
+    // program point. Re-lowering it after the function outcome can
+    // materialize a dead local and turn an exact assignment equation into a
+    // tautology, even though the recorded spelling remains a valid premise.
+    let recorded_surfaces = replay
+        .surface_propositions
+        .surfaces(kernel)
+        .collect::<Vec<_>>();
+    for surface in recorded_surfaces.into_iter().rev() {
+        if (proposition_contains_at_expression(surface)
+            || proposition_contains_old_expression(surface))
+            && replay
+                .surface_propositions
+                .available_kernel(surface, available)
+                .is_some_and(&matches_kernel)
+        {
+            return Ok(surface.clone());
+        }
+    }
     let (exact_points, compatible_points) =
         snapshot_indexed_program_points(kernel, &replay.program_point_states);
     for (point, point_state) in exact_points.iter().chain(&compatible_points) {

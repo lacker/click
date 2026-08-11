@@ -216,6 +216,14 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
         }
     };
 
+    for equation in crate::kernel::certified_store_equations(transition_facts) {
+        if surface_propositions.surfaces(&equation).next().is_some()
+            && !available.contains(&equation)
+        {
+            available.push(equation);
+        }
+    }
+
     let mut explicit_premises = Vec::new();
     if let Some(surface_premises) = surface_premises {
         for surface_premise in surface_premises {
@@ -240,6 +248,9 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
         }
     }
 
+    let recorded_source = surface_propositions
+        .available_kernel(surface_source, available)
+        .cloned();
     let ordinary_source = recorded_or_lowered(surface_source, available, surface_propositions)
         .map_err(|error| {
             ClickError::new(format!(
@@ -249,7 +260,9 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
         })?;
     let concrete_source =
         lower(surface_source, available).unwrap_or_else(|_| ordinary_source.clone());
-    let source = if proposition_contains_at_expression(surface_source) {
+    let source = if recorded_source.is_some() {
+        ordinary_source.clone()
+    } else if proposition_contains_at_expression(surface_source) {
         lower_outcome_proposition_symbolically_with_program_points(
             parameters,
             arguments,
@@ -293,11 +306,11 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
     } else {
         assumptions_from_propositions(available)
     };
-    // A transport source spelled at a different snapshot than its explicit
-    // fact is the same fact when the kernel proves the snapshots agree at
-    // the loaded pointers; this previously matched only through the
-    // None==None polarity bug, so make the legitimate case deliberate.
-    if !exact_fact_is_available(&source, &explicit_premises)
+    // The source occupies its own checked slot in `transport(source, target)`.
+    // It may therefore come from the recorded execution history; `using`
+    // names only the auxiliary facts needed to replay the transport.
+    if !exact_fact_is_available(&source, available)
+        && !exact_fact_is_available(&source, &explicit_premises)
         && !snapshot_bridged_fact_is_available(&source, &explicit_premises, transition_facts)
         && selected_assumptions
             .derive_atomic_proposition(&source)
@@ -330,26 +343,8 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
         ))
     })?;
     surface_propositions.record_lowering(surface_target, &target)?;
+    let certificate_available = surface_premises.is_none().then(|| available.clone());
 
-    let emitted_premises = if surface_premises.is_some() {
-        None
-    } else {
-        Some(plan_explicit_fact_transport_at_outcome(
-            surface_source,
-            &source,
-            &target,
-            available,
-            transition_facts,
-            parameters,
-            arguments,
-            pre_state,
-            post_state,
-            result,
-            replay,
-            predicate_environment,
-            click_function_environment,
-        )?)
-    };
     if exact_fact_is_available(&target, available)
         || materialization_equivalent_available_fact(&target, available).is_some()
     {
@@ -376,6 +371,28 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
         available.push(target.clone());
     }
 
+    let emitted_premises = if surface_premises.is_some() {
+        None
+    } else {
+        Some(plan_explicit_fact_transport_at_outcome(
+            surface_source,
+            &source,
+            &target,
+            certificate_available
+                .as_deref()
+                .expect("smart transport retained its pre-transport facts"),
+            transition_facts,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            replay,
+            predicate_environment,
+            click_function_environment,
+        )?)
+    };
+
     Ok(match emitted_premises {
         Some(premises) => ProofTactic::TransportUsing {
             source: surface_source.clone(),
@@ -392,7 +409,7 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
 
 #[allow(clippy::too_many_arguments)]
 fn plan_explicit_fact_transport_at_outcome(
-    surface_source: &ClickProposition,
+    _surface_source: &ClickProposition,
     source: &Proposition,
     target: &Proposition,
     available: &[Proposition],
@@ -412,7 +429,7 @@ fn plan_explicit_fact_transport_at_outcome(
             checked_surface_fact_at_outcome(
                 replay,
                 kernel,
-                SurfaceFactMatch::ReplayEquivalent,
+                SurfaceFactMatch::CanonicalExact,
                 available,
                 parameters,
                 arguments,
@@ -426,14 +443,8 @@ fn plan_explicit_fact_transport_at_outcome(
             .map(|surface| (kernel.clone(), surface))
         })
         .collect::<Vec<_>>();
+    candidates.retain(|(kernel, _)| kernel != source);
     let mut selected = Vec::new();
-    if exact_fact_is_available(source, available) {
-        let source_pair = (source.clone(), surface_source.clone());
-        if !candidates.contains(&source_pair) {
-            candidates.push(source_pair.clone());
-        }
-        selected.push(source_pair);
-    }
     let replays = |selected: &[(Proposition, ClickProposition)]| {
         let explicit = selected
             .iter()
@@ -450,10 +461,8 @@ fn plan_explicit_fact_transport_at_outcome(
             .chain(resource_facts)
             .fold(explicit_assumptions, |assumptions, fact| {
                 assumptions.assume_proposition(fact)
-            });
-        if selected_assumptions.derive_proposition(source).is_none() {
-            return false;
-        }
+            })
+            .assume_proposition(source.clone());
         if selected_assumptions.derive_proposition(target).is_some() {
             return true;
         }
