@@ -317,7 +317,7 @@ int32 input_cursor_shared_pipeline(
         at(statement(4).entry, left->pos) < at(statement(4).entry, left->len);
     }
     have right->pos < right->len by {
-        derive using {
+        simp() using {
             1 <= length;
             right->len == length;
             right->pos == 0;

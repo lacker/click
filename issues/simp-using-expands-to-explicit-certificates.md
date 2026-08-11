@@ -121,8 +121,8 @@ applications of the standard theorems `int32_increment_upper_bound`,
 input-cursor pipeline's separation proof has also migrated. Exact
 `rewrite` steps now substitute scalar lengths and pointer bases inside
 memory-resource `separate` and `contains` propositions, so the expansion names
-both substitutions before its final `assumption`. Its left-cursor bound proof
-has also migrated: exact equality rewrites can now feed their rewritten goal
+both substitutions before its final `assumption`. Its left- and right-cursor
+bound proofs have also migrated: exact equality rewrites can feed their rewritten goal
 into an existing named simple rule, producing two `rewrite` steps followed by
 `int32_successor_le_implies_lt`.
 
