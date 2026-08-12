@@ -1136,3 +1136,37 @@ fn perpetual_service_example_verifies_stably_across_repeated_runs() {
         }
     }
 }
+
+/// Whatever a reduced budget truncates inside `service_step`, the failure
+/// must present itself as budget exhaustion. The perpetual-service fold used
+/// to let a truncated kernel derivation surface as "missing pure fact" while
+/// the available-fact list printed the very fact it claimed was missing.
+#[test]
+fn truncated_service_step_reports_the_budget_not_a_missing_fact() {
+    let project =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/perpetual-service");
+    let click_path = project.join("perpetual_service.click");
+    let click_source =
+        std::fs::read_to_string(&click_path).expect("the example sidecar should be readable");
+    let c_sources = crate::cli::read_verifying_sources(&click_path, &click_source)
+        .expect("the example C sources should resolve");
+    let sources = crate::cli::source_refs(&c_sources);
+    for simple_budget in [10_000, 40_000, 80_000, 160_000, 320_000] {
+        let limits = crate::instrumentation::TacticWorkLimits {
+            simple: simple_budget,
+            ..Default::default()
+        };
+        let result = crate::instrumentation::with_tactic_work_limits(limits, || {
+            verify_c0_sources_functions(&click_source, &sources, ["service_step".to_string()])
+        });
+        let Err(error) = result else {
+            continue;
+        };
+        let message = error.message();
+        assert!(
+            message.contains("budget"),
+            "a truncated run must report its budget, not a semantic failure \
+             (simple budget {simple_budget}): {message}"
+        );
+    }
+}
