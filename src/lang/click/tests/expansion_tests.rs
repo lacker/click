@@ -3470,3 +3470,39 @@ fn pure_branching_disjunction_simp_expands_to_left_right() {
     assert!(!expanded.contains("simp()"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded branching disjunction proof should replay");
 }
+
+#[test]
+fn pure_folded_constant_successor_simp_expands_to_successor_bound() {
+    let click_source = r#"
+            theorem successor_of_zero_below_bound(x: int32, bound: int32) {
+                requires x == 0;
+                requires 2 <= bound;
+
+                ensures x + 1 < bound by {
+                    simp();
+                }
+            }
+        "#;
+    let offset = click_source.find("simp()").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("the folded constant successor simp should have an explicit certificate");
+    assert!(expanded.contains("rewrite(x == 0);"), "{expanded}");
+    assert!(
+        expanded.contains("apply(int32_successor_le_implies_lt("),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("simp()"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded constant successor proof should replay");
+}

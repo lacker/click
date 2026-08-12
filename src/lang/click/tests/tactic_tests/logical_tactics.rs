@@ -1578,3 +1578,85 @@ fn left_right_reject_the_disjunct_the_branch_does_not_prove() {
         error.message()
     );
 }
+
+#[test]
+fn smart_nonstrict_then_strict_transitivity_closes_a_pure_goal() {
+    let click_source = r#"
+        theorem below_from_le_lt(x: int32, y: int32) {
+            requires 0 <= x;
+            requires x < y;
+
+            ensures 0 < y by {
+                simp();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[]).expect(
+        "a non-strict leg followed by a strict leg should close through `int32_le_lt_transitive`",
+    );
+}
+
+#[test]
+fn apply_le_lt_transitive_requires_its_nonstrict_leg_listed() {
+    // Without `0 <= x` as an available fact the theorem's first requirement
+    // has no proof, so the explicit application must fail instead of
+    // rubber-stamping the missing leg.
+    let click_source = r#"
+        theorem below_missing_leg(x: int32, y: int32) {
+            requires x < y;
+
+            ensures 0 < y by {
+                apply(int32_le_lt_transitive(0, x, y)) using {
+                    x < y
+                };
+                assumption();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect_err("a transitivity application missing its non-strict leg must fail");
+}
+
+#[test]
+fn smart_rewrite_folds_substituted_constants_to_a_strict_constant_bound() {
+    // Substituting `x == 0` inside `x + 1` leaves the two-constant `0 + 1`,
+    // which the rewrite folds so the strict constant bound closes through
+    // the named successor rule against the listed `2 <= bound`.
+    let click_source = r#"
+        theorem successor_of_zero_below_bound(x: int32, bound: int32) {
+            requires x == 0;
+            requires 2 <= bound;
+
+            ensures x + 1 < bound by {
+                simp();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[]).expect(
+        "the folded constant successor should close through the strict constant lower bound",
+    );
+}
+
+#[test]
+fn apply_lt_le_transitive_rejects_a_false_constant_leg() {
+    // `2 < 2` is false, so the constant leg cannot be discharged by
+    // normalization and the application must fail.
+    let click_source = r#"
+        theorem false_constant_leg(bound: int32) {
+            requires 2 <= bound;
+
+            ensures 2 < bound by {
+                apply(int32_lt_le_transitive(2, 2, bound)) using {
+                    2 <= bound
+                };
+                assumption();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect_err("a false constant leg must not be rubber-stamped");
+}

@@ -27,7 +27,7 @@ const QUARANTINED: &[(&str, &str)] = &[
     ),
     (
         "owned-string",
-        "issues/owned-string-pure-theorem-certificate-missing.md: pure theorem smart proof produces no pure surface certificate",
+        "issues/owned-string-exceeds-interactive-verification-budget.md: the fully certificated project takes ~35s warm, past its 30s deadline; the truncation then reports as a ghost-region mismatch (issues/deadline-truncation-masquerades-as-ghost-region-mismatch.md)",
     ),
     (
         "owned-vector",

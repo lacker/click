@@ -570,14 +570,28 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                 Box::new(rewrite_term(right, from, to)),
             )
         };
+        // Substituting a constant can leave a two-constant operation
+        // (`0 + 1` after `rewrite(len == 0)` in a `len + 1` goal); folding
+        // it is deterministic arithmetic on the rewritten node only, so the
+        // rewritten goal states the value the substitution denotes.
         match term {
             Bitvector32Term::Add(left, right) => {
                 let (left, right) = binary(left, right);
-                Bitvector32Term::Add(left, right)
+                match (left.as_ref(), right.as_ref()) {
+                    (Bitvector32Term::Constant(first), Bitvector32Term::Constant(second)) => {
+                        Bitvector32Term::Constant(first.wrapping_add(*second))
+                    }
+                    _ => Bitvector32Term::Add(left, right),
+                }
             }
             Bitvector32Term::Subtract(left, right) => {
                 let (left, right) = binary(left, right);
-                Bitvector32Term::Subtract(left, right)
+                match (left.as_ref(), right.as_ref()) {
+                    (Bitvector32Term::Constant(first), Bitvector32Term::Constant(second)) => {
+                        Bitvector32Term::Constant(first.wrapping_sub(*second))
+                    }
+                    _ => Bitvector32Term::Subtract(left, right),
+                }
             }
             Bitvector32Term::Multiply(left, right) => {
                 Bitvector32Term::multiply(
