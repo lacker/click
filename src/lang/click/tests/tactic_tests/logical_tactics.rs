@@ -1478,3 +1478,103 @@ fn disjunctive_premise_simp_expands_to_a_cases_certificate() {
     SimpleProof::from_proof_tactics(&expanded)
         .expect("the disjunctive-premise expansion should be a surface certificate");
 }
+
+#[test]
+fn smart_pure_pointer_add_zero_identity_produces_a_rewrite_certificate() {
+    let click_source = r#"
+        theorem pointer_add_zero_equals(
+            base: int32*,
+            offset: int32,
+            target: int32*
+        ) {
+            requires base == target;
+            requires offset == 0;
+
+            ensures base + offset == target by {
+                simp();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect("a smart pointer-offset identity proof should yield a pure surface certificate");
+}
+
+#[test]
+fn pure_rewrite_rejects_an_int32_equality_that_is_not_available() {
+    // `offset == 1` is not an available fact, so the explicit rewrite
+    // certificate must be rejected instead of substituting an unproven
+    // equality inside the pointer goal.
+    let click_source = r#"
+        theorem pointer_add_wrong_offset(
+            base: int32*,
+            offset: int32,
+            target: int32*
+        ) {
+            requires base == target;
+            requires offset == 0;
+
+            ensures base + offset == target by {
+                rewrite(offset == 1);
+                assumption();
+            }
+        }
+    "#;
+
+    let error = verify_c0_sources(click_source, &[])
+        .expect_err("a rewrite by an unproven equality must fail replay");
+    assert!(
+        error
+            .message()
+            .contains("`rewrite` requires its equality to be an exact available fact"),
+        "unexpected error: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn branching_pure_disjunction_lowers_to_left_right_certificate() {
+    let click_source = r#"
+        theorem int32_sign_split(x: int32) {
+            ensures x <= 0 or x > 0 by {
+                if x <= 0 {
+                    simp();
+                } else {
+                    simp();
+                }
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[]).expect(
+        "each branch proves its polarity-equivalent disjunct, so the smart branching proof should lower to left/right",
+    );
+}
+
+#[test]
+fn left_right_reject_the_disjunct_the_branch_does_not_prove() {
+    // The then-branch assumes `x <= 0`, which proves the left disjunct only;
+    // an explicit `right()` there names a disjunct the branch context does
+    // not contain and must fail replay.
+    let click_source = r#"
+        theorem int32_sign_split_swapped(x: int32) {
+            ensures x <= 0 or x > 0 by {
+                if x <= 0 {
+                    right();
+                } else {
+                    left();
+                }
+            }
+        }
+    "#;
+
+    let error = verify_c0_sources(click_source, &[])
+        .expect_err("selecting the unproven disjunct must fail replay");
+    assert!(
+        error
+            .message()
+            .contains("requires its selected disjunct as an exact fact"),
+        "unexpected error: {}",
+        error.message()
+    );
+}

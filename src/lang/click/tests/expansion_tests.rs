@@ -3399,3 +3399,74 @@ fn source_expander_reports_missing_grouped_proof_precisely() {
             .contains("grouped verification but has no source `by` clause")
     );
 }
+
+#[test]
+fn pure_pointer_add_zero_simp_expands_to_rewrite_and_assumption() {
+    let click_source = r#"
+            theorem pointer_add_zero_equals(
+                base: int32*,
+                offset: int32,
+                target: int32*
+            ) {
+                requires base == target;
+                requires offset == 0;
+
+                ensures base + offset == target by {
+                    simp();
+                }
+            }
+        "#;
+    let offset = click_source.find("simp()").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("the pointer-offset identity simp should have an explicit certificate");
+    assert!(expanded.contains("rewrite(offset == 0);"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("simp()"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded pointer identity proof should replay");
+}
+
+#[test]
+fn pure_branching_disjunction_simp_expands_to_left_right() {
+    let click_source = r#"
+            theorem int32_sign_split(x: int32) {
+                ensures x <= 0 or x > 0 by {
+                    if x <= 0 {
+                        simp();
+                    } else {
+                        simp();
+                    }
+                }
+            }
+        "#;
+    let offset = click_source.find("if x <= 0").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("the branching disjunction proof should have an explicit certificate");
+    assert!(expanded.contains("left();"), "{expanded}");
+    assert!(expanded.contains("right();"), "{expanded}");
+    assert!(!expanded.contains("simp()"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded branching disjunction proof should replay");
+}

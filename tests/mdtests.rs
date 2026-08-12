@@ -17,12 +17,7 @@ const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
 /// green gate. Run one with `MDTEST_FILTER=<name>`, or all of them with
 /// `CLICK_RUN_QUARANTINED=1`. Each entry names the reason; remove entries as
 /// they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[
-    (
-        "proof_if_cases.md",
-        "issues/owned-string-pure-theorem-certificate-missing.md: pure smart proof produces no pure surface certificate",
-    ),
-];
+const QUARANTINED: &[(&str, &str)] = &[];
 
 #[test]
 fn mdtests() {

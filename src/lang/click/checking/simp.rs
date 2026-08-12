@@ -702,6 +702,25 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                         Box::new(rewrite_term(goal_right, left, right)),
                     )
                 }
+                // Pointer goals contain the same int32 terms inside their
+                // offsets; substituting the proven equality there is the same
+                // exact term congruence, with work bounded by the goal.
+                ConditionTerm::PointerOffsetEqual(goal_left, goal_right) => {
+                    ConditionTerm::PointerOffsetEqual(
+                        Box::new(rewrite_offset_term(goal_left, left, right)),
+                        Box::new(rewrite_offset_term(goal_right, left, right)),
+                    )
+                }
+                ConditionTerm::PointerEqual(goal_left, goal_right) => {
+                    let rewrite_pointer = |pointer: &Pointer| Pointer {
+                        block: pointer.block.clone(),
+                        offset: rewrite_offset_term(&pointer.offset, left, right),
+                    };
+                    ConditionTerm::PointerEqual(
+                        Box::new(rewrite_pointer(goal_left)),
+                        Box::new(rewrite_pointer(goal_right)),
+                    )
+                }
                 _ => {
                     return Err("`rewrite` currently expects an int32 comparison goal".to_string());
                 }
@@ -843,6 +862,26 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_from(
         if let Some(suffix) = closer(&current) {
             tactics.extend(suffix);
             return true;
+        }
+        // A disjunction closes the way `left`/`right` replay closes it: the
+        // selected disjunct must be the same total boolean condition as an
+        // available fact up to polarity (`x > 0` from `not (x <= 0)`).
+        // Construction mirrors exactly that replay check, and commits only
+        // when a disjunct closes, so nothing beyond the two children is
+        // examined.
+        if let Proposition::Or(left_child, right_child) = &current {
+            for (tactic, child) in [
+                (ProofTactic::Left, left_child.as_ref()),
+                (ProofTactic::Right, right_child.as_ref()),
+            ] {
+                if available
+                    .iter()
+                    .any(|fact| condition_polarity_equivalent(fact, child))
+                {
+                    tactics.push(tactic);
+                    return true;
+                }
+            }
         }
         for (index, (kernel, surface)) in premises.iter().enumerate() {
             if used[index] {

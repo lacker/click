@@ -2042,8 +2042,15 @@ pub(super) fn lower_restricted_simp_plan(
             ));
         };
         let child_goal = if choose_left { left.as_ref() } else { right.as_ref() };
-        if child.conclusion() != child_goal || !pure_fact_is_replay_available(child_goal, &available)
-        {
+        // `left`/`right` replay accepts the selected disjunct when it is the
+        // same total boolean condition as an available fact up to polarity
+        // (e.g. `x > 0` from `not (x <= 0)`); construction mirrors exactly
+        // that check rather than demanding the literal spelling.
+        let disjunct_replays = pure_fact_is_replay_available(child_goal, &available)
+            || available
+                .iter()
+                .any(|fact| condition_polarity_equivalent(fact, child_goal));
+        if child.conclusion() != child_goal || !disjunct_replays {
             return Err(ClickError::new(
                 "`simp() using` selected a derived disjunct that needs an explicit intermediate `have`",
             ));
