@@ -137,6 +137,9 @@ struct StepKey {
 struct SlowStep {
     key: StepKey,
     elapsed: Duration,
+    /// Deterministic work units the tactic consumed — the quantity its
+    /// class budget is enforced in.
+    work: usize,
     failed: bool,
 }
 
@@ -685,8 +688,8 @@ enum TimingEvent {
     Source(PathBuf),
     /// A tactic began; it stays active until its finish line arrives.
     Started(StepKey),
-    /// A tactic finished, with its elapsed time.
-    Finished(StepKey, Duration),
+    /// A tactic finished, with its elapsed time and deterministic work.
+    Finished(StepKey, Duration, usize),
     /// Verification ultimately returned an error created inside this tactic.
     Failed(StepKey),
     /// One verified function's whole wall-clock time.
@@ -814,8 +817,10 @@ fn profile_from_events(
                 TimingEvent::Started(structured_step(tactic, &source_path)?)
             }
             VerificationEvent::TacticFinished {
-                tactic, elapsed, ..
-            } => TimingEvent::Finished(structured_step(tactic, &source_path)?, *elapsed),
+                tactic,
+                elapsed,
+                work,
+            } => TimingEvent::Finished(structured_step(tactic, &source_path)?, *elapsed, *work),
             VerificationEvent::TacticFailed(tactic) => {
                 TimingEvent::Failed(structured_step(tactic, &source_path)?)
             }
@@ -888,7 +893,7 @@ fn build_profile(
                 source_files.insert(path);
             }
             TimingEvent::Started(key) => open.push((key, Duration::ZERO)),
-            TimingEvent::Finished(key, elapsed) => {
+            TimingEvent::Finished(key, elapsed, tactic_work) => {
                 let nested = match open.iter().rposition(|(candidate, _)| candidate == &key) {
                     Some(index) => {
                         let (_, nested) = open.remove(index);
@@ -908,6 +913,7 @@ fn build_profile(
                     slow_steps.push(SlowStep {
                         key,
                         elapsed: exclusive,
+                        work: tactic_work,
                         failed: false,
                     });
                 }
@@ -1013,7 +1019,7 @@ fn parse_profile(
                 source_path = path;
             }
             TimingEvent::Started(key) => open.push((key, Duration::ZERO)),
-            TimingEvent::Finished(key, elapsed) => {
+            TimingEvent::Finished(key, elapsed, tactic_work) => {
                 let nested = match open.iter().rposition(|(candidate, _)| candidate == &key) {
                     Some(index) => {
                         let (_, nested) = open.remove(index);
@@ -1035,6 +1041,7 @@ fn parse_profile(
                     slow_steps.push(SlowStep {
                         key,
                         elapsed: exclusive,
+                        work: tactic_work,
                         failed: false,
                     });
                 }
@@ -1144,9 +1151,13 @@ fn classify_timing_line(line: &str, source_path: &Path) -> Result<TimingEvent, S
             .ok_or_else(|| drift_message(line));
     }
     if let Some(rest) = strip_kind(body, "tactic") {
+        let (rest, work) = match rest.rsplit_once(" work ") {
+            Some((rest, work)) => (rest, work.parse().map_err(|_| drift_message(line))?),
+            None => (rest, 0),
+        };
         let (rest, elapsed) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
         let key = parse_step_key(rest, source_path).ok_or_else(|| drift_message(line))?;
-        return Ok(TimingEvent::Finished(key, elapsed));
+        return Ok(TimingEvent::Finished(key, elapsed, work));
     }
     if let Some(rest) = strip_kind(body, "function") {
         let (name, elapsed) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
