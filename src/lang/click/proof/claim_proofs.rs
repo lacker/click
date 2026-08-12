@@ -308,7 +308,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_auto(
         tactics.push(ProofTactic::Simp);
     }
 
-    let verified = prove_claims_by_grouped_tactics(
+    let mut verified = prove_claims_by_grouped_tactics(
         expansion_capture.as_deref_mut(),
         source_path,
         function_block,
@@ -322,22 +322,125 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_auto(
         &tactics,
         ProofTacticSource::GeneratedBy { source_index: 0 },
     )?;
+    certify_grouped_claims_result(
+        expansion_capture,
+        source_path,
+        function_block,
+        parsed_function,
+        claims,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        &mut verified,
+        "auto",
+        &tactics,
+    )?;
+    Ok(verified)
+}
+
+/// An explicit grouped proof script, followed by the whole-contract
+/// certificate gate: the script's stitched certificate must exist and replay
+/// completely before the grouped claims are accepted.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click) fn prove_claims_by_grouped_script(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    tactics: &[ProofTactic],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let mut verified = prove_claims_by_grouped_tactics(
+        expansion_capture.as_deref_mut(),
+        source_path,
+        function_block,
+        parsed_function,
+        claims,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        tactics,
+        ProofTacticSource::SourceSyntax,
+    )?;
+    certify_grouped_claims_result(
+        expansion_capture,
+        source_path,
+        function_block,
+        parsed_function,
+        claims,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        &mut verified,
+        "explicit proof script",
+        tactics,
+    )?;
+    Ok(verified)
+}
+
+/// The grouped form of the whole-claim certificate gate (see
+/// `certify_claim_result`): the stitched contract-level certificate must
+/// exist, replay completely, and reproduce the verified theorem count. When
+/// the replayed tactics are themselves a simple proof, that proof is the
+/// certificate by definition and the replay that just succeeded was the
+/// certificate replay.
+#[allow(clippy::too_many_arguments)]
+fn certify_grouped_claims_result(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    verified: &mut [VerifiedCTheorem],
+    proof_description: &str,
+    replayed_tactics: &[ProofTactic],
+) -> Result<(), ClickError> {
+    if let Ok(script) = SimpleProof::from_proof_tactics(replayed_tactics) {
+        for theorem in verified.iter_mut() {
+            theorem.expanded_proof = Some(script.clone());
+            theorem.expansion_blocker = None;
+        }
+        return Ok(());
+    }
     let certificate = verified
         .first()
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`auto` proved no grouped claims for `{}.contract`",
+                "`{proof_description}` proved no grouped claims for `{}.contract`",
                 function_block.signature().name()
             ))
         })?
         .expanded_proof_certificate()
         .map_err(|error| {
             ClickError::new(format!(
-                "`auto` succeeded internally for `{}.contract` without a surface certificate: {}",
+                "`{proof_description}` succeeded internally for `{}.contract` without a whole-contract surface certificate: {}",
                 function_block.signature().name(),
                 error.message()
             ))
         })?;
+    let certificate_tactics = certificate.to_proof_tactics();
+    if certificate_tactics.is_empty() {
+        return Err(ClickError::new(format!(
+            "`{proof_description}` stitched an empty whole-contract surface certificate for `{}.contract`",
+            function_block.signature().name()
+        )));
+    }
     let replayed = prove_claims_by_grouped_tactics(
         expansion_capture.as_deref_mut(),
         source_path,
@@ -349,26 +452,29 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_auto(
         click_function_environment,
         resource_environment,
         theorem_environment,
-        &certificate.to_proof_tactics(),
+        &certificate_tactics,
         ProofTacticSource::GeneratedBy { source_index: 0 },
     )
     .map_err(|error| {
         ClickError::new(format!(
-            "`auto` surface certificate failed complete replay for `{}.contract`:\n{}\n{}",
+            "`{proof_description}` surface certificate failed complete replay for `{}.contract`:\n{}\n{}",
             function_block.signature().name(),
             format_simple_proof(&certificate),
             error.message()
         ))
     })?;
-    if replayed.len() != verified.len() {
-        return Err(ClickError::new(format!(
-            "`auto` surface certificate replayed {} grouped theorems for `{}.contract`, expected {}",
-            replayed.len(),
-            function_block.signature().name(),
-            verified.len()
-        )));
+    // The certificate may legitimately refine an abstracted join into its
+    // concrete paths, so the check is claim coverage: every verified claim
+    // must be proved again by the certificate replay.
+    for theorem in verified.iter() {
+        if !replayed.iter().any(|replayed| replayed.claim == theorem.claim) {
+            return Err(ClickError::new(format!(
+                "`{proof_description}` surface certificate replay did not prove every grouped claim of `{}.contract` again",
+                function_block.signature().name()
+            )));
+        }
     }
-    Ok(verified)
+    Ok(())
 }
 
 /// Exit-claim closure: the structural form of the settled invariant that a
@@ -789,6 +895,7 @@ pub(super) fn finish_ordered_proof_replay(
     arguments: &[CExpression],
     certificate_tactics: &[ProofTactic],
     certification_cache: &mut Vec<(Vec<Proposition>, CState, bool, SymbolicCExecution)>,
+    claim_surface_builders: &mut Vec<(VerifiedClaim, SimpleProofBuilder)>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let ProofReplayContext {
         state,
@@ -1081,15 +1188,75 @@ pub(super) fn finish_ordered_proof_replay(
                 &path_assumptions,
             )
         };
+        // A nested proof branch can carry a self-contradictory case set: its
+        // sibling contexts own every execution path, and this context is
+        // vacuous. Such a path needs no matching kernel certificate — the
+        // exit drain below skips it by the same case reasoning.
+        let path_excluded_by_proof_branch =
+            |replayed: &crate::kernel::CFunctionExecutionCandidate| -> bool {
+                if replay.case_assumptions.is_empty() {
+                    return false;
+                }
+                let CFunctionOutcome::Return {
+                    value: result,
+                    state: post_state,
+                } = replayed.outcome()
+                else {
+                    return false;
+                };
+                let mut available = pure_facts.clone();
+                available.extend(replayed.facts().iter().map(|fact| fact.proposition().clone()));
+                for case in &replay.case_assumptions {
+                    let fact = if let Some(fact) = &case.fact {
+                        fact.clone()
+                    } else {
+                        let Ok(condition) = lower_outcome_proposition_with_program_points(
+                            parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            post_state,
+                            result,
+                            &available,
+                            &case.condition,
+                            predicate_environment,
+                            click_function_environment,
+                            &replay.program_point_states,
+                        ) else {
+                            return false;
+                        };
+                        if case.value {
+                            condition
+                        } else {
+                            Proposition::Not(Box::new(condition))
+                        }
+                    };
+                    if available
+                        .iter()
+                        .any(|existing| propositions_are_exact_negations(existing, &fact))
+                        || fact_conflicts_with_assumptions(
+                            &fact,
+                            &assumptions_from_propositions(&available),
+                        )
+                    {
+                        return true;
+                    }
+                    available.push(fact);
+                }
+                false
+            };
         let certified_path_for_replay = if replay.execution_abstraction {
-            (!certified_outcomes.is_empty()).then(|| vec![0; execution.paths().len()])
+            (!certified_outcomes.is_empty()).then(|| vec![Some(0); execution.paths().len()])
         } else {
             execution
                 .paths()
                 .iter()
                 .map(|replayed| {
-                    (0..certified_outcomes.len())
+                    match (0..certified_outcomes.len())
                         .find(|certified_index| outcomes_match(replayed, *certified_index))
+                    {
+                        Some(certified_index) => Some(Some(certified_index)),
+                        None => path_excluded_by_proof_branch(replayed).then_some(None),
+                    }
                 })
                 .collect::<Option<Vec<_>>>()
         };
@@ -1106,8 +1273,12 @@ pub(super) fn finish_ordered_proof_replay(
         let mut deferred_capture_branches_by_path = Vec::with_capacity(execution.paths().len());
 
         'execution_path: for (path_index, path) in execution.paths().iter().enumerate() {
-            let certified_path =
-                &certified_execution.paths()[certified_path_for_replay[path_index]];
+            let Some(certified_path_index) = certified_path_for_replay[path_index] else {
+                // This context's proof-branch case set excludes the path; a
+                // sibling context certifies it.
+                continue 'execution_path;
+            };
+            let certified_path = &certified_execution.paths()[certified_path_index];
             let mut path_grouped_surface_closers = Vec::new();
             let mut path_surface_post_tactics = Vec::new();
             let mut path_deferred_capture_tactics = Vec::new();
@@ -1180,12 +1351,15 @@ pub(super) fn finish_ordered_proof_replay(
                     {
                         continue 'execution_path;
                     }
-                    let mut case_context = path_requirements.clone();
-                    case_context.push(fact.clone());
-                    if assumptions_from_propositions(&case_context)
-                        .derive_proposition(&false_proposition())
-                        .is_some()
-                    {
+                    // Refute the case fact directly instead of deriving global
+                    // inconsistency: the targeted check is what the branch
+                    // routing needs, and whole-context inconsistency search
+                    // over a concrete path's memory facts is far too slow to
+                    // run per case per path.
+                    if fact_conflicts_with_assumptions(
+                        &fact,
+                        &assumptions_from_propositions(&path_requirements),
+                    ) {
                         // A proof-level branch only owns execution outcomes
                         // compatible with its assumption.  The sibling branch
                         // certifies this path; replaying this branch's exact
@@ -1198,6 +1372,9 @@ pub(super) fn finish_ordered_proof_replay(
                     path_requirements.push(fact);
                 }
             }
+            // `None` marks a path-independent capture: an abstracted post-join
+            // path cannot decide the pre-join surface branches, and the tactic
+            // it carries belongs on every leaf.
             let deferred_capture_branch_path = if let Some(deferred) =
                 replay.deferred_tactic_capture.as_ref()
             {
@@ -1217,12 +1394,13 @@ pub(super) fn finish_ordered_proof_replay(
                         predicate_environment,
                         click_function_environment,
                     )
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "execution proof failed for `{proof_label}` path {path_index}: could not align selected tactic with its execution branch: {message}"
-                        ))
-                    })?,
-                    _ if deferred.branch_skeleton.is_empty() => Vec::new(),
+                    // A post-join path carries no pre-join guard facts and
+                    // cannot decide the pre-join surface branches; its tactic
+                    // is path-independent. A genuinely misaligned placement
+                    // still fails: every-leaf appending rejects conflicting
+                    // leaves and the whole-claim gate replays the result.
+                    .ok(),
+                    _ if deferred.branch_skeleton.is_empty() => Some(Vec::new()),
                     _ => {
                         return Err(ClickError::new(format!(
                             "execution proof failed for `{proof_label}` path {path_index}: selected post-execution tactic has no return outcome for its proof branch"
@@ -1230,7 +1408,7 @@ pub(super) fn finish_ordered_proof_replay(
                     }
                 }
             } else {
-                Vec::new()
+                Some(Vec::new())
             };
             let mut unfolded_predicates = replay.unfolded_predicates.clone();
             path_requirements = unfold_available_predicate_facts(
@@ -1342,6 +1520,7 @@ pub(super) fn finish_ordered_proof_replay(
                             path_index,
                         )?;
                         record_post_execution_surface_tactic(
+                            deferred.surface_recorded,
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
@@ -1402,6 +1581,7 @@ pub(super) fn finish_ordered_proof_replay(
                             ))
                         })?;
                         record_post_execution_surface_tactic(
+                            deferred.surface_recorded,
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
@@ -1475,6 +1655,7 @@ pub(super) fn finish_ordered_proof_replay(
                         );
                         for tactic in certificate.to_proof_tactics() {
                             record_post_execution_surface_tactic(
+                                deferred.surface_recorded,
                                 &mut path_surface_post_tactics,
                                 &mut path_deferred_capture_tactics,
                                 replay.deferred_tactic_capture.as_ref(),
@@ -1522,6 +1703,7 @@ pub(super) fn finish_ordered_proof_replay(
                             &mut surface_certificate_facts,
                         );
                         record_post_execution_surface_tactic(
+                            deferred.surface_recorded,
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
@@ -1914,6 +2096,7 @@ pub(super) fn finish_ordered_proof_replay(
                             path_requirements.push(fact);
                         }
                         record_post_execution_surface_tactic(
+                            deferred.surface_recorded,
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
@@ -2003,6 +2186,7 @@ pub(super) fn finish_ordered_proof_replay(
                             })?;
                         }
                         record_post_execution_surface_tactic(
+                            deferred.surface_recorded,
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
@@ -2014,6 +2198,7 @@ pub(super) fn finish_ordered_proof_replay(
                     PostExecutionTactic::Choose(choice) => {
                         existence_tactics.push(ProofTactic::Choose(choice.clone()));
                         record_post_execution_surface_tactic(
+                            deferred.surface_recorded,
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
@@ -2025,6 +2210,7 @@ pub(super) fn finish_ordered_proof_replay(
                     PostExecutionTactic::Witness(witness) => {
                         existence_tactics.push(ProofTactic::Witness(witness.clone()));
                         record_post_execution_surface_tactic(
+                            deferred.surface_recorded,
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
@@ -2116,6 +2302,7 @@ pub(super) fn finish_ordered_proof_replay(
                             )));
                         }
                         record_post_execution_surface_tactic(
+                            deferred.surface_recorded,
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
@@ -2176,6 +2363,7 @@ pub(super) fn finish_ordered_proof_replay(
                             )));
                         }
                         record_post_execution_surface_tactic(
+                            deferred.surface_recorded,
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
@@ -2266,6 +2454,7 @@ pub(super) fn finish_ordered_proof_replay(
                             )));
                         }
                         record_post_execution_surface_tactic(
+                            deferred.surface_recorded,
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
@@ -2331,16 +2520,13 @@ pub(super) fn finish_ordered_proof_replay(
                                 path_index,
                             )?;
                         }
-                        let mut premises = Vec::new();
-                        for fact in &path_requirements {
-                            if let Some(surface) =
-                                replay.surface_propositions.surfaces(fact).next().cloned()
-                                && !premises.contains(&surface)
-                            {
-                                premises.push(surface);
-                            }
-                        }
+                        // The ambient frame checks against every available
+                        // fact; its replayable surface spelling is exactly
+                        // `frame()`. Spelling out one snapshot's surface facts
+                        // here produced a premise list replay could not
+                        // re-establish.
                         record_post_execution_surface_tactic(
+                            deferred.surface_recorded,
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
@@ -2348,7 +2534,7 @@ pub(super) fn finish_ordered_proof_replay(
                             *tactic_index,
                             ProofTactic::FrameUsing {
                                 region: None,
-                                premises,
+                                premises: Vec::new(),
                             },
                         );
                     }
@@ -2411,6 +2597,7 @@ pub(super) fn finish_ordered_proof_replay(
                             )?;
                         }
                         record_post_execution_surface_tactic(
+                            deferred.surface_recorded,
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
@@ -2802,11 +2989,11 @@ pub(super) fn finish_ordered_proof_replay(
             {
                 (
                     certified_path.clone(),
-                    certified_outcomes[certified_path_for_replay[path_index]].clone(),
+                    certified_outcomes[certified_path_index].clone(),
                     certification_facts.clone(),
                 )
             } else {
-                let certified_outcome = &certified_outcomes[certified_path_for_replay[path_index]];
+                let certified_outcome = &certified_outcomes[certified_path_index];
                 let outcome_delta = describe_function_outcome_delta(
                     &outcome,
                     certified_outcome,
@@ -2839,7 +3026,7 @@ pub(super) fn finish_ordered_proof_replay(
             )
             .ok_or_else(|| {
                 let certified_outcome =
-                    &certified_outcomes[certified_path_for_replay[path_index]];
+                    &certified_outcomes[certified_path_index];
                 let outcome_delta = describe_function_outcome_delta(
                     specification.outcome(),
                     certified_outcome,
@@ -2886,25 +3073,35 @@ pub(super) fn finish_ordered_proof_replay(
             deferred_capture_tactics_by_path.push(path_deferred_capture_tactics);
             deferred_capture_branches_by_path.push(deferred_capture_branch_path);
         }
+        // A context that recorded a proof-branch choice appends its
+        // post-execution tactics as a flat suffix after the choice point,
+        // where cross-context synthesis will place the surface `if`.
+        // Appending them by execution-branch leaf would graft one case's
+        // closers onto execution paths the case excluded.
+        let append_surface_tactics = |steps: &mut Vec<SimpleProofStep>,
+                                      path_tactics: &[Vec<ProofTactic>]|
+         -> Result<(), String> {
+            if replay.simple_proof_builder.path_choices.is_empty() {
+                append_surface_tactics_by_leaf(steps, path_tactics)
+            } else {
+                append_surface_tactics_flat(steps, path_tactics)
+            }
+        };
         if replay.grouped_contract {
             let mut expanded = replay.simple_proof_builder.clone();
             if surface_post_tactics_by_path
                 .iter()
                 .any(|tactics| !tactics.is_empty())
-                && let Err(message) = append_surface_tactics_by_leaf(
-                    &mut expanded.steps,
-                    &surface_post_tactics_by_path,
-                )
+                && let Err(message) =
+                    append_surface_tactics(&mut expanded.steps, &surface_post_tactics_by_path)
             {
                 expanded.block(message);
             }
             if surface_grouped_closers_by_path
                 .iter()
                 .any(|tactics| !tactics.is_empty())
-                && let Err(message) = append_surface_tactics_by_leaf(
-                    &mut expanded.steps,
-                    &surface_grouped_closers_by_path,
-                )
+                && let Err(message) =
+                    append_surface_tactics(&mut expanded.steps, &surface_grouped_closers_by_path)
             {
                 expanded.block(message);
             }
@@ -2914,6 +3111,7 @@ pub(super) fn finish_ordered_proof_replay(
                     .is_none()
                     .then(|| SimpleProof::from_steps(expanded.steps.clone()));
                 theorem.expansion_blocker = expanded.blocker.clone();
+                claim_surface_builders.push((theorem.claim.clone(), expanded.clone()));
             }
         } else {
             for (claim_index, claim) in claims.iter().enumerate() {
@@ -2921,17 +3119,15 @@ pub(super) fn finish_ordered_proof_replay(
                 if surface_post_tactics_by_path
                     .iter()
                     .any(|tactics| !tactics.is_empty())
-                    && let Err(message) = append_surface_tactics_by_leaf(
-                        &mut expanded.steps,
-                        &surface_post_tactics_by_path,
-                    )
+                    && let Err(message) =
+                        append_surface_tactics(&mut expanded.steps, &surface_post_tactics_by_path)
                 {
                     expanded.block(message);
                 }
                 if surface_closers_by_claim[claim_index]
                     .iter()
                     .any(|tactics| !tactics.is_empty())
-                    && let Err(message) = append_surface_tactics_by_leaf(
+                    && let Err(message) = append_surface_tactics(
                         &mut expanded.steps,
                         &surface_closers_by_claim[claim_index],
                     )
@@ -2948,6 +3144,7 @@ pub(super) fn finish_ordered_proof_replay(
                         theorem.expansion_blocker = expanded.blocker.clone();
                     }
                 }
+                claim_surface_builders.push((verified_claim, expanded));
             }
         }
         if tactic_expansion_capture_is_active(expansion_capture.as_deref()) {
@@ -2974,17 +3171,42 @@ pub(super) fn finish_ordered_proof_replay(
                 .iter()
                 .all(|tactics| tactics.is_empty());
             let mut capture = SimpleProofBuilder::default();
-            if !contributes_no_tactics {
+            let path_independent_capture = !deferred_capture_tactics_by_path.is_empty()
+                && deferred_capture_tactics_by_path
+                    .windows(2)
+                    .all(|pair| pair[0] == pair[1])
+                && deferred_capture_branches_by_path
+                    .iter()
+                    .all(Option::is_none);
+            if !contributes_no_tactics && path_independent_capture {
+                // No path can decide the enclosing branch skeleton — the
+                // tactic ran after the branches completed — and every path
+                // produced the same expansion; it stands on its own and must
+                // not be wrapped in that skeleton.
+                match SimpleProof::from_proof_tactics(&deferred_capture_tactics_by_path[0]) {
+                    Ok(proof) => capture.steps = proof.steps().to_vec(),
+                    Err(error) => capture.block(format!(
+                        "deferred expansion produced a non-simple proof: {error:?}"
+                    )),
+                }
+            } else if !contributes_no_tactics {
                 let mut capture_tactics = deferred.branch_skeleton.clone();
                 for (branch_path, path_tactics) in deferred_capture_branches_by_path
                     .iter()
                     .zip(&deferred_capture_tactics_by_path)
                 {
-                    if let Err(message) = append_surface_tactics_at_branch_path(
-                        &mut capture_tactics,
-                        branch_path,
-                        path_tactics,
-                    ) {
+                    let appended = match branch_path {
+                        Some(branch_path) => append_surface_tactics_at_branch_path(
+                            &mut capture_tactics,
+                            branch_path,
+                            path_tactics,
+                        ),
+                        None => append_surface_tactics_at_every_leaf(
+                            &mut capture_tactics,
+                            path_tactics,
+                        ),
+                    };
+                    if let Err(message) = appended {
                         capture.block(message);
                         break;
                     }

@@ -292,7 +292,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
     prelowered_goal: Option<&Proposition>,
-) -> Result<(Proposition, InternalProofPlan), ClickError> {
+) -> Result<(Proposition, SimpEvidence), ClickError> {
     // Plan and replay this proof once. Surface expansion must lower this exact
     // plan; it must not search for a different proof if lowering is incomplete.
     // Snapshot transport belongs to the statement transition that changed the
@@ -447,19 +447,13 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     };
     let assumptions = assumptions_from_propositions(&reasoning_available);
     if reasoning_available.contains(&goal) {
-        let plan = InternalProofPlan::from_surface_tactics(&[ProofTactic::Assumption])
-            .expect("assumption is a simple replay tactic");
-        return Ok((fact, plan));
+        return Ok((fact, SimpEvidence::Assumption));
     }
     if matches!(normalize_proposition(&goal), SimpProposition::True) {
-        let plan = InternalProofPlan::from_surface_tactics(&[ProofTactic::Normalize])
-            .expect("normalize is a simple replay tactic");
-        return Ok((fact, plan));
+        return Ok((fact, SimpEvidence::Normalize));
     }
     if quantified_replay_equivalent_available_fact(&goal, &reasoning_available).is_some() {
-        let plan = InternalProofPlan::from_surface_tactics(&[ProofTactic::Assumption])
-            .expect("assumption is a simple replay tactic");
-        return Ok((fact, plan));
+        return Ok((fact, SimpEvidence::Assumption));
     }
     let normalized_fact = normalize_direct_atomic_memory_loads(&goal);
     if let Some(equivalent) = reasoning_available
@@ -468,16 +462,10 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
         && let Some(derivation) =
             minimal_proposition_derivation(&goal, std::slice::from_ref(equivalent))?
     {
-        let plan = InternalProofPlan::from_operations(vec![
-            InternalProofOperation::ExactPropositionDerivation(derivation),
-        ]);
-        return Ok((fact, plan));
+        return Ok((fact, SimpEvidence::Derivation(derivation)));
     }
     if let Some(derivation) = search_condition_derivation(&goal, &reasoning_available)? {
-        let plan = InternalProofPlan::from_operations(vec![
-            InternalProofOperation::ExactPropositionDerivation(derivation),
-        ]);
-        return Ok((fact, plan));
+        return Ok((fact, SimpEvidence::Derivation(derivation)));
     }
 
     let Some(plan) = plan_simp_certificate(&goal, &assumptions) else {
@@ -717,6 +705,16 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 .map_err(|message| ClickError::new(format!(
                     "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: {message}"
                 )))?;
+                // Later `intro` tactics track the surface goal to bind a
+                // universal binder's Click name; a goal that is itself the
+                // unfolded predicate call must expose its definition here.
+                if let Ok(unfolded) = unfold_structural_invariant_proposition(
+                    predicate_environment,
+                    &surface_logical_goal,
+                    std::slice::from_ref(name),
+                ) {
+                    surface_logical_goal = unfolded;
+                }
             }
             ProofTactic::ApplyTheorem(application) => {
                 let application_context = TheoremApplicationContext {
@@ -980,6 +978,156 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     available.push(target);
                 }
             }
+            ProofTactic::InstantiateUsing {
+                quantified: surface_quantified,
+                argument,
+                premises: surface_premises,
+            } => {
+                let lower = |surface: &ClickProposition, facts: &[Proposition]| {
+                    surface_propositions
+                        .and_then(|propositions| {
+                            propositions.available_kernel(surface, facts).cloned()
+                        })
+                        .map(Ok)
+                        .unwrap_or_else(|| {
+                            lower_point_proposition_with_values(
+                                surface,
+                                facts,
+                                values.clone(),
+                                &array_refs,
+                                pre_state,
+                                state,
+                                result,
+                                program_point_states,
+                                predicate_environment,
+                                click_function_environment,
+                            )
+                        })
+                };
+                let explicit_premises = surface_premises
+                    .iter()
+                    .map(|premise| lower(premise, &available))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `instantiate using` premise: {message}"
+                        ))
+                    })?;
+                for premise in &explicit_premises {
+                    if !exact_fact_is_available(premise, &available) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate using` requires an exact available premise"
+                        )));
+                    }
+                }
+                let lowered_quantified =
+                    lower(surface_quantified, &available).map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `instantiate` quantified fact: {message}"
+                        ))
+                    })?;
+                let quantified_fact = if exact_fact_is_available(&lowered_quantified, &available)
+                {
+                    lowered_quantified
+                } else if let Some(matched) =
+                    quantified_replay_equivalent_available_fact(&lowered_quantified, &available)
+                {
+                    matched
+                } else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` quantified fact is not exactly available: {}",
+                        describe_click_proposition(surface_quantified)
+                    )));
+                };
+                let assumptions = assumptions_from_propositions(&available);
+                let mut active_functions = BTreeSet::new();
+                let argument_value = evaluate_contract_expression_with_environment(
+                    &values,
+                    &array_refs,
+                    pre_state,
+                    state,
+                    result,
+                    &assumptions,
+                    argument,
+                    predicate_environment,
+                    click_function_environment,
+                    program_point_states,
+                    &mut active_functions,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not evaluate `instantiate` argument: {message}"
+                    ))
+                })?;
+                let CValue::Int32(argument_term) = argument_value else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` argument did not evaluate to int32"
+                    )));
+                };
+                let Proposition::ForAll { var, sort, body } = &quantified_fact else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` requires a universally quantified fact"
+                    )));
+                };
+                if *sort != Sort::CInt32 {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` supports only int32 universals"
+                    )));
+                }
+                let instantiated = substitute_int32_variable_in_proposition(
+                    body,
+                    *var,
+                    argument_term.clone(),
+                );
+                let (guards, conclusion) =
+                    discharge_instantiated_guards(instantiated, &explicit_premises).map_err(
+                        |message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` failed: {message}"
+                            ))
+                        },
+                    )?;
+                let theorem =
+                    prove_forall_int32_application(&quantified_fact, argument_term, &guards)
+                        .ok_or_else(|| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: kernel rejected the `instantiate` application"
+                            ))
+                        })?;
+                let Proposition::Implies(theorem_quantified, mut theorem_body) =
+                    theorem.proposition().clone()
+                else {
+                    return Err(ClickError::new(
+                        "invalid universal instantiation theorem",
+                    ));
+                };
+                if theorem_quantified.as_ref() != &quantified_fact {
+                    return Err(ClickError::new(
+                        "universal instantiation changed its quantified premise",
+                    ));
+                }
+                for guard in &guards {
+                    let Proposition::Implies(theorem_guard, next) = theorem_body.as_ref() else {
+                        return Err(ClickError::new(
+                            "universal instantiation omitted a discharged premise",
+                        ));
+                    };
+                    if theorem_guard.as_ref() != guard {
+                        return Err(ClickError::new(
+                            "universal instantiation changed a discharged premise",
+                        ));
+                    }
+                    theorem_body = next.clone();
+                }
+                if theorem_body.as_ref() != &conclusion {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: universal instantiation produced an unexpected conclusion"
+                    )));
+                }
+                if !available.contains(&conclusion) {
+                    available.push(conclusion);
+                }
+            }
             ProofTactic::Choose(choice) => {
                 apply_choose_tactic(
                     choice,
@@ -1231,7 +1379,11 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 };
                 match tactic {
                     ProofTactic::Assumption => {
+                        // A goal spelled for a sibling execution path can
+                        // lower to a context-free truth on this path (after a
+                        // constant assignment); it needs no ambient fact.
                         if !available.contains(&unfolded_goal)
+                            && !normalizes_context_free(&unfolded_goal)
                             && materialization_equivalent_available_fact(&unfolded_goal, &available)
                                 .is_none()
                             && quantified_replay_equivalent_available_fact(
@@ -1615,7 +1767,10 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
     let mut verified = Vec::new();
     let mut certification_cache = Vec::new();
     let mut captured_paths = Vec::new();
+    let mut context_count = 0;
+    let mut claim_surface_builders: Vec<(VerifiedClaim, Vec<SimpleProofBuilder>)> = Vec::new();
     for context in contexts {
+        context_count += 1;
         let path_choices = context.replay.deferred_expansion_path_choices.clone();
         resume_deferred_tactic_expansion_capture(
             expansion_capture.as_deref_mut(),
@@ -1625,6 +1780,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
         let result_before = expansion_capture
             .as_deref()
             .is_some_and(|capture| capture.result.is_some());
+        let mut context_surface_builders = Vec::new();
         let theorems = finish_ordered_proof_replay(
             expansion_capture.as_deref_mut(),
             context,
@@ -1642,7 +1798,17 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
             arguments,
             tactics,
             &mut certification_cache,
+            &mut context_surface_builders,
         )?;
+        for (claim, builder) in context_surface_builders {
+            match claim_surface_builders
+                .iter_mut()
+                .find(|(existing, _)| *existing == claim)
+            {
+                Some((_, builders)) => builders.push(builder),
+                None => claim_surface_builders.push((claim, vec![builder])),
+            }
+        }
         for theorem in theorems {
             if !verified.contains(&theorem) {
                 verified.push(theorem);
@@ -1667,6 +1833,48 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
                 path_choices,
                 ..SimpleProofBuilder::default()
             });
+        }
+    }
+    // A structured proof produced one replay context per logical case, and
+    // each context's claim-level surface record covers only the execution
+    // paths its case owns. The whole-claim certificate is their synthesis at
+    // the recorded branch choices; a per-context record must not survive as
+    // the claim's expansion.
+    if context_count > 1 {
+        for (claim, builders) in claim_surface_builders {
+            // Contexts that recorded branch choices keep their surface `if`
+            // even when every case produced the same steps: replay still
+            // needs the case split to cross the branch statement. Contexts
+            // without choices and identical records collapse to one record.
+            let merged = if builders
+                .iter()
+                .all(|builder| builder.path_choices.is_empty() && builder.steps == builders[0].steps)
+            {
+                builders
+                    .first()
+                    .and_then(|builder| builder.blocker.clone())
+                    .map(Err)
+                    .unwrap_or_else(|| Ok(builders[0].steps.clone()))
+            } else {
+                synthesize_surface_alternatives(builders)
+            };
+            for theorem in &mut verified {
+                if theorem.claim != claim {
+                    continue;
+                }
+                match &merged {
+                    Ok(steps) => {
+                        theorem.expanded_proof = Some(SimpleProof::from_steps(steps.clone()));
+                        theorem.expansion_blocker = None;
+                    }
+                    Err(message) => {
+                        theorem.expanded_proof = None;
+                        theorem.expansion_blocker = Some(format!(
+                            "could not merge the claim's surface record across branch contexts: {message}"
+                        ));
+                    }
+                }
+            }
         }
     }
     if !captured_paths.is_empty() {

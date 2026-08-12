@@ -20,7 +20,7 @@ mod timing;
 use crate::kernel::fresh_int32_variable_for_propositions;
 use claim_proofs::finish_ordered_proof_replay;
 pub(super) use claim_proofs::{
-    prove_claim_by_tactics, prove_claims_by_grouped_auto, prove_claims_by_grouped_tactics,
+    prove_claim_by_tactics, prove_claims_by_grouped_auto, prove_claims_by_grouped_script,
 };
 use cursor_execution::*;
 use execution_planning::*;
@@ -56,6 +56,38 @@ use surface_synthesis::{surface_synthesis_exhaustion_description, surface_synthe
 use theorem_application::*;
 pub(super) use timing::{SourceTacticClass, source_tactic_class};
 use timing::{TacticTiming, has_independent_source_timing};
+
+/// Checked kernel evidence used as the input to constructing one
+/// [`SimpleProofStep`]. Evidence never forms an ordered replayable program of
+/// its own: search consumes it transiently to spell the surface step, and the
+/// resulting `SimpleProof` is what replays.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::lang::click::proof) enum ConstructionEvidence {
+    CertifiedStatementStep {
+        prerequisite_derivations: Vec<PropositionDerivation>,
+        exact_premises: Vec<Proposition>,
+        planned_transition: Option<usize>,
+    },
+    CertifiedLoopSummaryStep {
+        prerequisite_derivations: Vec<PropositionDerivation>,
+        exact_premises: Vec<Proposition>,
+        planned_transition: Option<usize>,
+    },
+    CertifiedFactTransport {
+        source: Proposition,
+        target: Proposition,
+        theorem: Theorem,
+    },
+    FinishCertifiedFactTransports(Vec<Proposition>),
+    CertifiedPathAssumption {
+        occurrence: usize,
+        condition: ClickProposition,
+        value: bool,
+        facts: Vec<Proposition>,
+        theorem: Theorem,
+    },
+    CertifiedFrame(Vec<Vec<PropositionDerivation>>),
+}
 
 type NextTopLevelStatement = (CState, CState, CStatement, Option<CStatement>);
 
@@ -115,7 +147,10 @@ fn apply_logical_goal_tactic(
             let Proposition::Or(left, _) = goal else {
                 return Err(format!("`left` requires a disjunction goal, got {goal:?}"));
             };
-            if !available.contains(left.as_ref()) {
+            if !available
+                .iter()
+                .any(|fact| condition_polarity_equivalent(fact, left))
+            {
                 return Err(format!(
                     "`left` requires its selected disjunct as an exact fact: {left:?}"
                 ));
@@ -126,7 +161,10 @@ fn apply_logical_goal_tactic(
             let Proposition::Or(_, right) = goal else {
                 return Err(format!("`right` requires a disjunction goal, got {goal:?}"));
             };
-            if !available.contains(right.as_ref()) {
+            if !available
+                .iter()
+                .any(|fact| condition_polarity_equivalent(fact, right))
+            {
                 return Err(format!(
                     "`right` requires its selected disjunct as an exact fact: {right:?}"
                 ));
@@ -381,6 +419,53 @@ fn equal_by_premise_chain(
                 &frame_assumptions,
             ))
     })
+}
+
+/// Splits an instantiated universal body into its implication guards and its
+/// final conclusion, requiring each guard conjunct to discharge from exactly
+/// the listed premises: a context-free normalization, an exact listed premise
+/// (up to conjunct splitting and condition polarity), or one bounded atomic
+/// derivation from the listed premises alone. No proposition search runs.
+pub(super) fn discharge_instantiated_guards(
+    instantiated: Proposition,
+    premises: &[Proposition],
+) -> Result<(Vec<Proposition>, Proposition), String> {
+    let premise_assumptions = assumptions_from_propositions(premises);
+    let mut premise_conjuncts = Vec::new();
+    for premise in premises {
+        atomic_conjuncts(premise, &mut premise_conjuncts);
+    }
+    let premise_conjuncts = premise_conjuncts
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    let discharges = |conjunct: &Proposition| {
+        matches!(normalize_proposition(conjunct), SimpProposition::True)
+            || premise_conjuncts.iter().any(|premise| {
+                premise == conjunct || condition_polarity_equivalent(premise, conjunct)
+            })
+            || premise_assumptions
+                .derive_atomic_proposition(conjunct)
+                .is_some()
+            || premise_assumptions
+                .derive_simp_atomic_proposition(conjunct)
+                .is_some()
+    };
+    let mut guards = Vec::new();
+    let mut current = instantiated;
+    while let Proposition::Implies(guard, body) = current {
+        let mut conjuncts = Vec::new();
+        atomic_conjuncts(&guard, &mut conjuncts);
+        if let Some(missing) = conjuncts.iter().find(|conjunct| !discharges(conjunct)) {
+            return Err(format!(
+                "instantiated premise `{}` does not follow from the listed evidence",
+                describe_pure_fact(missing, &[], &[]),
+            ));
+        }
+        guards.push(*guard);
+        current = *body;
+    }
+    Ok((guards, current))
 }
 
 pub(super) fn check_atomic_premise_derivation_goal(
@@ -1991,7 +2076,7 @@ pub(super) fn prove_claim_by_auto(
             ProofTacticSource::GeneratedBy { source_index: 0 },
         ) {
             Ok(mut theorems) => {
-                if let Err(error) = certify_auto_claim_result(
+                if let Err(error) = certify_claim_result(
                     expansion_capture.as_deref_mut(),
                     source_path,
                     function_block,
@@ -2003,7 +2088,9 @@ pub(super) fn prove_claim_by_auto(
                     click_function_environment,
                     resource_environment,
                     theorem_environment,
-                    &theorems,
+                    &mut theorems,
+                    "auto",
+                    &tactics,
                 ) {
                     loop_verification_error = Some(error);
                     continue;
@@ -2035,8 +2122,8 @@ pub(super) fn prove_claim_by_auto(
             &tactics,
             ProofTacticSource::GeneratedBy { source_index: 0 },
         ) {
-            Ok(theorems) => {
-                if let Err(error) = certify_auto_claim_result(
+            Ok(mut theorems) => {
+                if let Err(error) = certify_claim_result(
                     expansion_capture.as_deref_mut(),
                     source_path,
                     function_block,
@@ -2048,7 +2135,9 @@ pub(super) fn prove_claim_by_auto(
                     click_function_environment,
                     resource_environment,
                     theorem_environment,
-                    &theorems,
+                    &mut theorems,
+                    "auto",
+                    &tactics,
                 ) {
                     bounded_certificate_error.get_or_insert(error);
                     continue;
@@ -2068,8 +2157,19 @@ pub(super) fn prove_claim_by_auto(
         }))
 }
 
+/// The whole-claim certificate gate: a claim proof is accepted only when its
+/// stitched claim-level certificate exists, replays completely through the
+/// ordinary tactic judgment, and reproduces the verified path count. Every
+/// claim proof form — `auto`, `frame`, `simp`, and explicit scripts — runs
+/// through this gate, so "verified but not expandable" is not a reachable
+/// claim outcome.
+///
+/// When the replayed tactics are themselves a simple proof, that proof is the
+/// whole-claim certificate by definition — the replay that just succeeded was
+/// the certificate replay — so the gate records it and accepts without
+/// re-running anything.
 #[allow(clippy::too_many_arguments)]
-fn certify_auto_claim_result(
+fn certify_claim_result(
     mut expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
@@ -2081,18 +2181,37 @@ fn certify_auto_claim_result(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
-    verified: &[VerifiedCTheorem],
+    verified: &mut [VerifiedCTheorem],
+    proof_description: &str,
+    replayed_tactics: &[ProofTactic],
 ) -> Result<(), ClickError> {
+    if let Ok(script) = SimpleProof::from_proof_tactics(replayed_tactics) {
+        for theorem in verified.iter_mut() {
+            theorem.expanded_proof = Some(script.clone());
+            theorem.expansion_blocker = None;
+        }
+        return Ok(());
+    }
     let certificate = verified
         .first()
-        .ok_or_else(|| ClickError::new(format!("`auto` proved no paths for `{claim_label}`")))?
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{proof_description}` proved no paths for `{claim_label}`"
+            ))
+        })?
         .expanded_proof_certificate()
         .map_err(|error| {
             ClickError::new(format!(
-                "`auto` succeeded internally for `{claim_label}` without a surface certificate: {}",
+                "`{proof_description}` succeeded internally for `{claim_label}` without a whole-claim surface certificate: {}",
                 error.message()
             ))
         })?;
+    let certificate_tactics = certificate.to_proof_tactics();
+    if certificate_tactics.is_empty() {
+        return Err(ClickError::new(format!(
+            "`{proof_description}` stitched an empty whole-claim surface certificate for `{claim_label}`"
+        )));
+    }
     let replayed = prove_claim_by_tactics(
         expansion_capture.as_deref_mut(),
         source_path,
@@ -2105,22 +2224,25 @@ fn certify_auto_claim_result(
         click_function_environment,
         resource_environment,
         theorem_environment,
-        &certificate.to_proof_tactics(),
+        &certificate_tactics,
         ProofTacticSource::GeneratedBy { source_index: 0 },
     )
     .map_err(|error| {
         ClickError::new(format!(
-            "`auto` surface certificate failed complete replay for `{claim_label}`:\n{}\n{}",
+            "`{proof_description}` surface certificate failed complete replay for `{claim_label}`:\n{}\n{}",
             format_simple_proof(&certificate),
             error.message()
         ))
     })?;
-    if replayed.len() != verified.len() {
-        return Err(ClickError::new(format!(
-            "`auto` surface certificate replayed {} paths for `{claim_label}`, expected {}",
-            replayed.len(),
-            verified.len()
-        )));
+    // The certificate may legitimately refine an abstracted join into its
+    // concrete paths, so the check is claim coverage: every verified claim
+    // must be proved again by the certificate replay.
+    for theorem in verified.iter() {
+        if !replayed.iter().any(|replayed| replayed.claim == theorem.claim) {
+            return Err(ClickError::new(format!(
+                "`{proof_description}` surface certificate replay did not prove `{claim_label}` again"
+            )));
+        }
     }
     Ok(())
 }
@@ -2159,6 +2281,22 @@ pub(super) fn prove_claim_by_frame(
         theorem_environment,
         &tactics,
         ProofTacticSource::GeneratedBy { source_index: 0 },
+    )?;
+    certify_claim_result(
+        expansion_capture,
+        source_path,
+        function_block,
+        parsed_function,
+        claim,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        &mut theorems,
+        "frame",
+        &tactics,
     )?;
     for theorem in &mut theorems {
         theorem.proof_kind = ProofKind::Frame;
@@ -2206,8 +2344,76 @@ pub(super) fn prove_claim_by_simp(
         &tactics,
         ProofTacticSource::GeneratedBy { source_index: 0 },
     )?;
+    certify_claim_result(
+        expansion_capture,
+        source_path,
+        function_block,
+        parsed_function,
+        claim,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        &mut theorems,
+        "simp",
+        &tactics,
+    )?;
     for theorem in &mut theorems {
         theorem.proof_kind = ProofKind::Simp;
     }
+    Ok(theorems)
+}
+
+/// An explicit per-claim proof script, followed by the whole-claim
+/// certificate gate: the script's stitched claim-level certificate must exist
+/// and replay completely before the claim is accepted.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prove_claim_by_script(
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    tactics: &[ProofTactic],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let mut theorems = prove_claim_by_tactics(
+        expansion_capture.as_deref_mut(),
+        source_path,
+        function_block,
+        parsed_function,
+        claim,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        tactics,
+        ProofTacticSource::SourceSyntax,
+    )?;
+    certify_claim_result(
+        expansion_capture,
+        source_path,
+        function_block,
+        parsed_function,
+        claim,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        &mut theorems,
+        "explicit proof script",
+        tactics,
+    )?;
     Ok(theorems)
 }

@@ -27,6 +27,25 @@ pub(crate) fn c_pointers_proven_equal_for_memory_resolution(
     super::reasoning::pointers_proven_equal_for_memory_resolution(left, right, assumptions)
 }
 
+/// Recognizes two condition-fact spellings as the same fact under the given
+/// assumptions, with the exact matching rule the atomic prover applies when
+/// it consumes a context fact: memory-resolution load equality and
+/// decide-driven term equality. This is a bounded check, not a search.
+pub fn c_condition_facts_match_for_transport(
+    source: &Proposition,
+    target: &Proposition,
+    assumptions: &Assumptions,
+) -> bool {
+    let (
+        Proposition::ConditionIs(source_condition, source_value),
+        Proposition::ConditionIs(target_condition, target_value),
+    ) = (source, target)
+    else {
+        return false;
+    };
+    source_value == target_value && assumptions.condition_matches(source_condition, target_condition)
+}
+
 /// Certifies a stated condition target from one explicit condition source and
 /// deterministic memory-resolution evidence. Unlike whole-fact transport,
 /// this permits a target to retain an old load on one side while transporting
@@ -796,6 +815,37 @@ pub fn substitute_int32_variable_in_proposition(
     value: Bitvector32Term,
 ) -> Proposition {
     substitute_bitvector_variable_in_proposition(proposition, variable, &value)
+}
+
+/// Planning evidence for certificate lowering: the guided instantiation
+/// values the atomic prover would try for one universally quantified int32
+/// fact against a target condition fact, plus every value of a
+/// constant-bounded binder range. Simple replay never calls this; the
+/// selected value is recorded explicitly in the emitted certificate.
+pub fn forall_instantiation_candidate_values(
+    quantified: &Proposition,
+    target: &Proposition,
+) -> Vec<Bitvector32Term> {
+    let Proposition::ForAll { var, body, .. } = quantified else {
+        return Vec::new();
+    };
+    let mut candidates = match target {
+        Proposition::ConditionIs(condition, _) => {
+            Assumptions::guided_forall_condition_candidates(*var, body, condition)
+        }
+        _ => BTreeSet::new(),
+    };
+    let variables = vec![*var];
+    if let Some(ranges) = crate::kernel::reasoning::finite_forall_ranges(&variables, body)
+        && let [range] = ranges.as_slice()
+        && usize::try_from(range.upper - range.lower + 1)
+            .is_ok_and(|width| width <= crate::kernel::reasoning::FINITE_FORALL_INSTANTIATION_LIMIT)
+    {
+        for value in range.lower..=range.upper {
+            candidates.insert(signed_i64_bitvector_constant(value));
+        }
+    }
+    candidates.into_iter().collect()
 }
 
 /// Chooses a variable identity absent from both the free variables and logical
@@ -2501,6 +2551,30 @@ pub fn prove_int32_le_lt_transitive(
     );
     let second_premise =
         Proposition::ConditionIs(ConditionTerm::signed_less_than(middle, last.clone()), true);
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_than(first, last), true);
+    Theorem::new(Proposition::Implies(
+        Box::new(first_premise),
+        Box::new(Proposition::Implies(
+            Box::new(second_premise),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
+/// Signed strict order absorbs a non-strict upper extension.
+pub fn prove_int32_lt_le_transitive(
+    first: Bitvector32Term,
+    middle: Bitvector32Term,
+    last: Bitvector32Term,
+) -> Theorem {
+    let first_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(first.clone(), middle.clone()),
+        true,
+    );
+    let second_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(middle, last.clone()),
+        true,
+    );
     let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_than(first, last), true);
     Theorem::new(Proposition::Implies(
         Box::new(first_premise),

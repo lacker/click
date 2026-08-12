@@ -970,3 +970,231 @@ fn proof_sugar_and_bare_smart_tactics_have_the_same_frontier_semantics() {
     assert_eq!(frame_errors[0], frame_errors[1]);
     assert!(frame_errors[0].contains("requires execution to reach function exit first"));
 }
+
+#[test]
+fn every_claim_proof_form_carries_a_replayable_certificate() {
+    let c_source = r#"
+            int32 clamp(int32 p[1], int32 x) {
+                if (x < 0) {
+                    p[0] = 0;
+                } else {
+                    p[0] = x;
+                }
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "clamp.c";
+
+            int32 clamp(int32 p[1], int32 x) {
+                requires loadable(p[0..1]);
+                consumes p[0..1];
+                mutable p[0..1];
+                ensures result >= 0 by {
+                    execute();
+                    simp();
+                }
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("clamp.c", c_source)])
+        .expect("every claim proof form should verify");
+    for theorem in &verified {
+        theorem.expanded_proof_certificate().unwrap_or_else(|error| {
+            panic!(
+                "a verified claim must carry its whole-claim certificate: {}",
+                error.message()
+            )
+        });
+    }
+}
+
+#[test]
+fn mid_execution_witness_simp_have_expands_to_a_simple_certificate() {
+    let c_source = "int32 current_have(int32 x) { return x; }";
+    let click_source = r#"
+            verifying "current_have.c";
+
+            int32 current_have(int32 x) {
+                ensures exists (j: int32) { j == result };
+            } by {
+                have exists (j: int32) { j == x } by {
+                    witness(j = x);
+                    simp();
+                }
+                execute();
+                simp();
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("current_have.c", c_source)])
+        .expect("a witness/simp have should verify");
+    let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
+        panic!(
+            "a mid-execution witness/simp have should expand: {:?}",
+            verified[0].expansion_blocker()
+        )
+    });
+    let have = expanded
+        .iter()
+        .find_map(|tactic| match tactic {
+            ProofTactic::Have(have) => Some(have),
+            _ => None,
+        })
+        .expect("the expansion should retain the have");
+    let Proof::Script(body) = &have.proof else {
+        panic!("the expanded have should carry an explicit script: {have:?}");
+    };
+    assert!(
+        !body.iter().any(|tactic| matches!(tactic, ProofTactic::Simp)),
+        "the expanded have body should replace its smart simp: {body:?}"
+    );
+    SimpleProof::from_proof_tactics(&expanded)
+        .expect("the witness/simp have expansion should be a surface certificate");
+}
+
+#[test]
+fn mid_execution_proof_if_have_expands_to_a_simple_certificate() {
+    let c_source = r#"
+            int32 sign_partition(int32 x) {
+                int32 y;
+                y = x;
+                return y;
+            }
+        "#;
+    let click_source = r#"
+            verifying "sign_partition.c";
+
+            int32 sign_partition(int32 x) {
+                ensures result <= 0 or result > 0 by {
+                    step();
+                    step();
+                    have y <= 0 or y > 0 by {
+                        if y <= 0 {
+                            simp();
+                        } else {
+                            simp();
+                        }
+                    }
+                    step();
+                    simp();
+                }
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("sign_partition.c", c_source)])
+        .expect("a proof-if have should verify");
+    let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
+        panic!(
+            "a mid-execution proof-if have should expand: {:?}",
+            verified[0].expansion_blocker()
+        )
+    });
+    let have = expanded
+        .iter()
+        .find_map(|tactic| match tactic {
+            ProofTactic::Have(have) => Some(have),
+            _ => None,
+        })
+        .expect("the expansion should retain the have");
+    assert!(
+        !format!("{have:?}").contains("Simp"),
+        "the expanded have cases should close with simple tactics: {have:?}"
+    );
+    SimpleProof::from_proof_tactics(&expanded)
+        .expect("the proof-if have expansion should be a surface certificate");
+}
+
+#[test]
+fn instantiate_specializes_a_universal_fact_at_an_explicit_value() {
+    let c_source = r#"
+        int32 pick(int32 value) {
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "pick.c";
+
+        int32 pick(int32 value) {
+            requires bounded: forall (k: int32) {
+                0 <= k and k < 3 implies k <= value
+            };
+            ensures two_le: 2 <= value;
+        } by {
+            execute();
+            have 2 <= value by {
+                instantiate(forall (k: int32) {
+                    0 <= k and k < 3 implies k <= value
+                }, 2) using {}
+                assumption();
+            }
+            assumption();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("pick.c", c_source)])
+        .expect("instantiating the universal requirement at 2 should prove the bound");
+}
+
+#[test]
+fn instantiate_does_not_discharge_guards_from_ambient_facts() {
+    let c_source = r#"
+        int32 pick(int32 value, int32 n) {
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "pick.c";
+
+        int32 pick(int32 value, int32 n) {
+            requires wide: n >= 3;
+            requires bounded: forall (k: int32) {
+                0 <= k and k < n implies k <= value
+            };
+            ensures two_le: 2 <= value;
+        } by {
+            execute();
+            have 2 <= value by {
+                instantiate(forall (k: int32) {
+                    0 <= k and k < n implies k <= value
+                }, 2) using {}
+                assumption();
+            }
+            assumption();
+        }
+    "#;
+
+    let error = verify_c0_sources(click_source, &[("pick.c", c_source)])
+        .expect_err("the symbolic upper-bound guard must name its evidence");
+    assert!(
+        error
+            .message()
+            .contains("does not follow from the listed evidence"),
+        "unexpected error: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn constant_bound_weakenings_lower_to_named_theorem_chains() {
+    let c_source = r#"
+        int32 keep(int32 n) {
+            return n;
+        }
+    "#;
+    let click_source = r#"
+        verifying "keep.c";
+
+        int32 keep(int32 n) {
+            requires small: n <= 10;
+            ensures under_twenty: n < 20;
+            ensures next_under_fifteen: n + 1 <= 15;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("keep.c", c_source)])
+        .expect("constant bound weakenings should lower to named theorem chains");
+}

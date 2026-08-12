@@ -162,8 +162,15 @@ fn merge_surface_certificate_contexts(
 ///
 /// `construction` is the builder the smart search filled while committing to
 /// its moves. `certified_frame` marks a contextual `frame` certificate, whose
-/// synthesized branch structure replaces an existing surface branch instead of
-/// being appended inside it.
+/// synthesized branch structure merges with an existing surface branch
+/// instead of being appended inside it.
+///
+/// `merge_construction` controls whether the constructed steps join the
+/// enclosing surface record here. A function-exit tactic whose independent
+/// replay defers its work passes `false`: the deferred entries carry into the
+/// enclosing replay and the exit drain records the same surface steps in
+/// their deferral order, where a direct merge would place them before every
+/// deferred tactic that preceded this one in the source.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn complete_smart_tactic(
     context: ProofReplayContext,
@@ -182,6 +189,7 @@ pub(in crate::lang::click::proof) fn complete_smart_tactic(
     source_index: usize,
     construction: SimpleProofBuilder,
     certified_frame: bool,
+    merge_construction: bool,
 ) -> Result<ProofReplayContext, ClickError> {
     if let Some(blocker) = &construction.blocker {
         return Err(ClickError::new(format!(
@@ -195,6 +203,7 @@ pub(in crate::lang::click::proof) fn complete_smart_tactic(
     }
     let proof = SimpleProof::from_steps(construction.steps.clone());
     let outer_simple_proof = context.replay.simple_proof_builder.clone();
+    let deferred_before = context.replay.post_execution_tactics.len();
     let mut verified_result = replay_simple_proof(
         context,
         function_block,
@@ -220,20 +229,33 @@ pub(in crate::lang::click::proof) fn complete_smart_tactic(
         ))
     })?;
     let mut merged = outer_simple_proof;
-    let replaces_existing_branch = certified_frame
-        && matches!(proof.steps(), [SimpleProofStep::If { .. }])
-        && merged
-            .steps
-            .iter()
-            .any(|step| matches!(step, SimpleProofStep::If { .. }));
-    if replaces_existing_branch {
-        merged.replace_trailing_branch(proof.steps().to_vec());
-    } else {
-        for step in proof.steps() {
-            merged.push_step(step.clone());
+    if merge_construction {
+        // The merged steps are the surface record; deferred work the
+        // independent replay carried into the enclosing replay must not be
+        // recorded a second time by the exit drain.
+        for entry in verified_result
+            .replay
+            .post_execution_tactics
+            .iter_mut()
+            .skip(deferred_before)
+        {
+            entry.surface_recorded = true;
         }
+        let replaces_existing_branch = certified_frame
+            && matches!(proof.steps(), [SimpleProofStep::If { .. }])
+            && merged
+                .steps
+                .iter()
+                .any(|step| matches!(step, SimpleProofStep::If { .. }));
+        if replaces_existing_branch {
+            merged.replace_trailing_branch(proof.steps().to_vec());
+        } else {
+            for step in proof.steps() {
+                merged.push_step(step.clone());
+            }
+        }
+        merged.last_step_entry = construction.last_step_entry;
     }
-    merged.last_step_entry = construction.last_step_entry;
     verified_result.replay.simple_proof_builder = merged;
     Ok(verified_result)
 }

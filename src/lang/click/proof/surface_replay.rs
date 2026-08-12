@@ -289,6 +289,22 @@ pub(super) fn checked_surface_comparison_fact_at_point(
                 .surface_propositions
                 .available_kernel(surface, available)
                 .is_some_and(&matches_kernel)
+            // A recorded pair can name a program point outside the current
+            // replay scope (for example a function-prefix statement inside a
+            // loop-region proof). The candidate lowering resolves recorded
+            // snapshots without demanding current loadability, so it is the
+            // right scope check here.
+            && lower_surface_candidate_at_point(
+                replay,
+                surface,
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            )
+            .is_ok()
         {
             return Ok(surface.clone());
         }
@@ -505,7 +521,7 @@ pub(super) fn construct_simple_step_for_planned_operation(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     environments: ConstructionEnvironments<'_>,
-    operation: &InternalProofOperation,
+    operation: &ConstructionEvidence,
 ) {
     let mut builder = std::mem::take(&mut replay.simple_proof_builder);
     let available = std::mem::take(&mut builder.certificate_facts);
@@ -540,7 +556,7 @@ pub(super) fn append_simple_proof_step_for_operation(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     surface_tactic: Option<&ProofTactic>,
-    internal_operation: Option<&InternalProofOperation>,
+    internal_operation: Option<&ConstructionEvidence>,
     _statement_uses_memory_context: Option<bool>,
 ) {
     if replay.simple_proof_builder.blocker.is_some() {
@@ -553,7 +569,7 @@ pub(super) fn append_simple_proof_step_for_operation(
     match (surface_tactic, internal_operation) {
         (
             None,
-            Some(InternalProofOperation::CertifiedStatementStep {
+            Some(ConstructionEvidence::CertifiedStatementStep {
                 prerequisite_derivations,
                 exact_premises,
                 planned_transition: Some(planned_transition),
@@ -576,7 +592,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 predicate_environment,
                 click_function_environment,
                 None,
-                Some(&InternalProofOperation::CertifiedStatementStep {
+                Some(&ConstructionEvidence::CertifiedStatementStep {
                     prerequisite_derivations: prerequisite_derivations.clone(),
                     exact_premises: exact_premises.clone(),
                     planned_transition: None,
@@ -686,7 +702,7 @@ pub(super) fn append_simple_proof_step_for_operation(
         }
         (
             None,
-            Some(InternalProofOperation::CertifiedLoopSummaryStep {
+            Some(ConstructionEvidence::CertifiedLoopSummaryStep {
                 prerequisite_derivations,
                 exact_premises,
                 planned_transition: Some(planned_transition),
@@ -708,7 +724,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 predicate_environment,
                 click_function_environment,
                 None,
-                Some(&InternalProofOperation::CertifiedLoopSummaryStep {
+                Some(&ConstructionEvidence::CertifiedLoopSummaryStep {
                     prerequisite_derivations: prerequisite_derivations.clone(),
                     exact_premises: exact_premises.clone(),
                     planned_transition: None,
@@ -719,7 +735,7 @@ pub(super) fn append_simple_proof_step_for_operation(
         }
         (
             None,
-            Some(InternalProofOperation::CertifiedStatementStep {
+            Some(ConstructionEvidence::CertifiedStatementStep {
                 prerequisite_derivations: derivations,
                 exact_premises,
                 ..
@@ -948,7 +964,7 @@ pub(super) fn append_simple_proof_step_for_operation(
         }
         (
             None,
-            Some(InternalProofOperation::CertifiedLoopSummaryStep {
+            Some(ConstructionEvidence::CertifiedLoopSummaryStep {
                 prerequisite_derivations: derivations,
                 exact_premises,
                 ..
@@ -1336,7 +1352,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 ),
             });
         }
-        (None, Some(InternalProofOperation::CertifiedFactTransport { source, target, .. })) => {
+        (None, Some(ConstructionEvidence::CertifiedFactTransport { source, target, .. })) => {
             let Some(step_entry) = replay.simple_proof_builder.last_step_entry.clone() else {
                 replay
                     .simple_proof_builder
@@ -1630,10 +1646,10 @@ pub(super) fn append_simple_proof_step_for_operation(
                 )),
             }
         }
-        (None, Some(InternalProofOperation::FinishCertifiedFactTransports(_))) => {}
+        (None, Some(ConstructionEvidence::FinishCertifiedFactTransports(_))) => {}
         (
             None,
-            Some(InternalProofOperation::CertifiedPathAssumption {
+            Some(ConstructionEvidence::CertifiedPathAssumption {
                 occurrence,
                 condition,
                 value,
@@ -1706,47 +1722,21 @@ pub(super) fn append_simple_proof_step_for_operation(
                     tactic_offset: replay.simple_proof_builder.steps.len(),
                 });
         }
-        (Some(tactic @ ProofTactic::Have(have)), None) => {
+        (Some(tactic @ ProofTactic::Have(_)), None) => {
             match SimpleProof::from_proof_tactics(std::slice::from_ref(tactic)) {
                 Ok(_) => replay
                     .simple_proof_builder
                     .push_source_tactic(tactic.clone()),
-                Err(_)
-                    if smart_simp_unfold_prefix(&have.proof).is_some()
-                        || have_proof_contains_smart_apply(&have.proof) =>
-                {
-                    // The successful smart proof is lowered after it has
-                    // produced its checked kernel fact.
+                Err(_) => {
+                    // A `have` with a smart body records nothing here. The
+                    // `ProofTactic::Have` replay arm generates a simple
+                    // certificate for the body once the smart proof has
+                    // produced its checked kernel fact, independently replays
+                    // it, and pushes it — or fails the tactic.
                 }
-                Err(error) => replay
-                    .simple_proof_builder
-                    .block(format!("could not lower control-flow tactic: {error:?}")),
             }
         }
-        (None, Some(InternalProofOperation::ExactPropositionDerivation(derivation))) => {
-            let anchor_point = replay.simple_proof_builder.last_step_entry.clone();
-            match lower_surface_atomic_derivation(
-                replay,
-                derivation,
-                None,
-                anchor_point.as_ref(),
-                available,
-                parameters,
-                arguments,
-                state,
-                predicate_environment,
-                click_function_environment,
-            ) {
-                Ok((conclusion, proof)) => {
-                    replay.simple_proof_builder.push_have(conclusion, proof);
-                }
-                Err(error) => replay.simple_proof_builder.block(format!(
-                    "could not lower exact proposition derivation: {}",
-                    error.message()
-                )),
-            }
-        }
-        (None, Some(InternalProofOperation::CertifiedFrame(path_derivations))) => {
+        (None, Some(ConstructionEvidence::CertifiedFrame(path_derivations))) => {
             let lowered = path_derivations
                 .iter()
                 .map(|derivations| {
@@ -1873,7 +1863,7 @@ pub(super) fn append_simple_proof_step_for_operation(
             }
             TacticClass::Smart(_) => {}
         },
-        (None, Some(InternalProofOperation::Surface(_))) | (Some(_), Some(_)) | (None, None) => {
+        (Some(_), Some(_)) | (None, None) => {
             unreachable!("invalid simple-proof construction operation")
         }
     }
@@ -2008,6 +1998,118 @@ pub(super) fn lower_smart_simp_suffix_have(
     None
 }
 
+/// Candidate simple bodies for a smart `have` script: each trailing smart
+/// `simp` (including one inside a proof-level `if` case) is replaced by an
+/// explicit goal-closing simple tactic. Bounded by construction — one closer
+/// choice per `simp` occurrence over a fixed closer set.
+fn simple_have_body_candidates(tactics: &[ProofTactic]) -> Vec<Vec<ProofTactic>> {
+    const CANDIDATE_LIMIT: usize = 16;
+    let mut candidates = match tactics {
+        [] => Vec::new(),
+        [ProofTactic::If(proof_if)] => {
+            let then_candidates = simple_have_body_candidates(&proof_if.then_tactics);
+            let else_candidates = simple_have_body_candidates(&proof_if.else_tactics);
+            let mut candidates = Vec::new();
+            for then_tactics in &then_candidates {
+                for else_tactics in &else_candidates {
+                    candidates.push(vec![ProofTactic::If(ProofIf {
+                        condition: proof_if.condition.clone(),
+                        then_tactics: then_tactics.clone(),
+                        else_tactics: else_tactics.clone(),
+                    })]);
+                }
+            }
+            candidates
+        }
+        [prefix @ .., ProofTactic::Simp] => [
+            ProofTactic::Assumption,
+            ProofTactic::Normalize,
+            ProofTactic::Left,
+            ProofTactic::Right,
+        ]
+        .into_iter()
+        .map(|closer| {
+            let mut candidate = prefix.to_vec();
+            candidate.push(closer);
+            candidate
+        })
+        .collect(),
+        _ => Vec::new(),
+    };
+    candidates.truncate(CANDIDATE_LIMIT);
+    candidates
+}
+
+/// Constructs the simple certificate for a mid-execution smart `have` whose
+/// body is neither simple nor covered by the `[unfold*, simp]` or smart
+/// `apply` lowerings — a `witness`/`choose` prefix before its `simp`, or a
+/// proof-level `if` whose cases close by `simp`.
+///
+/// Every candidate is accepted only when the replay judgment
+/// (`prove_have_at_current_point`) proves it AND yields exactly the fact the
+/// smart script established. A smart `have` with no accepted candidate fails
+/// here instead of silently losing the enclosing proof's expansion.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn certify_general_smart_have(
+    have: &ProofHave,
+    fact: &Proposition,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+    available: &[Proposition],
+    transition_facts: &[ExecutionPureFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    surface_propositions: &SurfacePropositionMap,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    function_requires: &[Requirement],
+) -> Result<SimpleProof, ClickError> {
+    let Proof::Script(tactics) = &have.proof else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: smart `have` succeeded, but its non-script body has no simple certificate"
+        )));
+    };
+    for candidate_tactics in simple_have_body_candidates(tactics) {
+        let candidate = ProofHave {
+            proposition: have.proposition.clone(),
+            proof: Proof::Script(candidate_tactics),
+        };
+        let Ok(proof) = SimpleProof::from_proof_tactics(std::slice::from_ref(
+            &ProofTactic::Have(candidate.clone()),
+        )) else {
+            continue;
+        };
+        let replayed = prove_have_at_current_point(
+            &candidate,
+            theorem_environment,
+            claim_label,
+            tactic_index,
+            available,
+            transition_facts,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            program_point_states,
+            surface_propositions,
+            predicate_environment,
+            click_function_environment,
+            function_requires,
+        );
+        if replayed.is_ok_and(|replayed| replayed == *fact) {
+            return Ok(proof);
+        }
+    }
+    Err(ClickError::new(format!(
+        "`{claim_label}` tactic {tactic_index}: smart `have {}` succeeded, but no simple certificate for its proof body replayed; close each case with explicit simple tactics",
+        describe_click_proposition(&have.proposition)
+    )))
+}
+
 fn have_proof_contains_smart_apply(proof: &Proof) -> bool {
     let Proof::Script(tactics) = proof else {
         return false;
@@ -2027,7 +2129,7 @@ pub(super) fn surface_simp_plan_proof(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     surface_goal: &ClickProposition,
-    plan: &InternalProofPlan,
+    plan: &SimpEvidence,
     unfolded_predicates: &[String],
 ) -> Result<Proof, ClickError> {
     let active_surface_goal = if unfolded_predicates.is_empty() {
@@ -2044,14 +2146,10 @@ pub(super) fn surface_simp_plan_proof(
             ))
         })?
     };
-    let proof = match plan.operations() {
-        [InternalProofOperation::Surface(ProofTactic::Assumption)] => {
-            Proof::Script(vec![ProofTactic::Assumption])
-        }
-        [InternalProofOperation::Surface(ProofTactic::Normalize)] => {
-            Proof::Script(vec![ProofTactic::Normalize])
-        }
-        [InternalProofOperation::ExactPropositionDerivation(derivation)] => {
+    let proof = match plan {
+        SimpEvidence::Assumption => Proof::Script(vec![ProofTactic::Assumption]),
+        SimpEvidence::Normalize => Proof::Script(vec![ProofTactic::Normalize]),
+        SimpEvidence::Derivation(derivation) => {
             let (_, proof) = lower_surface_atomic_derivation(
                 replay,
                 derivation,
@@ -2072,11 +2170,6 @@ pub(super) fn surface_simp_plan_proof(
             })?;
             proof
         }
-        _ => {
-            return Err(ClickError::new(
-                "smart proof planned an unexpected simp certificate",
-            ));
-        }
     };
     if unfolded_predicates.is_empty() {
         return Ok(proof);
@@ -2095,6 +2188,94 @@ pub(super) fn surface_simp_plan_proof(
     Ok(Proof::Script(tactics))
 }
 
+/// How a restricted-`simp` premise's certificate spelling relates to the
+/// replay-visible fact set. Certificates may cite `ExactlyAvailable`
+/// spellings directly; a `SnapshotBridged` spelling denotes an available fact
+/// only through the kernel's certified snapshot bridge and must be
+/// materialized by an explicit transport step before simple replay can use it.
+enum PremiseSpelling {
+    ExactlyAvailable,
+    SnapshotBridged,
+}
+
+/// The snapshot-anchored reflexive spelling a transport re-anchors from when
+/// a listed premise equates one expression across two program points. For
+/// `x == at(P, x)` this is `at(P, x) == at(P, x)`: trivially derivable at the
+/// recorded point, with the certified bridge carrying one side to the current
+/// state.
+fn reflexive_snapshot_transport_source(surface: &ClickProposition) -> Option<ClickProposition> {
+    let ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::Equal,
+        right,
+    } = surface
+    else {
+        return None;
+    };
+    let anchored = [right, left].into_iter().find(|side| {
+        matches!(
+            side,
+            ContractExpression::At { .. } | ContractExpression::Old(_)
+        )
+    })?;
+    Some(ClickProposition::Comparison {
+        left: anchored.clone(),
+        operator: ComparisonOperator::Equal,
+        right: anchored.clone(),
+    })
+}
+
+/// The single construction event for a smart `have`/`simp` at the current
+/// proof point: kernel search selects its evidence and the same call spells
+/// that evidence as a replayable [`SimpleProof`]. Search may only succeed
+/// through derivations the surface vocabulary can spell; there is no retained
+/// plan between the two, and no separate lowering pass to disagree with the
+/// search that already succeeded.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn construct_smart_have_certificate(
+    replay: &mut TacticReplayState,
+    state: &CState,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    have: &ProofHave,
+    claim_label: &str,
+    tactic_index: usize,
+    unfolded_predicates: &[String],
+) -> Result<(Proposition, SimpleProof), ClickError> {
+    let (fact, evidence) = plan_smart_have_at_current_point(
+        have,
+        claim_label,
+        tactic_index,
+        available,
+        parameters,
+        arguments,
+        replay.old_reference_state(state),
+        state,
+        &replay.program_point_states,
+        &replay.surface_propositions,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        None,
+    )?;
+    let certificate = surface_smart_have_certificate(
+        replay,
+        state,
+        available,
+        parameters,
+        arguments,
+        predicate_environment,
+        click_function_environment,
+        have,
+        &evidence,
+        unfolded_predicates,
+    )?;
+    Ok((fact, certificate))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn surface_smart_have_certificate(
     replay: &mut TacticReplayState,
@@ -2105,7 +2286,7 @@ pub(super) fn surface_smart_have_certificate(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     have: &ProofHave,
-    plan: &InternalProofPlan,
+    plan: &SimpEvidence,
     unfolded_predicates: &[String],
 ) -> Result<SimpleProof, ClickError> {
     let restricted_simp = matches!(
@@ -2124,7 +2305,7 @@ pub(super) fn surface_smart_have_certificate(
         })
         .transpose()?;
     let restricted_context_available = unfolded_available.as_deref().unwrap_or(available);
-    let restricted_available = match &have.proof {
+    let restricted_resolved = match &have.proof {
         Proof::Script(tactics) => tactics.last().and_then(|tactic| match tactic {
             ProofTactic::SimpUsing(simp) => Some(
                 simp.premises
@@ -2135,7 +2316,7 @@ pub(super) fn surface_smart_have_certificate(
                             .available_kernel(surface, restricted_context_available)
                             .cloned()
                         {
-                            return Ok(kernel);
+                            return Ok((kernel, PremiseSpelling::ExactlyAvailable));
                         }
                         let freshly_lowered = lower_point_proposition(
                             surface,
@@ -2155,7 +2336,7 @@ pub(super) fn surface_smart_have_certificate(
                                     || condition_polarity_equivalent(fact, lowered)
                             })
                         {
-                            return Ok(fact.clone());
+                            return Ok((fact.clone(), PremiseSpelling::ExactlyAvailable));
                         }
                         if let Ok(lowered) = &freshly_lowered
                             && exact_proper_conjunct_is_available(
@@ -2163,7 +2344,7 @@ pub(super) fn surface_smart_have_certificate(
                                 restricted_context_available,
                             )
                         {
-                            return Ok(lowered.clone());
+                            return Ok((lowered.clone(), PremiseSpelling::ExactlyAvailable));
                         }
                         if let Ok(lowered) = &freshly_lowered
                             && let Some(fact) =
@@ -2172,7 +2353,7 @@ pub(super) fn surface_smart_have_certificate(
                                     restricted_context_available,
                                 )
                         {
-                            return Ok(fact);
+                            return Ok((fact, PremiseSpelling::ExactlyAvailable));
                         }
                         if let Ok(lowered) = &freshly_lowered
                             && snapshot_bridged_fact_is_available(
@@ -2184,8 +2365,12 @@ pub(super) fn surface_smart_have_certificate(
                             // Retain the listed spelling after checking that
                             // it is the same available fact across certified
                             // snapshots. The restricted reasoning context is
-                            // still exactly the listed premise vector.
-                            return Ok(lowered.clone());
+                            // still exactly the listed premise vector — but
+                            // the spelling itself is not an exact replay-time
+                            // fact, so the certificate must materialize it
+                            // with an explicit snapshot transport before any
+                            // simple step may cite it as evidence.
+                            return Ok((lowered.clone(), PremiseSpelling::SnapshotBridged));
                         }
                         Err(ClickError::new(match freshly_lowered {
                             Ok(_) => format!(
@@ -2205,6 +2390,12 @@ pub(super) fn surface_smart_have_certificate(
         _ => None,
     }
     .transpose()?;
+    let restricted_available = restricted_resolved.as_ref().map(|resolved| {
+        resolved
+            .iter()
+            .map(|(kernel, _)| kernel.clone())
+            .collect::<Vec<_>>()
+    });
     let certificate_available = restricted_available.as_deref().unwrap_or(available);
     let proof = if let (Some(exact), Proof::Script(source_tactics)) =
         (restricted_available.as_ref(), &have.proof)
@@ -2245,13 +2436,10 @@ pub(super) fn surface_smart_have_certificate(
         let restricted_derivation =
             plan_restricted_simp_goal(&explicit_goal, exact.clone(), &explicit_goal, exact)
                 .map_err(ClickError::new)?;
-        let restricted_plan = InternalProofPlan::from_operations(vec![
-            InternalProofOperation::ExactPropositionDerivation(restricted_derivation),
-        ]);
         let explicit = lower_restricted_simp_plan(
             &explicit_goal,
             Some(&active_surface_goal),
-            &restricted_plan,
+            &SimpEvidence::Derivation(restricted_derivation),
             &pairs,
         )?;
         let mut tactics = unfolded_predicates
@@ -2267,6 +2455,30 @@ pub(super) fn surface_smart_have_certificate(
                 })
                 .map(|(_, surface)| ProofTactic::Extract(surface.clone())),
         );
+        // A snapshot-bridged premise is certified evidence, but its listed
+        // spelling is not an exact replay-time fact. Simple `rewrite` never
+        // searches, so the certificate must first materialize the spelling
+        // with an explicit snapshot transport; the premise then reaches the
+        // rewrite as an exact available fact.
+        let resolved = restricted_resolved
+            .as_ref()
+            .expect("restricted premises were resolved above");
+        for ((_, surface), (_, spelling)) in pairs.iter().zip(resolved) {
+            if !matches!(spelling, PremiseSpelling::SnapshotBridged) {
+                continue;
+            }
+            let Some(source) = reflexive_snapshot_transport_source(surface) else {
+                return Err(ClickError::new(format!(
+                    "`simp() using` premise `{}` holds only across certified snapshots and has no snapshot-anchored side to transport from",
+                    describe_click_proposition(surface)
+                )));
+            };
+            tactics.push(ProofTactic::TransportUsing {
+                source,
+                target: surface.clone(),
+                premises: Vec::new(),
+            });
+        }
         tactics.extend(explicit);
         Proof::Script(tactics)
     } else {

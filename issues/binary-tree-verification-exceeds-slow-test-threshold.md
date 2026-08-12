@@ -22,30 +22,34 @@ semantic budget. Direct CLI and already-built harness timings agree, so this
 is not a test-harness-only slowdown. The problem is the project's real
 aggregate verification cost.
 
-## Status 2026-08-12
+Update (2026-08-11): the `step` at `tree_sum_root_and_children` statement 2
+(source tactic 5, the bounded three-way sum) sits at the 500ms simple
+wall-clock budget and now blocks verification outright under ordinary machine
+load. On an idle machine it measures about 390ms and the project verifies; on
+the same machine under concurrent load it crosses the budget on every run and
+`click verify examples/binary-tree` fails with "a slow simple tactic is a
+Click engine bug". A build of the pre-`e9460ff` tree shows the same crossing,
+so this is long-standing cost, not a recent regression; it was masked while
+the project also failed earlier at `tree_is_leaf` (since fixed). The project
+is quarantined in `tests/examples.rs` against this issue until the step's
+verifier path is reduced. This is the same machine-speed-dependent
+enforcement problem tracked in `input-cursor-simple-step-crosses-budget.md`.
+Full-project wall time also varied between passing runs (one 3.9s outlier
+against a 14-19s norm on identical input), which suggests run-to-run variance
+in derivation memo hits worth capturing while profiling.
 
-Whole-project measurement is currently blocked: the project is quarantined
-for the independent
-[grouped-simp expressibility failure](binary-tree-grouped-simp-transition-not-expressible.md),
-which fails `tree_is_leaf.contract` before the expensive functions run. The
-`tree_sum_root_and_children` proof unit still verifies through the targeted
-entry point (`click verify examples/binary-tree/binary_tree.click:153:5`)
-and was used as the reduction workload.
-
-Attribution of its hot `step` (statement 2, source tactic 5) confirmed the
-suspected repeated work in kernel memory/resource reasoning: every
-order-path query re-collected `condition_order_facts` from an unchanged fact
-set, and the same top-level pointer/bitvector memory-resolution queries were
-re-run dozens of times per step from separation and resource-context scans.
-Both are now memoized by fact-set content identity with the decide-memo
-truncation discipline, with kernel cache-behavior regressions. The step's
-deterministic cost fell from 63,752 to 40,460 work units; input-cursor's
-analogous step fell from 92,826 to 35,368.
-
-Tactic budgets are now enforced primarily in deterministic work units
-(simple 100,000), so the pass/fail behavior of this project no longer
-depends on machine speed; the remaining problem is aggregate latency only.
-Re-profile the whole project once the grouped-simp quarantine lifts.
+Update (2026-08-12): the repeated work suspected above is confirmed and
+partially fixed. Every order-path query re-collected `condition_order_facts`
+from an unchanged fact set, and the same top-level pointer/bitvector
+memory-resolution queries were re-run dozens of times per step from
+separation and resource-context scans; both are now memoized by fact-set
+content identity with the decide-memo truncation discipline and kernel
+cache-behavior regressions. The hot step's deterministic cost fell from
+63,752 to 40,460 work units on the pre-merge base. Simple-tactic budgets are
+now enforced primarily in deterministic work units (100,000 simple) with the
+wall clock demoted to a generous backstop, so the machine-load-dependent
+blocking failure mode is gone; the remaining question for un-quarantining is
+whole-project measurement on the merged tree.
 
 ## Regression design
 

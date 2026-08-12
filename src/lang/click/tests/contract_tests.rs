@@ -410,7 +410,6 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
         position.column,
     )
     .expect("unwritten read should expand through explicit transport");
-    assert!(expanded.contains("normalize();"), "{expanded}");
     assert!(expanded.contains("transport("), "{expanded}");
     assert!(expanded.contains("separate("), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");

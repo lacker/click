@@ -79,6 +79,7 @@ remains migration compatibility and should not be used in new proofs.
 | `split()` | simple | Close a conjunction when both conjuncts are exact available facts. |
 | `left()` / `right()` | simple | Close the selected disjunct from an exact available fact. |
 | `contradiction(P)` | simple | Close from exact facts `P` and `not P`, including exact opposite polarities of the same C condition. |
+| `instantiate(F, value) using { P; ... }` | simple | Specialize an exact available universal fact `F` at `value`, discharging each instantiated guard from the listed premises alone (by normalization or one bounded atomic derivation), and add the instantiated conclusion. |
 | `apply(theorem(args))` | smart | Apply a theorem while selecting its premises from context. |
 | `apply(theorem(args)) using { P; ... }` | simple | Apply a theorem using exactly the listed premises. |
 | `induct(n) as ih` | simple | Start strong induction on a nonnegative `int32` theorem parameter. |
@@ -114,8 +115,13 @@ surface certificate retains the relevant loadability and order facts through
 explicit transports, rewrites, extracts, or named theorem applications. A
 context-free-looking result such as a normalized equality is not emitted as
 bare `normalize()` if replay still needs those premises to interpret an
-indexed load. Verification checks the emitted certificate immediately, and
-expansion/audit replay the same surface proof.
+indexed load. A `simp() using` premise that equates one expression across
+several execution snapshots may denote an available fact only through the
+kernel's certified snapshot bridge; the certificate then materializes that
+spelling with an explicit `transport` before citing it, because simple
+`rewrite` replay never searches for an equivalent equality. Verification
+checks the emitted certificate immediately, and expansion/audit replay the
+same surface proof.
 
 ## Effects, resources, and snapshots
 
