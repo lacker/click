@@ -521,6 +521,21 @@ pub(super) fn directly_matching_separation_fact(
     required: &Proposition,
     available: &[Proposition],
 ) -> Option<Proposition> {
+    let assumptions = assumptions_from_propositions(available);
+    directly_matching_separation_fact_under(required, available, &assumptions)
+}
+
+/// `directly_matching_separation_fact` where the caller already holds the
+/// assumption context the match should reason in (for example the available
+/// facts plus recorded execution effect facts, which let the bounded resource
+/// matcher see that two load spellings from different snapshots denote one
+/// pointer). Candidates still come only from `available`, so widening the
+/// assumptions cannot make an unlisted fact available.
+pub(super) fn directly_matching_separation_fact_under(
+    required: &Proposition,
+    available: &[Proposition],
+    assumptions: &Assumptions,
+) -> Option<Proposition> {
     let Proposition::CResourceSeparate {
         left: required_left,
         right: required_right,
@@ -528,15 +543,14 @@ pub(super) fn directly_matching_separation_fact(
     else {
         return None;
     };
-    let assumptions = assumptions_from_propositions(available);
     available.iter().find_map(|fact| {
         let Proposition::CResourceSeparate { left, right } = fact else {
             return None;
         };
-        let same_orientation = c_resources_directly_match(left, required_left, &assumptions)
-            && c_resources_directly_match(right, required_right, &assumptions);
-        let reverse_orientation = c_resources_directly_match(left, required_right, &assumptions)
-            && c_resources_directly_match(right, required_left, &assumptions);
+        let same_orientation = c_resources_directly_match(left, required_left, assumptions)
+            && c_resources_directly_match(right, required_right, assumptions);
+        let reverse_orientation = c_resources_directly_match(left, required_right, assumptions)
+            && c_resources_directly_match(right, required_left, assumptions);
         (same_orientation || reverse_orientation).then(|| fact.clone())
     })
 }
@@ -934,4 +948,126 @@ pub(super) fn facts_for_simple_goal_lowering(propositions: &[Proposition]) -> Ve
         }
     }
     facts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::{
+        CMemory, CMemoryRange, CResource, CValue, Pointer, PointerBlock, PointerOffsetTerm,
+        Variable, intern_c_memory,
+    };
+
+    /// The perpetual-service `fold(service(owner))` near-miss: the body's
+    /// separation fact is available from the unfold, but the fold point
+    /// respells it through a memory that retains this path's store cells, so
+    /// the two spellings print identically yet compare structurally unequal.
+    /// The bounded separation matcher must equate them from the recorded
+    /// pointer-offset equality and separation facts, without the open-ended
+    /// kernel search whose budget truncation used to be misreported as a
+    /// missing fact.
+    #[test]
+    fn fold_body_separation_fact_matches_across_store_snapshots() {
+        let owner_base = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+                byte_width: 4,
+            },
+        };
+        let owner_field = |bytes: i64| Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Add(
+                Box::new(owner_base.offset.clone()),
+                Box::new(PointerOffsetTerm::Constant(bytes)),
+            ),
+        };
+        let phase_field = owner_field(4);
+        let cell_field = owner_field(8);
+        let load = |memory: &CMemory, pointer: &Pointer| {
+            Bitvector32Term::MemoryLoad(intern_c_memory(memory.clone()), Box::new(pointer.clone()))
+        };
+        let empty = CMemory::new();
+        // The spelling recorded when the resource body was unfolded: the cell
+        // pointer read through the call-havoc snapshot.
+        let havoc = CMemory::new().with_block("havoc:1000000", 0);
+        // The spelling carried by the recorded execution facts: the same
+        // loads read through the branch-entry memory with its retained cells.
+        let entry = empty
+            .clone()
+            .store(
+                phase_field.clone(),
+                CValue::Int32(load(&empty, &phase_field)),
+            )
+            .store(owner_base.clone(), CValue::Int32(load(&empty, &owner_base)));
+        let cell_element_offset = |memory: &CMemory| PointerOffsetTerm::Int32Scaled {
+            value: Box::new(load(memory, &cell_field)),
+            byte_width: 4,
+        };
+        // The fold-point spelling reads the cell pointer through a memory
+        // that still carries the `owner->cell[0] = owner->phase` store, whose
+        // written address is itself spelled through a loaded pointer, so no
+        // assumption-free normalization can drop the cell.
+        let folded = havoc.clone().store(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: cell_element_offset(&havoc),
+            },
+            CValue::Int32(load(&havoc, &owner_base)),
+        );
+        let separation = |left_start: u32, left_end: u32, cell_memory: &CMemory| {
+            Proposition::CResourceSeparate {
+                left: CResource::Memory(CMemoryRange::new(
+                    owner_base.clone(),
+                    Bitvector32Term::Constant(left_start),
+                    Bitvector32Term::Constant(left_end),
+                )),
+                right: CResource::Memory(CMemoryRange::new(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: cell_element_offset(cell_memory),
+                    },
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(1),
+                )),
+            }
+        };
+        let required = separation(0, 4, &folded);
+        let available = separation(0, 4, &havoc);
+
+        // The two spellings print identically but are different propositions,
+        // so plain exact matching must miss.
+        assert_ne!(required, available);
+        assert_eq!(
+            describe_pure_fact(&required, &[], &[]),
+            describe_pure_fact(&available, &[], &[]),
+        );
+        assert!(!exact_fact_is_available(
+            &required,
+            std::slice::from_ref(&available)
+        ));
+
+        // The recorded execution facts: the two spellings of the cell pointer
+        // denote one offset, and the loaded pointer's field is separate from
+        // the written cell range.
+        let offsets_equal = Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(
+                Box::new(cell_element_offset(&havoc)),
+                Box::new(cell_element_offset(&entry)),
+            ),
+            true,
+        );
+        let fields_separate = separation(2, 4, &entry);
+        let assumptions =
+            assumptions_from_propositions(&[offsets_equal.clone(), fields_separate.clone()]);
+        assert_eq!(
+            directly_matching_separation_fact_under(
+                &required,
+                std::slice::from_ref(&available),
+                &assumptions,
+            ),
+            Some(available.clone()),
+            "the bounded separation matcher must transport the unfold spelling to the fold point"
+        );
+    }
 }

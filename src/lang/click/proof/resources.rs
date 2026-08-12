@@ -1843,21 +1843,52 @@ pub(super) fn fold_composite_resources_on_outcome(
                     ))
                 })?
             };
-            if !exact_fact_is_available(&required, available_pure_facts)
+            // Available facts may spell this body fact through loads recorded
+            // at an earlier snapshot. Decide those spellings with the bounded
+            // replay matchers first: exact structural membership, the
+            // snapshot-bridging relation with this execution's effect facts as
+            // framing, and the direct separation-fact matcher. All of these do
+            // work proportional to the fact being checked, so an exactly
+            // available body fact never rides on the open-ended kernel search
+            // below, which can consume a large share of the fold's budget.
+            let exactly_available = exact_fact_is_available_across_effects(
+                &required,
+                available_pure_facts,
+                execution_pure_facts,
+            ) || directly_matching_separation_fact_under(
+                &required,
+                available_pure_facts,
+                &body_assumptions,
+            )
+            .is_some();
+            if !exactly_available
                 && !matches!(normalize_proposition(&required), SimpProposition::True)
-                // An available fact may spell the same body fact through
-                // loads at an earlier snapshot. Exact fold replay needs only
-                // the kernel decision; asking it to minimize a derivation
-                // that will never be emitted repeats the check once per
-                // ambient loadability candidate.
                 && !body_assumptions.proves(&required)
             {
+                // `proves` returns false when the active budget runs out
+                // mid-derivation. Reporting that truncation as a missing fact
+                // is misleading, so surface the budget state itself first.
+                check_verification_deadline()?;
                 let resources = match &outcome {
                     CFunctionOutcome::Return { state, .. } => state.resources().facts(),
                     _ => pre_state.resources().facts(),
                 };
+                let required_text = describe_pure_fact(&required, parameters, arguments);
+                let identically_printed = available_pure_facts
+                    .iter()
+                    .filter(|fact| {
+                        describe_pure_fact(fact, parameters, arguments) == required_text
+                    })
+                    .count();
+                let snapshot_note = if identically_printed > 0 {
+                    format!(
+                        "\n  note: {identically_printed} available fact(s) print identically but carry different memory-snapshot spellings, and the recorded execution effects do not prove the snapshots agree at the loaded pointers"
+                    )
+                } else {
+                    String::new()
+                };
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` path {path_index}: `fold({})` requires an exact body fact: {}",
+                    "`{claim_label}` path {path_index}: `fold({})` requires an exact body fact: {}{snapshot_note}",
                     describe_resource_clause(resource),
                     describe_missing_pure_fact(
                         &required,

@@ -952,3 +952,48 @@ int32 second(int32 x) { ensures result == x; } by simp;
     assert_eq!(selection.selected_functions, ["first", "second"]);
     assert!(selection.reused_functions.is_empty());
 }
+
+/// The perpetual-service example used to verify or fail depending on ambient
+/// machine load: `fold(service(owner))` decided its body's separation fact
+/// through an open-ended kernel search whose budget truncation was reported
+/// as a missing fact. The bounded matchers now decide the respelled body
+/// facts deterministically, so repeated verification must stay green under
+/// the deterministic work budgets this test suite runs with.
+#[test]
+fn perpetual_service_example_verifies_stably_across_repeated_runs() {
+    let project =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/perpetual-service");
+    let mut click_paths = std::fs::read_dir(&project)
+        .expect("the perpetual-service example project should exist")
+        .map(|entry| entry.expect("example directory entries should be readable").path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "click"))
+        .collect::<Vec<_>>();
+    click_paths.sort();
+    assert!(
+        !click_paths.is_empty(),
+        "expected a .click sidecar in {}",
+        project.display()
+    );
+    for click_path in &click_paths {
+        let click_source =
+            std::fs::read_to_string(click_path).expect("the example sidecar should be readable");
+        let c_sources = crate::cli::read_verifying_sources(click_path, &click_source)
+            .expect("the example C sources should resolve");
+        let sources = crate::cli::source_refs(&c_sources);
+        verify_c0_sources(&click_source, &sources).unwrap_or_else(|error| {
+            panic!("`{}` failed: {}", click_path.display(), error.message())
+        });
+        // The flaky fold lives in `service_step`; repeat its verification to
+        // pin cross-run determinism of the shared caches and interners.
+        for round in 0..4 {
+            verify_c0_sources_functions(&click_source, &sources, ["service_step".to_string()])
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "repeat round {round}: `{}` failed: {}",
+                        click_path.display(),
+                        error.message()
+                    )
+                });
+        }
+    }
+}
