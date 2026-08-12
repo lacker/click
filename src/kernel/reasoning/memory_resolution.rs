@@ -23,6 +23,100 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
+/// One top-level memory-resolution equality query, keyed by fact-set content
+/// identity plus the ambient DAG-bridging mode. Hot simple steps ask the
+/// same handful of pointer/term equalities dozens of times while scanning
+/// facts and resource contexts; the queries are pure functions of the fact
+/// set, the memory DAG, and the bridging mode, so repeats are memoizable
+/// with the same discipline as `decide`.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum ResolutionQueryKey {
+    PointerEqual(u64, bool, Pointer, Pointer),
+    PointerOffsetEqual(u64, bool, PointerOffsetTerm, PointerOffsetTerm),
+    BitvectorEqual(u64, bool, Bitvector32Term, Bitvector32Term),
+}
+
+thread_local! {
+    static RESOLUTION_QUERY_POSITIVE_MEMO: std::cell::RefCell<
+        std::collections::HashSet<ResolutionQueryKey>,
+    > = std::cell::RefCell::new(std::collections::HashSet::new());
+    static RESOLUTION_QUERY_NEGATIVE_MEMO: std::cell::RefCell<
+        std::collections::HashSet<(u64, ResolutionQueryKey)>,
+    > = std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+const RESOLUTION_QUERY_MEMO_LIMIT: usize = 200_000;
+
+/// The memo identity for one top-level resolution query, or `None` when the
+/// query must run unmemoized. Unmemoized cases are the ones whose answers
+/// are ambient-state-dependent: a nested arm shares the caller's fuel, a
+/// nested memory-DAG cell lookup sees the depth cutoff, and explicit
+/// certificate replay crosses extra DAG edges. In-progress condition
+/// decisions need no guard here: every decision cycle cut and in-decision
+/// weakening records a search truncation, which already blocks negative
+/// caching, and a positive answer is found evidence that remains valid
+/// outside the weakened context.
+fn resolution_query_memo_id(assumptions: &Assumptions) -> Option<(u64, bool)> {
+    if MEMORY_RESOLUTION_FUEL.with(|fuel| fuel.get().is_some()) {
+        return None;
+    }
+    if !crate::kernel::api::memory_dag_cell_lookup_depth_is_zero() {
+        return None;
+    }
+    if crate::kernel::api::explicit_dag_replay_active() {
+        return None;
+    }
+    // Ambient scope only: content-hashing the fact set on every top-level
+    // query would cost more than many of the queries themselves. Outside any
+    // scope the query runs unmemoized, as before.
+    let id = crate::kernel::assumptions::ambient_assumptions_memo_id(assumptions)?;
+    Some((id, crate::kernel::api::extended_dag_bridging_active()))
+}
+
+/// Runs one top-level resolution query through the memo. A `true` is found
+/// evidence and stays valid however the search was pruned, so it is cached
+/// unconditionally. A `false` is only the absence of a connection: it is
+/// cached per memory-DAG derivation generation (new faithful edges can turn
+/// it true) and never when the search was truncated by ambient fuel or depth
+/// guards, exactly like the `decide` memo.
+fn memoized_resolution_query(
+    key: Option<ResolutionQueryKey>,
+    run: impl FnOnce() -> bool,
+) -> bool {
+    let Some(key) = key else {
+        return run();
+    };
+    if RESOLUTION_QUERY_POSITIVE_MEMO.with(|memo| memo.borrow().contains(&key)) {
+        return true;
+    }
+    let generation = crate::kernel::primitives::c_memory_derivation_generation();
+    if RESOLUTION_QUERY_NEGATIVE_MEMO
+        .with(|memo| memo.borrow().contains(&(generation, key.clone())))
+    {
+        return false;
+    }
+    let truncations_before = crate::kernel::assumptions::search_truncations();
+    let result = run();
+    if result {
+        RESOLUTION_QUERY_POSITIVE_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.len() >= RESOLUTION_QUERY_MEMO_LIMIT {
+                memo.clear();
+            }
+            memo.insert(key);
+        });
+    } else if crate::kernel::assumptions::search_truncations() == truncations_before {
+        RESOLUTION_QUERY_NEGATIVE_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.len() >= RESOLUTION_QUERY_MEMO_LIMIT {
+                memo.clear();
+            }
+            memo.insert((generation, key));
+        });
+    }
+    result
+}
+
 /// Runs `body` with the memory-resolution node budget armed. Nested calls
 /// (a wrapper reached from inside another query) keep the outer budget.
 pub(in crate::kernel) fn with_memory_resolution_fuel<T>(body: impl FnOnce() -> T) -> T {
@@ -308,8 +402,13 @@ pub(in crate::kernel) fn pointers_proven_equal_for_memory_resolution(
     right: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
-    with_memory_resolution_fuel(|| {
-        pointers_proven_equal_for_memory_resolution_with_depth(left, right, assumptions, 0)
+    let key = resolution_query_memo_id(assumptions).map(|(id, bridging)| {
+        ResolutionQueryKey::PointerEqual(id, bridging, left.clone(), right.clone())
+    });
+    memoized_resolution_query(key, || {
+        with_memory_resolution_fuel(|| {
+            pointers_proven_equal_for_memory_resolution_with_depth(left, right, assumptions, 0)
+        })
     })
 }
 
@@ -318,8 +417,13 @@ pub(in crate::kernel) fn pointer_offsets_proven_equal_for_memory_resolution(
     right: &PointerOffsetTerm,
     assumptions: &Assumptions,
 ) -> bool {
-    with_memory_resolution_fuel(|| {
-        pointer_offsets_equal_for_memory_resolution(left, right, assumptions, 0) == Some(true)
+    let key = resolution_query_memo_id(assumptions).map(|(id, bridging)| {
+        ResolutionQueryKey::PointerOffsetEqual(id, bridging, left.clone(), right.clone())
+    });
+    memoized_resolution_query(key, || {
+        with_memory_resolution_fuel(|| {
+            pointer_offsets_equal_for_memory_resolution(left, right, assumptions, 0) == Some(true)
+        })
     })
 }
 
@@ -554,8 +658,13 @@ pub(in crate::kernel) fn bitvector_terms_proven_equal_for_memory_resolution(
     right: &Bitvector32Term,
     assumptions: &Assumptions,
 ) -> bool {
-    with_memory_resolution_fuel(|| {
-        bitvector_terms_equal_for_memory_resolution(left, right, assumptions, 0)
+    let key = resolution_query_memo_id(assumptions).map(|(id, bridging)| {
+        ResolutionQueryKey::BitvectorEqual(id, bridging, left.clone(), right.clone())
+    });
+    memoized_resolution_query(key, || {
+        with_memory_resolution_fuel(|| {
+            bitvector_terms_equal_for_memory_resolution(left, right, assumptions, 0)
+        })
     })
 }
 

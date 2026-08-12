@@ -679,9 +679,9 @@ fn render_legacy(event: &VerificationEvent) -> String {
         VerificationEvent::TacticFinished {
             tactic,
             elapsed,
-            work: _,
+            work,
         } => format!(
-            "click timing: tactic {} {:.6}s",
+            "click timing: tactic {} {:.6}s work {work}",
             tactic_fields(tactic),
             elapsed.as_secs_f64()
         ),

@@ -547,6 +547,20 @@ pub(super) fn extended_dag_bridging_active() -> bool {
     EXTENDED_DAG_BRIDGING.with(std::cell::Cell::get)
 }
 
+/// True while explicit certificate replay widens the DAG walk (see
+/// `explicit_atomic_equality_from_memory_derivations`); resolution answers
+/// computed in that mode must not be shared with the planner-facing arms.
+pub(super) fn explicit_dag_replay_active() -> bool {
+    EXPLICIT_DAG_REPLAY.with(std::cell::Cell::get)
+}
+
+/// True outside any memory-DAG cell lookup. Answers computed inside a
+/// lookup see the `CELL_LOOKUP_DEPTH` cutoff and are weaker than the
+/// depth-zero answer, so they must not be memoized under a depth-free key.
+pub(super) fn memory_dag_cell_lookup_depth_is_zero() -> bool {
+    CELL_LOOKUP_DEPTH.with(std::cell::Cell::get) == 0
+}
+
 /// Runs `body` with the extended DAG bridging enabled (see above).
 pub(super) fn with_extended_dag_bridging<T>(body: impl FnOnce() -> T) -> T {
     let previous = EXTENDED_DAG_BRIDGING.with(|flag| flag.replace(true));

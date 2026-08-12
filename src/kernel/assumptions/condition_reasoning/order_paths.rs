@@ -491,7 +491,7 @@ impl Assumptions {
             {
                 return true;
             }
-            for (edge_left, edge_right, edge_strict) in &order_facts {
+            for (edge_left, edge_right, edge_strict) in order_facts.iter() {
                 let constant_connection = signed_bitvector_constant(&current)
                     .zip(signed_bitvector_constant(edge_left))
                     .and_then(|(current, edge_left)| {
@@ -596,7 +596,7 @@ impl Assumptions {
             {
                 return true;
             }
-            for (edge_left, edge_right, edge_strict) in &order_facts {
+            for (edge_left, edge_right, edge_strict) in order_facts.iter() {
                 if crate::instrumentation::deadline_exceeded() {
                     return false;
                 }

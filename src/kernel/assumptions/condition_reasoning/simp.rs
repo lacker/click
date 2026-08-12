@@ -412,7 +412,7 @@ impl Assumptions {
         right: &Bitvector32Term,
         require_strict: bool,
     ) -> bool {
-        let mut order_facts = self.condition_order_facts();
+        let mut order_facts = self.condition_order_facts().as_ref().clone();
         self.collect_quantified_order_facts_for_condition(
             &ConditionTerm::signed_less_than(left.clone(), right.clone()),
             &mut order_facts,
@@ -428,7 +428,7 @@ impl Assumptions {
             {
                 return true;
             }
-            for (edge_left, edge_right, edge_strict) in &order_facts {
+            for (edge_left, edge_right, edge_strict) in order_facts.iter() {
                 if let Some(connection_strict) =
                     self.order_path_connection_for_simp(&current, edge_left)
                 {
