@@ -154,7 +154,7 @@ smart planner must put every fact and rule it used into the `SimpleProof`.
 ## What is enforced today
 
 Ordinary verification stops a tactic when it exhausts its deterministic work
-budget (cooperative prover checkpoints; SIMPLE 100,000, SMART and CONTROL
+budget (cooperative prover checkpoints; SIMPLE 500,000, SMART and CONTROL
 2,000,000), so pass/fail does not depend on machine speed or load. A
 real-time backstop behind it catches stretches of work the checkpoints do
 not count, measured as **exclusive per-thread CPU time** on Unix: scheduler

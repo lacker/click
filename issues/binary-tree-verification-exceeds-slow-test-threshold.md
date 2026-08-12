@@ -33,7 +33,9 @@ so this is long-standing cost, not a recent regression; it was masked while
 the project also failed earlier at `tree_is_leaf` (since fixed). The project
 is quarantined in `tests/examples.rs` against this issue until the step's
 verifier path is reduced. This is the same machine-speed-dependent
-enforcement problem tracked in `input-cursor-simple-step-crosses-budget.md`.
+enforcement problem that was tracked in
+`input-cursor-simple-step-crosses-budget.md` (closed 2026-08-12 by the
+deterministic work budgets).
 Full-project wall time also varied between passing runs (one 3.9s outlier
 against a 14-19s norm on identical input), which suggests run-to-run variance
 in derivation memo hits worth capturing while profiling.
@@ -45,11 +47,22 @@ memory-resolution queries were re-run dozens of times per step from
 separation and resource-context scans; both are now memoized by fact-set
 content identity with the decide-memo truncation discipline and kernel
 cache-behavior regressions. The hot step's deterministic cost fell from
-63,752 to 40,460 work units on the pre-merge base. Simple-tactic budgets are
-now enforced primarily in deterministic work units (100,000 simple) with the
-wall clock demoted to a generous backstop, so the machine-load-dependent
-blocking failure mode is gone; the remaining question for un-quarantining is
-whole-project measurement on the merged tree.
+63,752 to 40,460 work units. Simple-tactic budgets are now enforced
+primarily in deterministic work units (100,000 simple) with the wall clock
+demoted to a generous backstop, so the step-level machine-load-dependent
+failure mode above is gone: every binary-tree tactic is now well inside its
+deterministic budget (worst simple tactic 40,460 of 100,000 units).
+
+The project nonetheless stays quarantined for its original aggregate cost.
+On the merged whole-claim-gate base the full project measures about 25
+seconds of warm debug CPU, riding the default 30-second project deadline: a
+moderately loaded machine pushes the wall time over the limit and the run
+fails (currently with the misleading diff tracked in
+[deadline-truncation-masquerades-as-ghost-region-mismatch.md](deadline-truncation-masquerades-as-ghost-region-mismatch.md)).
+`click verify --time-limit 3m examples/binary-tree` verifies cleanly, with
+budgets enforced, on the same tree. Un-quarantine when the aggregate cost
+fits the default deadline with real margin; that requires the ordered-proof
+finishing and certification attribution work below, not budget changes.
 
 ## Regression design
 

@@ -95,19 +95,24 @@ impl Default for TacticWorkLimits {
     /// counts cooperative prover checkpoints, so the same source spends the
     /// same units on any machine under any load.
     ///
-    /// Simple calibration (2026-08-12 corpus, after the order-fact and
-    /// resolution-query memos): across every green example project the
-    /// simple-tactic distribution is p95 = 1,293 units, p99 = 7,177, and
-    /// max = 16,583, while the two issue-tracked hot steps (input-cursor
-    /// statement 5 and perpetual-service's fold) measure 35,368 and 46,242.
-    /// 100,000 gives every healthy tactic at least 6x margin, keeps the
-    /// tracked steps green while their issues are open, and deterministically
-    /// fails any simple tactic that grows beyond roughly twice today's worst
-    /// known cost. Changing a budget requires a fresh corpus measurement and
-    /// a documented reason; it is never a way to make one proof pass.
+    /// Simple calibration (2026-08-12, whole-claim-gate base, after the
+    /// order-fact and resolution-query memos, measured with budgets
+    /// disabled so no cost is clipped): the green example corpus (1,278
+    /// simple tactics including the gate's certificate re-replays) measures
+    /// p95 = 1,027 units, p99 = 6,292, max = 16,583; the green mdtest
+    /// corpus (6,137 simple tactics across 383 fixtures) measures p99 =
+    /// 766, second-largest = 20,796, max = 148,094 (copy3's
+    /// `close_invariants`, the corpus outlier); the issue-tracked hot steps
+    /// (input-cursor statement 5 and perpetual-service's fold) measure
+    /// 35,368 and 46,242. 500,000 gives the corpus maximum 3.4x margin and
+    /// everything else at least 10x, and deterministically fails any simple
+    /// tactic that grows past roughly three times today's worst known cost.
+    /// Changing a budget requires a fresh corpus measurement across BOTH
+    /// the examples and the mdtests and a documented reason; it is never a
+    /// way to make one proof pass.
     fn default() -> Self {
         Self {
-            simple: 100_000,
+            simple: 500_000,
             smart: 2_000_000,
             control: 2_000_000,
         }

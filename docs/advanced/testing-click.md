@@ -92,12 +92,18 @@ Completed tactic events report both real CPU time and deterministic work, so
 `click profile` can continue measuring actual user latency without making
 that measurement a correctness oracle.
 
-The default correctness budgets are 100,000 checkpoints for simple tactics
+The default correctness budgets are 500,000 checkpoints for simple tactics
 and 2,000,000 for smart and control tactics. The simple budget is calibrated
-from the green example corpus (2026-08-12: p95 = 1,293 units, p99 = 7,177,
-max = 16,583, with the two issue-tracked hot steps at 35,368 and 46,242), so
-every healthy tactic has at least 6x margin and a simple tactic that grows
-past roughly twice today's worst known cost fails deterministically.
+from the complete green corpus on the whole-claim-gate base (2026-08-12,
+measured with budgets disabled so no cost is clipped): the example projects'
+1,278 simple tactics measure p95 = 1,027 units, p99 = 6,292, max = 16,583;
+the 383 mdtests' 6,137 simple tactics measure p99 = 766 with a single
+148,094-unit outlier (copy3's `close_invariants`; the next largest is
+20,796); and the issue-tracked hot steps sit at 35,368 and 46,242. The
+budget gives the corpus maximum 3.4x margin and everything else at least
+10x, and a simple tactic that grows past roughly three times today's worst
+known cost fails deterministically on any machine. Recalibration must
+measure both the examples and the mdtests.
 Changing a work budget requires corpus measurements and a documented reason;
 it is not a way to make one difficult proof pass.
 

@@ -57,6 +57,9 @@ const RESOLUTION_QUERY_MEMO_LIMIT: usize = 200_000;
 /// caching, and a positive answer is found evidence that remains valid
 /// outside the weakened context.
 fn resolution_query_memo_id(assumptions: &Assumptions) -> Option<(u64, bool)> {
+    if crate::kernel::assumptions::decide_memo_disabled() {
+        return None;
+    }
     if MEMORY_RESOLUTION_FUEL.with(|fuel| fuel.get().is_some()) {
         return None;
     }

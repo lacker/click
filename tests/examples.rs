@@ -19,7 +19,7 @@ const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const QUARANTINED: &[(&str, &str)] = &[
     (
         "binary-tree",
-        "issues/binary-tree-verification-exceeds-slow-test-threshold.md: the tree_sum_root_and_children step sits at the 500ms simple wall-clock budget and fails under ordinary machine load",
+        "issues/binary-tree-verification-exceeds-slow-test-threshold.md: aggregate verification cost rides the 30s project deadline (25s warm CPU), so the project flakes with machine load even though every tactic is inside its deterministic work budget",
     ),
     (
         "bounded-pool",

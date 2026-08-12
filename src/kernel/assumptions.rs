@@ -564,7 +564,7 @@ impl Drop for AssumptionsIdScope {
 /// True when CLICK_DISABLE_DECIDE_MEMO is set: decision and equality-graph
 /// memoization is bypassed so behavior can be compared against the
 /// unmemoized prover. Checked once per thread.
-fn decide_memo_disabled() -> bool {
+pub(super) fn decide_memo_disabled() -> bool {
     thread_local! {
         static DISABLED: std::cell::OnceCell<bool> = const { std::cell::OnceCell::new() };
     }
