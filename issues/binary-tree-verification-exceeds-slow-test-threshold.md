@@ -22,6 +22,31 @@ semantic budget. Direct CLI and already-built harness timings agree, so this
 is not a test-harness-only slowdown. The problem is the project's real
 aggregate verification cost.
 
+## Status 2026-08-12
+
+Whole-project measurement is currently blocked: the project is quarantined
+for the independent
+[grouped-simp expressibility failure](binary-tree-grouped-simp-transition-not-expressible.md),
+which fails `tree_is_leaf.contract` before the expensive functions run. The
+`tree_sum_root_and_children` proof unit still verifies through the targeted
+entry point (`click verify examples/binary-tree/binary_tree.click:153:5`)
+and was used as the reduction workload.
+
+Attribution of its hot `step` (statement 2, source tactic 5) confirmed the
+suspected repeated work in kernel memory/resource reasoning: every
+order-path query re-collected `condition_order_facts` from an unchanged fact
+set, and the same top-level pointer/bitvector memory-resolution queries were
+re-run dozens of times per step from separation and resource-context scans.
+Both are now memoized by fact-set content identity with the decide-memo
+truncation discipline, with kernel cache-behavior regressions. The step's
+deterministic cost fell from 63,752 to 40,460 work units; input-cursor's
+analogous step fell from 92,826 to 35,368.
+
+Tactic budgets are now enforced primarily in deterministic work units
+(simple 100,000), so the pass/fail behavior of this project no longer
+depends on machine speed; the remaining problem is aggregate latency only.
+Re-profile the whole project once the grouped-simp quarantine lifts.
+
 ## Regression design
 
 Add sufficiently narrow profiling around ordered-proof finishing to separate
