@@ -167,6 +167,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Split
             | ProofTactic::Left
             | ProofTactic::Right
+            | ProofTactic::Enumerate
             | ProofTactic::Contradiction(_)
             | ProofTactic::Rewrite(_)
             | ProofTactic::Simp
@@ -248,6 +249,7 @@ pub(in crate::lang::click) fn tactic_name(tactic: &ProofTactic) -> &'static str 
         ProofTactic::Split => "split",
         ProofTactic::Left => "left",
         ProofTactic::Right => "right",
+        ProofTactic::Enumerate => "enumerate",
         ProofTactic::Contradiction(_) => "contradiction",
         ProofTactic::CloseInvariants => "close_invariants",
         ProofTactic::Rewrite(_) => "rewrite",

@@ -1043,7 +1043,11 @@ fn select_outcome_simp_certificate(
                         proposition: Box::new(core),
                     };
                     if let Ok(lowered) = check(&surface)
-                        && propositions_match_up_to_canonical_loads(&lowered, &required)
+                        && (propositions_match_up_to_canonical_loads(&lowered, &required)
+                            // A quantified fact re-lowers with fresh binder
+                            // variables; recognize it up to per-level binder
+                            // renaming like the ambient premise pairing does.
+                            || nested_quantified_binder_equivalent(&lowered, &required, 8))
                     {
                         if !kernel_premises.contains(&lowered) {
                             kernel_premises.push(lowered);
@@ -1162,6 +1166,71 @@ pub(super) fn lower_outcome_simp_tactics(
             let mut tactics = vec![ProofTactic::UnfoldPredicate(name.clone())];
             tactics.append(&mut suffix);
             return Ok(tactics);
+        }
+        // A universal predicate body (such as an `all_le_range` or `sorted`
+        // postcondition) is dischargeable through the explicit forall-goal
+        // chain or a spelled finite enumeration once the goal is unfolded to
+        // its quantified spelling. Nested predicate definitions unfold one
+        // named step at a time, and each step is carried in the certificate.
+        let mut unfold_names = Vec::new();
+        let mut unfolded_surface = surface_goal.clone();
+        while let ClickProposition::PredicateCall { name, .. } = &unfolded_surface {
+            if unfold_names.len() >= 8 || predicate_environment.get(name).is_none() {
+                break;
+            }
+            let Ok(next) = unfold_structural_invariant_proposition(
+                predicate_environment,
+                &unfolded_surface,
+                std::slice::from_ref(name),
+            ) else {
+                break;
+            };
+            unfold_names.push(name.clone());
+            unfolded_surface = next;
+        }
+        if !unfold_names.is_empty()
+            && let Ok(fully_unfolded_goal) = unfold_predicates_in_proposition(
+                predicate_environment,
+                click_function_environment,
+                &unfold_names,
+                goal,
+                &assumptions_from_propositions(&available),
+            )
+        {
+            let suffix = plan_explicit_forall_goal(
+                &fully_unfolded_goal,
+                &unfolded_surface,
+                &premise_pairs,
+            )
+            .or_else(|| {
+                plan_outcome_finite_forall_enumeration(
+                    replay,
+                    &unfolded_surface,
+                    &fully_unfolded_goal,
+                    available,
+                    &premise_pairs,
+                    parameters,
+                    arguments,
+                    pre_state,
+                    post_state,
+                    result,
+                    predicate_environment,
+                    click_function_environment,
+                )
+            });
+            if let Some(mut suffix) = suffix {
+                let mut tactics = unfold_names
+                    .into_iter()
+                    .map(ProofTactic::UnfoldPredicate)
+                    .collect::<Vec<_>>();
+                tactics.append(&mut suffix);
+                SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+                    ClickError::new(format!(
+                        "universal predicate goal discharge produced a non-simple expansion: {error:?}"
+                    ))
+                })?;
+                return Ok(tactics);
+            }
         }
     }
     if let Some(tactics) = plan_explicit_unchanged_load_transport(surface_goal, &premise_pairs) {
@@ -1316,6 +1385,199 @@ fn plan_outcome_disjunction_cases(
             left_tactics,
             right_tactics,
         })]);
+    }
+    None
+}
+
+/// Constructs an explicit finite-enumeration certificate for a
+/// constant-bounded universal goal: one spelled `have` per non-vacuous
+/// instance of the kernel's deterministic instantiation table (each proved by
+/// its own recursively constructed certificate), closed by `enumerate()`.
+/// Vacuous instances (a guard refuted by the substituted constants) are
+/// checked by normalization during replay and need no spelled proof.
+#[allow(clippy::too_many_arguments)]
+fn plan_outcome_finite_forall_enumeration(
+    replay: &TacticReplayState,
+    surface_goal: &ClickProposition,
+    goal: &Proposition,
+    available: &[Proposition],
+    premise_pairs: &[(Proposition, ClickProposition)],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Option<Vec<ProofTactic>> {
+    let instances = crate::kernel::finite_forall_goal_instances(goal)?;
+    // Peel the surface binder chain to substitute each enumerated value.
+    let mut binder_names = Vec::new();
+    let mut surface_body = surface_goal;
+    while let ClickProposition::ForAll { name, body, .. } = surface_body {
+        binder_names.push(name.clone());
+        surface_body = body.as_ref();
+    }
+    if binder_names.is_empty() {
+        return None;
+    }
+    let mut tactics = Vec::new();
+    for (values, instance) in instances {
+        check_verification_deadline().ok()?;
+        if values.len() != binder_names.len() {
+            return None;
+        }
+        if matches!(normalize_proposition(&instance), SimpProposition::True) {
+            continue;
+        }
+        let value_expressions = values
+            .iter()
+            .map(|value| {
+                u32::try_from(*value).ok().map(|value| {
+                    ContractExpression::CFragment(CExpression::Value(int32(
+                        Bitvector32Term::Constant(value),
+                    )))
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let substitutions = binder_names
+            .iter()
+            .cloned()
+            .zip(value_expressions.iter().cloned())
+            .collect::<BTreeMap<_, _>>();
+        let surface_instance = substitute_click_proposition(surface_body, &substitutions).ok()?;
+        let proof = plan_finite_instance_proof(
+            replay,
+            post_state,
+            available,
+            &instance,
+            &surface_instance,
+            &values,
+            &value_expressions,
+            premise_pairs,
+        )
+        .map(Proof::Script)
+        .or_else(|| {
+            lower_outcome_simp_proof(
+                replay,
+                &surface_instance,
+                &instance,
+                available,
+                parameters,
+                arguments,
+                pre_state,
+                post_state,
+                result,
+                predicate_environment,
+                click_function_environment,
+            )
+            .ok()
+        })?;
+        tactics.push(ProofTactic::Have(ProofHave {
+            proposition: surface_instance,
+            proof,
+        }));
+    }
+    tactics.push(ProofTactic::Enumerate);
+    Some(tactics)
+}
+
+/// The direct proof of one non-vacuous enumeration instance: introduce its
+/// constant guard, then discharge the conclusion from one listed universal
+/// premise instantiated at one of the instance's own spelled values. A
+/// candidate that would need a transport is accepted only when the same
+/// certified-transport judgment the replay runs already connects its
+/// instantiated conclusion to the instance goal.
+#[allow(clippy::too_many_arguments)]
+fn plan_finite_instance_proof(
+    replay: &TacticReplayState,
+    post_state: &CState,
+    available: &[Proposition],
+    instance: &Proposition,
+    surface_instance: &ClickProposition,
+    values: &[i64],
+    value_expressions: &[ContractExpression],
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let (antecedent, conclusion, surface_conclusion) = match (instance, surface_instance) {
+        (
+            Proposition::Implies(antecedent, conclusion),
+            ClickProposition::Implies(_, surface_conclusion),
+        ) => (
+            Some(antecedent.as_ref()),
+            conclusion.as_ref(),
+            surface_conclusion.as_ref(),
+        ),
+        (instance, surface_instance) => (None, instance, surface_instance),
+    };
+    let premise_kernels = premise_pairs
+        .iter()
+        .map(|(kernel, _)| kernel.clone())
+        .collect::<Vec<_>>();
+    let conclusion_gate = |source: &Proposition| -> bool {
+        let explicit_assumptions = premise_kernels.iter().cloned().fold(
+            assumptions_from_propositions(std::slice::from_ref(source)),
+            |assumptions, fact| assumptions.assume_proposition(fact),
+        );
+        let implicit_assumptions = available
+            .iter()
+            .filter(|fact| is_implicit_fact_transport_context(fact))
+            .cloned()
+            .fold(explicit_assumptions, |assumptions, fact| {
+                assumptions.assume_proposition(fact)
+            });
+        let transition_facts = fact_transport_transition_facts(&replay.effect_facts, source);
+        let transport_assumptions = transition_facts
+            .iter()
+            .fold(implicit_assumptions, |assumptions, fact| {
+                assumptions.assume_proposition(fact.proposition().clone())
+            })
+            .assume_proposition(source.clone());
+        certified_fact_transport_reaches_through(
+            source,
+            conclusion,
+            post_state.memory(),
+            &transport_assumptions,
+            &transition_facts,
+        )
+    };
+    for (index, (kernel, surface)) in premise_pairs.iter().enumerate() {
+        if !matches!(kernel, Proposition::ForAll { .. }) {
+            continue;
+        }
+        let mut discharge_kernels = antecedent.into_iter().cloned().collect::<Vec<_>>();
+        let mut using_surfaces = Vec::new();
+        for (other, (other_kernel, other_surface)) in premise_pairs.iter().enumerate() {
+            if other == index {
+                continue;
+            }
+            discharge_kernels.push(other_kernel.clone());
+            using_surfaces.push(other_surface.clone());
+        }
+        for (value, value_expression) in values.iter().zip(value_expressions) {
+            let Ok(argument) = u32::try_from(*value) else {
+                continue;
+            };
+            let Some(mut body_tactics) = plan_explicit_universal_conclusion_discharge(
+                kernel,
+                surface,
+                Bitvector32Term::Constant(argument),
+                value_expression,
+                conclusion,
+                surface_conclusion,
+                &discharge_kernels,
+                &using_surfaces,
+                Some(&conclusion_gate),
+            ) else {
+                continue;
+            };
+            let mut tactics = Vec::new();
+            if antecedent.is_some() {
+                tactics.push(ProofTactic::Intro);
+            }
+            tactics.append(&mut body_tactics);
+            return Some(tactics);
+        }
     }
     None
 }
@@ -1498,6 +1760,108 @@ fn plan_explicit_forall_instantiation(
 /// the introduced binder, and close by assumption. The instantiated guards
 /// discharge from the introduced antecedent plus the remaining listed
 /// premises.
+/// One explicit `instantiate ... using` (plus its optional closing transport
+/// and `assumption`) that discharges `goal_conclusion` from a universal
+/// premise at the given argument. Shared between the binder-introduction
+/// forall-goal chain and spelled finite-enumeration instances.
+#[allow(clippy::too_many_arguments)]
+fn plan_explicit_universal_conclusion_discharge(
+    premise_kernel: &Proposition,
+    premise_surface: &ClickProposition,
+    argument_term: Bitvector32Term,
+    argument_expression: &ContractExpression,
+    goal_conclusion: &Proposition,
+    surface_goal_conclusion: &ClickProposition,
+    discharge_kernels: &[Proposition],
+    using_surfaces: &[ClickProposition],
+    conclusion_gate: Option<&dyn Fn(&Proposition) -> bool>,
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ForAll {
+        var: premise_var,
+        sort: Sort::CInt32,
+        body: premise_body,
+    } = premise_kernel
+    else {
+        return None;
+    };
+    let instantiated =
+        substitute_int32_variable_in_proposition(premise_body, *premise_var, argument_term);
+    let (_, conclusion) = discharge_instantiated_guards(instantiated, discharge_kernels).ok()?;
+    let closes_by_assumption = conclusion == *goal_conclusion
+        || normalize_direct_atomic_memory_loads(&conclusion)
+            == normalize_direct_atomic_memory_loads(goal_conclusion);
+    // Constant-argument instances offer several instantiation candidates, so
+    // the caller may insist the instantiated conclusion provably reaches the
+    // goal before accepting a transport that replay would reject.
+    if !closes_by_assumption
+        && let Some(gate) = conclusion_gate
+        && !gate(&conclusion)
+    {
+        return None;
+    }
+    // A residual spelling difference (for example a loop counter the listed
+    // order facts pin to a constant) crosses through an explicit transport
+    // from the instantiated conclusion instead. The transported closure is
+    // validated by the caller's immediate certificate replay, so no weaker
+    // equivalence pre-check runs here.
+    let transport_closure = if closes_by_assumption {
+        None
+    } else {
+        // A loop-exit universal invariant fact is spelled through an
+        // `at(point, ...)` wrapper; peel it here and restore it on the
+        // substituted transport source so the source lowers at the same
+        // snapshot the premise denotes.
+        let (premise_selector, premise_forall) = match premise_surface {
+            ClickProposition::At {
+                selector,
+                proposition,
+            } => (Some(selector), proposition.as_ref()),
+            other => (None, other),
+        };
+        let ClickProposition::ForAll {
+            name: premise_binder,
+            body: premise_surface_body,
+            ..
+        } = premise_forall
+        else {
+            return None;
+        };
+        let premise_surface_conclusion = match premise_surface_body.as_ref() {
+            ClickProposition::Implies(_, conclusion) => conclusion.as_ref(),
+            body => body,
+        };
+        let substitutions =
+            std::iter::once((premise_binder.clone(), argument_expression.clone()))
+                .collect::<BTreeMap<_, _>>();
+        let source =
+            substitute_click_proposition(premise_surface_conclusion, &substitutions).ok()?;
+        let source = match premise_selector {
+            Some(selector) => ClickProposition::At {
+                selector: selector.clone(),
+                proposition: Box::new(source),
+            },
+            None => source,
+        };
+        Some((source, surface_goal_conclusion.clone()))
+    };
+    let mut tactics = vec![ProofTactic::InstantiateUsing {
+        quantified: premise_surface.clone(),
+        argument: argument_expression.clone(),
+        premises: using_surfaces.to_vec(),
+    }];
+    if let Some((source, target)) = transport_closure {
+        let mut transport_premises = vec![source.clone()];
+        transport_premises.extend(using_surfaces.iter().cloned());
+        tactics.push(ProofTactic::TransportUsing {
+            source,
+            target,
+            premises: transport_premises,
+        });
+    }
+    tactics.push(ProofTactic::Assumption);
+    Some(tactics)
+}
+
 fn plan_explicit_forall_goal(
     goal: &Proposition,
     surface_goal: &ClickProposition,
@@ -1531,16 +1895,11 @@ fn plan_explicit_forall_goal(
             ),
             (body, _) => (None, body, None),
         };
-    let normalized_goal_conclusion = normalize_direct_atomic_memory_loads(goal_conclusion);
+    let surface_goal_conclusion = match surface_body.as_ref() {
+        ClickProposition::Implies(_, conclusion) => conclusion.as_ref(),
+        body => body,
+    };
     for (index, (kernel, surface)) in premise_pairs.iter().enumerate() {
-        let Proposition::ForAll {
-            var: premise_var,
-            sort: Sort::CInt32,
-            body: premise_body,
-        } = kernel
-        else {
-            continue;
-        };
         let mut discharge_kernels = antecedent.iter().cloned().collect::<Vec<_>>();
         let mut using_surfaces = surface_antecedent.iter().cloned().collect::<Vec<_>>();
         for (other, (other_kernel, other_surface)) in premise_pairs.iter().enumerate() {
@@ -1550,74 +1909,24 @@ fn plan_explicit_forall_goal(
             discharge_kernels.push(other_kernel.clone());
             using_surfaces.push(other_surface.clone());
         }
-        let instantiated = substitute_int32_variable_in_proposition(
-            premise_body,
-            *premise_var,
+        let Some(mut body_tactics) = plan_explicit_universal_conclusion_discharge(
+            kernel,
+            surface,
             Bitvector32Term::Variable(*goal_var),
-        );
-        let Ok((_, conclusion)) = discharge_instantiated_guards(instantiated, &discharge_kernels)
-        else {
+            &ContractExpression::CFragment(CExpression::Variable(binder_name.clone())),
+            goal_conclusion,
+            surface_goal_conclusion,
+            &discharge_kernels,
+            &using_surfaces,
+            None,
+        ) else {
             continue;
-        };
-        let closes_by_assumption = conclusion == *goal_conclusion
-            || normalize_direct_atomic_memory_loads(&conclusion) == normalized_goal_conclusion;
-        // A residual spelling difference (for example a loop counter the
-        // listed order facts pin to a constant) crosses through an explicit
-        // transport from the instantiated conclusion instead.
-        // The transported closure is validated by the caller's immediate
-        // certificate replay, so no weaker equivalence pre-check runs here.
-        let transport_closure = if closes_by_assumption {
-            None
-        } else {
-            let ClickProposition::ForAll {
-                name: premise_binder,
-                body: premise_surface_body,
-                ..
-            } = surface
-            else {
-                continue;
-            };
-            let premise_surface_conclusion = match premise_surface_body.as_ref() {
-                ClickProposition::Implies(_, conclusion) => conclusion.as_ref(),
-                body => body,
-            };
-            let substitutions = std::iter::once((
-                premise_binder.clone(),
-                ContractExpression::CFragment(CExpression::Variable(binder_name.clone())),
-            ))
-            .collect::<BTreeMap<_, _>>();
-            let Ok(source) =
-                substitute_click_proposition(premise_surface_conclusion, &substitutions)
-            else {
-                continue;
-            };
-            let surface_goal_conclusion = match surface_body.as_ref() {
-                ClickProposition::Implies(_, conclusion) => conclusion.as_ref().clone(),
-                body => body.clone(),
-            };
-            Some((source, surface_goal_conclusion))
         };
         let mut tactics = vec![ProofTactic::Intro];
         if antecedent.is_some() {
             tactics.push(ProofTactic::Intro);
         }
-        tactics.push(ProofTactic::InstantiateUsing {
-            quantified: surface.clone(),
-            argument: ContractExpression::CFragment(CExpression::Variable(
-                binder_name.clone(),
-            )),
-            premises: using_surfaces.clone(),
-        });
-        if let Some((source, target)) = transport_closure {
-            let mut transport_premises = vec![source.clone()];
-            transport_premises.extend(using_surfaces);
-            tactics.push(ProofTactic::TransportUsing {
-                source,
-                target,
-                premises: transport_premises,
-            });
-        }
-        tactics.push(ProofTactic::Assumption);
+        tactics.append(&mut body_tactics);
         return Some(tactics);
     }
     // Without a universal premise the body may still be a preserved load:

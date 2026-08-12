@@ -1915,6 +1915,7 @@ fn prove_pure_theorem_tactics(
             | ProofTactic::Split
             | ProofTactic::Left
             | ProofTactic::Right
+            | ProofTactic::Enumerate
             | ProofTactic::Contradiction(_) => {
                 let contradiction_fact = match tactic {
                     ProofTactic::Contradiction(surface_fact) => Some(

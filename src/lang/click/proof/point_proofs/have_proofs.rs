@@ -857,7 +857,12 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         ))
                     })?;
                 for premise in &explicit_premises {
-                    if !exact_fact_is_available(premise, &available) {
+                    // A listed universal premise re-lowers with fresh binder
+                    // variables; recognize it up to binder renaming.
+                    if !exact_fact_is_available(premise, &available)
+                        && quantified_replay_equivalent_available_fact(premise, &available)
+                            .is_none()
+                    {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `transport using` requires an exact available premise"
                         )));
@@ -1014,7 +1019,13 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         ))
                     })?;
                 for premise in &explicit_premises {
-                    if !exact_fact_is_available(premise, &available) {
+                    // A listed universal premise re-lowers with fresh binder
+                    // variables; recognize it up to binder renaming, exactly
+                    // as the quantified fact itself is recognized below.
+                    if !exact_fact_is_available(premise, &available)
+                        && quantified_replay_equivalent_available_fact(premise, &available)
+                            .is_none()
+                    {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate using` requires an exact available premise"
                         )));
@@ -1240,6 +1251,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
             | ProofTactic::Split
             | ProofTactic::Left
             | ProofTactic::Right
+            | ProofTactic::Enumerate
             | ProofTactic::Contradiction(_)
             | ProofTactic::SimpUsing(_)
             | ProofTactic::Rewrite(_) => {
@@ -1419,6 +1431,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     | ProofTactic::Split
                     | ProofTactic::Left
                     | ProofTactic::Right
+                    | ProofTactic::Enumerate
                     | ProofTactic::Contradiction(_) => {
                         let contradiction_fact = match tactic {
                             ProofTactic::Contradiction(surface_fact) => Some(

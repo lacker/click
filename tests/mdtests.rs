@@ -19,14 +19,6 @@ const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
 /// they are fixed (see docs/advanced/testing-click.md).
 const QUARANTINED: &[(&str, &str)] = &[
     (
-        "bubble_pass3_max_suffix.md",
-        "issues/universal-outcome-certificates-missing.md: universal loop-summary goal's expressible path facts do not replay its postcondition derivation",
-    ),
-    (
-        "bubble_sort3_two_pass_sorted.md",
-        "issues/universal-outcome-certificates-missing.md: nested two-binder sorted postcondition needs finite case-split certificates",
-    ),
-    (
         "proof_if_cases.md",
         "issues/owned-string-pure-theorem-certificate-missing.md: pure smart proof produces no pure surface certificate",
     ),

@@ -1312,6 +1312,106 @@ fn cases_checks_each_branch_under_exactly_its_own_disjunct() {
 }
 
 #[test]
+fn enumerate_closes_a_constant_bounded_universal_goal() {
+    let c_source = r#"
+        int32 keep(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "keep.c";
+
+        int32 keep(int32 x) {
+            requires small: x <= 5;
+            ensures bounded: forall (k: int32) { 0 <= k and k < 2 implies x <= 5 };
+        } by {
+            execute();
+            have forall (k: int32) { 0 <= k and k < 2 implies x <= 5 } by {
+                have 0 <= 0 and 0 < 2 implies x <= 5 by { intro(); assumption(); }
+                have 0 <= 1 and 1 < 2 implies x <= 5 by { intro(); assumption(); }
+                enumerate();
+            }
+            assumption();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("keep.c", c_source)])
+        .expect("spelled instances should close the bounded universal by enumeration");
+}
+
+#[test]
+fn enumerate_requires_each_in_range_instance_as_an_available_fact() {
+    let c_source = r#"
+        int32 keep(int32 x) {
+            return x;
+        }
+    "#;
+    // The `k == 0` instance (`0 <= x`) is neither spelled nor an available
+    // fact, so the enumeration must fail instead of deriving the missing
+    // case by search.
+    let click_source = r#"
+        verifying "keep.c";
+
+        int32 keep(int32 x) {
+            requires low: 1 <= x;
+            ensures bounded: forall (k: int32) { 0 <= k and k < 2 implies k <= x };
+        } by {
+            execute();
+            have forall (k: int32) { 0 <= k and k < 2 implies k <= x } by {
+                have 0 <= 1 and 1 < 2 implies 1 <= x by { intro(); assumption(); }
+                enumerate();
+            }
+            assumption();
+        }
+    "#;
+
+    let error = verify_c0_sources(click_source, &[("keep.c", c_source)])
+        .expect_err("a missing in-range instance must fail the enumeration");
+    assert!(
+        error
+            .message()
+            .contains("`enumerate` requires each in-range instance as an exact available fact"),
+        "unexpected error: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn enumerate_requires_a_constant_bounded_universal_goal() {
+    let c_source = r#"
+        int32 keep(int32 x) {
+            return x;
+        }
+    "#;
+    // The binder has no constant upper bound, so there is no finite
+    // instantiation table to check.
+    let click_source = r#"
+        verifying "keep.c";
+
+        int32 keep(int32 x) {
+            requires small: x <= 5;
+            ensures bounded: forall (k: int32) { 0 <= k and k < x implies x <= 5 };
+        } by {
+            execute();
+            have forall (k: int32) { 0 <= k and k < x implies x <= 5 } by {
+                enumerate();
+            }
+            assumption();
+        }
+    "#;
+
+    let error = verify_c0_sources(click_source, &[("keep.c", c_source)])
+        .expect_err("an unbounded universal goal must not enumerate");
+    assert!(
+        error
+            .message()
+            .contains("`enumerate` requires a universal goal"),
+        "unexpected error: {}",
+        error.message()
+    );
+}
+
+#[test]
 fn disjunctive_premise_simp_expands_to_a_cases_certificate() {
     let c_source = r#"
         int32 select_first(int32* left, int32* right, int32 choose_left) {

@@ -1,5 +1,60 @@
 use super::*;
 
+/// The finite instantiation table of a constant-bounded universal goal, in
+/// deterministic range order. `None` when the binder chain has no
+/// guard-derived constant range or the table would exceed the finite
+/// instantiation limit. This mirrors the ranges the kernel's `FiniteForAll`
+/// derivation enumerates, so a surface certificate that spells each in-range
+/// instance can be checked with work proportional to this table.
+pub(crate) fn finite_forall_goal_instances(
+    proposition: &Proposition,
+) -> Option<Vec<(Vec<i64>, Proposition)>> {
+    fn collect(
+        body: &Proposition,
+        variables: &[Variable],
+        ranges: &[FiniteForAllRange],
+        values: &mut Vec<i64>,
+        instances: &mut Vec<(Vec<i64>, Proposition)>,
+    ) {
+        if values.len() == variables.len() {
+            let mut instantiated = body.clone();
+            for (variable, value) in variables.iter().zip(values.iter()) {
+                instantiated = substitute_bitvector_variable_in_proposition(
+                    &instantiated,
+                    *variable,
+                    &signed_i64_bitvector_constant(*value),
+                );
+            }
+            instances.push((values.clone(), instantiated));
+            return;
+        }
+        let range = &ranges[values.len()];
+        for value in range.lower..=range.upper {
+            values.push(value);
+            collect(body, variables, ranges, values, instances);
+            values.pop();
+        }
+    }
+
+    let mut variables = Vec::new();
+    let body = collect_forall_chain(proposition, &mut variables);
+    if variables.is_empty() {
+        return None;
+    }
+    let ranges = finite_forall_ranges(&variables, body)?;
+    let instance_count = ranges.iter().try_fold(1usize, |count, range| {
+        usize::try_from(range.upper - range.lower + 1)
+            .ok()
+            .and_then(|width| count.checked_mul(width))
+    })?;
+    if instance_count > FINITE_FORALL_INSTANTIATION_LIMIT {
+        return None;
+    }
+    let mut instances = Vec::with_capacity(instance_count);
+    collect(body, &variables, &ranges, &mut Vec::new(), &mut instances);
+    Some(instances)
+}
+
 impl Assumptions {
     pub fn proves(&self, proposition: &Proposition) -> bool {
         if crate::instrumentation::deadline_exceeded() {

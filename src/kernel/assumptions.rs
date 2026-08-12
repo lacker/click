@@ -10,6 +10,8 @@ mod condition_reasoning;
 mod memory_reasoning;
 mod proposition_reasoning;
 
+pub(crate) use proposition_reasoning::finite_forall_goal_instances;
+
 // Global equality resolution can re-enter itself through snapshot and alias
 // facts. Two levels retain the framed symbolic-load cases while making failed
 // searches terminate conservatively instead of overflowing the stack.

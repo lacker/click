@@ -78,6 +78,7 @@ remains migration compatibility and should not be used in new proofs.
 | `intro()` | simple | Introduce an implication antecedent, negated proposition, or universal binder; an introduced binder is available by its Click name to following tactics. |
 | `split()` | simple | Close a conjunction when both conjuncts are exact available facts. |
 | `left()` / `right()` | simple | Close the selected disjunct from an exact available fact. |
+| `enumerate()` | simple | Close a universal goal whose guards bound every binder to a constant range: each in-range instance must either normalize context-free (a vacuous guard) or be an exact available fact, checked in range order with work proportional to the instantiation table. |
 | `contradiction(P)` | simple | Close from exact facts `P` and `not P`, including exact opposite polarities of the same C condition. |
 | `instantiate(F, value) using { P; ... }` | simple | Specialize an exact available universal fact `F` at `value`, discharging each instantiated guard from the listed premises alone (by normalization or one bounded atomic derivation), and add the instantiated conclusion. |
 | `apply(theorem(args))` | smart | Apply a theorem while selecting its premises from context. |
@@ -99,6 +100,14 @@ Although ordinary global-theorem `apply` is smart when it searches for
 premises, applying the named induction hypothesis is a deterministic simple
 step with fixed nonnegative, strict-decrease, and substituted-requirement
 obligations.
+
+`enumerate` is how a certificate closes a finite case analysis over a
+constant-bounded universal, such as a `sorted(p, 3)` postcondition: the
+certificate spells one `have` per non-vacuous instance (typically closed by
+`intro`, `instantiate ... using`, an explicit transport, and `assumption`),
+and `enumerate()` checks exactly those instances against the goal's own
+guard-derived ranges. Replay never instantiates by search: an in-range
+instance that is neither vacuous nor spelled fails.
 
 Proof-level `if` and `cases` answer different questions. `if P` is an
 excluded-middle split: the else case assumes `not P`, so it cannot eliminate a

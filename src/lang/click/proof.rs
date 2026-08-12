@@ -171,6 +171,31 @@ fn apply_logical_goal_tactic(
             }
             Ok(true)
         }
+        ProofTactic::Enumerate => {
+            // Close a constant-bounded universal goal from its spelled
+            // instances: the goal's guards fix each binder's constant range
+            // (exactly the kernel `FiniteForAll` table), and every in-range
+            // instance must either normalize context-free (a vacuous guard)
+            // or be an exact available fact. Work is proportional to the
+            // instantiation table; nothing is searched.
+            let Some(instances) = crate::kernel::finite_forall_goal_instances(goal) else {
+                return Err(format!(
+                    "`enumerate` requires a universal goal whose guards bound every binder to a constant range, got {goal:?}"
+                ));
+            };
+            for (_, instance) in instances {
+                if normalizes_context_free(&instance) {
+                    continue;
+                }
+                if !pure_fact_is_replay_available(&instance, available) {
+                    return Err(format!(
+                        "`enumerate` requires each in-range instance as an exact available fact; missing {}",
+                        describe_pure_fact(&instance, &[], &[]),
+                    ));
+                }
+            }
+            Ok(true)
+        }
         ProofTactic::Contradiction(_) => {
             let fact = contradiction_fact
                 .ok_or_else(|| "`contradiction` is missing its lowered fact".to_string())?;

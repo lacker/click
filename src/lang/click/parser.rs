@@ -1951,6 +1951,10 @@ impl Parser {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::Right
             }
+            "enumerate" => {
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::Enumerate
+            }
             "contradiction" => {
                 self.expect(Token::LParen)?;
                 let proposition = self.parse_proposition()?;

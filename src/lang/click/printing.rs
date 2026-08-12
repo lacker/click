@@ -332,6 +332,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::Split => line(output, &prefix, "split();"),
         ProofTactic::Left => line(output, &prefix, "left();"),
         ProofTactic::Right => line(output, &prefix, "right();"),
+        ProofTactic::Enumerate => line(output, &prefix, "enumerate();"),
         ProofTactic::Contradiction(fact) => line(
             output,
             &prefix,

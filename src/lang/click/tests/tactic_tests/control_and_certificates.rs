@@ -430,14 +430,17 @@ fn canonical_tactic_printer_round_trips_cases_certificate() {
         Box::new(nonnegative.clone()),
         Box::new(negative.clone()),
     );
-    let tactics = vec![ProofTactic::Have(ProofHave {
-        proposition: disjunction.clone(),
-        proof: Proof::Script(vec![ProofTactic::Cases(ProofCases {
-            disjunction,
-            left_tactics: vec![ProofTactic::Left],
-            right_tactics: vec![ProofTactic::Right],
-        })]),
-    })];
+    let tactics = vec![
+        ProofTactic::Have(ProofHave {
+            proposition: disjunction.clone(),
+            proof: Proof::Script(vec![ProofTactic::Cases(ProofCases {
+                disjunction,
+                left_tactics: vec![ProofTactic::Left],
+                right_tactics: vec![ProofTactic::Right],
+            })]),
+        }),
+        ProofTactic::Enumerate,
+    ];
     let certificate = SimpleProof::from_proof_tactics(&tactics)
         .expect("a cases script should form a surface certificate");
     let printed = format_simple_proof(&certificate);
