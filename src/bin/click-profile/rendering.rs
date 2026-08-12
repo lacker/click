@@ -63,6 +63,15 @@ pub(super) fn render_profiles_with_top(
         format_fractional_duration(time_limit),
     )
     .expect("writing a String cannot fail");
+    {
+        let budgets = click::instrumentation::TacticWorkLimits::default();
+        writeln!(
+            output,
+            "Enforced budgets are deterministic work units (simple {}, smart {}, control {}); the time thresholds above are reporting thresholds.",
+            budgets.simple, budgets.smart, budgets.control,
+        )
+        .expect("writing a String cannot fail");
+    }
     writeln!(
         output,
         "Classification is emitted by the verifier; do not infer it from a tactic's name."
@@ -911,8 +920,9 @@ fn render_category(
         };
         writeln!(
             output,
-            "  {:>10}  {}  {}  {}  statement {}{}",
+            "  {:>10}  {:>13}  {}  {}  {}  statement {}{}",
             format_fractional_duration(step.elapsed),
+            format_work_units(step.work),
             step_location(&step.key),
             step.key.claim,
             step.key.tactic_name,
@@ -927,6 +937,14 @@ fn render_category(
             render_expansion_command(output, &step.key, position, thresholds, time_limit);
         }
     }
+}
+
+/// Renders a tactic's deterministic work as `N units` — the quantity its
+/// class budget is enforced in, shown alongside the measured time so a
+/// hotspot report says both how slow a tactic was here and how much of its
+/// machine-independent budget it spent.
+fn format_work_units(work: usize) -> String {
+    format!("{work} units")
 }
 
 /// Renders a step's `PATH:LINE:COLUMN`, or just the path when the step has no

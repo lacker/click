@@ -539,7 +539,7 @@ impl AssumptionsIdScope {
 /// reasoning helpers use this so only designated entry points ever pay the
 /// hash; outside any scope they simply run unmemoized, as before memoization
 /// existed.
-fn ambient_assumptions_memo_id(assumptions: &Assumptions) -> Option<u64> {
+pub(super) fn ambient_assumptions_memo_id(assumptions: &Assumptions) -> Option<u64> {
     let address = assumptions as *const Assumptions as usize;
     ASSUMPTIONS_ID_SCOPES.with(|scopes| {
         scopes
@@ -564,7 +564,7 @@ impl Drop for AssumptionsIdScope {
 /// True when CLICK_DISABLE_DECIDE_MEMO is set: decision and equality-graph
 /// memoization is bypassed so behavior can be compared against the
 /// unmemoized prover. Checked once per thread.
-fn decide_memo_disabled() -> bool {
+pub(super) fn decide_memo_disabled() -> bool {
     thread_local! {
         static DISABLED: std::cell::OnceCell<bool> = const { std::cell::OnceCell::new() };
     }
@@ -580,6 +580,13 @@ fn decide_memo_disabled() -> bool {
 /// a `None` whose search was truncated.
 pub(super) fn note_search_truncation() {
     SEARCH_TRUNCATIONS.with(|count| count.set(count.get() + 1));
+}
+
+/// The running count of ambient search truncations on this thread. Memo
+/// layers compare the count around a query to tell a pure negative answer
+/// (cacheable) from one whose search was cut short (path-dependent).
+pub(super) fn search_truncations() -> u64 {
+    SEARCH_TRUNCATIONS.with(Cell::get)
 }
 
 const DEFAULT_SIMP_REASONING_FUEL: usize = 300;

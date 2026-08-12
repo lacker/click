@@ -2540,3 +2540,92 @@ fn symbolic_max_not_lt_branch_is_native_theorem() {
         )
     );
 }
+
+#[test]
+fn repeated_order_fact_collections_share_one_scan() {
+    let left = Bitvector32Term::Variable(Variable(93_101));
+    let right = Bitvector32Term::Variable(Variable(93_102));
+    let assumptions =
+        Assumptions::new().assume_condition(ConditionTerm::signed_less_than(left, right), true);
+    let _scope = assumptions.enter_id_scope();
+
+    let first = assumptions.condition_order_facts();
+    let second = assumptions.condition_order_facts();
+
+    assert_eq!(first.len(), 1, "the order fact should be collected");
+    assert!(
+        std::rc::Rc::ptr_eq(&first, &second),
+        "a repeated collection over one fact set should share the first scan"
+    );
+}
+
+#[test]
+fn repeated_resolution_queries_do_not_repay_their_search() {
+    let left = Pointer {
+        block: "memo-regression".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(93_103)), 4),
+    };
+    let right = Pointer {
+        block: "memo-regression".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(93_104)), 4),
+    };
+    let assumptions = Assumptions::new().assume_condition(
+        ConditionTerm::signed_less_than(
+            Bitvector32Term::Variable(Variable(93_103)),
+            Bitvector32Term::Variable(Variable(93_104)),
+        ),
+        true,
+    );
+    let _scope = assumptions.enter_id_scope();
+
+    let work_for = |index: usize| {
+        let tactic = crate::instrumentation::TacticEvent {
+            claim: "memo.regression".to_string(),
+            tactic_index: index,
+            tactic_name: "query".to_string(),
+            class: "simple".to_string(),
+            statement_index: index,
+            source_index: index,
+        };
+        let (result, events) = crate::instrumentation::collect(|| {
+            crate::instrumentation::emit(crate::instrumentation::VerificationEvent::TacticStarted(
+                tactic.clone(),
+            ));
+            let result = pointers_proven_equal_for_memory_resolution(&left, &right, &assumptions);
+            crate::instrumentation::emit(
+                crate::instrumentation::VerificationEvent::TacticFinished {
+                    tactic: tactic.clone(),
+                    elapsed: std::time::Duration::ZERO,
+                    work: 0,
+                },
+            );
+            result
+        });
+        let work = events
+            .iter()
+            .find_map(|event| match event {
+                crate::instrumentation::VerificationEvent::TacticFinished { work, .. } => {
+                    Some(*work)
+                }
+                _ => None,
+            })
+            .expect("the query tactic should finish");
+        (result, work)
+    };
+
+    let (first_result, first_work) = work_for(0);
+    let (second_result, second_work) = work_for(1);
+
+    assert_eq!(
+        first_result, second_result,
+        "the memo must not change answers"
+    );
+    assert!(
+        first_work > 0,
+        "the first query should consume deterministic work"
+    );
+    assert_eq!(
+        second_work, 0,
+        "a repeated top-level query should answer from the memo without new work"
+    );
+}

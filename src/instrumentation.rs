@@ -91,6 +91,25 @@ pub struct TacticWorkLimits {
 }
 
 impl Default for TacticWorkLimits {
+    /// The deterministic work budget is the primary per-tactic bound: it
+    /// counts cooperative prover checkpoints, so the same source spends the
+    /// same units on any machine under any load.
+    ///
+    /// Simple calibration (2026-08-12, whole-claim-gate base, after the
+    /// order-fact and resolution-query memos, measured with budgets
+    /// disabled so no cost is clipped): the green example corpus (1,278
+    /// simple tactics including the gate's certificate re-replays) measures
+    /// p95 = 1,027 units, p99 = 6,292, max = 16,583; the green mdtest
+    /// corpus (6,137 simple tactics across 383 fixtures) measures p99 =
+    /// 766, second-largest = 20,796, max = 148,094 (copy3's
+    /// `close_invariants`, the corpus outlier); the issue-tracked hot steps
+    /// (input-cursor statement 5 and perpetual-service's fold) measure
+    /// 35,368 and 46,242. 500,000 gives the corpus maximum 3.4x margin and
+    /// everything else at least 10x, and deterministically fails any simple
+    /// tactic that grows past roughly three times today's worst known cost.
+    /// Changing a budget requires a fresh corpus measurement across BOTH
+    /// the examples and the mdtests and a documented reason; it is never a
+    /// way to make one proof pass.
     fn default() -> Self {
         Self {
             simple: 500_000,
@@ -112,9 +131,17 @@ impl TacticWorkLimits {
 }
 
 impl Default for TacticLimits {
+    /// Real-time limits are a backstop behind the deterministic work
+    /// budgets, catching stretches of work the cooperative checkpoints do
+    /// not count. The simple limit is deliberately generous: near-threshold
+    /// wall-clock enforcement made the same proof pass or fail with machine
+    /// load (an idle 209 ms step measured 500 ms on a loaded machine), so
+    /// the semantic gate for simple tactics is the work budget, and this
+    /// cutoff only stops runaway uncounted loops. Smart search keeps its
+    /// short cutoff: it is a heuristic whose latency is itself the product.
     fn default() -> Self {
         Self {
-            simple: Duration::from_millis(500),
+            simple: Duration::from_secs(5),
             smart: Duration::from_secs(2),
             control: Duration::from_secs(6),
         }
@@ -679,9 +706,9 @@ fn render_legacy(event: &VerificationEvent) -> String {
         VerificationEvent::TacticFinished {
             tactic,
             elapsed,
-            work: _,
+            work,
         } => format!(
-            "click timing: tactic {} {:.6}s",
+            "click timing: tactic {} {:.6}s work {work}",
             tactic_fields(tactic),
             elapsed.as_secs_f64()
         ),

@@ -1230,7 +1230,7 @@ impl Assumptions {
         let Some((left, right, strict)) = condition_as_order_fact(condition, value) else {
             return false;
         };
-        let mut order_facts = self.condition_order_facts();
+        let mut order_facts = self.condition_order_facts().as_ref().clone();
         self.collect_derived_order_facts(&mut order_facts);
         self.collect_quantified_order_facts_for_condition(condition, &mut order_facts);
         self.has_order_path_in_facts(&left, &right, strict, &order_facts)

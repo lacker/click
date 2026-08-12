@@ -153,16 +153,20 @@ smart planner must put every fact and rule it used into the `SimpleProof`.
 
 ## What is enforced today
 
-Ordinary verification stops a tactic when its class deadline expires, measured
-as **exclusive per-thread CPU time** on Unix: scheduler contention is not
-charged, and a container does not inherit its children's cost. Platforms
-without a thread CPU clock fall back to exclusive wall-clock time. The defaults
-are SIMPLE 500 ms, SMART 2 s, and CONTROL 6 s. Profiling still flags CONTROL
-bookkeeping at 2 s so it remains visible without making a non-expandable
-container share the hard cutoff for smart search. Kernel expression,
-statement, call, loop, and path checkpoints observe the active deadline, and
-the failure names the class, claim, statement, source tactic, elapsed time, and
-limit. `CLICK_DISABLE_TACTIC_BUDGETS=1`
+Ordinary verification stops a tactic when it exhausts its deterministic work
+budget (cooperative prover checkpoints; SIMPLE 500,000, SMART and CONTROL
+2,000,000), so pass/fail does not depend on machine speed or load. A
+real-time backstop behind it catches stretches of work the checkpoints do
+not count, measured as **exclusive per-thread CPU time** on Unix: scheduler
+contention is not charged, and a container does not inherit its children's
+cost. Platforms without a thread CPU clock fall back to exclusive wall-clock
+time. The backstop defaults are SIMPLE 5 s, SMART 2 s, and CONTROL 6 s;
+profile reporting still flags SIMPLE at 500 ms and CONTROL at 2 s so slow
+operations remain visible findings without becoming machine-dependent
+verdicts. Kernel expression, statement, call, loop, and path checkpoints
+observe the active deadline, and the failure names the class, claim,
+statement, source tactic, the spent work or elapsed time, and the limit.
+`CLICK_DISABLE_TACTIC_BUDGETS=1`
 bypasses enforcement for reduction and archaeology. `click profile` is itself
 a diagnostic override: its project deadline remains hard, while individual
 tactics are allowed to complete so the report can identify the slow operation.

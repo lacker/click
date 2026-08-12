@@ -1,17 +1,58 @@
 use super::*;
 
+/// One collected order fact: `left (<|<=) right` with its strictness.
+pub(in crate::kernel) type OrderFact = (Bitvector32Term, Bitvector32Term, bool);
+
+thread_local! {
+    // Order-path queries re-collect the same order facts from the same fact
+    // set dozens of times inside one tactic; the collection is a pure
+    // per-fact syntactic filter, so it is shared by fact-set content
+    // identity. An `Rc` hands every query the same collected vector without
+    // re-cloning the terms.
+    static ORDER_FACTS_MEMO: std::cell::RefCell<
+        std::collections::HashMap<u64, std::rc::Rc<Vec<OrderFact>>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+const ORDER_FACTS_MEMO_LIMIT: usize = 20_000;
+
 impl Assumptions {
-    pub(in crate::kernel) fn condition_order_facts(
-        &self,
-    ) -> Vec<(Bitvector32Term, Bitvector32Term, bool)> {
+    pub(in crate::kernel) fn condition_order_facts(&self) -> std::rc::Rc<Vec<OrderFact>> {
+        // Ambient scope id when live, content id otherwise — the same
+        // hash-once-per-distinct-fact-set policy `decide` pays at its entry.
+        // Each hit saves a full fact-set scan, so the collection stays
+        // cheaper than the hash only for fact sets never queried twice.
+        let memo_id = super::super::dag_memo_assumptions_id(self);
+        if let Some(memo_id) = memo_id
+            && let Some(hit) = ORDER_FACTS_MEMO.with(|memo| memo.borrow().get(&memo_id).cloned())
+        {
+            // One checkpoint keeps a run of memo hits responsive to the
+            // cooperative deadline without rescanning the fact set.
+            crate::instrumentation::deadline_exceeded();
+            return hit;
+        }
         let mut facts = Vec::new();
+        let mut complete = true;
         for (condition, value) in &self.condition_facts {
             if crate::instrumentation::deadline_exceeded() {
+                complete = false;
                 break;
             }
             if let Some(fact) = condition_as_order_fact(condition, *value) {
                 facts.push(fact);
             }
+        }
+        let facts = std::rc::Rc::new(facts);
+        // A scan cut short by the deadline is not this fact set's collection;
+        // only complete scans are shared.
+        if complete && let Some(memo_id) = memo_id {
+            ORDER_FACTS_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= ORDER_FACTS_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert(memo_id, facts.clone());
+            });
         }
         facts
     }

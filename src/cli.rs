@@ -144,11 +144,16 @@ fn duration_from_optional_os(
     parse_duration(source).map_err(|message| format!("{variable}: {message}"))
 }
 
-/// Per-class tactic time budgets (owner ruling 2026-07-31): a slow SIMPLE
+/// Per-class tactic time thresholds (owner ruling 2026-07-31): a slow SIMPLE
 /// tactic is an engine bug. A successful slow SMART tactic is an expansion
 /// candidate; a failed SMART search should be decomposed unless it missed its
 /// enforced bound or produced a tooling-quality failure.
-/// These match `click profile`'s default thresholds.
+/// These match `click profile`'s default reporting thresholds and the
+/// structured-violation diagnostics below. Production *enforcement* is the
+/// deterministic per-class work budget in `instrumentation::TacticWorkLimits`
+/// with a generous real-time backstop (`instrumentation::TacticLimits`):
+/// crossing a reporting threshold is a finding to investigate, while
+/// exhausting a work budget fails the proof deterministically.
 pub const DEFAULT_SIMPLE_TACTIC_LIMIT: Duration = Duration::from_millis(500);
 pub const DEFAULT_SMART_TACTIC_LIMIT: Duration = Duration::from_secs(2);
 pub const DEFAULT_CONTROL_TACTIC_LIMIT: Duration = Duration::from_secs(6);
