@@ -121,13 +121,15 @@ reports the interrupted tactic or verifier phase and writes no artifact.
 The implementation keeps source proofs and expanded proofs distinct:
 
 - `ProofTactic` is the parsed source representation and may contain smart,
-  simple, control, or internal planning operations.
+  simple, or control operations.
 - `SimpleProof` is the result of a successful smart tactic. It recursively owns
   `SimpleProofStep` values, so it cannot contain a smart tactic or an internal
   replay operation.
-- `InternalProofPlan` is private search machinery used while constructing that
-  result. It is not printed, profiled as an independent source tactic, or
-  accepted as evidence that expansion succeeded.
+- Search evidence (kernel derivations and certified transitions) is consumed
+  transiently while constructing that result. It is not printed, profiled as
+  an independent source tactic, or accepted as evidence that expansion
+  succeeded; there is no retained internal plan between search and the
+  `SimpleProof` it constructs.
 
 `SimpleProofBuilder` stores typed simple steps while internal search evidence is
 lowered. Once construction succeeds, Click structurally prints the same

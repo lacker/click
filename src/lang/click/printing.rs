@@ -362,6 +362,23 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_premise_list(output, premises, indent + 1);
             line(output, &prefix, "}");
         }
+        ProofTactic::InstantiateUsing {
+            quantified,
+            argument,
+            premises,
+        } => {
+            line(
+                output,
+                &prefix,
+                &format!(
+                    "instantiate({}, {}) using {{",
+                    source_click_proposition(quantified),
+                    describe_contract_expression(argument)
+                ),
+            );
+            write_premise_list(output, premises, indent + 1);
+            line(output, &prefix, "}");
+        }
         ProofTactic::FrameUsing { region, premises } => {
             line(
                 output,

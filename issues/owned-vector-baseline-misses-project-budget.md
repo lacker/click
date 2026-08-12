@@ -19,6 +19,15 @@ The project remains directly runnable with `CLICK_EXAMPLE=owned-vector`; it is
 quarantined from the default example gate until repeated ordinary runs fit the
 existing deadline.
 
+As of 2026-08-11, before any budget pressure appears, the run fails promptly
+at a certificate-lowering gap: a smart site proves `1 <= x + 1` from `x >= 0`
+(a folded-constant increment lower bound), and Click has no explicit simple
+certificate for that spelling. Two sibling gaps (`x < c1` from `x <= c2`, and
+`x + 1 <= c1` from `x <= c2`) were closed by the constant-bound weakening
+planners in `surface_certificates.rs`; the folded-constant `lower + 1`
+orientation of `int32_increment_preserves_order` still needs a planner before
+the budget question is reachable again.
+
 ## Acceptance criteria
 
 - `CLICK_EXAMPLE=owned-vector cargo test --test examples -- --nocapture`

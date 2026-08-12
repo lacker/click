@@ -72,6 +72,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 )));
             }
             let surface_start = opened.replay.simple_proof_builder.steps.len();
+            opened.replay.open_scopes += 1;
             let unfolded = unfold_composite_resource(
                 resource_environment,
                 resource,
@@ -106,6 +107,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             )?;
             let mut contexts = Vec::new();
             for mut closed in opened_contexts {
+                closed.replay.open_scopes = closed.replay.open_scopes.saturating_sub(1);
                 if closed.replay.is_at_function_exit() {
                     closed.replay.defer_post_execution(
                         *index,
@@ -173,6 +175,20 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             else_branch,
             continuation,
         } => {
+            let mut context = context;
+            // A mid-execution case condition may name the current statement's
+            // entry snapshot (`at(statement(N).entry, ...)`) before any step
+            // has crossed that statement; record it so the spelling lowers.
+            record_current_statement_entry(
+                &mut context.replay,
+                &context.state,
+                function_block,
+                function,
+                arguments,
+                claim_label,
+                *index,
+                "if",
+            )?;
             let condition_text = describe_click_proposition(condition);
             let mut contexts = Vec::new();
             for (branch_name, value, branch) in [
@@ -197,6 +213,24 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 .map_err(|error| add_proof_branch_path(error, &branch_context.branch_path))?;
                 if !feasible {
                     continue;
+                }
+                // Record where this proof-level case split sits in the claim's
+                // surface record. Cross-context synthesis reassembles the
+                // whole-claim certificate at exactly these recorded choices,
+                // so the tactics a case runs are spelled inside its surface
+                // `if` branch instead of leaking into sibling paths.
+                if branch_context.replay.simple_proof_builder.blocker.is_none() {
+                    let tactic_offset = branch_context.replay.simple_proof_builder.steps.len();
+                    branch_context
+                        .replay
+                        .simple_proof_builder
+                        .path_choices
+                        .push(SurfacePathChoice {
+                            occurrence: *index,
+                            condition: condition.clone(),
+                            value,
+                            tactic_offset,
+                        });
                 }
                 let branch_contexts = execute_internal_proof(
                     branch,
@@ -243,7 +277,21 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             else_branch,
             continuation,
         } => {
+            let mut context = context;
             let statement_index = context.replay.frontier.next_statement_index;
+            // The branch condition is spelled against the branch statement's
+            // entry snapshot; record it so both the recorded surface choice
+            // and a replayed `at(statement(N).entry, ...)` condition lower.
+            record_current_statement_entry(
+                &mut context.replay,
+                &context.state,
+                function_block,
+                function,
+                arguments,
+                claim_label,
+                *index,
+                "branch",
+            )?;
             let source_region = context
                 .replay
                 .source_layout
@@ -265,7 +313,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             });
             let capture_in_continuation = selected_source_index
                 .is_some_and(|wanted| internal_proof_contains_source_index(continuation, wanted));
-            let capture_condition = if selected_source_index.is_some() && !capture_in_continuation {
+            let branch_surface_condition = {
                 let (_, _, statement, _) = next_top_level_statement_from_execution_point(
                     &context.replay,
                     &context.state,
@@ -278,18 +326,68 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 let CStatement::If { condition, .. } = statement else {
                     unreachable!("source branch was checked as an if above")
                 };
-                Some(surface_with_source_site(
+                surface_with_source_site(
                     &surface_c_condition(&condition),
                     &ProgramPointRef {
                         region: CodeRegionRef::Statement(statement_index),
                         kind: ProgramPointKind::Entry,
                     },
-                )?)
-            } else {
-                None
+                )?
+            };
+            let capture_condition = (selected_source_index.is_some() && !capture_in_continuation)
+                .then(|| branch_surface_condition.clone());
+            let branch_surface_start = context.replay.simple_proof_builder.steps.len();
+            let prior_choice_count = context.replay.simple_proof_builder.path_choices.len();
+            let branch_entry_snapshot = context
+                .replay
+                .program_point_states
+                .get(&ProgramPointRef {
+                    region: CodeRegionRef::Statement(statement_index),
+                    kind: ProgramPointKind::Entry,
+                })
+                .cloned();
+            // Spells a proof-`if` case around a context's arm record: the
+            // branch decision as a surface path choice at the branch point,
+            // and the C `if` entry (plus an empty arm's immediate completion)
+            // as explicit steps. Used for contexts that do not rejoin — their
+            // certificates replay the branch as a decided case.
+            let retrofit_branch_case = |context: &mut ProofReplayContext,
+                                        take_then: bool,
+                                        empty_arm: bool| {
+                let builder = &mut context.replay.simple_proof_builder;
+                if builder.blocker.is_some() {
+                    return;
+                }
+                let entry_steps = 1 + usize::from(empty_arm);
+                for choice in builder.path_choices.iter_mut().skip(prior_choice_count) {
+                    if choice.tactic_offset >= branch_surface_start {
+                        choice.tactic_offset += entry_steps;
+                    }
+                }
+                builder.path_choices.insert(
+                    prior_choice_count,
+                    SurfacePathChoice {
+                        occurrence: statement_index,
+                        condition: branch_surface_condition.clone(),
+                        value: take_then,
+                        tactic_offset: branch_surface_start,
+                    },
+                );
+                let entry_step = SimpleProof::from_proof_tactics(&[ProofTactic::StepUsing(
+                    Vec::new(),
+                )])
+                .expect("a plain step is a simple tactic")
+                .steps()[0]
+                    .clone();
+                for _ in 0..entry_steps {
+                    builder
+                        .steps
+                        .insert(branch_surface_start.min(builder.steps.len()), entry_step.clone());
+                }
             };
             let mut completed_contexts = Vec::new();
             let mut continuing_contexts = Vec::new();
+            let mut continuing_arm_values = Vec::new();
             for (branch_name, take_then, branch) in [
                 ("then", true, then_branch.as_ref()),
                 ("else", false, else_branch.as_ref()),
@@ -334,6 +432,10 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                             tactic_offset: 0,
                         });
                 }
+                let empty_arm = branch_context
+                    .replay
+                    .completed_branch_regions
+                    .contains(&statement_index);
                 let branch_contexts = execute_internal_proof(
                     branch,
                     branch_context,
@@ -350,7 +452,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     function,
                     arguments,
                 )?;
-                for branch_context in branch_contexts {
+                for mut branch_context in branch_contexts {
                     let returned = branch_context.replay.is_at_function_exit();
                     let reached_continuation = branch_context
                         .replay
@@ -368,10 +470,15 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                         ));
                     }
                     if returned {
+                        // A context that finished inside the arm never
+                        // rejoins; its certificate replays the branch as a
+                        // decided proof case.
+                        retrofit_branch_case(&mut branch_context, take_then, empty_arm);
                         completed_contexts.push(branch_context);
                         continue;
                     }
                     continuing_contexts.push(branch_context);
+                    continuing_arm_values.push((take_then, empty_arm));
                 }
             }
             if completed_contexts.is_empty() && continuing_contexts.is_empty() {
@@ -382,6 +489,108 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             if continuing_contexts.is_empty() {
                 return Ok(completed_contexts);
             }
+
+            // Rebuild the claim-level surface record across the joining arms
+            // before their contexts merge, so neither arm's execution record
+            // is silently dropped from the claim certificate. A join records
+            // the branch tactic itself — its join (and, under `ensuring`,
+            // its interface abstraction) is part of the proof, and replaying
+            // a concretized `if` would not reproduce the joined context. A
+            // single surviving arm replays as a decided proof case instead.
+            let joined_surface_builder = if completed_contexts.is_empty()
+                && (ensuring.is_some() || continuing_contexts.len() > 1)
+            {
+                let mut then_builders = Vec::new();
+                let mut else_builders = Vec::new();
+                let mut arm_blocker = None;
+                for ((take_then, _), arm_context) in
+                    continuing_arm_values.iter().zip(&continuing_contexts)
+                {
+                    let builder = &arm_context.replay.simple_proof_builder;
+                    if let Some(message) = &builder.blocker {
+                        arm_blocker.get_or_insert_with(|| message.clone());
+                        continue;
+                    }
+                    let mut arm_builder = builder.clone();
+                    let steps = if arm_builder.steps.len() >= branch_surface_start {
+                        arm_builder.steps.split_off(branch_surface_start)
+                    } else {
+                        Vec::new()
+                    };
+                    let mut choices = if arm_builder.path_choices.len() >= prior_choice_count {
+                        arm_builder.path_choices.split_off(prior_choice_count)
+                    } else {
+                        Vec::new()
+                    };
+                    for choice in &mut choices {
+                        choice.tactic_offset =
+                            choice.tactic_offset.saturating_sub(branch_surface_start);
+                    }
+                    let arm_builder = SimpleProofBuilder {
+                        steps,
+                        path_choices: choices,
+                        ..SimpleProofBuilder::default()
+                    };
+                    if *take_then {
+                        then_builders.push(arm_builder);
+                    } else {
+                        else_builders.push(arm_builder);
+                    }
+                }
+                let mut merged = continuing_contexts[0].replay.simple_proof_builder.clone();
+                merged.steps.truncate(branch_surface_start);
+                merged.path_choices.truncate(prior_choice_count);
+                if let Some(message) = arm_blocker {
+                    merged.block(message);
+                } else {
+                    let arm_proof = |builders: Vec<SimpleProofBuilder>| {
+                        if builders.is_empty() {
+                            Ok(SimpleProof::from_steps(Vec::new()))
+                        } else {
+                            synthesize_surface_paths(builders).map(SimpleProof::from_steps)
+                        }
+                    };
+                    match (arm_proof(then_builders), arm_proof(else_builders)) {
+                        (Ok(then_proof), Ok(else_proof)) => {
+                            merged.steps.push(SimpleProofStep::Branch {
+                                ensuring: ensuring.clone(),
+                                then_proof: Box::new(then_proof),
+                                else_proof: Box::new(else_proof),
+                            });
+                        }
+                        (Err(message), _) | (_, Err(message)) => merged.block(format!(
+                            "could not synthesize `branch` arm surface record: {message}"
+                        )),
+                    }
+                }
+                Some(merged)
+            } else {
+                // Some arm returned (or only one arm survives): every
+                // context replays the branch as a decided proof case, and
+                // cross-context synthesis rebuilds the surface `if` from the
+                // retrofitted choices.
+                for ((take_then, empty_arm), context) in continuing_arm_values
+                    .iter()
+                    .zip(continuing_contexts.iter_mut())
+                {
+                    retrofit_branch_case(context, *take_then, *empty_arm);
+                }
+                (continuing_contexts.len() > 1).then(|| {
+                    let builders = continuing_contexts
+                        .iter()
+                        .map(|context| context.replay.simple_proof_builder.clone())
+                        .collect::<Vec<_>>();
+                    let mut merged = builders[0].clone();
+                    merged.path_choices.truncate(prior_choice_count);
+                    match synthesize_surface_alternatives(builders) {
+                        Ok(steps) => merged.steps = steps,
+                        Err(message) => merged.block(format!(
+                            "could not synthesize `branch` arms into one surface record: {message}"
+                        )),
+                    }
+                    merged
+                })
+            };
 
             let mut joined_context = if let Some(assertions) = ensuring {
                 let mut common_pure_facts = continuing_contexts[0].pure_facts.clone();
@@ -509,6 +718,28 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 }
                 joined
             };
+            if let Some(builder) = joined_surface_builder {
+                joined_context.replay.simple_proof_builder = builder;
+            }
+            // Branch abstraction discards source-boundary snapshots, but the
+            // recorded surface branch choice is spelled against the branch
+            // statement's own entry snapshot — pre-branch history the claim
+            // certificate must still be able to lower at function exit.
+            let branch_entry_point = ProgramPointRef {
+                region: CodeRegionRef::Statement(statement_index),
+                kind: ProgramPointKind::Entry,
+            };
+            if let Some(snapshot) = branch_entry_snapshot
+                && !joined_context
+                    .replay
+                    .program_point_states
+                    .contains_key(&branch_entry_point)
+            {
+                joined_context
+                    .replay
+                    .program_point_states
+                    .insert(branch_entry_point, snapshot);
+            }
             joined_context.branch_path.clear();
             joined_context.replay.case_assumptions.clear();
             let mut continued = execute_internal_proof(

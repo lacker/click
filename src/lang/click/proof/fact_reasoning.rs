@@ -183,35 +183,32 @@ pub(in crate::lang::click) fn condition_polarity_equivalent(
     if left == right {
         return true;
     }
-    match (left, right) {
-        (
-            Proposition::ConditionIs(left_condition, left_value),
-            Proposition::ConditionIs(right_condition, right_value),
-        ) => {
-            matches!(
-                (
-                    canonical_order_condition(left_condition, *left_value),
-                    canonical_order_condition(right_condition, *right_value),
-                ),
-                (Some(left), Some(right)) if left == right
-            )
-        }
-        (Proposition::Not(negated), Proposition::ConditionIs(right_condition, right_value)) => {
-            matches!(
-                negated.as_ref(),
-                Proposition::ConditionIs(left_condition, left_value)
-                    if left_condition == right_condition && left_value != right_value
-            )
-        }
-        (Proposition::ConditionIs(left_condition, left_value), Proposition::Not(negated)) => {
-            matches!(
-                negated.as_ref(),
-                Proposition::ConditionIs(right_condition, right_value)
-                    if left_condition == right_condition && left_value != right_value
-            )
-        }
-        _ => false,
+    // A negated condition fact is the same total boolean condition with the
+    // opposite expected value; flattening lets one spelling compare against
+    // the other and against the canonical order form of either.
+    let flatten = |proposition: &Proposition| match proposition {
+        Proposition::ConditionIs(condition, value) => Some((condition.clone(), *value)),
+        Proposition::Not(negated) => match negated.as_ref() {
+            Proposition::ConditionIs(condition, value) => Some((condition.clone(), !value)),
+            _ => None,
+        },
+        _ => None,
+    };
+    let (Some((left_condition, left_value)), Some((right_condition, right_value))) =
+        (flatten(left), flatten(right))
+    else {
+        return false;
+    };
+    if left_condition == right_condition && left_value == right_value {
+        return true;
     }
+    matches!(
+        (
+            canonical_order_condition(&left_condition, left_value),
+            canonical_order_condition(&right_condition, right_value),
+        ),
+        (Some(left), Some(right)) if left == right
+    )
 }
 
 fn canonical_order_condition(

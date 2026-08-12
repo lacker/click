@@ -665,6 +665,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 source_index,
                 construction,
                 false,
+                true,
             )?;
             state = result.state;
             requirement_pure_facts = result.pure_facts;
@@ -732,6 +733,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 source_index,
                 construction,
                 false,
+                true,
             )?;
             state = result.state;
             requirement_pure_facts = result.pure_facts;
@@ -837,55 +839,60 @@ fn replay_linear_tactics_without_frontier_loops(
                         "`{claim_label}` tactic {tactic_index}: `transport` requires at least one completed execution step"
                     )));
                 }
+                // A mid-execution smart `transport` is planned into an
+                // explicit `transport using` and checked through
+                // `complete_smart_tactic` before this match (see the
+                // `Transport` pre-pass above), so only `transport using`
+                // reaches this point mid-execution.
                 let pre_state = replay.old_reference_state(&state).clone();
-                let surface_premises = match tactic {
-                    ProofTactic::TransportUsing { premises, .. } => Some(premises),
-                    ProofTactic::Transport { .. } => None,
-                    _ => unreachable!(),
+                let ProofTactic::TransportUsing {
+                    premises: surface_premises,
+                    ..
+                } = tactic
+                else {
+                    unreachable!("mid-execution `transport` is completed by its pre-pass")
                 };
                 let mut explicit_premises = Vec::new();
-                if let Some(surface_premises) = surface_premises {
-                    for surface_premise in surface_premises {
-                        let premise = if let Some(recorded) = replay
-                            .surface_propositions
-                            .available_kernel(surface_premise, &requirement_pure_facts)
-                        {
-                            recorded.clone()
-                        } else {
-                            lower_point_proposition(
-                                surface_premise,
+                for surface_premise in surface_premises {
+                    let premise = if let Some(recorded) = replay
+                        .surface_propositions
+                        .available_kernel(surface_premise, &requirement_pure_facts)
+                    {
+                        recorded.clone()
+                    } else {
+                        lower_point_proposition(
+                            surface_premise,
+                            &requirement_pure_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            &pre_state,
+                            &state,
+                            None,
+                            &replay.program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: could not lower `transport using` premise: {message}"
+                            ))
+                        })?
+                    };
+                    if !exact_fact_is_available(&premise, &requirement_pure_facts) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `transport using` requires an exact premise: {}",
+                            describe_missing_pure_fact(
+                                &premise,
                                 &requirement_pure_facts,
+                                state.resources().facts(),
                                 parsed_function.parameters(),
                                 arguments,
-                                &pre_state,
-                                &state,
-                                None,
-                                &replay.program_point_states,
-                                predicate_environment,
-                                click_function_environment,
+                                &replay.effect_facts,
                             )
-                            .map_err(|message| {
-                                ClickError::new(format!(
-                                    "`{claim_label}` tactic {tactic_index}: could not lower `transport using` premise: {message}"
-                                ))
-                            })?
-                        };
-                        if !exact_fact_is_available(&premise, &requirement_pure_facts) {
-                            return Err(ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `transport using` requires an exact premise: {}",
-                                describe_missing_pure_fact(
-                                    &premise,
-                                    &requirement_pure_facts,
-                                    state.resources().facts(),
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    &replay.effect_facts,
-                                )
-                            )));
-                        }
-                        if !explicit_premises.contains(&premise) {
-                            explicit_premises.push(premise);
-                        }
+                        )));
+                    }
+                    if !explicit_premises.contains(&premise) {
+                        explicit_premises.push(premise);
                     }
                 }
                 // Lowering memory expressions uses the already-validated
@@ -927,7 +934,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 replay
                     .surface_propositions
                     .record_lowering(surface_source, &source)?;
-                let selected_assumptions = if surface_premises.is_some() {
+                let selected_assumptions = {
                     let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
                     let resource_facts = state
                         .resources()
@@ -940,8 +947,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         .fold(explicit_assumptions, |assumptions, fact| {
                             assumptions.assume_proposition(fact)
                         })
-                } else {
-                    assumptions.clone()
                 };
                 // A transport source spelled at a later program point than
                 // its listed fact is the same fact when the kernel proves the
@@ -961,17 +966,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         .is_none()
                 {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `transport{}` requires a source derivable from its {}facts: {}",
-                        if surface_premises.is_some() {
-                            " using"
-                        } else {
-                            ""
-                        },
-                        if surface_premises.is_some() {
-                            "explicit "
-                        } else {
-                            "ambient "
-                        },
+                        "`{claim_label}` tactic {tactic_index}: `transport using` requires a source derivable from its explicit facts: {}",
                         describe_missing_pure_fact(
                             &source,
                             &requirement_pure_facts,
@@ -1024,41 +1019,6 @@ fn replay_linear_tactics_without_frontier_loops(
                 }
                 let transition_facts =
                     fact_transport_transition_facts(&replay.effect_facts, &source);
-                if surface_premises.is_none() {
-                    match plan_explicit_fact_transport(
-                        surface_source,
-                        &source,
-                        &target,
-                        &requirement_pure_facts,
-                        &transition_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        &replay,
-                        &state,
-                        predicate_environment,
-                        click_function_environment,
-                    ) {
-                        Ok(premises) => {
-                            replay.simple_proof_builder.push_step(
-                                SimpleProofStep::TransportUsing {
-                                    source: surface_source.clone(),
-                                    target: surface_target.clone(),
-                                    premises,
-                                },
-                            );
-                        }
-                        Err(error) => {
-                            replay
-                                .simple_proof_builder
-                                .block(fact_transport_planning_failure(
-                                    surface_source,
-                                    surface_target,
-                                    &replay.unfolded_predicates,
-                                    &error,
-                                ))
-                        }
-                    }
-                }
                 let transport_assumptions = transition_facts
                     .iter()
                     .fold(selected_assumptions, |assumptions, fact| {
@@ -1088,6 +1048,20 @@ fn replay_linear_tactics_without_frontier_loops(
                 let tactic_name = "step() using";
                 let prerequisite_policy = StatementPrerequisitePolicy::Explicit;
                 let loop_step_policy = LoopStepPolicy::EnterBody;
+                // Resuming from a completed branch region reaches this
+                // statement without recording its entry snapshot; a premise
+                // spelled `at(statement(N).entry, ...)` for the statement this
+                // step crosses must still lower.
+                record_current_statement_entry(
+                    &mut replay,
+                    &state,
+                    function_block,
+                    function,
+                    arguments,
+                    claim_label,
+                    tactic_index,
+                    tactic_name,
+                )?;
                 let pre_state = replay.old_reference_state(&state).clone();
                 let mut explicit_premises = Vec::new();
                 for surface_premise in premises {
@@ -1207,7 +1181,12 @@ fn replay_linear_tactics_without_frontier_loops(
                             &replay.effect_facts,
                         ) || materialization_equivalent_available_fact(&premise, &all_pure_facts)
                             .is_some()
-                            || crate::kernel::loadable_covered_by_fact(&assumptions, &premise);
+                            || crate::kernel::loadable_covered_by_fact(&assumptions, &premise)
+                            // A premise spelled for a sibling execution path
+                            // can lower to a context-free truth on this path
+                            // (a shared post-branch step's premise after a
+                            // constant assignment); it demands no evidence.
+                            || Assumptions::new().proves(&premise);
                     if !premise_is_available {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise: {}",
@@ -1380,6 +1359,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     source_index,
                     construction,
                     false,
+                    true,
                 )?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
@@ -1463,6 +1443,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     source_index,
                     construction,
                     false,
+                    true,
                 )?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
@@ -1528,6 +1509,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     source_index,
                     construction,
                     false,
+                    true,
                 )?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
@@ -1569,6 +1551,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         source_index,
                         construction,
                         false,
+                        true,
                     )?;
                     state = result.state;
                     requirement_pure_facts = result.pure_facts;
@@ -1704,9 +1687,25 @@ fn replay_linear_tactics_without_frontier_loops(
                         predicate_environment,
                         click_function_environment,
                     },
-                    &InternalProofOperation::CertifiedFrame(path_derivations),
+                    &ConstructionEvidence::CertifiedFrame(path_derivations),
                 );
                 let construction = std::mem::take(&mut construction_replay.simple_proof_builder);
+                // A branched contextual frame merges its synthesized branch
+                // with the existing surface branch here, and a frame inside
+                // an `open { ... }` block merges so its steps are captured
+                // into the block's nested proof. A flat top-level exit frame
+                // is recorded by the drain instead: its independent replay
+                // defers the frame work, the deferrals carry into this
+                // replay, and the drain spells the same steps in deferral
+                // order — merging here would misplace them before every
+                // earlier deferred tactic.
+                let merge_construction = replay.open_scopes > 0
+                    || matches!(construction.steps.as_slice(), [SimpleProofStep::If { .. }]);
+                // The construction is still the tactic's own standalone
+                // expansion even when the drain records the claim-level
+                // steps; a selected `frame()` capture takes it directly.
+                let capture_construction = (!merge_construction && capture_this_tactic)
+                    .then(|| construction.clone());
                 let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,
@@ -1729,12 +1728,20 @@ fn replay_linear_tactics_without_frontier_loops(
                     source_index,
                     construction,
                     true,
+                    merge_construction,
                 )?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
                 replay = result.replay;
                 branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                if let Some(construction) = capture_construction {
+                    finish_tactic_expansion_capture(
+                        expansion_capture.as_deref_mut(),
+                        &construction,
+                        false,
+                    );
+                }
             }
             ProofTactic::FrameUsing {
                 region: region_ref,
@@ -2032,68 +2039,27 @@ fn replay_linear_tactics_without_frontier_loops(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::ApplyTheorem(application) => {
+                // A mid-execution smart `apply` is planned into an explicit
+                // `apply using` and checked through `complete_smart_tactic`
+                // before this match (see the `ApplyTheorem` pre-pass above),
+                // so only the function-exit form reaches this arm.
                 if theorem_environment.get(&application.name).is_none() {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: unknown theorem `{}`",
                         application.name
                     )));
                 }
-                if replay.is_at_function_exit() {
-                    if replay.ordered_finalization {
-                        replay.defer_post_execution(
-                            tactic_index,
-                            source_index,
-                            PostExecutionTactic::Apply(application.clone()),
-                        );
-                    } else {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: post-execution `apply` is not available in this region proof"
-                        )));
-                    }
+                debug_assert!(replay.is_at_function_exit());
+                if replay.ordered_finalization {
+                    replay.defer_post_execution(
+                        tactic_index,
+                        source_index,
+                        PostExecutionTactic::Apply(application.clone()),
+                    );
                 } else {
-                    match plan_explicit_theorem_application(
-                        theorem_environment,
-                        application,
-                        claim_label,
-                        tactic_index,
-                        &requirement_pure_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        &replay,
-                        &state,
-                        predicate_environment,
-                        click_function_environment,
-                    ) {
-                        Ok(premises) => {
-                            replay.simple_proof_builder.push_step(
-                                SimpleProofStep::ApplyTheoremUsing {
-                                    application: application.clone(),
-                                    premises,
-                                },
-                            );
-                        }
-                        Err(error) => replay.simple_proof_builder.block(format!(
-                            "could not make theorem application premises explicit: {}",
-                            error.message()
-                        )),
-                    }
-                    requirement_pure_facts = apply_theorem_at_current_point(
-                        theorem_environment,
-                        application,
-                        claim_label,
-                        tactic_index,
-                        requirement_pure_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        replay.old_reference_state(&state),
-                        &state,
-                        &replay.program_point_states,
-                        predicate_environment,
-                        click_function_environment,
-                        &replay.unfolded_predicates,
-                        None,
-                    )?;
-                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: post-execution `apply` is not available in this region proof"
+                    )));
                 }
             }
             ProofTactic::ApplyTheoremUsing {
@@ -2263,75 +2229,93 @@ fn replay_linear_tactics_without_frontier_loops(
                     }
                 }
                 let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
-                let smart_plan = if let Some(unfolded_predicates) = &smart_unfolds {
-                    let (fact, plan) = plan_smart_have_at_current_point(
-                        have,
-                        claim_label,
-                        tactic_index,
-                        &have_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        replay.old_reference_state(&state),
-                        &state,
-                        &replay.program_point_states,
-                        &replay.surface_propositions,
-                        predicate_environment,
-                        click_function_environment,
-                        unfolded_predicates,
-                        None,
-                    )?;
-                    Some((fact, plan))
-                } else {
-                    None
+                // Smart search and certificate construction are one event:
+                // the goal is proved exactly when its evidence has been
+                // spelled as a replayable SimpleProof.
+                let smart_result = match &smart_unfolds {
+                    Some(unfolded_predicates) => Some(
+                        construct_smart_have_certificate(
+                            &mut replay,
+                            &state,
+                            &have_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            predicate_environment,
+                            click_function_environment,
+                            have,
+                            claim_label,
+                            tactic_index,
+                            unfolded_predicates,
+                        )?,
+                    ),
+                    None => None,
                 };
-                let fact = match &smart_plan {
-                    Some((fact, _)) => fact.clone(),
-                    None => prove_have_at_current_point(
-                        have,
-                        theorem_environment,
-                        claim_label,
-                        tactic_index,
-                        &have_facts,
-                        &replay.effect_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        replay.old_reference_state(&state),
-                        &state,
-                        &replay.program_point_states,
-                        &replay.surface_propositions,
-                        predicate_environment,
-                        click_function_environment,
-                        function_block.requires(),
-                    )?,
+                let (fact, surface_certificate) = match smart_result {
+                    Some((fact, certificate)) => (fact, Some(certificate)),
+                    None => {
+                        let fact = prove_have_at_current_point(
+                            have,
+                            theorem_environment,
+                            claim_label,
+                            tactic_index,
+                            &have_facts,
+                            &replay.effect_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            replay.old_reference_state(&state),
+                            &state,
+                            &replay.program_point_states,
+                            &replay.surface_propositions,
+                            predicate_environment,
+                            click_function_environment,
+                            function_block.requires(),
+                        )?;
+                        let certificate = surface_smart_apply_have_certificate(
+                            &mut replay,
+                            &state,
+                            &have_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            predicate_environment,
+                            click_function_environment,
+                            theorem_environment,
+                            claim_label,
+                            tactic_index,
+                            have,
+                            &fact,
+                        )?;
+                        (fact, certificate)
+                    }
                 };
-                let surface_certificate = if let Some((_, plan)) = &smart_plan {
-                    Some(surface_smart_have_certificate(
-                        &mut replay,
-                        &state,
-                        &have_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        predicate_environment,
-                        click_function_environment,
-                        have,
-                        plan,
-                        smart_unfolds.as_deref().unwrap_or(&[]),
-                    )?)
-                } else {
-                    surface_smart_apply_have_certificate(
-                        &mut replay,
-                        &state,
-                        &have_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        predicate_environment,
-                        click_function_environment,
-                        theorem_environment,
-                        claim_label,
-                        tactic_index,
-                        have,
-                        &fact,
-                    )?
+                // A body that is neither simple nor covered by the smart
+                // lowerings above (a `witness`/`choose` prefix before `simp`,
+                // or a proof-level `if` closing its cases by `simp`) must
+                // still yield a replayed simple certificate; otherwise the
+                // tactic fails instead of silently losing the enclosing
+                // proof's expansion.
+                let surface_certificate = match surface_certificate {
+                    Some(certificate) => Some(certificate),
+                    None if SimpleProof::from_proof_tactics(std::slice::from_ref(tactic)).is_err() => {
+                        Some(certify_general_smart_have(
+                            have,
+                            &fact,
+                            theorem_environment,
+                            claim_label,
+                            tactic_index,
+                            &have_facts,
+                            &replay.effect_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            replay.old_reference_state(&state),
+                            &state,
+                            &replay.program_point_states,
+                            &replay.surface_propositions,
+                            predicate_environment,
+                            click_function_environment,
+                            function_block.requires(),
+                        )?)
+                    }
+                    None => None,
                 };
                 if let Some(certificate) = surface_certificate {
                     let replay_certificate = |certificate: &SimpleProof| {
@@ -2456,6 +2440,7 @@ fn replay_linear_tactics_without_frontier_loops(
             }
             ProofTactic::Intro
             | ProofTactic::Extract(_)
+            | ProofTactic::InstantiateUsing { .. }
             | ProofTactic::Split
             | ProofTactic::Left
             | ProofTactic::Right

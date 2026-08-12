@@ -670,6 +670,28 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_then(
     available: &[Proposition],
     closer: &impl Fn(&Proposition) -> Option<Vec<ProofTactic>>,
 ) -> Option<Vec<ProofTactic>> {
+    let normalized_available = |current: &Proposition| {
+        let normalized_current = normalize_direct_atomic_memory_loads(current);
+        available.iter().any(|fact| {
+            fact == current || normalize_direct_atomic_memory_loads(fact) == normalized_current
+        })
+    };
+    plan_explicit_equality_rewrites_from(goal, premises, available, &normalized_available, closer)
+}
+
+/// The single explicit-certificate search shared by every smart-simplification
+/// construction path. Both the point-proof `simp() using` chain and the
+/// post-execution outcome planner must call through here (directly or via
+/// [`plan_explicit_equality_rewrites_then`]), so a named simple rule available
+/// to one is available to the other. `is_available` is the caller's judgment
+/// of when the current goal closes by `assumption`.
+pub(in crate::lang::click) fn plan_explicit_equality_rewrites_from(
+    goal: &Proposition,
+    premises: &[(Proposition, ClickProposition)],
+    available: &[Proposition],
+    is_available: &impl Fn(&Proposition) -> bool,
+    closer: &impl Fn(&Proposition) -> Option<Vec<ProofTactic>>,
+) -> Option<Vec<ProofTactic>> {
     fn reverse_equality(
         kernel: &Proposition,
         surface: &ClickProposition,
@@ -719,12 +741,10 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_then(
         available: &[Proposition],
         used: &mut [bool],
         tactics: &mut Vec<ProofTactic>,
+        is_available: &impl Fn(&Proposition) -> bool,
         closer: &impl Fn(&Proposition) -> Option<Vec<ProofTactic>>,
     ) -> bool {
-        let normalized_current = normalize_direct_atomic_memory_loads(&current);
-        if available.iter().any(|fact| {
-            fact == &current || normalize_direct_atomic_memory_loads(fact) == normalized_current
-        }) {
+        if is_available(&current) {
             tactics.push(ProofTactic::Assumption);
             return true;
         }
@@ -752,7 +772,15 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_then(
                 };
                 used[index] = true;
                 tactics.push(ProofTactic::Rewrite(oriented_surface));
-                if search(rewritten, premises, available, used, tactics, closer) {
+                if search(
+                    rewritten,
+                    premises,
+                    available,
+                    used,
+                    tactics,
+                    is_available,
+                    closer,
+                ) {
                     return true;
                 }
                 tactics.pop();
@@ -770,6 +798,7 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_then(
         available,
         &mut used,
         &mut tactics,
+        is_available,
         closer,
     )
     .then_some(tactics)
@@ -1038,33 +1067,47 @@ fn normalize_direct_atomic_memory_load_uncached(term: &Bitvector32Term) -> Bitve
     }
 }
 
+/// The checked kernel evidence behind one successful smart simplification.
+/// Search produces this at the moment it succeeds and immediately spells it
+/// as explicit surface tactics; it is never stored, ordered into a plan, or
+/// replayed as a private operation program. A derivation the surface
+/// vocabulary cannot spell is a search failure, not a lowering error.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::lang::click) enum SimpEvidence {
+    /// The goal is (an exact equivalent of) an available fact.
+    Assumption,
+    /// The goal normalizes to true without consulting any context.
+    Normalize,
+    /// A kernel derivation of the goal from its context premises.
+    Derivation(PropositionDerivation),
+}
+
 pub(in crate::lang::click) fn plan_simp_certificate(
     proposition: &Proposition,
     assumptions: &Assumptions,
-) -> Option<InternalProofPlan> {
-    let operation = if matches!(normalize_proposition(proposition), SimpProposition::True) {
-        InternalProofOperation::Surface(ProofTactic::Normalize)
+) -> Option<SimpEvidence> {
+    if matches!(normalize_proposition(proposition), SimpProposition::True) {
+        Some(SimpEvidence::Normalize)
     } else {
-        InternalProofOperation::ExactPropositionDerivation(
+        Some(SimpEvidence::Derivation(
             assumptions.derive_simp_proposition(proposition)?,
-        )
-    };
-    Some(InternalProofPlan::from_operations(vec![operation]))
+        ))
+    }
 }
 
 pub(in crate::lang::click) fn replay_simp_certificate(
     proposition: &Proposition,
     assumptions: &Assumptions,
-    certificate: &InternalProofPlan,
+    certificate: &SimpEvidence,
 ) -> bool {
-    match certificate.operations() {
-        [InternalProofOperation::Surface(ProofTactic::Normalize)] => {
+    match certificate {
+        SimpEvidence::Assumption => assumptions.proves(proposition),
+        SimpEvidence::Normalize => {
             matches!(normalize_proposition(proposition), SimpProposition::True)
         }
-        [InternalProofOperation::ExactPropositionDerivation(derivation)] => {
+        SimpEvidence::Derivation(derivation) => {
             derivation.conclusion() == proposition && derivation.replay(assumptions)
         }
-        _ => false,
     }
 }
 

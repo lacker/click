@@ -1366,6 +1366,20 @@ impl Assumptions {
         let Proposition::ForAll { var, body, .. } = proposition else {
             return Vec::new();
         };
+        Self::guided_forall_condition_candidates(*var, body, condition)
+            .into_iter()
+            .map(|candidate| substitute_bitvector_variable_in_proposition(body, *var, &candidate))
+            .collect()
+    }
+
+    /// Guided instantiation candidates for one universal int32 body against a
+    /// target condition: bound-variable subterm matches inside the body's
+    /// conclusion plus the variables of the target condition itself.
+    pub(in crate::kernel) fn guided_forall_condition_candidates(
+        var: Variable,
+        body: &Proposition,
+        condition: &ConditionTerm,
+    ) -> BTreeSet<Bitvector32Term> {
         fn collect_offset_candidates(
             pattern: &PointerOffsetTerm,
             target: &PointerOffsetTerm,
@@ -1480,7 +1494,7 @@ impl Assumptions {
         let mut variables = BTreeSet::new();
         collect_condition_bitvector_variables(condition, &mut variables);
         candidates.extend(variables.into_iter().map(Bitvector32Term::Variable));
-        let conclusion = match body.as_ref() {
+        let conclusion = match body {
             Proposition::Implies(_, conclusion) => conclusion.as_ref(),
             conclusion => conclusion,
         };
@@ -1492,15 +1506,12 @@ impl Assumptions {
             ConditionTerm::Bitvector32Equal(target_left, target_right),
         ) = (conclusion, condition)
         {
-            collect_term_candidates(pattern_left, target_left, *var, &mut candidates);
-            collect_term_candidates(pattern_right, target_right, *var, &mut candidates);
-            collect_term_candidates(pattern_left, target_right, *var, &mut candidates);
-            collect_term_candidates(pattern_right, target_left, *var, &mut candidates);
+            collect_term_candidates(pattern_left, target_left, var, &mut candidates);
+            collect_term_candidates(pattern_right, target_right, var, &mut candidates);
+            collect_term_candidates(pattern_left, target_right, var, &mut candidates);
+            collect_term_candidates(pattern_right, target_left, var, &mut candidates);
         }
         candidates
-            .into_iter()
-            .map(|candidate| substitute_bitvector_variable_in_proposition(body, *var, &candidate))
-            .collect()
     }
 
     pub(in crate::kernel) fn condition_matches(

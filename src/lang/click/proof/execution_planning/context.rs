@@ -413,7 +413,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     construction: Option<ConstructionEnvironments<'_>>,
-) -> Vec<InternalProofOperation> {
+) -> Vec<ConstructionEvidence> {
     let mut exact_premises = transition.planning_premises.clone();
     for transport in &transition.fact_transports {
         if !transport.statement_local && !exact_premises.contains(&transport.source) {
@@ -427,12 +427,12 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     }
     let planned_transition = replay.planned_statement_transitions.len();
     let statement_operation = match loop_step_policy {
-        LoopStepPolicy::EnterBody => InternalProofOperation::CertifiedStatementStep {
+        LoopStepPolicy::EnterBody => ConstructionEvidence::CertifiedStatementStep {
             prerequisite_derivations: transition.prerequisite_derivations.clone(),
             exact_premises,
             planned_transition: Some(planned_transition),
         },
-        LoopStepPolicy::ApplyVerifiedRule => InternalProofOperation::CertifiedLoopSummaryStep {
+        LoopStepPolicy::ApplyVerifiedRule => ConstructionEvidence::CertifiedLoopSummaryStep {
             prerequisite_derivations: transition.prerequisite_derivations.clone(),
             exact_premises,
             planned_transition: Some(planned_transition),
@@ -510,14 +510,14 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         .collect::<Vec<_>>();
     let mut deferred_operations = external_transports
         .iter()
-        .map(|transport| InternalProofOperation::CertifiedFactTransport {
+        .map(|transport| ConstructionEvidence::CertifiedFactTransport {
             source: transport.source.clone(),
             target: transport.target.clone(),
             theorem: transport.theorem.clone(),
         })
         .collect::<Vec<_>>();
     if !external_transports.is_empty() {
-        deferred_operations.push(InternalProofOperation::FinishCertifiedFactTransports(
+        deferred_operations.push(ConstructionEvidence::FinishCertifiedFactTransports(
             external_transports
                 .iter()
                 .map(|transport| transport.source.clone())
@@ -578,7 +578,7 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
         parameters,
         arguments,
         environments,
-        &InternalProofOperation::CertifiedStatementStep {
+        &ConstructionEvidence::CertifiedStatementStep {
             prerequisite_derivations: transition.prerequisite_derivations.clone(),
             exact_premises,
             planned_transition: None,

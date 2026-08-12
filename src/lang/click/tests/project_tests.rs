@@ -283,6 +283,145 @@ int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
     .expect("an explicit call-entry snapshot should replay with an owned resource");
 }
 
+/// A `simp() using` premise that equates one expression across two call
+/// transitions denotes an available fact only through the kernel's certified
+/// snapshot bridge — no single replay-time fact carries that exact spelling.
+/// The generated certificate must materialize the bridged spelling with an
+/// explicit snapshot transport at construction time; simple `rewrite` replay
+/// never searches for an equivalent equality, so a certificate that cites the
+/// bridged spelling directly does not replay.
+#[test]
+fn snapshot_bridged_simp_premise_expands_to_an_explicit_transport() {
+    let init_c = r#"
+struct box {
+    int32 value;
+    int32* data;
+};
+
+int32 box_init(struct box* owner, int32 data[], int32 value) {
+    owner->value = value;
+    owner->data = data;
+    return 0;
+}
+"#;
+    let touch_c = r#"
+struct box {
+    int32 value;
+    int32* data;
+};
+
+int32 box_touch(struct box* owner) {
+    owner->value = 1;
+    return 0;
+}
+"#;
+    let pipeline_c = r#"
+struct box {
+    int32 value;
+    int32* data;
+};
+
+int32 box_pipeline(struct box* owner, int32 data[]) {
+    int32 ignored;
+    ignored = box_init(owner, data, 0);
+    ignored = box_touch(owner);
+    ignored = box_touch(owner);
+    return 0;
+}
+"#;
+    let click_source = r#"
+resource owned_box(owner: struct box*) {
+    owns owner->value;
+    owns owner->data;
+}
+
+verifying "box_init.c";
+verifying "box_touch.c";
+verifying "box_pipeline.c";
+
+int32 box_init(struct box* owner, int32 data[], int32 value) {
+    consumes object(owner);
+    mutable object(owner);
+    produces owned_box(owner);
+    ensures owner->data == data;
+    ensures owner->value == value;
+} by {
+    execute();
+    fold(owned_box(owner));
+    frame();
+    simp();
+}
+
+int32 box_touch(struct box* owner) {
+    owns owned_box(owner);
+    mutable owner->value;
+    ensures owner->data == old(owner->data);
+} by {
+    unfold(owned_box(owner));
+    execute();
+    fold(owned_box(owner));
+    frame();
+    simp();
+}
+
+int32 box_pipeline(struct box* owner, int32 data[]) {
+    consumes object(owner);
+    produces owned_box(owner);
+    ensures owner->data == data;
+} by {
+    step();
+    step() using {
+        loadable(old(object(owner)));
+    }
+    step() using {
+        loadable(old(object(owner)));
+        owner->data == data;
+    }
+    step() using {
+        loadable(old(object(owner)));
+        owner->data == data;
+    }
+    have owner->data == data by {
+        simp() using {
+            owner->data == at(statement(2).entry, owner->data);
+            at(statement(2).entry, owner->data) == data;
+        }
+    }
+    step() using {
+        owner->data == data;
+    }
+    simp();
+}
+"#;
+    let sources = [
+        ("box_init.c", init_c),
+        ("box_touch.c", touch_c),
+        ("box_pipeline.c", pipeline_c),
+    ];
+
+    verify_c0_sources(click_source, &sources)
+        .expect("the snapshot-bridged restricted simp certificate should replay");
+
+    let selected = click_source.find("have owner->data == data by {").unwrap();
+    let position = expansion::position_at_offset(click_source, selected);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("the snapshot-bridged restricted simp should expand");
+    assert!(
+        expanded.contains(
+            "transport(at(statement(2).entry, owner->data) == at(statement(2).entry, owner->data), \
+             owner->data == at(statement(2).entry, owner->data))"
+        ),
+        "the certificate must materialize the bridged premise spelling before rewriting:\n{expanded}"
+    );
+    assert!(
+        expanded.contains("rewrite(owner->data == at(statement(2).entry, owner->data));"),
+        "the rewrite must cite the construction-time premise spelling:\n{expanded}"
+    );
+    verify_c0_sources(&expanded, &sources)
+        .expect("the explicit bridged-premise certificate should replay");
+}
+
 #[test]
 fn execute_until_expands_mixed_snapshot_call_postconditions() {
     let zero_c = r#"

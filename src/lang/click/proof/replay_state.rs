@@ -29,6 +29,11 @@ pub(super) struct TacticReplayState {
     pub(super) unfolded_predicates: Vec<String>,
     pub(super) post_execution_tactics: Vec<DeferredPostExecutionTactic>,
     pub(super) region_simp: Option<(usize, usize)>,
+    /// Depth of enclosing `open { ... }` blocks. Surface steps recorded while
+    /// an open block is active are captured into its nested `Open` proof, so
+    /// a constructed certificate must merge into the builder here rather than
+    /// rely on the exit drain's top-level record.
+    pub(super) open_scopes: usize,
     pub(super) region_invariants_closed: bool,
     /// Where the replayed `close_invariants` tactic sat, so the invariant
     /// bundle check its caller performs after the replay finishes can be
@@ -206,11 +211,14 @@ pub(in crate::lang::click) fn capture_c0_proof_site_expansion(
         Err(error) => Err(error),
         Ok(_) if matches!(site, ProofSite::LoopPhase { .. }) => {
             // A loop phase nested under an unreachable C path can have no
-            // initialization/preservation obligations at all.  There is no
-            // path certificate to retain in that case; emit a canonical
-            // simple proof.  Reverification remains the authority and will
-            // reject `assumption` if the phase was actually reachable.
-            Ok(vec![ProofTactic::Assumption])
+            // initialization/preservation obligations at all. There is no
+            // path certificate to retain, and a synthesized stand-in proof
+            // would present itself as verified evidence; report the empty
+            // obligation set instead of inventing one.
+            Err(ClickError::new(format!(
+                "verification retained no certificate for {}: the phase produced no proof obligations (its loop may sit under an unreachable path), so there is no proof to expand",
+                site.description()
+            )))
         }
         Ok(_) => Err(ClickError::new(format!(
             "verification did not retain a certificate for {}",
@@ -414,9 +422,13 @@ impl SimpleProofBuilder {
         }
     }
 
-    /// Replaces the most recent surface branch with `steps`. A contextual
-    /// frame certificate synthesizes the branch structure it framed, so its
-    /// steps supersede the existing branch instead of nesting inside it.
+    /// Merges the most recent surface branch with `steps`. A contextual frame
+    /// certificate synthesizes the branch structure it framed; when that
+    /// structure mirrors the existing trailing branch, its per-leaf tactics
+    /// are zipped into the matching leaves so the execution records already
+    /// inside the branch survive in the claim-level record. A branch that
+    /// does not mirror the existing one supersedes it instead of nesting
+    /// inside it.
     pub(super) fn replace_trailing_branch(&mut self, steps: Vec<SimpleProofStep>) {
         if self.blocker.is_some() {
             return;
@@ -429,6 +441,11 @@ impl SimpleProofBuilder {
             .iter()
             .rposition(|step| matches!(step, SimpleProofStep::If { .. }))
             .expect("trailing branch replacement requires an existing surface branch");
+        if branch_index == self.steps.len() - 1
+            && zip_surface_branches(&mut self.steps[branch_index..], &steps)
+        {
+            return;
+        }
         self.steps.truncate(branch_index);
         self.steps.extend(steps);
     }
@@ -477,6 +494,44 @@ impl SimpleProofBuilder {
             self.path_choices.clear();
         }
     }
+}
+
+/// Zips a synthesized branch into an existing trailing branch when their
+/// conditions coincide: each incoming leaf's tactics extend the matching
+/// existing leaf. Returns `false` — leaving `existing` untouched — when the
+/// incoming steps are not one branch mirroring the existing one.
+fn zip_surface_branches(existing: &mut [SimpleProofStep], incoming: &[SimpleProofStep]) -> bool {
+    let [
+        SimpleProofStep::If {
+            condition: incoming_condition,
+            then_proof: incoming_then,
+            else_proof: incoming_else,
+        },
+    ] = incoming
+    else {
+        return false;
+    };
+    let Some(SimpleProofStep::If {
+        condition,
+        then_proof,
+        else_proof,
+    }) = existing.last_mut()
+    else {
+        return false;
+    };
+    if condition != incoming_condition {
+        return false;
+    }
+    for (existing_branch, incoming_branch) in [
+        (then_proof, incoming_then),
+        (else_proof, incoming_else),
+    ] {
+        let steps = &mut existing_branch.steps;
+        if !zip_surface_branches(steps, incoming_branch.steps()) {
+            steps.extend(incoming_branch.steps().iter().cloned());
+        }
+    }
+    true
 }
 
 /// The enclosing builder saved while one tactic runs against a scoped view.
@@ -531,6 +586,7 @@ pub(super) fn end_tactic_surface_scope(
 }
 
 pub(super) fn record_post_execution_surface_tactic(
+    surface_recorded: bool,
     path_tactics: &mut Vec<ProofTactic>,
     capture_tactics: &mut Vec<ProofTactic>,
     deferred_capture: Option<&DeferredTacticCapture>,
@@ -538,6 +594,9 @@ pub(super) fn record_post_execution_surface_tactic(
     tactic_index: usize,
     tactic: ProofTactic,
 ) {
+    if surface_recorded {
+        return;
+    }
     if deferred_capture.is_some_and(|capture| {
         capture.tactic_index == tactic_index && capture.post_execution_index == post_execution_index
     }) {
@@ -615,6 +674,56 @@ pub(super) fn append_surface_tactics_by_leaf(
             "surface/certificate path coverage diverged at p{next_path}: surface has {next_path} paths but frame certificate has {}",
             path_steps.len()
         ))
+    }
+}
+
+/// Appends one context's post-execution surface tactics as a flat top-level
+/// suffix. A proof-branch context records its branch decision as a
+/// [`SurfacePathChoice`]; the tactics it runs after that decision belong after
+/// the choice point — where cross-context synthesis will place the surface
+/// `if` — not inside the leaves of an earlier execution branch, which would
+/// graft one case's closers onto execution paths the case excluded.
+pub(super) fn append_surface_tactics_flat(
+    steps: &mut Vec<SimpleProofStep>,
+    path_tactics: &[Vec<ProofTactic>],
+) -> Result<(), String> {
+    let Some(common) = path_tactics.first() else {
+        return Ok(());
+    };
+    if !path_tactics.iter().all(|tactics| tactics == common) {
+        return Err(
+            "proof-branch context paths need differing surface tactics after the branch choice"
+                .to_string(),
+        );
+    }
+    let proof = SimpleProof::from_proof_tactics(common)
+        .map_err(|error| format!("path contained a non-simple tactic: {error:?}"))?;
+    steps.extend(proof.steps);
+    Ok(())
+}
+
+/// Appends a path-independent suffix at every leaf of a surface tactic tree.
+/// An empty leaf takes the suffix; a leaf that already carries different
+/// tactics is a stitching conflict.
+pub(super) fn append_surface_tactics_at_every_leaf(
+    tactics: &mut Vec<ProofTactic>,
+    suffix: &[ProofTactic],
+) -> Result<(), String> {
+    if let Some(ProofTactic::If(proof_if)) = tactics.last_mut() {
+        append_surface_tactics_at_every_leaf(&mut proof_if.then_tactics, suffix)?;
+        append_surface_tactics_at_every_leaf(&mut proof_if.else_tactics, suffix)?;
+        return Ok(());
+    }
+    if tactics.is_empty() {
+        tactics.extend(suffix.iter().cloned());
+        Ok(())
+    } else if tactics == suffix {
+        Ok(())
+    } else {
+        Err(
+            "a path-independent tactic expansion conflicts with a leaf's existing expansion"
+                .to_string(),
+        )
     }
 }
 
@@ -872,6 +981,10 @@ pub(super) struct DeferredPostExecutionTactic {
     pub(super) tactic_index: usize,
     pub(super) source_index: usize,
     pub(super) tactic: PostExecutionTactic,
+    /// The tactic's surface steps are already in the claim's surface record
+    /// (a constructed certificate merged them there); the exit drain performs
+    /// the deferred work but must not record the steps a second time.
+    pub(super) surface_recorded: bool,
 }
 
 impl TacticReplayState {
@@ -886,6 +999,7 @@ impl TacticReplayState {
                 tactic_index,
                 source_index,
                 tactic,
+                surface_recorded: false,
             });
     }
 }
