@@ -91,9 +91,23 @@ pub struct TacticWorkLimits {
 }
 
 impl Default for TacticWorkLimits {
+    /// The deterministic work budget is the primary per-tactic bound: it
+    /// counts cooperative prover checkpoints, so the same source spends the
+    /// same units on any machine under any load.
+    ///
+    /// Simple calibration (2026-08-12 corpus, after the order-fact and
+    /// resolution-query memos): across every green example project the
+    /// simple-tactic distribution is p95 = 1,293 units, p99 = 7,177, and
+    /// max = 16,583, while the two issue-tracked hot steps (input-cursor
+    /// statement 5 and perpetual-service's fold) measure 35,368 and 46,242.
+    /// 100,000 gives every healthy tactic at least 6x margin, keeps the
+    /// tracked steps green while their issues are open, and deterministically
+    /// fails any simple tactic that grows beyond roughly twice today's worst
+    /// known cost. Changing a budget requires a fresh corpus measurement and
+    /// a documented reason; it is never a way to make one proof pass.
     fn default() -> Self {
         Self {
-            simple: 500_000,
+            simple: 100_000,
             smart: 2_000_000,
             control: 2_000_000,
         }
@@ -112,9 +126,17 @@ impl TacticWorkLimits {
 }
 
 impl Default for TacticLimits {
+    /// Real-time limits are a backstop behind the deterministic work
+    /// budgets, catching stretches of work the cooperative checkpoints do
+    /// not count. The simple limit is deliberately generous: near-threshold
+    /// wall-clock enforcement made the same proof pass or fail with machine
+    /// load (an idle 209 ms step measured 500 ms on a loaded machine), so
+    /// the semantic gate for simple tactics is the work budget, and this
+    /// cutoff only stops runaway uncounted loops. Smart search keeps its
+    /// short cutoff: it is a heuristic whose latency is itself the product.
     fn default() -> Self {
         Self {
-            simple: Duration::from_millis(500),
+            simple: Duration::from_secs(5),
             smart: Duration::from_secs(2),
             control: Duration::from_secs(6),
         }

@@ -79,20 +79,27 @@ sidecar gets the ordinary `click verify` 30-second limit
 (`CLICK_EXAMPLE_TIME_LIMIT`). Override those variables while reducing a slow
 fixture; neither disables tactic budgets.
 
-Production tactics have two independent bounds. A deterministic work budget
-counts cooperative prover checkpoints, while the existing real-time limit
-keeps the CLI prompt in practice: 500 milliseconds for simple tactics, two
-seconds for smart tactics, and six seconds for control tactics. Exhaustion says
-which kind of bound fired. Completed tactic events report both real CPU time
-and deterministic work, so `click profile` can continue measuring actual user
-latency without making that measurement a correctness oracle.
+Production tactics have two independent bounds, and the deterministic work
+budget is the primary one: it counts cooperative prover checkpoints, so the
+same source spends the same units on any machine under any load. The
+real-time limits are a backstop for stretches of work the checkpoints do not
+count: five seconds for simple tactics, two seconds for smart tactics, and
+six seconds for control tactics. Simple correctness must not hinge on
+wall-clock speed — near-threshold time enforcement made one audit pass or
+fail with machine load — while smart search keeps a short cutoff because its
+latency is itself the product. Exhaustion says which kind of bound fired.
+Completed tactic events report both real CPU time and deterministic work, so
+`click profile` can continue measuring actual user latency without making
+that measurement a correctness oracle.
 
-The default correctness budgets are 500,000 checkpoints for simple tactics and
-2,000,000 for smart and control tactics. These are deliberately looser than
-the production time cutoff on a typical development machine: they detect
-runaway or substantially broadened search without turning CPU throughput into
-a pass/fail input. Changing a work budget requires corpus measurements and a
-documented reason; it is not a way to make one difficult proof pass.
+The default correctness budgets are 100,000 checkpoints for simple tactics
+and 2,000,000 for smart and control tactics. The simple budget is calibrated
+from the green example corpus (2026-08-12: p95 = 1,293 units, p99 = 7,177,
+max = 16,583, with the two issue-tracked hot steps at 35,368 and 46,242), so
+every healthy tactic has at least 6x margin and a simple tactic that grows
+past roughly twice today's worst known cost fails deterministically.
+Changing a work budget requires corpus measurements and a documented reason;
+it is not a way to make one difficult proof pass.
 
 Rust library tests enforce deterministic tactic-work budgets but do not
 inherit the production time limits. Tests specifically about real-time
