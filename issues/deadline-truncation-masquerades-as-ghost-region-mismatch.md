@@ -57,3 +57,14 @@ MDTEST_FILTER=copy3_array_demo cargo test --test mdtests   # with simple work bu
   if the spellings agree, the diagnostic must say what actually differed.
 - A focused regression drives the ghost-region comparison against an expired
   deadline and asserts the failure names the deadline.
+
+## Shared root-cause family
+
+`Assumptions::proves` (src/kernel/assumptions/proposition_reasoning.rs) returns
+`false` the moment `deadline_exceeded()` fires, so every caller that treats
+`false` as "unprovable" converts truncation into a semantic-sounding failure.
+The fold body-fact fix removed one such caller (and calls
+`check_verification_deadline()?` before reporting a miss); the ghost-region
+and missing-path-goal dumps tracked here are the same defect at other call
+sites. The durable fix is a tri-state or error-propagating result from the
+kernel provers so truncation can never be spelled as "missing"/"mismatch".
