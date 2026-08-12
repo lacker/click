@@ -406,11 +406,6 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                 "`rewrite` requires its equality to be an exact available fact".to_string(),
             );
         }
-        let Proposition::ConditionIs(ConditionTerm::PointerEqual(goal_left, goal_right), expected) =
-            goal
-        else {
-            return Err("`rewrite` pointer equality expects a pointer equality goal".to_string());
-        };
         let normalized = |pointer: &Pointer| Pointer {
             block: pointer.block.clone(),
             offset: normalize_direct_atomic_pointer_offset_loads(&pointer.offset),
@@ -423,13 +418,106 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                 pointer.clone()
             }
         };
-        let rewritten = Proposition::ConditionIs(
-            ConditionTerm::PointerEqual(
-                Box::new(rewrite_pointer(goal_left)),
-                Box::new(rewrite_pointer(goal_right)),
+        // A pointer equality also rewrites the subject of a load: replacing
+        // the loaded pointer with its proven-equal spelling is exact term
+        // congruence, with work bounded by the goal's size.
+        fn rewrite_load_pointers(
+            term: &Bitvector32Term,
+            rewrite_pointer: &impl Fn(&Pointer) -> Pointer,
+        ) -> Bitvector32Term {
+            let binary = |left_term: &Bitvector32Term, right_term: &Bitvector32Term| {
+                (
+                    Box::new(rewrite_load_pointers(left_term, rewrite_pointer)),
+                    Box::new(rewrite_load_pointers(right_term, rewrite_pointer)),
+                )
+            };
+            match term {
+                Bitvector32Term::MemoryLoad(memory, pointer) => Bitvector32Term::MemoryLoad(
+                    memory.clone(),
+                    Box::new(rewrite_pointer(pointer)),
+                ),
+                Bitvector32Term::Add(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::Add(left, right)
+                }
+                Bitvector32Term::Subtract(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::Subtract(left, right)
+                }
+                Bitvector32Term::Multiply(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::Multiply(left, right)
+                }
+                Bitvector32Term::Divide(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::Divide(left, right)
+                }
+                Bitvector32Term::Remainder(left_term, right_term) => {
+                    let (left, right) = binary(left_term, right_term);
+                    Bitvector32Term::Remainder(left, right)
+                }
+                _ => term.clone(),
+            }
+        }
+        let rewritten = match goal {
+            Proposition::ConditionIs(
+                ConditionTerm::PointerEqual(goal_left, goal_right),
+                expected,
+            ) => Proposition::ConditionIs(
+                ConditionTerm::PointerEqual(
+                    Box::new(rewrite_pointer(goal_left)),
+                    Box::new(rewrite_pointer(goal_right)),
+                ),
+                *expected,
             ),
-            *expected,
-        );
+            Proposition::ConditionIs(condition, expected) => {
+                let rewrite_term =
+                    |term: &Bitvector32Term| rewrite_load_pointers(term, &rewrite_pointer);
+                let rewritten = match condition {
+                    ConditionTerm::Bitvector32SignedLessThan(goal_left, goal_right) => {
+                        ConditionTerm::Bitvector32SignedLessThan(
+                            Box::new(rewrite_term(goal_left)),
+                            Box::new(rewrite_term(goal_right)),
+                        )
+                    }
+                    ConditionTerm::Bitvector32SignedLessEqual(goal_left, goal_right) => {
+                        ConditionTerm::Bitvector32SignedLessEqual(
+                            Box::new(rewrite_term(goal_left)),
+                            Box::new(rewrite_term(goal_right)),
+                        )
+                    }
+                    ConditionTerm::Bitvector32SignedGreaterThan(goal_left, goal_right) => {
+                        ConditionTerm::Bitvector32SignedGreaterThan(
+                            Box::new(rewrite_term(goal_left)),
+                            Box::new(rewrite_term(goal_right)),
+                        )
+                    }
+                    ConditionTerm::Bitvector32SignedGreaterEqual(goal_left, goal_right) => {
+                        ConditionTerm::Bitvector32SignedGreaterEqual(
+                            Box::new(rewrite_term(goal_left)),
+                            Box::new(rewrite_term(goal_right)),
+                        )
+                    }
+                    ConditionTerm::Bitvector32Equal(goal_left, goal_right) => {
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(rewrite_term(goal_left)),
+                            Box::new(rewrite_term(goal_right)),
+                        )
+                    }
+                    _ => {
+                        return Err(
+                            "`rewrite` pointer equality does not occur in this goal".to_string()
+                        );
+                    }
+                };
+                Proposition::ConditionIs(rewritten, *expected)
+            }
+            _ => {
+                return Err(
+                    "`rewrite` pointer equality expects a condition goal".to_string(),
+                );
+            }
+        };
         if &rewritten == goal {
             return Err("`rewrite` equality does not occur in the current goal".to_string());
         }

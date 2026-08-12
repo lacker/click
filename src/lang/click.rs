@@ -865,6 +865,7 @@ pub enum ProofTactic {
     Have(ProofHave),
     Open(ProofOpen),
     If(ProofIf),
+    Cases(ProofCases),
     Branch(ProofBranch),
     Loop(StructuralClause),
     ObserveResource(ResourceClause),
@@ -944,6 +945,7 @@ pub enum ControlFlowTactic {
     Have,
     Open,
     If,
+    Cases,
     Branch,
     Loop,
 }
@@ -1030,6 +1032,11 @@ pub enum SimpleProofStep {
         then_proof: Box<SimpleProof>,
         else_proof: Box<SimpleProof>,
     },
+    Cases {
+        disjunction: ClickProposition,
+        left_proof: Box<SimpleProof>,
+        right_proof: Box<SimpleProof>,
+    },
     Branch {
         ensuring: Option<Vec<ProofAssertion>>,
         then_proof: Box<SimpleProof>,
@@ -1064,6 +1071,8 @@ pub enum CertificatePathSegment {
     OpenBody,
     ThenBranch,
     ElseBranch,
+    LeftCase,
+    RightCase,
     LoopInitialize,
     LoopPreserve,
     LoopItem(usize),
@@ -1215,6 +1224,23 @@ impl SimpleProofStep {
                         .collect(),
                 }),
             },
+            ProofTactic::Cases(proof_cases) => Self::Cases {
+                disjunction: proof_cases.disjunction.clone(),
+                left_proof: Box::new(SimpleProof {
+                    steps: proof_cases
+                        .left_tactics
+                        .iter()
+                        .map(Self::from_validated_tactic)
+                        .collect(),
+                }),
+                right_proof: Box::new(SimpleProof {
+                    steps: proof_cases
+                        .right_tactics
+                        .iter()
+                        .map(Self::from_validated_tactic)
+                        .collect(),
+                }),
+            },
             ProofTactic::Branch(proof_branch) => Self::Branch {
                 ensuring: proof_branch.ensuring.clone(),
                 then_proof: Box::new(SimpleProof {
@@ -1342,6 +1368,15 @@ impl SimpleProofStep {
                 then_tactics: then_proof.to_proof_tactics(),
                 else_tactics: else_proof.to_proof_tactics(),
             }),
+            Self::Cases {
+                disjunction,
+                left_proof,
+                right_proof,
+            } => ProofTactic::Cases(ProofCases {
+                disjunction: disjunction.clone(),
+                left_tactics: left_proof.to_proof_tactics(),
+                right_tactics: right_proof.to_proof_tactics(),
+            }),
             Self::Branch {
                 ensuring,
                 then_proof,
@@ -1435,6 +1470,23 @@ fn validate_certificate_tactics(
                     let else_result = validate_certificate_tactics(&proof_if.else_tactics, path);
                     path.pop();
                     else_result
+                }
+            }
+            TacticClass::ControlFlow(ControlFlowTactic::Cases) => {
+                let ProofTactic::Cases(proof_cases) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                path.push(CertificatePathSegment::LeftCase);
+                let left_result = validate_certificate_tactics(&proof_cases.left_tactics, path);
+                path.pop();
+                if left_result.is_err() {
+                    left_result
+                } else {
+                    path.push(CertificatePathSegment::RightCase);
+                    let right_result =
+                        validate_certificate_tactics(&proof_cases.right_tactics, path);
+                    path.pop();
+                    right_result
                 }
             }
             TacticClass::ControlFlow(ControlFlowTactic::Branch) => {
@@ -1560,6 +1612,7 @@ impl ProofTactic {
             Self::Have(_) => TacticClass::ControlFlow(ControlFlowTactic::Have),
             Self::Open(_) => TacticClass::ControlFlow(ControlFlowTactic::Open),
             Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),
+            Self::Cases(_) => TacticClass::ControlFlow(ControlFlowTactic::Cases),
             Self::Branch(_) => TacticClass::ControlFlow(ControlFlowTactic::Branch),
             Self::Loop(_) => TacticClass::ControlFlow(ControlFlowTactic::Loop),
         }
@@ -1593,6 +1646,16 @@ pub struct ProofIf {
     condition: ClickProposition,
     then_tactics: Vec<ProofTactic>,
     else_tactics: Vec<ProofTactic>,
+}
+
+/// Explicit elimination of a disjunctive fact: replay checks that the spelled
+/// disjunction is an available fact, then checks each branch under exactly its
+/// assumed disjunct. Both branches are always spelled; nothing is searched.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofCases {
+    disjunction: ClickProposition,
+    left_tactics: Vec<ProofTactic>,
+    right_tactics: Vec<ProofTactic>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

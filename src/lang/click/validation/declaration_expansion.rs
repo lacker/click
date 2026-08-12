@@ -392,6 +392,22 @@ fn expand_declared_resource_tactic(
                 .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         })),
+        ProofTactic::Cases(proof_cases) => Ok(ProofTactic::Cases(ProofCases {
+            disjunction: expand_declared_resource_proposition(
+                proof_cases.disjunction,
+                resource_definitions,
+            )?,
+            left_tactics: proof_cases
+                .left_tactics
+                .into_iter()
+                .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+            right_tactics: proof_cases
+                .right_tactics
+                .into_iter()
+                .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        })),
         ProofTactic::Branch(proof_branch) => Ok(ProofTactic::Branch(ProofBranch {
             ensuring: proof_branch
                 .ensuring

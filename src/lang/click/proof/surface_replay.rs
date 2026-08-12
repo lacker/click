@@ -2021,6 +2021,21 @@ fn simple_have_body_candidates(tactics: &[ProofTactic]) -> Vec<Vec<ProofTactic>>
             }
             candidates
         }
+        [ProofTactic::Cases(proof_cases)] => {
+            let left_candidates = simple_have_body_candidates(&proof_cases.left_tactics);
+            let right_candidates = simple_have_body_candidates(&proof_cases.right_tactics);
+            let mut candidates = Vec::new();
+            for left_tactics in &left_candidates {
+                for right_tactics in &right_candidates {
+                    candidates.push(vec![ProofTactic::Cases(ProofCases {
+                        disjunction: proof_cases.disjunction.clone(),
+                        left_tactics: left_tactics.clone(),
+                        right_tactics: right_tactics.clone(),
+                    })]);
+                }
+            }
+            candidates
+        }
         [prefix @ .., ProofTactic::Simp] => [
             ProofTactic::Assumption,
             ProofTactic::Normalize,

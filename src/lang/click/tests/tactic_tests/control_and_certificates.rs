@@ -415,6 +415,49 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
 }
 
 #[test]
+fn canonical_tactic_printer_round_trips_cases_certificate() {
+    let nonnegative = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+        operator: ComparisonOperator::GreaterEqual,
+        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+    };
+    let negative = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+        operator: ComparisonOperator::LessThan,
+        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+    };
+    let disjunction = ClickProposition::Or(
+        Box::new(nonnegative.clone()),
+        Box::new(negative.clone()),
+    );
+    let tactics = vec![ProofTactic::Have(ProofHave {
+        proposition: disjunction.clone(),
+        proof: Proof::Script(vec![ProofTactic::Cases(ProofCases {
+            disjunction,
+            left_tactics: vec![ProofTactic::Left],
+            right_tactics: vec![ProofTactic::Right],
+        })]),
+    })];
+    let certificate = SimpleProof::from_proof_tactics(&tactics)
+        .expect("a cases script should form a surface certificate");
+    let printed = format_simple_proof(&certificate);
+    let source = format!(
+        r#"
+            verifying "printer.c";
+
+            int32 printer(int32 x) {{
+                ensures x == x;
+            }} {printed}
+        "#
+    );
+    let parsed = parse(&source).expect("printed cases certificate should parse");
+    assert_eq!(
+        parsed.function_blocks()[0].grouped_proof(),
+        Some(&Proof::Script(tactics))
+    );
+}
+
+#[test]
 fn simple_proof_round_trips_nested_surface_steps() {
     let reflexive = ClickProposition::Comparison {
         left: current_var("x"),

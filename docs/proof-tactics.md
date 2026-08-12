@@ -86,6 +86,7 @@ remains migration compatibility and should not be used in new proofs.
 | `apply(ih(m))` | simple in an induction proof | Instantiate the local hypothesis after proving `0 <= m`, `m < n`, and the theorem requirements at `m`. |
 | `have P by { ... }` | structural control; source class inherited | Prove `P` in a nested proof and add it to the surrounding context. |
 | `if P { ... } else { ... }` | control | Split the proof on the exact condition `P`. This does not execute a C `if`. |
+| `cases (A or B) { ... } { ... }` | control | Eliminate an exact available disjunction: the first block proves the goal assuming `A`, the second assuming `B`. Both blocks are always spelled. |
 | `witness ...` / `choose ...` | control | Introduce or select existential evidence in the supported proposition contexts. |
 
 `by simp;` is sugar for a script containing the same `simp()` operation at the
@@ -98,6 +99,15 @@ Although ordinary global-theorem `apply` is smart when it searches for
 premises, applying the named induction hypothesis is a deterministic simple
 step with fixed nonnegative, strict-decrease, and substituted-requirement
 obligations.
+
+Proof-level `if` and `cases` answer different questions. `if P` is an
+excluded-middle split: the else case assumes `not P`, so it cannot eliminate a
+disjunctive fact whose right side is not the negation of its left. `cases`
+requires the spelled disjunction to be an exact available fact and checks each
+branch under exactly its assumed disjunct — the shape smart simplification
+emits when a proof consumes a fact such as `selected == left or
+selected == right`. Replay never searches: a branch that needs the other
+case's disjunct fails.
 
 The retired `calculate` tactic is not an alias for simplification; use
 `simp() using` to constrain smart search to named facts. The former

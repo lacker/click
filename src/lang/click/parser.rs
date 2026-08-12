@@ -1695,6 +1695,23 @@ impl Parser {
                 else_tactics,
             }));
         }
+        if name == "cases" {
+            self.expect(Token::LParen)?;
+            let disjunction = self.parse_proposition()?;
+            self.expect(Token::RParen)?;
+            // Each branch proves the goal under exactly its assumed disjunct.
+            // Both branches are always spelled; there is no implicit side.
+            let left_tactics = self.parse_possibly_empty_tactic_block()?;
+            let right_tactics = self.parse_possibly_empty_tactic_block()?;
+            if self.peek() == Some(&Token::Semicolon) {
+                self.position += 1;
+            }
+            return Ok(ProofTactic::Cases(ProofCases {
+                disjunction,
+                left_tactics,
+                right_tactics,
+            }));
+        }
         if name == "branch" {
             self.expect(Token::LBrace)?;
             let ensuring = if self.peek_ident() == Some("ensuring") {

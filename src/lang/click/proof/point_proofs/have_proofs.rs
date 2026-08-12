@@ -1594,7 +1594,9 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 }
             }
             ProofTactic::Simp => use_simp = true,
-            ProofTactic::If(_) => unreachable!("proof-level if tactics are expanded before replay"),
+            ProofTactic::If(_) | ProofTactic::Cases(_) => {
+                unreachable!("proof-level if and cases tactics are expanded before replay")
+            }
             _ => {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `{}` is not available in a pure proof",
@@ -1720,28 +1722,68 @@ fn add_have_case_assumptions(
         .iter()
         .filter(|assumption| assumption.tactic_index == inner_tactic_index)
     {
-        let proposition = lower_point_proposition(
-            &case_assumption.proposition,
-            available,
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            result,
-            program_point_states,
-            predicate_environment,
-            click_function_environment,
-        )
-        .map_err(|message| {
-            ClickError::new(format!(
-                "`{claim_label}` tactic {outer_tactic_index}, `have` tactic {inner_tactic_index}: could not lower `if` condition: {message}"
-            ))
-        })?;
-        available.push(if case_assumption.value {
-            proposition
-        } else {
-            Proposition::Not(Box::new(proposition))
-        });
+        match &case_assumption.kind {
+            ProofCaseAssumptionKind::Condition { proposition, value } => {
+                let proposition = lower_point_proposition(
+                    proposition,
+                    available,
+                    parameters,
+                    arguments,
+                    pre_state,
+                    state,
+                    result,
+                    program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {outer_tactic_index}, `have` tactic {inner_tactic_index}: could not lower `if` condition: {message}"
+                    ))
+                })?;
+                available.push(if *value {
+                    proposition
+                } else {
+                    Proposition::Not(Box::new(proposition))
+                });
+            }
+            ProofCaseAssumptionKind::Disjunct { disjunction, left } => {
+                let lowered = lower_point_proposition(
+                    disjunction,
+                    available,
+                    parameters,
+                    arguments,
+                    pre_state,
+                    state,
+                    result,
+                    program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {outer_tactic_index}, `have` tactic {inner_tactic_index}: could not lower `cases` disjunction: {message}"
+                    ))
+                })?;
+                let Proposition::Or(left_disjunct, right_disjunct) = &lowered else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {outer_tactic_index}, `have` tactic {inner_tactic_index}: `cases` requires a disjunction, got {}",
+                        describe_pure_fact(&lowered, parameters, arguments)
+                    )));
+                };
+                if !pure_fact_is_replay_available(&lowered, available) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {outer_tactic_index}, `have` tactic {inner_tactic_index}: `cases` requires its exact disjunction as an available fact: {}",
+                        describe_pure_fact(&lowered, parameters, arguments)
+                    )));
+                }
+                available.push(if *left {
+                    left_disjunct.as_ref().clone()
+                } else {
+                    right_disjunct.as_ref().clone()
+                });
+            }
+        }
     }
     Ok(())
 }

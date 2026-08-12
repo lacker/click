@@ -1259,8 +1259,24 @@ struct ExpandedProofCase {
 
 struct ProofCaseAssumption {
     tactic_index: usize,
-    proposition: ClickProposition,
-    value: bool,
+    kind: ProofCaseAssumptionKind,
+}
+
+#[derive(Clone)]
+enum ProofCaseAssumptionKind {
+    /// Excluded-middle case split from proof-level `if`: assume the spelled
+    /// condition with the given polarity. Sound without an availability check.
+    Condition {
+        proposition: ClickProposition,
+        value: bool,
+    },
+    /// Disjunction elimination from `cases`: replay checks that the spelled
+    /// disjunction is an available fact at the split point, then assumes
+    /// exactly the selected disjunct.
+    Disjunct {
+        disjunction: ClickProposition,
+        left: bool,
+    },
 }
 
 // Pure proofs and point-local `have` proofs use flat logical cases. Execution
@@ -1275,7 +1291,7 @@ fn expand_structured_proof_cases(
     let Some((control_index, control_tactic)) = tactics
         .iter()
         .enumerate()
-        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_)))
+        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_) | ProofTactic::Cases(_)))
     else {
         return Ok(vec![ExpandedProofCase {
             tactics: tactics.to_vec(),
@@ -1283,50 +1299,74 @@ fn expand_structured_proof_cases(
         }]);
     };
     let prefix = &tactics[..control_index];
-    match control_tactic {
-        ProofTactic::If(proof_if) => {
-            let suffix_cases = expand_structured_proof_cases(&tactics[control_index + 1..])?;
-            let mut cases = Vec::new();
-            for (value, branch_tactics) in [
-                (true, proof_if.then_tactics.as_slice()),
-                (false, proof_if.else_tactics.as_slice()),
-            ] {
-                for branch in expand_structured_proof_cases(branch_tactics)? {
-                    for suffix in &suffix_cases {
-                        let boundary = prefix.len() + branch.tactics.len();
-                        let mut linear = prefix.to_vec();
-                        linear.extend(branch.tactics.iter().cloned());
-                        linear.extend(suffix.tactics.iter().cloned());
-                        let mut assumptions = vec![ProofCaseAssumption {
-                            tactic_index: prefix.len(),
-                            proposition: proof_if.condition.clone(),
-                            value,
-                        }];
-                        assumptions.extend(branch.assumptions.iter().map(|assumption| {
-                            ProofCaseAssumption {
-                                tactic_index: prefix.len() + assumption.tactic_index,
-                                proposition: assumption.proposition.clone(),
-                                value: assumption.value,
-                            }
-                        }));
-                        assumptions.extend(suffix.assumptions.iter().map(|assumption| {
-                            ProofCaseAssumption {
-                                tactic_index: boundary + assumption.tactic_index,
-                                proposition: assumption.proposition.clone(),
-                                value: assumption.value,
-                            }
-                        }));
-                        cases.push(ExpandedProofCase {
-                            tactics: linear,
-                            assumptions,
-                        });
+    let branches: [(ProofCaseAssumptionKind, &[ProofTactic]); 2] = match control_tactic {
+        ProofTactic::If(proof_if) => [
+            (
+                ProofCaseAssumptionKind::Condition {
+                    proposition: proof_if.condition.clone(),
+                    value: true,
+                },
+                proof_if.then_tactics.as_slice(),
+            ),
+            (
+                ProofCaseAssumptionKind::Condition {
+                    proposition: proof_if.condition.clone(),
+                    value: false,
+                },
+                proof_if.else_tactics.as_slice(),
+            ),
+        ],
+        ProofTactic::Cases(proof_cases) => [
+            (
+                ProofCaseAssumptionKind::Disjunct {
+                    disjunction: proof_cases.disjunction.clone(),
+                    left: true,
+                },
+                proof_cases.left_tactics.as_slice(),
+            ),
+            (
+                ProofCaseAssumptionKind::Disjunct {
+                    disjunction: proof_cases.disjunction.clone(),
+                    left: false,
+                },
+                proof_cases.right_tactics.as_slice(),
+            ),
+        ],
+        _ => unreachable!("control-tactic search only returns proof if or cases"),
+    };
+    let suffix_cases = expand_structured_proof_cases(&tactics[control_index + 1..])?;
+    let mut cases = Vec::new();
+    for (kind, branch_tactics) in branches {
+        for branch in expand_structured_proof_cases(branch_tactics)? {
+            for suffix in &suffix_cases {
+                let boundary = prefix.len() + branch.tactics.len();
+                let mut linear = prefix.to_vec();
+                linear.extend(branch.tactics.iter().cloned());
+                linear.extend(suffix.tactics.iter().cloned());
+                let mut assumptions = vec![ProofCaseAssumption {
+                    tactic_index: prefix.len(),
+                    kind: kind.clone(),
+                }];
+                assumptions.extend(branch.assumptions.iter().map(|assumption| {
+                    ProofCaseAssumption {
+                        tactic_index: prefix.len() + assumption.tactic_index,
+                        kind: assumption.kind.clone(),
                     }
-                }
+                }));
+                assumptions.extend(suffix.assumptions.iter().map(|assumption| {
+                    ProofCaseAssumption {
+                        tactic_index: boundary + assumption.tactic_index,
+                        kind: assumption.kind.clone(),
+                    }
+                }));
+                cases.push(ExpandedProofCase {
+                    tactics: linear,
+                    assumptions,
+                });
             }
-            Ok(cases)
         }
-        _ => unreachable!("control-tactic search only returns proof if"),
     }
+    Ok(cases)
 }
 
 #[derive(Clone)]
@@ -1632,6 +1672,10 @@ fn source_tactic_width(tactic: &ProofTactic) -> usize {
         ProofTactic::If(proof_if) => {
             1 + source_tactic_count(&proof_if.then_tactics)
                 + source_tactic_count(&proof_if.else_tactics)
+        }
+        ProofTactic::Cases(proof_cases) => {
+            1 + source_tactic_count(&proof_cases.left_tactics)
+                + source_tactic_count(&proof_cases.right_tactics)
         }
         ProofTactic::Branch(proof_branch) => {
             1 + source_tactic_count(&proof_branch.then_tactics)

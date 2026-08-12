@@ -1871,6 +1871,10 @@ pub(in crate::lang::click) fn validate_loop_initialization_tactics(
                 validate_loop_initialization_tactics(&proof_if.then_tactics)?;
                 validate_loop_initialization_tactics(&proof_if.else_tactics)?;
             }
+            ProofTactic::Cases(proof_cases) => {
+                validate_loop_initialization_tactics(&proof_cases.left_tactics)?;
+                validate_loop_initialization_tactics(&proof_cases.right_tactics)?;
+            }
             tactic => {
                 return Err(ClickError::new(format!(
                     "`initialize` is a pure proof and cannot use `{}`",

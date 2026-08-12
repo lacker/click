@@ -1221,6 +1221,26 @@ pub(super) fn lower_outcome_simp_tactics(
             extracted_surfaces.into_iter().map(ProofTactic::Extract),
         );
         Ok(explicit)
+    } else if let Some(tactics) = plan_outcome_disjunction_cases(
+        replay,
+        surface_goal,
+        goal,
+        available,
+        &premise_pairs,
+        parameters,
+        arguments,
+        pre_state,
+        post_state,
+        result,
+        predicate_environment,
+        click_function_environment,
+    ) {
+        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "disjunction case split produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        Ok(tactics)
     } else {
         Err(ClickError::new(format!(
             "post-execution simplification proved `{}`, but Click has no explicit simple certificate for that derivation\n  selected premises: {}",
@@ -1232,6 +1252,72 @@ pub(super) fn lower_outcome_simp_tactics(
                 .join(", "),
         )))
     }
+}
+
+/// Constructs an explicit `cases` certificate that eliminates one spelled
+/// disjunctive premise. Search recurses into each branch with exactly the
+/// assumed disjunct added, so the emitted certificate spells both branches
+/// and replay checks them under their own assumption only. A premise whose
+/// disjunct is already available is skipped, which bounds the recursion by
+/// the number of distinct disjunctive premises.
+#[allow(clippy::too_many_arguments)]
+fn plan_outcome_disjunction_cases(
+    replay: &TacticReplayState,
+    surface_goal: &ClickProposition,
+    goal: &Proposition,
+    available: &[Proposition],
+    premise_pairs: &[(Proposition, ClickProposition)],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Option<Vec<ProofTactic>> {
+    for (kernel, surface) in premise_pairs {
+        check_verification_deadline().ok()?;
+        let Proposition::Or(left, right) = kernel else {
+            continue;
+        };
+        if pure_fact_is_replay_available(left, available)
+            || pure_fact_is_replay_available(right, available)
+        {
+            continue;
+        }
+        let branch = |disjunct: &Proposition| {
+            let mut branch_available = available.to_vec();
+            branch_available.push(disjunct.clone());
+            match lower_outcome_simp_proof(
+                replay,
+                surface_goal,
+                goal,
+                &branch_available,
+                parameters,
+                arguments,
+                pre_state,
+                post_state,
+                result,
+                predicate_environment,
+                click_function_environment,
+            ) {
+                Ok(Proof::Script(tactics)) => Some(tactics),
+                _ => None,
+            }
+        };
+        let Some(left_tactics) = branch(left) else {
+            continue;
+        };
+        let Some(right_tactics) = branch(right) else {
+            continue;
+        };
+        return Some(vec![ProofTactic::Cases(ProofCases {
+            disjunction: surface.clone(),
+            left_tactics,
+            right_tactics,
+        })]);
+    }
+    None
 }
 
 fn collect_surface_conjunct_pairs(
@@ -3419,6 +3505,68 @@ fn lower_outcome_simp_proof_direct(
             ))
         })?;
         return Ok(Proof::Script(tactics));
+    }
+    if let (ClickProposition::Or(surface_left, surface_right), Proposition::Or(left, right)) =
+        (surface_goal, goal)
+        && !available.contains(goal)
+    {
+        // Prefer a whole-goal certificate (assumption, transport, or an
+        // explicit `cases` split over a disjunctive premise). Only when that
+        // fails, introduce one spelled disjunct with `left()`/`right()`.
+        let direct = lower_outcome_simp_tactics(
+            replay,
+            surface_goal,
+            goal,
+            available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            predicate_environment,
+            click_function_environment,
+        );
+        let direct_error = match direct {
+            Ok(tactics) => return Ok(Proof::Script(tactics)),
+            Err(error) => error,
+        };
+        for (side_surface, side_kernel, choose) in [
+            (surface_left, left, ProofTactic::Left),
+            (surface_right, right, ProofTactic::Right),
+        ] {
+            if pure_fact_is_replay_available(side_kernel, available) {
+                return Ok(Proof::Script(vec![choose]));
+            }
+            let Ok(proof) = lower_outcome_simp_proof(
+                replay,
+                side_surface,
+                side_kernel,
+                available,
+                parameters,
+                arguments,
+                pre_state,
+                post_state,
+                result,
+                predicate_environment,
+                click_function_environment,
+            ) else {
+                continue;
+            };
+            let tactics = vec![
+                ProofTactic::Have(ProofHave {
+                    proposition: side_surface.as_ref().clone(),
+                    proof,
+                }),
+                choose,
+            ];
+            SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+                ClickError::new(format!(
+                    "disjunct introduction produced a non-simple expansion: {error:?}"
+                ))
+            })?;
+            return Ok(Proof::Script(tactics));
+        }
+        return Err(direct_error);
     }
     if let (ClickProposition::And(surface_left, surface_right), Proposition::And(left, right)) =
         (surface_goal, goal)

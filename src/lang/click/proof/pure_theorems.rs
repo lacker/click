@@ -182,6 +182,11 @@ fn prepare_pure_induction_tactics(
                     then_tactics: transform(&proof_if.then_tactics, hypothesis)?,
                     else_tactics: transform(&proof_if.else_tactics, hypothesis)?,
                 })),
+                ProofTactic::Cases(proof_cases) => Ok(ProofTactic::Cases(ProofCases {
+                    disjunction: proof_cases.disjunction.clone(),
+                    left_tactics: transform(&proof_cases.left_tactics, hypothesis)?,
+                    right_tactics: transform(&proof_cases.right_tactics, hypothesis)?,
+                })),
                 ProofTactic::ApplyInduction { .. } => Err(ClickError::new(
                     "internal induction-application syntax is not accepted directly",
                 )),
@@ -692,6 +697,10 @@ fn pure_theorem_surface_certificate(
             ProofTactic::If(proof_if) => {
                 contains_restricted_simp(&proof_if.then_tactics)
                     || contains_restricted_simp(&proof_if.else_tactics)
+            }
+            ProofTactic::Cases(proof_cases) => {
+                contains_restricted_simp(&proof_cases.left_tactics)
+                    || contains_restricted_simp(&proof_cases.right_tactics)
             }
             ProofTactic::Have(have) => match &have.proof {
                 Proof::Script(tactics) => contains_restricted_simp(tactics),
@@ -1616,25 +1625,62 @@ fn prove_pure_theorem_tactics(
             .iter()
             .filter(|assumption| assumption.tactic_index == tactic_index)
         {
-            let proposition = lower_pure_theorem_proposition(
-                claim_label,
-                &assumption.proposition,
-                &context.values,
-                &context.array_refs,
-                &context.memory,
-                predicate_environment,
-                click_function_environment,
-            )
-            .map_err(|message| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: could not lower `if` condition: {message}"
-                ))
-            })?;
-            available.push(if assumption.value {
-                proposition
-            } else {
-                Proposition::Not(Box::new(proposition))
-            });
+            match &assumption.kind {
+                ProofCaseAssumptionKind::Condition { proposition, value } => {
+                    let proposition = lower_pure_theorem_proposition(
+                        claim_label,
+                        proposition,
+                        &context.values,
+                        &context.array_refs,
+                        &context.memory,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: could not lower `if` condition: {message}"
+                        ))
+                    })?;
+                    available.push(if *value {
+                        proposition
+                    } else {
+                        Proposition::Not(Box::new(proposition))
+                    });
+                }
+                ProofCaseAssumptionKind::Disjunct { disjunction, left } => {
+                    let lowered = lower_pure_theorem_proposition(
+                        claim_label,
+                        disjunction,
+                        &context.values,
+                        &context.array_refs,
+                        &context.memory,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: could not lower `cases` disjunction: {message}"
+                        ))
+                    })?;
+                    let Proposition::Or(left_disjunct, right_disjunct) = &lowered else {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `cases` requires a disjunction, got {}",
+                            describe_pure_fact(&lowered, &[], &[])
+                        )));
+                    };
+                    if !pure_fact_is_replay_available(&lowered, &available) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `cases` requires its exact disjunction as an available fact: {}",
+                            describe_pure_fact(&lowered, &[], &[])
+                        )));
+                    }
+                    available.push(if *left {
+                        left_disjunct.as_ref().clone()
+                    } else {
+                        right_disjunct.as_ref().clone()
+                    });
+                }
+            }
         }
         if closed {
             return Err(ClickError::new(format!(

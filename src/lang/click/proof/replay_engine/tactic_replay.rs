@@ -2444,6 +2444,7 @@ fn replay_linear_tactics_without_frontier_loops(
             | ProofTactic::Split
             | ProofTactic::Left
             | ProofTactic::Right
+            | ProofTactic::Cases(_)
             | ProofTactic::Contradiction(_)
             | ProofTactic::SimpUsing(_) => {
                 return Err(ClickError::new(format!(

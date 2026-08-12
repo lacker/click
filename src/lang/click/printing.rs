@@ -197,6 +197,16 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_tactics(output, &proof_if.else_tactics, indent + 1);
             line(output, &prefix, "}");
         }
+        ProofTactic::Cases(proof_cases) => {
+            output.push_str(&prefix);
+            output.push_str("cases (");
+            output.push_str(&source_click_proposition(&proof_cases.disjunction));
+            output.push_str(") {\n");
+            write_tactics(output, &proof_cases.left_tactics, indent + 1);
+            line(output, &prefix, "} {");
+            write_tactics(output, &proof_cases.right_tactics, indent + 1);
+            line(output, &prefix, "}");
+        }
         ProofTactic::Branch(proof_branch) => {
             line(output, &prefix, "branch {");
             if let Some(assertions) = &proof_branch.ensuring {

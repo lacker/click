@@ -1198,3 +1198,183 @@ fn constant_bound_weakenings_lower_to_named_theorem_chains() {
     verify_c0_sources(click_source, &[("keep.c", c_source)])
         .expect("constant bound weakenings should lower to named theorem chains");
 }
+
+#[test]
+fn cases_eliminates_a_disjunctive_premise() {
+    let c_source = r#"
+        int32 keep_small(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "keep_small.c";
+
+        int32 keep_small(int32 x) {
+            requires small: x == 1 or x == 2;
+            ensures identity: result == x;
+        } by {
+            execute();
+            have x <= 2 by {
+                cases (x == 1 or x == 2) {
+                    rewrite(x == 1);
+                    normalize();
+                } {
+                    rewrite(x == 2);
+                    normalize();
+                }
+            }
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("keep_small.c", c_source)])
+        .expect("explicit cases over the disjunctive requirement should replay");
+}
+
+#[test]
+fn cases_requires_its_exact_disjunction_as_an_available_fact() {
+    let c_source = r#"
+        int32 keep_small(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "keep_small.c";
+
+        int32 keep_small(int32 x) {
+            requires small: x == 1 or x == 2;
+            ensures identity: result == x;
+        } by {
+            execute();
+            have x <= 3 by {
+                cases (x == 1 or x == 3) {
+                    rewrite(x == 1);
+                    normalize();
+                } {
+                    rewrite(x == 3);
+                    normalize();
+                }
+            }
+            simp();
+        }
+    "#;
+
+    let error = verify_c0_sources(click_source, &[("keep_small.c", c_source)])
+        .expect_err("cases must not split a disjunction that is not an available fact");
+    assert!(
+        error
+            .message()
+            .contains("`cases` requires its exact disjunction as an available fact"),
+        "unexpected error: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn cases_checks_each_branch_under_exactly_its_own_disjunct() {
+    let c_source = r#"
+        int32 keep_small(int32 x) {
+            return x;
+        }
+    "#;
+    // The branches are swapped: the left branch may only assume `x == 1`,
+    // so its `rewrite(x == 2)` must fail instead of borrowing the other case.
+    let click_source = r#"
+        verifying "keep_small.c";
+
+        int32 keep_small(int32 x) {
+            requires small: x == 1 or x == 2;
+            ensures identity: result == x;
+        } by {
+            execute();
+            have x <= 2 by {
+                cases (x == 1 or x == 2) {
+                    rewrite(x == 2);
+                    normalize();
+                } {
+                    rewrite(x == 1);
+                    normalize();
+                }
+            }
+            simp();
+        }
+    "#;
+
+    let error = verify_c0_sources(click_source, &[("keep_small.c", c_source)])
+        .expect_err("a branch must not use the other case's disjunct");
+    assert!(
+        error
+            .message()
+            .contains("`rewrite` requires its equality to be an exact available fact"),
+        "unexpected error: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn disjunctive_premise_simp_expands_to_a_cases_certificate() {
+    let c_source = r#"
+        int32 select_first(int32* left, int32* right, int32 choose_left) {
+            int32* selected;
+            if (choose_left != 0) {
+                selected = left;
+            } else {
+                selected = right;
+            }
+            return selected[0];
+        }
+    "#;
+    let click_source = r#"
+        verifying "select_first.c";
+
+        int32 select_first(int32* left, int32* right, int32 choose_left) {
+            views left[0..1];
+            views right[0..1];
+
+            ensures result == left[0] or result == right[0] by {
+                step();
+                branch {
+                    ensuring {
+                        fact selected == left or selected == right;
+                        views selected[0..1];
+                    }
+                    then {
+                        step();
+                    }
+                    else {
+                        step();
+                    }
+                }
+                step();
+                simp();
+            }
+        }
+    "#;
+
+    let verified = verify_c0_sources(click_source, &[("select_first.c", c_source)])
+        .expect("the disjunctive-premise postcondition should verify");
+    let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
+        panic!(
+            "the disjunctive-premise simp should expand: {:?}",
+            verified[0].expansion_blocker()
+        )
+    });
+    fn find_cases(tactics: &[ProofTactic]) -> Option<&ProofCases> {
+        tactics.iter().find_map(|tactic| match tactic {
+            ProofTactic::Cases(cases) => Some(cases),
+            ProofTactic::Have(have) => match &have.proof {
+                Proof::Script(body) => find_cases(body),
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+    let cases = find_cases(&expanded)
+        .expect("the expansion should eliminate the disjunctive premise with `cases`");
+    assert!(
+        !format!("{cases:?}").contains("Simp"),
+        "both spelled branches should close with simple tactics: {cases:?}"
+    );
+    SimpleProof::from_proof_tactics(&expanded)
+        .expect("the disjunctive-premise expansion should be a surface certificate");
+}
