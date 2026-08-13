@@ -10,11 +10,11 @@ use click::cli::{
     read_mdtest, read_verifying_sources, source_refs,
 };
 use click::lang::click::{
-    c0_smart_tactic_source_sites, c0_tactic_source_position, expand_c0_tactic_source_at,
-    verify_c0_sources_at,
+    c0_smart_tactic_source_sites, c0_tactic_source_position, expand_c0_claim_source_by_label,
+    expand_c0_tactic_source_at, verify_c0_sources_at,
 };
 
-const USAGE: &str = "usage: click expand [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>:<column>\n\nExpansion is checked before output. With --in-place, the original is atomically replaced only after targeted verification succeeds.";
+const USAGE: &str = "usage: click expand [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>:<column>\n       click expand --claim <LABEL> [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>\n\nExpansion is checked before output. With --in-place, the original is atomically replaced only after targeted verification succeeds.";
 
 fn main() {
     if let Err(message) = entry() {
@@ -26,11 +26,16 @@ fn main() {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Arguments {
     click_path: PathBuf,
-    line: usize,
-    column: usize,
+    selection: Selection,
     time_limit: Duration,
     output: Option<PathBuf>,
     in_place: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Selection {
+    Tactic { line: usize, column: usize },
+    Claim(String),
 }
 
 fn entry() -> Result<(), String> {
@@ -64,6 +69,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut time_limit = None;
     let mut output = None;
     let mut in_place = false;
+    let mut claim = None;
     let mut parse_options = true;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -89,14 +95,27 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
                 .next()
                 .ok_or_else(|| format!("missing duration after `--time-limit`\n{USAGE}"))?;
             time_limit = Some(parse_duration(&duration)?);
+        } else if argument == "--claim" {
+            if claim.is_some() {
+                return Err("`--claim` may only be supplied once".to_string());
+            }
+            claim = Some(
+                arguments
+                    .next()
+                    .ok_or_else(|| format!("missing label after `--claim`\n{USAGE}"))?,
+            );
         } else if argument.starts_with('-') {
             return Err(format!("unknown option `{argument}`\n{USAGE}"));
         } else {
             positional.push(argument);
         }
     }
-    let (click_path, line, column) = match positional.as_slice() {
-        [location] => parse_source_location(location)?,
+    let (click_path, selection) = match (claim, positional.as_slice()) {
+        (Some(claim), [path]) => (PathBuf::from(path), Selection::Claim(claim)),
+        (None, [location]) => {
+            let (path, line, column) = parse_source_location(location)?;
+            (path, Selection::Tactic { line, column })
+        }
         _ => return Err(USAGE.to_string()),
     };
     if in_place && output.is_some() {
@@ -104,8 +123,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     }
     Ok(Arguments {
         click_path,
-        line,
-        column,
+        selection,
         time_limit: time_limit.unwrap_or(DEFAULT_EXPANSION_TIME_LIMIT),
         output,
         in_place,
@@ -130,11 +148,7 @@ fn run_bounded(arguments: &Arguments) -> Result<String, String> {
     let owned_sources = read_verifying_sources(&arguments.click_path, &click_source)?;
     let sources = source_refs(&owned_sources);
     let (claim, expanded) = generate_expansion(arguments.time_limit, || {
-        let claim = selected_claim(&click_source, &sources, arguments.line, arguments.column)?;
-        let expanded =
-            expand_c0_tactic_source_at(&click_source, &sources, arguments.line, arguments.column)
-                .map_err(|error| error.message().to_string())?;
-        Ok((claim, expanded))
+        expand_selection(&click_source, &sources, &arguments.selection)
     })?;
     verify_expansion(&expanded, &sources, &claim, arguments.time_limit)?;
     Ok(expanded)
@@ -158,17 +172,39 @@ fn run_mdtest(arguments: &Arguments) -> Result<String, String> {
             arguments.click_path.display()
         )
     })?;
-    let click_line = mdtest.click_line(arguments.line)?;
     let sources = source_refs(&mdtest.c_sources);
     let (claim, expanded) = generate_expansion(arguments.time_limit, || {
-        let claim = selected_claim(click_source, &sources, click_line, arguments.column)?;
-        let expanded =
-            expand_c0_tactic_source_at(click_source, &sources, click_line, arguments.column)
-                .map_err(|error| error.message().to_string())?;
-        Ok((claim, expanded))
+        let selection = match &arguments.selection {
+            Selection::Tactic { line, column } => Selection::Tactic {
+                line: mdtest.click_line(*line)?,
+                column: *column,
+            },
+            Selection::Claim(claim) => Selection::Claim(claim.clone()),
+        };
+        expand_selection(click_source, &sources, &selection)
     })?;
     verify_expansion(&expanded, &sources, &claim, arguments.time_limit)?;
     mdtest.replace_click_source(&markdown, &expanded)
+}
+
+fn expand_selection(
+    click_source: &str,
+    sources: &[(&str, &str)],
+    selection: &Selection,
+) -> Result<(String, String), String> {
+    match selection {
+        Selection::Tactic { line, column } => {
+            let claim = selected_claim(click_source, sources, *line, *column)?;
+            let expanded = expand_c0_tactic_source_at(click_source, sources, *line, *column)
+                .map_err(|error| error.message().to_string())?;
+            Ok((claim, expanded))
+        }
+        Selection::Claim(claim) => {
+            let expanded = expand_c0_claim_source_by_label(click_source, sources, claim)
+                .map_err(|error| error.message().to_string())?;
+            Ok((claim.clone(), expanded))
+        }
+    }
 }
 
 fn generate_expansion<R>(
@@ -465,9 +501,27 @@ int32 identity(int32 x) {
             arguments.click_path,
             PathBuf::from("volume:name/example.click")
         );
-        assert_eq!(arguments.line, 12);
-        assert_eq!(arguments.column, 7);
+        assert_eq!(
+            arguments.selection,
+            Selection::Tactic {
+                line: 12,
+                column: 7
+            }
+        );
         assert_eq!(arguments.time_limit, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn parses_claim_selection_with_a_plain_path() {
+        let arguments =
+            parse_arguments(["--claim", "identity.contract", "example.click"].map(str::to_string))
+                .expect("claim selection should parse");
+
+        assert_eq!(arguments.click_path, PathBuf::from("example.click"));
+        assert_eq!(
+            arguments.selection,
+            Selection::Claim("identity.contract".to_string())
+        );
     }
 
     #[test]
@@ -504,8 +558,10 @@ int32 bad(int32 x) {
             .expect("selected tactic should have a source position");
         let arguments = Arguments {
             click_path,
-            line: position.line,
-            column: position.column,
+            selection: Selection::Tactic {
+                line: position.line,
+                column: position.column,
+            },
             time_limit: DEFAULT_EXPANSION_TIME_LIMIT,
             output: None,
             in_place: false,
@@ -518,6 +574,42 @@ int32 bad(int32 x) {
         assert!(
             expanded.ends_with("int32 bad(int32 x) {\n    ensures result == x + 1 by simp;\n}\n")
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn run_expands_an_entire_claim_by_label() {
+        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let directory = env::temp_dir().join(format!(
+            "click-expand-claim-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let c_source = "int32 identity(int32 x) { return x; }";
+        let click_source = r#"verifying "identity.c";
+int32 identity(int32 x) {
+    ensures result == x;
+} by {
+    execute();
+    simp();
+}
+"#;
+        let click_path = directory.join("project.click");
+        fs::write(directory.join("identity.c"), c_source).unwrap();
+        fs::write(&click_path, click_source).unwrap();
+        let arguments = Arguments {
+            click_path,
+            selection: Selection::Claim("identity.contract".to_string()),
+            time_limit: DEFAULT_EXPANSION_TIME_LIMIT,
+            output: None,
+            in_place: false,
+        };
+
+        let expanded = run(&arguments).expect("the whole claim should expand and replay");
+
+        assert_ne!(expanded, click_source);
+        assert!(!expanded.contains("execute();"));
+        assert!(!expanded.contains("simp();"));
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -223,13 +223,16 @@ manual release/certificate-boundary gate, not part of ordinary `cargo test`.
   diagnosis. Its default project limit is 30 seconds, and `--top` controls the
   number of function and claim attribution rows (default 8).
 - `click expand [--output PATH | --in-place] <sidecar.click|mdtest.md>:<line>:<column>`
-  requires the selected proof unit to verify, replaces one successful smart
-  tactic, then verifies the complete rewritten proof unit and the transitive
-  contracts it calls before writing it. A failure later in the selected proof
-  blocks expansion of an earlier tactic by design; restore proof correctness
-  before doing performance work. An unrelated broken proof unit does not block
-  expansion, and unselected source text is preserved byte-for-byte. Its default
-  limit is 60 seconds; `--time-limit` overrides it.
+  replaces one selected successful smart tactic. `click expand --claim LABEL
+  [--output PATH | --in-place] <sidecar.click|mdtest.md>` instead replaces every
+  smart tactic in one function claim, which is the practical path when a claim's
+  aggregate search cost is large but no individual site is slow. Both forms
+  require the selected proof unit to verify, then verify the complete rewritten
+  proof unit and the transitive contracts it calls before writing it. A failure
+  later in the selected proof blocks expansion by design; restore proof
+  correctness before doing performance work. An unrelated broken proof unit
+  does not block expansion, and unselected source text is preserved
+  byte-for-byte. The default limit is 60 seconds; `--time-limit` overrides it.
 - `click audit <sidecar.click|example|mdtest|directory|repository-root>` expands,
   retained-session verifies, compares original and expanded cold verification,
   and checks the claim's smart-site multiset strictly shrinks without

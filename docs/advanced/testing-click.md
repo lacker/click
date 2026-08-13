@@ -244,6 +244,13 @@ click expand --in-place path/to/file.click:LINE:COLUMN
 click verify path/to/file.click
 ```
 
+When profiling attributes aggregate cost to a claim containing many individually
+small smart tactics, expand the complete claim in one checked operation:
+
+```sh
+click expand --claim function.contract --in-place path/to/file.click
+```
+
 The first verification is a prerequisite, not merely a useful check:
 expansion optimizes an already-correct selected proof unit. A failure later in
 that proof blocks expansion of an earlier tactic. Repair the proof with

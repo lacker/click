@@ -89,22 +89,107 @@ int32 vector_copy(
         0 <= k and k < length implies dst[k] == old(src[k])
     };
 } by {
-    step();
-    step();
+    step() using {
+        0 <= length;
+        length <= dst_capacity;
+        length <= src_capacity;
+        1 <= dst_capacity;
+        1 <= src_capacity;
+        loadable(dst[0..dst_capacity]);
+        loadable(src[0..src_capacity]);
+        separate(memory(dst[0..dst_capacity]), memory(src[0..src_capacity]));
+    }
+    step() using {
+        at(statement(0).entry, 0) <= at(statement(0).entry, length);
+        at(statement(0).entry, length) <= at(statement(0).entry, dst_capacity);
+        at(statement(0).entry, length) <= at(statement(0).entry, src_capacity);
+        at(statement(0).entry, 1) <= at(statement(0).entry, dst_capacity);
+        at(statement(0).entry, 1) <= at(statement(0).entry, src_capacity);
+        at(statement(0).entry, loadable(dst[0..dst_capacity]));
+        at(statement(0).entry, loadable(src[0..src_capacity]));
+        at(statement(0).entry, separate(memory(dst[0..dst_capacity]), memory(src[0..src_capacity])));
+    }
     loop {
         invariant 0 <= i;
         invariant i <= length;
-        invariant forall (k: int32) {
-            0 <= k and k < i implies dst[k] == old(src[k])
-        };
-        mutable dst[0..length] by frame;
+        invariant forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) };
+        mutable dst[0..length] by {
+            frame() using {
+            }
+        }
+        initialize by {
+            have 0 <= i by {
+                normalize();
+            }
+            have i <= length by {
+                assumption();
+            }
+            have forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) } by {
+                normalize();
+            }
+        }
+        preserve by {
+            step() using {
+                i < length;
+                0 <= length;
+                0 <= i;
+                1 <= dst_capacity;
+                1 <= src_capacity;
+                length <= dst_capacity;
+                length <= src_capacity;
+                i <= length;
+                loadable(old(dst[0..dst_capacity]));
+                loadable(old(src[0..src_capacity]));
+                separate(memory(dst[0..dst_capacity]), memory(src[0..src_capacity]));
+            }
+            step() using {
+                at(statement(3).entry, i) < at(statement(3).entry, length);
+                at(statement(3).entry, 0) <= at(statement(3).entry, length);
+                at(statement(3).entry, 0) <= at(statement(3).entry, i);
+                at(statement(3).entry, 1) <= at(statement(3).entry, dst_capacity);
+                at(statement(3).entry, 1) <= at(statement(3).entry, src_capacity);
+                at(statement(3).entry, length) <= at(statement(3).entry, dst_capacity);
+                at(statement(3).entry, length) <= at(statement(3).entry, src_capacity);
+                at(statement(3).entry, i) <= at(statement(3).entry, length);
+                at(statement(3).entry, loadable(old(dst[0..dst_capacity])));
+                at(statement(3).entry, loadable(old(src[0..src_capacity])));
+                at(statement(3).entry, separate(memory(dst[0..dst_capacity]), memory(src[0..src_capacity])));
+            }
+            close_invariants();
+        }
     }
-    have i == length by simp;
-    have forall (k: int32) {
-        0 <= k and k < length implies dst[k] == old(src[k])
-    } by simp;
-    step();
-    frame();
+    have i == length by {
+        apply(int32_le_and_not_lt_implies_eq(at(loop(0).exit, i), at(loop(0).exit, length))) using {
+            at(loop(0).exit, i) <= at(loop(0).exit, length);
+            not at(loop(0).exit, i) < at(loop(0).exit, length);
+        }
+        assumption();
+    }
+    have forall (k: int32) { 0 <= k and k < length implies dst[k] == old(src[k]) } by {
+        intro();
+        intro();
+        instantiate(forall (k: int32) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, dst[k]) == old(src[k]) }, k) using {
+            0 <= k and k < length;
+            i == length;
+        }
+        assumption();
+    }
+    step() using {
+        at(statement(1).entry, 0) <= at(statement(1).entry, length);
+        at(statement(1).entry, length) <= at(statement(1).entry, dst_capacity);
+        at(statement(1).entry, length) <= at(statement(1).entry, src_capacity);
+        at(statement(1).entry, 1) <= at(statement(1).entry, dst_capacity);
+        at(statement(1).entry, 1) <= at(statement(1).entry, src_capacity);
+        at(statement(0).entry, loadable(dst[0..dst_capacity]));
+        at(statement(0).entry, loadable(src[0..src_capacity]));
+        at(statement(0).entry, separate(memory(dst[0..dst_capacity]), memory(src[0..src_capacity])));
+        at(loop(0).exit, 0) <= at(loop(0).exit, i);
+        at(loop(0).exit, i) <= at(loop(0).exit, length);
+        not at(loop(0).exit, i) < at(loop(0).exit, length);
+        i == length;
+    }
+    frame() using {
+    }
     have result == length by {
         assumption();
     }
@@ -113,10 +198,7 @@ int32 vector_copy(
         intro();
         extract(0 <= k);
         extract(k < length);
-        transport(
-            old(src[k]) == old(src[k]),
-            src[k] == old(src[k])
-        ) using {
+        transport(old(src[k]) == old(src[k]), src[k] == old(src[k])) using {
             0 <= length;
             0 <= k;
             k < length;
@@ -158,25 +240,226 @@ int32 vector_grow(struct vector* owner) {
     };
 } by {
     unfold(allocated_vector(owner));
-    have owner->cap < 2147483647 by simp;
-    have owner->cap + 1 <= 536870911 by simp;
-    execute_until(statement(9));
-    have 0 <= owner->len by simp;
-    have owner->len <= owner->cap by simp;
-    have 1 <= new_capacity by simp;
-    have owner->len <= old_capacity by simp;
-    have owner->len <= new_capacity by simp;
-    have new_capacity <= 536870911 by simp;
+    have owner->cap < 2147483647 by {
+        apply(int32_le_lt_transitive(owner->cap, 536870910, 2147483647)) using {
+            owner->cap <= 536870910;
+        }
+        assumption();
+    }
+    have (owner->cap + 1) <= 536870911 by {
+        apply(int32_le_lt_transitive(owner->cap, 536870910, 536870911)) using {
+            owner->cap <= 536870910;
+        }
+        apply(int32_increment_upper_bound(owner->cap, 536870911)) using {
+            owner->cap < 536870911;
+        }
+        assumption();
+    }
+    step() using {
+        owner->cap <= 536870910;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(owner[0..1]);
+        loadable((owner + 1)[0..1]);
+        loadable((owner + 2)[0..2]);
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+        loadable(owner->data[0..owner->len]);
+        owner->cap < 2147483647;
+        (owner->cap + 1) <= 536870911;
+    }
+    step() using {
+        owner->cap <= 536870910;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+        loadable(old(owner->data[0..owner->len]));
+        owner->cap < 2147483647;
+        (owner->cap + 1) <= 536870911;
+    }
+    step() using {
+        owner->cap <= 536870910;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+        loadable(old(owner->data[0..owner->len]));
+        owner->cap < 2147483647;
+        (owner->cap + 1) <= 536870911;
+    }
+    step() using {
+        owner->cap <= 536870910;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+        loadable(old(owner->data[0..owner->len]));
+        owner->cap < 2147483647;
+        (owner->cap + 1) <= 536870911;
+    }
+    step() using {
+        owner->cap <= 536870910;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+        loadable(old(owner->data[0..owner->len]));
+        owner->cap < 2147483647;
+        (owner->cap + 1) <= 536870911;
+    }
+    step() using {
+        owner->cap <= 536870910;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+        loadable(old(owner->data[0..owner->len]));
+        owner->cap < 2147483647;
+        (owner->cap + 1) <= 536870911;
+    }
+    step() using {
+        owner->cap <= 536870910;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+        loadable(old(owner->data[0..owner->len]));
+        owner->cap < 2147483647;
+        (owner->cap + 1) <= 536870911;
+    }
+    step() using {
+        owner->cap <= 536870910;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        loadable(old(owner->data[0..old_capacity]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+        loadable(old(owner->data[0..owner->len]));
+        owner->cap < 2147483647;
+        (owner->cap + 1) <= 536870911;
+    }
+    step() using {
+        owner->cap <= 536870910;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        loadable(old(owner->data[0..old_capacity]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+        loadable(old(owner->data[0..owner->len]));
+        owner->cap < 2147483647;
+        (owner->cap + 1) <= 536870911;
+    }
+    have 0 <= owner->len by {
+        assumption();
+    }
+    have owner->len <= owner->cap by {
+        assumption();
+    }
+    have 1 <= new_capacity by {
+        have 1 <= (owner->cap + 1) by {
+            apply(int32_increment_lower_bound(owner->cap, 1, 2147483647)) using {
+                1 <= owner->cap;
+                owner->cap < 2147483647;
+            }
+            assumption();
+        }
+        transport(1 <= (owner->cap + 1), 1 <= new_capacity) using {
+            1 <= (owner->cap + 1);
+        }
+        assumption();
+    }
+    have owner->len <= old_capacity by {
+        assumption();
+    }
+    have owner->len <= new_capacity by {
+        have owner->len <= (owner->cap + 1) by {
+            apply(int32_increment_lower_bound(owner->cap, owner->len, 2147483647)) using {
+                owner->len <= owner->cap;
+                owner->cap < 2147483647;
+            }
+            assumption();
+        }
+        transport(owner->len <= (owner->cap + 1), owner->len <= new_capacity) using {
+            owner->len <= (owner->cap + 1);
+        }
+        assumption();
+    }
+    have new_capacity <= 536870911 by {
+        assumption();
+    }
     have loadable(old_data[0..old_capacity]) by {
-        simp() using {
+        transport(loadable(old(owner->data[0..owner->cap])), loadable(old_data[0..old_capacity])) using {
             loadable(old(owner->data[0..owner->cap]));
         }
+        assumption();
     }
     if new_data == 0 {
         have loadable(owner->data[0..owner->cap]) by {
-            simp() using {
+            transport(loadable(old(owner->data[0..owner->cap])), loadable(owner->data[0..owner->cap])) using {
                 loadable(old(owner->data[0..owner->cap]));
             }
+            assumption();
         }
         step() using {
             at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
@@ -249,13 +532,26 @@ int32 vector_grow(struct vector* owner) {
             assumption();
         }
         fold(allocated_vector(owner));
-        frame();
-        have result == 0 by simp;
-        have result == 0 or result == 1 by simp;
-        have owner->len == old(owner->len) by simp;
-        have result == 0 implies owner->cap == old(owner->cap) by simp;
-        have result == 0 implies owner->data == old(owner->data) by simp;
-        have result == 1 implies owner->cap == old(owner->cap) + 1 by simp;
+        frame() using {
+        }
+        have result == 0 by {
+            normalize();
+        }
+        have result == 0 or result == 1 by {
+            normalize();
+        }
+        have owner->len == old(owner->len) by {
+            normalize();
+        }
+        have result == 0 implies owner->cap == old(owner->cap) by {
+            normalize();
+        }
+        have result == 0 implies owner->data == old(owner->data) by {
+            normalize();
+        }
+        have result == 1 implies owner->cap == (old(owner->cap) + 1) by {
+            normalize();
+        }
         assumption();
         assumption();
         assumption();
@@ -264,8 +560,67 @@ int32 vector_grow(struct vector* owner) {
         assumption();
         assumption();
     } else {
-        step();
-        step();
+        step() using {
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+            at(statement(8).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+            at(statement(8).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+            at(statement(8).entry, loadable(old(owner[0..1])));
+            at(statement(8).entry, loadable(old((owner + 1)[0..1])));
+            at(statement(8).entry, loadable(old((owner + 2)[0..2])));
+            at(statement(8).entry, loadable(old(owner->data[0..old_capacity])));
+            at(statement(8).entry, loadable(old(owner->data[0..owner->len])));
+            at(statement(9).entry, owner->cap) <= at(statement(9).entry, 536870910);
+            at(statement(9).entry, 0) <= at(statement(9).entry, owner->len);
+            at(statement(9).entry, owner->len) <= at(statement(9).entry, owner->cap);
+            at(statement(9).entry, 1) <= at(statement(9).entry, owner->cap);
+            at(statement(9).entry, owner->cap) <= at(statement(9).entry, 536870911);
+            at(statement(9).entry, owner->cap) < at(statement(9).entry, 2147483647);
+            at(statement(9).entry, (owner->cap + 1)) <= at(statement(9).entry, 536870911);
+            at(statement(8).entry, owner->cap) <= at(statement(8).entry, 536870910);
+            separate(memory(owner[0..1]), memory(owner->data[0..old_capacity]));
+            separate(memory(owner[1..2]), memory(owner->data[0..old_capacity]));
+            separate(memory(owner[2..4]), memory(owner->data[0..old_capacity]));
+            at(statement(8).entry, 0) <= at(statement(8).entry, owner->len);
+            owner->len <= old_capacity;
+            at(statement(8).entry, 1) <= at(statement(8).entry, owner->cap);
+            at(statement(8).entry, owner->cap) <= at(statement(8).entry, 536870911);
+            at(statement(8).entry, owner->cap) < at(statement(8).entry, 2147483647);
+            new_capacity <= 536870911;
+            1 <= new_capacity;
+            owner->len <= new_capacity;
+            loadable(old_data[0..old_capacity]);
+            new_data != 0;
+        }
+        step() using {
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+            at(statement(8).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+            at(statement(8).entry, loadable(old(owner[0..1])));
+            at(statement(8).entry, loadable(old((owner + 1)[0..1])));
+            at(statement(8).entry, loadable(old((owner + 2)[0..2])));
+            at(statement(8).entry, loadable(old(owner->data[0..old_capacity])));
+            at(statement(8).entry, loadable(old(owner->data[0..owner->len])));
+            at(statement(9).entry, owner->cap) <= at(statement(9).entry, 536870910);
+            at(statement(9).entry, 0) <= at(statement(9).entry, owner->len);
+            at(statement(9).entry, owner->len) <= at(statement(9).entry, old_capacity);
+            at(statement(9).entry, 1) <= at(statement(9).entry, owner->cap);
+            at(statement(9).entry, owner->cap) <= at(statement(9).entry, 536870911);
+            at(statement(9).entry, owner->cap) < at(statement(9).entry, 2147483647);
+            at(statement(9).entry, new_capacity) <= at(statement(9).entry, 536870911);
+            at(statement(8).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+            at(statement(9).entry, 1) <= at(statement(9).entry, new_capacity);
+            at(statement(9).entry, owner->len) <= at(statement(9).entry, new_capacity);
+            at(statement(9).entry, loadable(old_data[0..old_capacity]));
+            at(statement(9).entry, new_data) != at(statement(9).entry, 0);
+            at(statement(11).entry, owner->cap) <= at(statement(11).entry, 536870910);
+            at(statement(11).entry, 0) <= at(statement(11).entry, owner->len);
+            at(statement(11).entry, owner->len) <= at(statement(11).entry, owner->cap);
+            at(statement(11).entry, 1) <= at(statement(11).entry, owner->cap);
+            at(statement(11).entry, owner->cap) <= at(statement(11).entry, 536870911);
+            at(statement(11).entry, owner->cap) < at(statement(11).entry, 2147483647);
+            at(statement(11).entry, (owner->cap + 1)) <= at(statement(11).entry, 536870911);
+        }
         step() using {
             0 <= owner->len;
             owner->len <= new_capacity;
@@ -273,10 +628,7 @@ int32 vector_grow(struct vector* owner) {
             1 <= new_capacity;
             1 <= old_capacity;
             loadable(old_data[0..old_capacity]);
-            separate(
-                memory(new_data[0..new_capacity]),
-                memory(old_data[0..old_capacity])
-            );
+            separate(memory(new_data[0..new_capacity]), memory(old_data[0..old_capacity]));
         }
         have copied == owner->len by {
             assumption();
@@ -349,7 +701,8 @@ int32 vector_grow(struct vector* owner) {
             at(statement(8).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
             at(statement(13).entry, copied) == at(statement(13).entry, owner->len);
         }
-        step() using {}
+        step() using {
+        }
         step() using {
             at(statement(9).entry, new_data) != at(statement(9).entry, 0);
             at(statement(8).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
@@ -447,54 +800,47 @@ int32 vector_grow(struct vector* owner) {
             normalize();
         }
         have owner->len <= owner->cap by {
-            simp() using {
-                at(statement(9).entry, owner->len <= new_capacity);
-                owner->cap == at(statement(9).entry, new_capacity);
-            }
+            assumption();
         }
         have 1 <= owner->cap by {
-            simp() using {
-                at(statement(9).entry, 1 <= new_capacity);
-                owner->cap == at(statement(9).entry, new_capacity);
-            }
+            assumption();
         }
         have owner->cap <= 536870911 by {
-            simp() using {
-                at(statement(9).entry, new_capacity <= 536870911);
-                owner->cap == at(statement(9).entry, new_capacity);
-            }
+            assumption();
         }
-        have separate(
-            memory(object(owner)),
-            memory(owner->data[0..owner->cap])
-        ) by simp;
-        have forall (k: int32) {
-            0 <= k and k < old(owner->len) implies
-                owner->data[k] == old(owner->data[k])
-        } by simp;
+        have separate(memory(object(owner)), memory(owner->data[0..owner->cap])) by {
+            assumption();
+        }
+        have forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) } by {
+            assumption();
+        }
         have loadable(owner->data[0..owner->len]) by {
-            transport(
-                forall (k: int32) {
-                    0 <= k and k < old(owner->len) implies
-                        owner->data[k] == old(owner->data[k])
-                },
-                loadable(owner->data[0..owner->len])
-            ) using {
-                forall (k: int32) {
-                    0 <= k and k < old(owner->len) implies
-                        owner->data[k] == old(owner->data[k])
-                };
+            transport(forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) }, loadable(owner->data[0..owner->len])) using {
+                forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) };
             }
             assumption();
         }
         fold(allocated_vector(owner));
-        frame();
-        have result == 1 by simp;
-        have result == 0 or result == 1 by simp;
-        have owner->len == old(owner->len) by simp;
-        have result == 0 implies owner->cap == old(owner->cap) by simp;
-        have result == 0 implies owner->data == old(owner->data) by simp;
-        have result == 1 implies owner->cap == old(owner->cap) + 1 by simp;
+        frame() using {
+        }
+        have result == 1 by {
+            normalize();
+        }
+        have result == 0 or result == 1 by {
+            normalize();
+        }
+        have owner->len == old(owner->len) by {
+            normalize();
+        }
+        have result == 0 implies owner->cap == old(owner->cap) by {
+            normalize();
+        }
+        have result == 0 implies owner->data == old(owner->data) by {
+            normalize();
+        }
+        have result == 1 implies owner->cap == (old(owner->cap) + 1) by {
+            normalize();
+        }
         assumption();
         assumption();
         assumption();
@@ -520,13 +866,118 @@ int32 vector_push(struct vector* owner, int32 value) {
     };
 } by {
     unfold(vector_storage(owner));
-    execute();
+    step() using {
+        owner->len < owner->cap;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(owner[0..1]);
+        loadable((owner + 1)[0..1]);
+        loadable((owner + 2)[0..2]);
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        loadable(owner->data[0..owner->len]);
+    }
+    step() using {
+        owner->len < owner->cap;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        loadable(old(owner->data[0..owner->len]));
+    }
+    step() using {
+        owner->len < owner->cap;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        loadable(old(owner->data[0..owner->len]));
+    }
+    step() using {
+        owner->len < owner->cap;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        loadable(old(owner->data[0..owner->len]));
+    }
+    step() using {
+        owner->len < owner->cap;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        loadable(old(owner->data[0..load_int32(byte_offset(owner, 4))]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        loadable(old(owner->data[0..owner->len]));
+    }
+    step() using {
+        at(statement(0).entry, owner->len) < at(statement(0).entry, owner->cap);
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        loadable(old(owner->data[0..load_int32(byte_offset(owner, 4))]));
+        0 <= index;
+        at(statement(0).entry, owner->len) <= at(statement(0).entry, owner->cap);
+        loadable(old(owner->data[0..owner->len]));
+    }
+    step() using {
+        at(statement(0).entry, owner->len) < at(statement(0).entry, owner->cap);
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        loadable(old(owner->data[0..load_int32(byte_offset(owner, 4))]));
+        0 <= index;
+        at(statement(0).entry, owner->len) <= at(statement(0).entry, owner->cap);
+        loadable(old(owner->data[0..owner->len]));
+    }
     fold(vector_storage(owner));
-    frame();
-    have result == old(owner->len) + 1 by {
+    have at(function.entry, owner->len) <= at(function.entry, owner->len) by {
         normalize();
     }
-    have owner->len == old(owner->len) + 1 by {
+    have at(function.entry, owner->len) < at(function.entry, (owner->len + 1)) by {
+        apply(int32_increment_strictly_increases(at(function.entry, owner->len), at(function.entry, owner->cap))) using {
+            at(function.entry, owner->len) < at(function.entry, owner->cap);
+        }
+        assumption();
+    }
+    frame() using {
+        at(statement(5).entry, owner->len) < at(statement(5).entry, owner->cap);
+        at(function.entry, owner->len) <= at(function.entry, owner->len);
+        at(function.entry, owner->len) < at(function.entry, (owner->len + 1));
+    }
+    have result == (old(owner->len) + 1) by {
+        normalize();
+    }
+    have owner->len == (old(owner->len) + 1) by {
         normalize();
     }
     have owner->data[old(owner->len)] == value by {
@@ -538,20 +989,13 @@ int32 vector_push(struct vector* owner, int32 value) {
     have owner->data == old(owner->data) by {
         normalize();
     }
-    have forall (k: int32) {
-        0 <= k and k < old(owner->len) implies
-            owner->data[k] == old(owner->data[k])
-    } by {
+    have forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) } by {
         intro();
         intro();
         extract(0 <= k);
         extract(k < old(owner->len));
-        transport(
-            old(owner->data[k]) == old(owner->data[k]),
-            owner->data[k] == old(owner->data[k])
-        ) using {
-            at(statement(5).entry, owner->len) <=
-                at(statement(5).entry, owner->cap);
+        transport(old(owner->data[k]) == old(owner->data[k]), owner->data[k] == old(owner->data[k])) using {
+            at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->cap);
             0 <= k;
             k < old(owner->len);
         }
@@ -590,10 +1034,112 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
 } by {
     observe(allocated_vector(owner));
     if owner->len == owner->cap {
-        step();
-        step();
-        step();
-        step();
+        step() using {
+            owner->cap <= 536870910;
+            separate(memory(owner->len), memory(owner->cap));
+            separate(memory(owner->len), memory(owner->data));
+            separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+            separate(memory(owner->cap), memory(owner->data));
+            separate(memory(owner->len), allocation(owner->data, (owner->cap * 4)));
+            separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4)));
+            separate(memory(owner->data), allocation(owner->data, (owner->cap * 4)));
+            separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap]));
+            loadable(owner->len);
+            loadable(owner->cap);
+            loadable(owner->data);
+            loadable(owner->data[0..owner->cap]);
+            0 <= owner->len;
+            owner->len <= owner->cap;
+            1 <= owner->cap;
+            owner->cap <= 536870911;
+            loadable(owner->data[0..owner->len]);
+            owner->len == owner->cap;
+        }
+        step() using {
+            at(statement(0).entry, separate(memory(owner->len), memory(owner->cap)));
+            at(statement(0).entry, separate(memory(owner->len), memory(owner->data)));
+            at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+            at(statement(0).entry, separate(memory(owner->cap), memory(owner->data)));
+            at(statement(0).entry, separate(memory(owner->len), allocation(owner->data, (owner->cap * 4))));
+            at(statement(0).entry, separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4))));
+            at(statement(0).entry, separate(memory(owner->data), allocation(owner->data, (owner->cap * 4))));
+            at(statement(0).entry, separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap])));
+            at(statement(0).entry, loadable(owner->len));
+            at(statement(0).entry, loadable(owner->cap));
+            at(statement(0).entry, loadable(owner->data));
+            at(statement(0).entry, loadable(owner->data[0..owner->cap]));
+            at(statement(0).entry, loadable(owner->data[0..owner->len]));
+            at(statement(1).entry, owner->cap) <= at(statement(1).entry, 536870910);
+            at(statement(1).entry, 0) <= at(statement(1).entry, owner->len);
+            at(statement(1).entry, owner->len) <= at(statement(1).entry, owner->cap);
+            at(statement(1).entry, 1) <= at(statement(1).entry, owner->cap);
+            at(statement(1).entry, owner->cap) <= at(statement(1).entry, 536870911);
+            at(statement(1).entry, owner->len) == at(statement(1).entry, owner->cap);
+            at(statement(0).entry, owner->cap) <= at(statement(0).entry, 536870910);
+            at(statement(0).entry, 0) <= at(statement(0).entry, owner->len);
+            at(statement(0).entry, owner->len) <= at(statement(0).entry, owner->cap);
+            at(statement(0).entry, 1) <= at(statement(0).entry, owner->cap);
+            at(statement(0).entry, owner->cap) <= at(statement(0).entry, 536870911);
+            at(statement(0).entry, owner->len) == at(statement(0).entry, owner->cap);
+        }
+        step() using {
+            at(statement(0).entry, separate(memory(owner->len), memory(owner->cap)));
+            at(statement(0).entry, separate(memory(owner->len), memory(owner->data)));
+            at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+            at(statement(0).entry, separate(memory(owner->cap), memory(owner->data)));
+            at(statement(0).entry, separate(memory(owner->len), allocation(owner->data, (owner->cap * 4))));
+            at(statement(0).entry, separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4))));
+            at(statement(0).entry, separate(memory(owner->data), allocation(owner->data, (owner->cap * 4))));
+            at(statement(0).entry, separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap])));
+            at(statement(0).entry, loadable(owner->len));
+            at(statement(0).entry, loadable(owner->cap));
+            at(statement(0).entry, loadable(owner->data));
+            at(statement(0).entry, loadable(owner->data[0..owner->cap]));
+            at(statement(0).entry, loadable(owner->data[0..owner->len]));
+            at(statement(2).entry, owner->cap) <= at(statement(2).entry, 536870910);
+            at(statement(2).entry, 0) <= at(statement(2).entry, owner->len);
+            at(statement(2).entry, owner->len) <= at(statement(2).entry, owner->cap);
+            at(statement(2).entry, 1) <= at(statement(2).entry, owner->cap);
+            at(statement(2).entry, owner->cap) <= at(statement(2).entry, 536870911);
+            at(statement(2).entry, owner->len) == at(statement(2).entry, owner->cap);
+            at(statement(1).entry, owner->cap) <= at(statement(1).entry, 536870910);
+            separate(memory(owner->len), memory(owner->data[0..owner->cap]));
+            separate(memory(owner->cap), memory(owner->data[0..owner->cap]));
+            separate(memory(owner->data), memory(owner->data[0..owner->cap]));
+            contains(allocated_vector(owner), memory(owner->len));
+            contains(allocated_vector(owner), memory(owner->cap));
+            contains(allocated_vector(owner), memory(owner->data));
+            contains(allocated_vector(owner), allocation(owner->data, (owner->cap * 4)));
+            contains(allocated_vector(owner), memory(owner->data[0..owner->cap]));
+            at(statement(1).entry, 0) <= at(statement(1).entry, owner->len);
+            at(statement(1).entry, owner->len) <= at(statement(1).entry, owner->cap);
+            at(statement(1).entry, 1) <= at(statement(1).entry, owner->cap);
+            at(statement(1).entry, owner->cap) <= at(statement(1).entry, 536870911);
+            at(statement(1).entry, owner->len) == at(statement(1).entry, owner->cap);
+        }
+        step() using {
+            at(statement(0).entry, separate(memory(owner->len), memory(owner->cap)));
+            at(statement(0).entry, separate(memory(owner->len), memory(owner->data)));
+            at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+            at(statement(0).entry, separate(memory(owner->cap), memory(owner->data)));
+            at(statement(0).entry, separate(memory(owner->len), allocation(owner->data, (owner->cap * 4))));
+            at(statement(0).entry, separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4))));
+            at(statement(0).entry, separate(memory(owner->data), allocation(owner->data, (owner->cap * 4))));
+            at(statement(0).entry, separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap])));
+            at(statement(0).entry, loadable(owner->len));
+            at(statement(0).entry, loadable(owner->cap));
+            at(statement(0).entry, loadable(owner->data));
+            at(statement(0).entry, loadable(owner->data[0..owner->cap]));
+            at(statement(0).entry, loadable(owner->data[0..owner->len]));
+            at(statement(2).entry, owner->cap) <= at(statement(2).entry, 536870910);
+            at(statement(2).entry, 0) <= at(statement(2).entry, owner->len);
+            at(statement(2).entry, owner->len) <= at(statement(2).entry, owner->cap);
+            at(statement(2).entry, owner->len) == at(statement(2).entry, owner->cap);
+            at(statement(3).entry, owner->cap) <= at(statement(3).entry, 536870910);
+            at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
+            at(statement(3).entry, owner->len) <= at(statement(3).entry, owner->cap);
+            at(statement(3).entry, owner->len) == at(statement(3).entry, owner->cap);
+        }
         if c(grown) == 0 {
             step() using {
                 at(statement(0).entry, separate(memory(owner->len), memory(owner->cap)));
@@ -633,59 +1179,88 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
                 at(statement(4).entry, owner->cap) <= at(statement(4).entry, 536870911);
                 grown == 0;
             }
-            execute();
-            have not (old(owner->len) < old(owner->cap)) by {
-                simp() using {
-                    at(function.entry, owner->len == owner->cap);
-                }
+            step() using {
+                at(statement(0).entry, separate(memory(owner->len), memory(owner->cap)));
+                at(statement(0).entry, separate(memory(owner->len), memory(owner->data)));
+                at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+                at(statement(0).entry, separate(memory(owner->cap), memory(owner->data)));
+                at(statement(0).entry, separate(memory(owner->len), allocation(owner->data, (owner->cap * 4))));
+                at(statement(0).entry, separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4))));
+                at(statement(0).entry, separate(memory(owner->data), allocation(owner->data, (owner->cap * 4))));
+                at(statement(0).entry, separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap])));
+                at(statement(0).entry, loadable(owner->len));
+                at(statement(0).entry, loadable(owner->cap));
+                at(statement(0).entry, loadable(owner->data));
+                at(statement(0).entry, loadable(owner->data[0..owner->cap]));
+                at(statement(0).entry, loadable(owner->data[0..owner->len]));
+                at(statement(3).entry, owner->cap) <= at(statement(3).entry, 536870910);
+                at(statement(4).entry, owner->len) == at(statement(4).entry, owner->len);
+                at(statement(4).entry, 0) <= at(statement(4).entry, owner->len);
+                at(statement(4).entry, owner->len) <= at(statement(4).entry, owner->cap);
+                at(statement(4).entry, owner->len) == at(statement(4).entry, owner->cap);
+                at(statement(3).entry, owner->len) <= at(statement(3).entry, owner->cap);
+                at(statement(2).entry, 1) <= at(statement(2).entry, owner->cap);
+                at(statement(2).entry, owner->cap) <= at(statement(2).entry, 536870911);
+                at(statement(3).entry, owner->len) == at(statement(3).entry, owner->cap);
+                at(statement(4).entry, owner->cap) <= at(statement(4).entry, 536870910);
+                at(statement(4).entry, 1) <= at(statement(4).entry, owner->cap);
+                at(statement(4).entry, owner->cap) <= at(statement(4).entry, 536870911);
+                at(statement(4).entry, grown) == at(statement(4).entry, 0);
+                at(statement(5).entry, 0) <= at(statement(5).entry, owner->len);
+                at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->cap);
+                at(statement(5).entry, owner->len) == at(statement(5).entry, owner->cap);
+                at(statement(5).entry, owner->cap) <= at(statement(5).entry, 536870910);
+                at(statement(5).entry, 1) <= at(statement(5).entry, owner->cap);
+                at(statement(5).entry, owner->cap) <= at(statement(5).entry, 536870911);
             }
-            frame();
-            have result == 0 by simp;
-            have result == 0 or result == 1 by simp;
-            have result == 0 implies owner->len == old(owner->len) by simp;
+            have not old(owner->len) < old(owner->cap) by {
+                rewrite(at(function.entry, owner->len == owner->cap));
+                normalize();
+            }
+            frame() using {
+            }
+            have result == 0 by {
+                normalize();
+            }
+            have result == 0 or result == 1 by {
+                normalize();
+            }
+            have result == 0 implies owner->len == old(owner->len) by {
+                normalize();
+            }
             have result == 0 implies owner->cap == old(owner->cap) by {
                 normalize();
             }
             have result == 0 implies owner->data == old(owner->data) by {
                 normalize();
             }
-            have result == 1 implies owner->len == old(owner->len) + 1 by simp;
+            have result == 1 implies owner->len == (old(owner->len) + 1) by {
+                normalize();
+            }
             have result == 1 implies owner->data[old(owner->len)] == value by {
                 normalize();
             }
-            have forall (k: int32) {
-                0 <= k and k < old(owner->len) implies
-                    owner->data[k] == old(owner->data[k])
-            } by simp;
+            have forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) } by {
+                assumption();
+            }
             have old(owner->len) < old(owner->cap) implies result == 1 by {
                 intro();
-                transport(
-                    not (old(owner->len) < old(owner->cap)),
-                    not (old(owner->len) < old(owner->cap))
-                ) using {
-                    not (old(owner->len) < old(owner->cap));
+                transport(not old(owner->len) < old(owner->cap), not old(owner->len) < old(owner->cap)) using {
+                    not old(owner->len) < old(owner->cap);
                 }
                 contradiction(old(owner->len) < old(owner->cap));
             }
-            have old(owner->len) < old(owner->cap) implies
-                owner->cap == old(owner->cap) by {
+            have old(owner->len) < old(owner->cap) implies owner->cap == old(owner->cap) by {
                 intro();
-                transport(
-                    not (old(owner->len) < old(owner->cap)),
-                    not (old(owner->len) < old(owner->cap))
-                ) using {
-                    not (old(owner->len) < old(owner->cap));
+                transport(not old(owner->len) < old(owner->cap), not old(owner->len) < old(owner->cap)) using {
+                    not old(owner->len) < old(owner->cap);
                 }
                 contradiction(old(owner->len) < old(owner->cap));
             }
-            have old(owner->len) < old(owner->cap) implies
-                owner->data == old(owner->data) by {
+            have old(owner->len) < old(owner->cap) implies owner->data == old(owner->data) by {
                 intro();
-                transport(
-                    not (old(owner->len) < old(owner->cap)),
-                    not (old(owner->len) < old(owner->cap))
-                ) using {
-                    not (old(owner->len) < old(owner->cap));
+                transport(not old(owner->len) < old(owner->cap), not old(owner->len) < old(owner->cap)) using {
+                    not old(owner->len) < old(owner->cap);
                 }
                 contradiction(old(owner->len) < old(owner->cap));
             }
@@ -739,10 +1314,47 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
                 at(statement(4).entry, owner->cap) <= at(statement(4).entry, 536870911);
                 c(grown) != 0;
             }
-            step();
+            step() using {
+                at(statement(0).entry, separate(memory(owner->len), memory(owner->cap)));
+                at(statement(0).entry, separate(memory(owner->len), memory(owner->data)));
+                at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+                at(statement(0).entry, separate(memory(owner->cap), memory(owner->data)));
+                at(statement(0).entry, separate(memory(owner->len), allocation(owner->data, (owner->cap * 4))));
+                at(statement(0).entry, separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4))));
+                at(statement(0).entry, separate(memory(owner->data), allocation(owner->data, (owner->cap * 4))));
+                at(statement(0).entry, separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap])));
+                at(statement(0).entry, loadable(owner->len));
+                at(statement(0).entry, loadable(owner->cap));
+                at(statement(0).entry, loadable(owner->data));
+                at(statement(0).entry, loadable(owner->data[0..owner->cap]));
+                at(statement(0).entry, loadable(owner->data[0..owner->len]));
+                at(statement(3).entry, owner->cap) <= at(statement(3).entry, 536870910);
+                at(statement(4).entry, owner->len) == at(statement(4).entry, owner->len);
+                at(statement(4).entry, 0) <= at(statement(4).entry, owner->len);
+                at(statement(4).entry, owner->len) <= at(statement(4).entry, owner->cap);
+                at(statement(4).entry, owner->len) == at(statement(4).entry, owner->cap);
+                at(statement(3).entry, owner->len) <= at(statement(3).entry, owner->cap);
+                at(statement(2).entry, 1) <= at(statement(2).entry, owner->cap);
+                at(statement(2).entry, owner->cap) <= at(statement(2).entry, 536870911);
+                at(statement(3).entry, owner->len) == at(statement(3).entry, owner->cap);
+                at(statement(4).entry, owner->cap) <= at(statement(4).entry, 536870910);
+                at(statement(4).entry, 1) <= at(statement(4).entry, owner->cap);
+                at(statement(4).entry, owner->cap) <= at(statement(4).entry, 536870911);
+                at(statement(4).entry, c(grown)) != at(statement(4).entry, 0);
+                at(statement(6).entry, 0) <= at(statement(6).entry, owner->len);
+                at(statement(6).entry, owner->len) <= at(statement(6).entry, owner->cap);
+                at(statement(6).entry, owner->len) == at(statement(6).entry, owner->cap);
+                at(statement(6).entry, owner->cap) <= at(statement(6).entry, 536870910);
+                at(statement(6).entry, 1) <= at(statement(6).entry, owner->cap);
+                at(statement(6).entry, owner->cap) <= at(statement(6).entry, 536870911);
+            }
             unfold(allocated_vector(owner));
-            have c(grown) == 1 by simp;
-            have owner->len == old(owner->len) by simp;
+            have c(grown) == 1 by {
+                assumption();
+            }
+            have owner->len == old(owner->len) by {
+                assumption();
+            }
             have owner->cap == (old(owner->cap) + 1) by {
                 rewrite(at(statement(4).entry, 1) == at(statement(4).entry, grown));
                 rewrite(at(statement(4).entry, grown) == at(statement(4).entry, 0));
@@ -754,28 +1366,17 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             have 536870911 < 2147483647 by {
                 normalize();
             }
-            apply(int32_le_lt_transitive(
-                at(function.entry, owner->cap),
-                536870911,
-                2147483647
-            )) using {
+            apply(int32_le_lt_transitive(at(function.entry, owner->cap), 536870911, 2147483647)) using {
                 at(function.entry, owner->cap) <= 536870911;
                 536870911 < 2147483647;
             }
-            apply(int32_increment_strictly_increases(
-                at(function.entry, owner->cap),
-                2147483647
-            )) using {
+            apply(int32_increment_strictly_increases(at(function.entry, owner->cap), 2147483647)) using {
                 at(function.entry, owner->cap) < 2147483647;
             }
             have owner->len < owner->cap by {
-                simp() using {
-                    at(function.entry, owner->len == owner->cap);
-                    owner->len == old(owner->len);
-                    owner->cap == old(owner->cap) + 1;
-                    at(function.entry, owner->cap) <
-                        at(function.entry, owner->cap) + 1;
-                }
+                rewrite(owner->cap == (old(owner->cap) + 1));
+                rewrite(at(function.entry, owner->len == owner->cap));
+                assumption();
             }
             fold(vector_storage(owner));
             step() using {
@@ -786,10 +1387,10 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             }
             unfold(vector_storage(owner));
             have 0 <= owner->len by {
-                simp();
+                assumption();
             }
             have owner->len <= owner->cap by {
-                simp();
+                assumption();
             }
             have 1 <= owner->cap by {
                 rewrite(owner->cap == at(statement(6).exit, owner->cap));
@@ -800,20 +1401,123 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
                 assumption();
             }
             fold(allocated_vector(owner));
-            step() using {}
-            simp();
+            step() using {
+            }
         }
     } else {
         observe(allocated_vector(owner));
         have owner->len <= owner->cap by {
             assumption();
         }
-        have not (owner->len == owner->cap) by {
+        have not owner->len == owner->cap by {
             assumption();
         }
-        have owner->len < owner->cap by simp;
-        have old(owner->len) < old(owner->cap) by simp;
-        execute_until(statement(8));
+        have owner->len < owner->cap by {
+            apply(int32_le_and_neq_implies_lt(owner->len, owner->cap)) using {
+                owner->len <= owner->cap;
+                not owner->len == owner->cap;
+            }
+            assumption();
+        }
+        have old(owner->len) < old(owner->cap) by {
+            assumption();
+        }
+        step() using {
+            owner->cap <= 536870910;
+            separate(memory(owner->len), memory(owner->cap));
+            separate(memory(owner->len), memory(owner->data));
+            separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+            separate(memory(owner->cap), memory(owner->data));
+            separate(memory(owner->len), allocation(owner->data, (owner->cap * 4)));
+            separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4)));
+            separate(memory(owner->data), allocation(owner->data, (owner->cap * 4)));
+            separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap]));
+            loadable(owner->len);
+            loadable(owner->cap);
+            loadable(owner->data);
+            loadable(owner->data[0..owner->cap]);
+            0 <= owner->len;
+            owner->len <= owner->cap;
+            1 <= owner->cap;
+            owner->cap <= 536870911;
+            loadable(owner->data[0..owner->len]);
+            not owner->len == owner->cap;
+            old(owner->len) < old(owner->cap);
+        }
+        step() using {
+            owner->cap <= 536870910;
+            separate(memory(owner->len), memory(owner->cap));
+            separate(memory(owner->len), memory(owner->data));
+            separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+            separate(memory(owner->cap), memory(owner->data));
+            separate(memory(owner->len), allocation(owner->data, (owner->cap * 4)));
+            separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4)));
+            separate(memory(owner->data), allocation(owner->data, (owner->cap * 4)));
+            separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap]));
+            loadable(old(owner->len));
+            loadable(old(owner->cap));
+            loadable(old(owner->data));
+            loadable(old(owner->data[0..owner->cap]));
+            0 <= owner->len;
+            owner->len <= owner->cap;
+            1 <= owner->cap;
+            owner->cap <= 536870911;
+            loadable(old(owner->data[0..owner->len]));
+            not owner->len == owner->cap;
+            old(owner->len) < old(owner->cap);
+        }
+        step() using {
+            owner->cap <= 536870910;
+            separate(memory(owner->len), memory(owner->cap));
+            separate(memory(owner->len), memory(owner->data));
+            separate(memory(owner->len), memory(owner->data[0..owner->cap]));
+            separate(memory(owner->cap), memory(owner->data));
+            separate(memory(owner->cap), memory(owner->data[0..owner->cap]));
+            separate(memory(owner->data), memory(owner->data[0..owner->cap]));
+            separate(memory(owner->len), allocation(owner->data, (owner->cap * 4)));
+            separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4)));
+            separate(memory(owner->data), allocation(owner->data, (owner->cap * 4)));
+            separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap]));
+            contains(allocated_vector(owner), memory(owner->len));
+            contains(allocated_vector(owner), memory(owner->cap));
+            contains(allocated_vector(owner), memory(owner->data));
+            contains(allocated_vector(owner), allocation(owner->data, (owner->cap * 4)));
+            contains(allocated_vector(owner), memory(owner->data[0..owner->cap]));
+            loadable(old(owner->len));
+            loadable(old(owner->cap));
+            loadable(old(owner->data));
+            loadable(old(owner->data[0..owner->cap]));
+            0 <= owner->len;
+            owner->len <= owner->cap;
+            1 <= owner->cap;
+            owner->cap <= 536870911;
+            loadable(old(owner->data[0..owner->len]));
+            separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+            not owner->len == owner->cap;
+            old(owner->len) < old(owner->cap);
+        }
+        step() using {
+            owner->cap <= 536870910;
+            separate(memory(owner->len), memory(owner->cap));
+            separate(memory(owner->len), memory(owner->data));
+            separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+            separate(memory(owner->cap), memory(owner->data));
+            separate(memory(owner->len), allocation(owner->data, (owner->cap * 4)));
+            separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4)));
+            separate(memory(owner->data), allocation(owner->data, (owner->cap * 4)));
+            separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap]));
+            loadable(old(owner->len));
+            loadable(old(owner->cap));
+            loadable(old(owner->data));
+            loadable(old(owner->data[0..owner->cap]));
+            0 <= owner->len;
+            owner->len <= owner->cap;
+            1 <= owner->cap;
+            owner->cap <= 536870911;
+            loadable(old(owner->data[0..owner->len]));
+            not owner->len == owner->cap;
+            old(owner->len) < old(owner->cap);
+        }
         unfold(allocated_vector(owner));
         fold(vector_storage(owner));
         step() using {
@@ -823,8 +1527,12 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             loadable(owner->data);
         }
         unfold(vector_storage(owner));
-        have 0 <= owner->len by simp;
-        have owner->len <= owner->cap by simp;
+        have 0 <= owner->len by {
+            assumption();
+        }
+        have owner->len <= owner->cap by {
+            assumption();
+        }
         have 1 <= owner->cap by {
             rewrite(owner->cap == at(statement(0).entry, owner->cap));
             assumption();
@@ -834,33 +1542,23 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             assumption();
         }
         fold(allocated_vector(owner));
-        step() using {}
+        step() using {
+        }
         have 0 == 0 by {
             normalize();
         }
-        have at(statement(0).entry, 0) <=
-            at(statement(0).entry, owner->len) by {
+        have at(statement(0).entry, 0) <= at(statement(0).entry, owner->len) by {
             assumption();
         }
-        have at(statement(0).entry, (owner->len + 1)) <=
-            at(statement(0).entry, owner->cap) by {
-            have at(statement(0).entry, owner->len) <
-                at(statement(0).entry, owner->cap) by {
-                transport(
-                    owner->len < owner->cap,
-                    at(statement(0).entry, owner->len) <
-                        at(statement(0).entry, owner->cap)
-                ) using {
+        have at(statement(0).entry, (owner->len + 1)) <= at(statement(0).entry, owner->cap) by {
+            have at(statement(0).entry, owner->len) < at(statement(0).entry, owner->cap) by {
+                transport(owner->len < owner->cap, at(statement(0).entry, owner->len) < at(statement(0).entry, owner->cap)) using {
                     owner->len < owner->cap;
                 }
                 assumption();
             }
-            apply(int32_increment_upper_bound(
-                at(statement(0).entry, owner->len),
-                at(statement(0).entry, owner->cap)
-            )) using {
-                at(statement(0).entry, owner->len) <
-                    at(statement(0).entry, owner->cap);
+            apply(int32_increment_upper_bound(at(statement(0).entry, owner->len), at(statement(0).entry, owner->cap))) using {
+                at(statement(0).entry, owner->len) < at(statement(0).entry, owner->cap);
             }
             assumption();
         }
@@ -897,12 +1595,25 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             at(statement(0).entry, 0) <= at(statement(0).entry, owner->len);
             at(statement(0).entry, (owner->len + 1)) <= at(statement(0).entry, owner->cap);
         }
-        have result == 1 by simp;
-        have result == 0 or result == 1 by simp;
-        have result == 0 implies owner->len == old(owner->len) by simp;
-        have result == 0 implies owner->cap == old(owner->cap) by simp;
-        have result == 0 implies owner->data == old(owner->data) by simp;
-        have result == 1 implies owner->len == old(owner->len) + 1 by simp;
+        have result == 1 by {
+            normalize();
+        }
+        have result == 0 or result == 1 by {
+            normalize();
+        }
+        have result == 0 implies owner->len == old(owner->len) by {
+            normalize();
+        }
+        have result == 0 implies owner->cap == old(owner->cap) by {
+            normalize();
+        }
+        have result == 0 implies owner->data == old(owner->data) by {
+            normalize();
+        }
+        have result == 1 implies owner->len == (old(owner->len) + 1) by {
+            intro();
+            assumption();
+        }
         have owner->data[old(owner->len)] == value by {
             assumption();
         }
@@ -910,10 +1621,7 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             intro();
             assumption();
         }
-        have forall (k: int32) {
-            0 <= k and k < old(owner->len) implies
-                owner->data[k] == old(owner->data[k])
-        } by {
+        have forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) } by {
             assumption();
         }
         have owner->cap == old(owner->cap) by {
@@ -926,13 +1634,11 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             intro();
             assumption();
         }
-        have old(owner->len) < old(owner->cap) implies
-            owner->cap == old(owner->cap) by {
+        have old(owner->len) < old(owner->cap) implies owner->cap == old(owner->cap) by {
             intro();
             assumption();
         }
-        have old(owner->len) < old(owner->cap) implies
-            owner->data == old(owner->data) by {
+        have old(owner->len) < old(owner->cap) implies owner->data == old(owner->data) by {
             intro();
             assumption();
         }
@@ -961,17 +1667,83 @@ int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
     ensures owner->cap == capacity;
     ensures owner->data == data;
 } by {
-    execute();
+    step() using {
+        1 <= capacity;
+        loadable(owner[0..4]);
+        loadable(data[0..capacity]);
+    }
+    step() using {
+        1 <= capacity;
+        loadable(old(owner[0..4]));
+        loadable(old(data[0..capacity]));
+    }
+    step() using {
+        1 <= capacity;
+        loadable(old(owner[0..4]));
+        loadable(old(data[0..capacity]));
+    }
+    step() using {
+        1 <= capacity;
+        loadable(old(owner[0..4]));
+        loadable(old(data[0..capacity]));
+    }
     fold(empty_vector(owner));
-    frame();
-    simp();
+    frame() using {
+    }
+    have result == 0 by {
+        normalize();
+    }
+    have owner->len == 0 by {
+        normalize();
+    }
+    have owner->cap == capacity by {
+        normalize();
+    }
+    have owner->data == data by {
+        normalize();
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }
 
 int32 vector_len(struct vector* owner) {
     views nonempty_vector(owner);
-    immutable;
+    immutable by {
+        step() using {
+            separate(memory(owner[0..1]), memory(owner[1..2]));
+            separate(memory(owner[0..1]), memory(owner[2..4]));
+            separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+            separate(memory(owner[1..2]), memory(owner[2..4]));
+            loadable(owner[0..1]);
+            loadable((owner + 1)[0..1]);
+            loadable((owner + 2)[0..2]);
+            1 <= owner->len;
+            owner->len <= owner->cap;
+        }
+        frame() using {
+        }
+    }
 
-    ensures result == owner->len by auto;
+    ensures result == owner->len by {
+        step() using {
+            separate(memory(owner[0..1]), memory(owner[1..2]));
+            separate(memory(owner[0..1]), memory(owner[2..4]));
+            separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+            separate(memory(owner[1..2]), memory(owner[2..4]));
+            loadable(owner[0..1]);
+            loadable((owner + 1)[0..1]);
+            loadable((owner + 2)[0..2]);
+            1 <= owner->len;
+            owner->len <= owner->cap;
+        }
+        have result == owner->len by {
+            normalize();
+        }
+        assumption();
+    }
 }
 
 int32 vector_get(struct vector* owner, int32 index) {
@@ -983,8 +1755,48 @@ int32 vector_get(struct vector* owner, int32 index) {
     ensures result == owner->data[index];
     ensures result == old(owner->data[index]);
 } by {
-    execute();
-    frame();
+    step() using {
+        0 <= index;
+        index < owner->len;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(owner[0..1]);
+        loadable((owner + 1)[0..1]);
+        loadable((owner + 2)[0..2]);
+        1 <= owner->len;
+        owner->len <= owner->cap;
+    }
+    step() using {
+        0 <= index;
+        index < owner->len;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        1 <= owner->len;
+        owner->len <= owner->cap;
+    }
+    step() using {
+        0 <= index;
+        index < owner->len;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        loadable(old(owner->data[0..load_int32(byte_offset(owner, 4))]));
+        1 <= owner->len;
+        owner->len <= owner->cap;
+    }
+    frame() using {
+    }
     have result == owner->data[index] by {
         normalize();
     }
@@ -1007,9 +1819,52 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
     ensures owner->data == old(owner->data);
 } by {
     unfold(nonempty_vector(owner));
-    step();
-    step();
-    step();
+    step() using {
+        0 <= index;
+        index < owner->len;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(owner[0..1]);
+        loadable((owner + 1)[0..1]);
+        loadable((owner + 2)[0..2]);
+        1 <= owner->len;
+        owner->len <= owner->cap;
+    }
+    step() using {
+        at(statement(0).entry, 0) <= at(statement(0).entry, index);
+        at(statement(0).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+        at(statement(0).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+        at(statement(0).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+        at(statement(0).entry, loadable(owner[0..1]));
+        at(statement(0).entry, loadable((owner + 1)[0..1]));
+        at(statement(0).entry, loadable((owner + 2)[0..2]));
+        at(statement(1).entry, index) < at(statement(1).entry, owner->len);
+        at(statement(1).entry, 1) <= at(statement(1).entry, owner->len);
+        at(statement(1).entry, owner->len) <= at(statement(1).entry, owner->cap);
+        at(statement(0).entry, index) < at(statement(0).entry, owner->len);
+        at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+        at(statement(0).entry, 1) <= at(statement(0).entry, owner->len);
+        at(statement(0).entry, owner->len) <= at(statement(0).entry, owner->cap);
+    }
+    step() using {
+        at(statement(1).entry, 0) <= at(statement(1).entry, index);
+        at(statement(0).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+        at(statement(0).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+        at(statement(0).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+        at(statement(0).entry, loadable(owner[0..1]));
+        at(statement(0).entry, loadable((owner + 1)[0..1]));
+        at(statement(0).entry, loadable((owner + 2)[0..2]));
+        at(statement(2).entry, index) < at(statement(2).entry, owner->len);
+        at(statement(2).entry, 1) <= at(statement(2).entry, owner->len);
+        at(statement(2).entry, owner->len) <= at(statement(2).entry, owner->cap);
+        at(statement(1).entry, index) < at(statement(1).entry, owner->len);
+        at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+        loadable(old(owner->data[0..load_int32(byte_offset(owner, 4))]));
+        at(statement(1).entry, 1) <= at(statement(1).entry, owner->len);
+        at(statement(1).entry, owner->len) <= at(statement(1).entry, owner->cap);
+    }
     step() using {
         0 <= index;
         index < owner->len;
@@ -1021,9 +1876,48 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
         separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
     }
     fold(nonempty_vector(owner));
-    have index < index + 1 by simp;
-    frame();
-    simp();
+    have index < (index + 1) by {
+        apply(int32_increment_strictly_increases(at(statement(3).entry, index), at(statement(3).entry, owner->len))) using {
+            at(statement(3).entry, index) < at(statement(3).entry, owner->len);
+        }
+        assumption();
+    }
+    have index <= index by {
+        normalize();
+    }
+    have index < (index + 1) by {
+        apply(int32_increment_strictly_increases(at(statement(3).entry, index), at(statement(3).entry, owner->len))) using {
+            at(statement(3).entry, index) < at(statement(3).entry, owner->len);
+        }
+        assumption();
+    }
+    frame() using {
+        at(statement(3).entry, 0) <= at(statement(3).entry, index);
+        at(statement(3).entry, index) < at(statement(3).entry, owner->len);
+        index <= index;
+        index < (index + 1);
+    }
+    have result == value by {
+        normalize();
+    }
+    have owner->data[index] == value by {
+        normalize();
+    }
+    have owner->len == old(owner->len) by {
+        normalize();
+    }
+    have owner->cap == old(owner->cap) by {
+        normalize();
+    }
+    have owner->data == old(owner->data) by {
+        normalize();
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }
 
 int32 vector_fill(struct vector* owner, int32 value) {
@@ -1071,51 +1965,120 @@ int32 vector_fill(struct vector* owner, int32 value) {
         separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
     }
     have loadable(owner->len) by {
-        simp() using {
+        transport(loadable(old(owner->len)), loadable(owner->len)) using {
             loadable(old(owner->len));
         }
+        assumption();
     }
     have loadable(owner->cap) by {
-        simp() using {
+        transport(loadable(old(owner->cap)), loadable(owner->cap)) using {
             loadable(old(owner->cap));
         }
+        assumption();
     }
     have loadable(owner->data) by {
-        simp() using {
+        transport(loadable(old(owner->data)), loadable(owner->data)) using {
             loadable(old(owner->data));
         }
+        assumption();
     }
     have loadable(owner->data[0..owner->cap]) by {
-        simp() using {
+        transport(loadable(old(owner->data[0..owner->cap])), loadable(owner->data[0..owner->cap])) using {
             loadable(old(owner->data[0..owner->cap]));
         }
+        assumption();
     }
     have i >= 0 by {
         normalize();
     }
     have i <= owner->len by {
-        simp() using {
+        apply(int32_positive_is_nonnegative(owner->len)) using {
             1 <= owner->len;
         }
+        assumption();
     }
     loop as fill_cells {
         invariant i >= 0 and i <= owner->len;
-        mutable owner->data[0..owner->len] by frame;
-        initialize by simp;
+        mutable owner->data[0..owner->len] by {
+            frame() using {
+            }
+        }
+        initialize by {
+            have i >= 0 and i <= owner->len by {
+                have i >= 0 by {
+                    normalize();
+                }
+                have i <= owner->len by {
+                    assumption();
+                }
+                split();
+            }
+        }
         preserve by {
-            have i < owner->cap by simp;
-            step();
-            step();
+            have i < owner->cap by {
+                apply(int32_lt_le_transitive(i, owner->len, owner->cap)) using {
+                    i < owner->len;
+                    owner->len <= owner->cap;
+                }
+                assumption();
+            }
+            step() using {
+                0 == 0;
+                i < owner->len;
+                0 <= owner->len;
+                1 <= owner->len;
+                at(statement(3).entry, 1) <= at(statement(3).entry, owner->len);
+                owner->len <= owner->cap;
+                at(statement(3).entry, owner->len) <= at(statement(3).entry, owner->cap);
+                loadable(old(owner->cap));
+                loadable(old(owner->data));
+                loadable(old(owner->len));
+                loadable(old(owner->data[0..owner->cap]));
+                separate(memory(owner->len), memory(owner->cap));
+                separate(memory(owner->len), memory(owner->data));
+                separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+                separate(memory(owner->cap), memory(owner->data));
+                at(statement(3).entry, i) >= at(statement(3).entry, 0);
+                at(statement(3).entry, i) <= at(statement(3).entry, owner->len);
+                i < owner->cap;
+            }
+            step() using {
+                at(statement(3).entry, 0) == at(statement(3).entry, 0);
+                at(statement(3).entry, loadable(old(owner->cap)));
+                at(statement(3).entry, loadable(old(owner->data)));
+                at(statement(3).entry, loadable(old(owner->len)));
+                at(statement(3).entry, loadable(old(owner->data[0..owner->cap])));
+                at(statement(3).entry, separate(memory(owner->len), memory(owner->cap)));
+                at(statement(3).entry, separate(memory(owner->len), memory(owner->data)));
+                at(statement(3).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+                at(statement(3).entry, separate(memory(owner->cap), memory(owner->data)));
+                at(statement(3).entry, i) >= at(statement(3).entry, 0);
+                at(statement(4).entry, i) < at(statement(4).entry, owner->len);
+                at(statement(4).entry, 0) <= at(statement(4).entry, owner->len);
+                at(statement(4).entry, 1) <= at(statement(4).entry, owner->len);
+                at(statement(4).entry, owner->len) <= at(statement(4).entry, owner->cap);
+                at(statement(4).entry, i) <= at(statement(4).entry, owner->len);
+                at(statement(4).entry, i) < at(statement(4).entry, owner->cap);
+                at(statement(3).entry, i) < at(statement(3).entry, owner->len);
+                at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
+                at(statement(3).entry, 1) <= at(statement(3).entry, owner->len);
+                at(statement(3).entry, owner->len) <= at(statement(3).entry, owner->cap);
+                at(statement(3).entry, i) <= at(statement(3).entry, owner->len);
+                at(statement(3).entry, i) < at(statement(3).entry, owner->cap);
+            }
             have i >= 0 by {
-                simp() using {
+                extract(at(statement(3).entry, i) >= 0);
+                apply(int32_increment_greater_equal_lower_bound(at(statement(3).entry, i), 0, at(statement(3).entry, owner->len))) using {
                     at(statement(3).entry, i) >= 0;
                     at(statement(3).entry, i) < at(statement(3).entry, owner->len);
                 }
+                assumption();
             }
             have i <= owner->len by {
-                simp() using {
+                apply(int32_increment_upper_bound(at(statement(3).entry, i), at(statement(3).entry, owner->len))) using {
                     at(statement(3).entry, i) < at(statement(3).entry, owner->len);
                 }
+                assumption();
             }
             close_invariants();
         }
@@ -1142,7 +2105,8 @@ int32 vector_fill(struct vector* owner, int32 value) {
         at(statement(0).entry, i) <= at(statement(0).entry, owner->len);
         not i < owner->len;
     }
-    frame();
+    frame() using {
+    }
     fold(nonempty_vector(owner));
     assumption();
     have result == owner->len by {
@@ -1164,8 +2128,35 @@ int32 vector_replace_if(
 
     ensures replace != 0 implies result == replacement;
 } by {
-    step();
-    step();
+    step() using {
+        0 <= index;
+        index < owner->len;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(owner[0..1]);
+        loadable((owner + 1)[0..1]);
+        loadable((owner + 2)[0..2]);
+        1 <= owner->len;
+        owner->len <= owner->cap;
+    }
+    step() using {
+        at(statement(0).entry, 0) <= at(statement(0).entry, index);
+        at(statement(0).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+        at(statement(0).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+        at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+        at(statement(0).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+        at(statement(0).entry, loadable(owner[0..1]));
+        at(statement(0).entry, loadable((owner + 1)[0..1]));
+        at(statement(0).entry, loadable((owner + 2)[0..2]));
+        at(statement(1).entry, index) < at(statement(1).entry, owner->len);
+        at(statement(1).entry, 1) <= at(statement(1).entry, owner->len);
+        at(statement(1).entry, owner->len) <= at(statement(1).entry, owner->cap);
+        at(statement(0).entry, index) < at(statement(0).entry, owner->len);
+        at(statement(0).entry, 1) <= at(statement(0).entry, owner->len);
+        at(statement(0).entry, owner->len) <= at(statement(0).entry, owner->cap);
+    }
     step() using {
         index < owner->len;
         0 <= index;
@@ -1190,9 +2181,23 @@ int32 vector_replace_if(
                 loadable(old(owner->data));
                 loadable(old(owner->len));
             }
-            have replace != 0 implies selected == replacement by simp;
-            have not (replace != 0) implies selected == original by simp;
-            have index < index + 1 by simp;
+            have replace != 0 implies selected == replacement by {
+                rewrite(selected == replacement);
+                normalize();
+            }
+            have not replace != 0 implies selected == original by {
+                have not not replace != 0 by {
+                    assumption();
+                }
+                intro();
+                contradiction(not not replace != 0);
+            }
+            have index < (index + 1) by {
+                apply(int32_increment_strictly_increases(at(statement(4).entry, index), at(statement(4).entry, owner->len))) using {
+                    at(statement(4).entry, index) < at(statement(4).entry, owner->len);
+                }
+                assumption();
+            }
         }
         else {
             step() using {
@@ -1205,16 +2210,63 @@ int32 vector_replace_if(
                 loadable(old(owner->data));
                 loadable(old(owner->len));
             }
-            have replace != 0 implies selected == replacement by simp;
-            have not (replace != 0) implies selected == original by simp;
-            have index < index + 1 by simp;
+            have replace != 0 implies selected == replacement by {
+                have not replace != 0 by {
+                    assumption();
+                }
+                intro();
+                contradiction(not replace != 0);
+            }
+            have not replace != 0 implies selected == original by {
+                have not not replace != 0 by {
+                    assumption();
+                }
+                intro();
+                contradiction(not not replace != 0);
+            }
+            have index < (index + 1) by {
+                apply(int32_increment_strictly_increases(at(statement(5).entry, index), at(statement(5).entry, owner->len))) using {
+                    at(statement(5).entry, index) < at(statement(5).entry, owner->len);
+                }
+                assumption();
+            }
         }
     }
-    execute();
-    have index < index + 1 by simp;
+    step() using {
+        at(statement(2).entry, index) < at(statement(2).entry, owner->len);
+        at(statement(2).entry, 0) <= at(statement(2).entry, index);
+        at(statement(2).entry, 1) <= at(statement(2).entry, owner->len);
+        at(statement(2).entry, owner->len) <= at(statement(2).entry, owner->cap);
+        at(statement(2).entry, loadable(old(owner->cap)));
+        at(statement(2).entry, loadable(old(owner->data)));
+        at(statement(2).entry, loadable(old(owner->len)));
+        owner->len == at(statement(0).entry, owner->len);
+        owner->cap == at(statement(0).entry, owner->cap);
+        owner->data == at(statement(0).entry, owner->data);
+        at(statement(3).entry, original) == at(statement(3).entry, owner->data[index]);
+        at(statement(3).entry, index) < at(statement(3).entry, owner->len);
+        at(statement(3).entry, 1) <= at(statement(3).entry, owner->len);
+        at(statement(3).entry, owner->len) <= at(statement(3).entry, owner->cap);
+        at(statement(0).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+        at(statement(0).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+        at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+        at(statement(0).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+        at(statement(1).entry, index) < at(statement(1).entry, owner->len);
+        at(statement(1).entry, 1) <= at(statement(1).entry, owner->len);
+        at(statement(1).entry, owner->len) <= at(statement(1).entry, owner->cap);
+        replace == replace;
+        index < (index + 1);
+    }
+    have index < (index + 1) by {
+        assumption();
+    }
     frame() using {
     }
-    simp();
+    have replace != 0 implies result == replacement by {
+        assumption();
+    }
+    assumption();
+    assumption();
 }
 
 int32 vector_clear(struct vector* owner) {
@@ -1225,28 +2277,50 @@ int32 vector_clear(struct vector* owner) {
     ensures owner->len == 0;
 } by {
     unfold(nonempty_vector(owner));
-    execute();
-    have owner->len == 0 by simp;
-    apply(int32_le_transitive(
-        1,
-        at(statement(0).entry, owner->len),
-        at(statement(0).entry, owner->cap)
-    )) using {
-        at(statement(0).entry, 1) <= at(statement(0).entry, owner->len);
-        at(statement(0).entry, owner->len) <=
-            at(statement(0).entry, owner->cap);
+    step() using {
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(owner[0..1]);
+        loadable((owner + 1)[0..1]);
+        loadable((owner + 2)[0..2]);
+        1 <= owner->len;
+        owner->len <= owner->cap;
     }
-    transport(
-        at(statement(0).entry, 1) <= at(statement(0).entry, owner->cap),
-        1 <= owner->cap
-    ) using {
+    step() using {
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(old(owner[0..1]));
+        loadable(old((owner + 1)[0..1]));
+        loadable(old((owner + 2)[0..2]));
+        at(statement(0).entry, 1) <= at(statement(0).entry, owner->len);
+        at(statement(0).entry, owner->len) <= at(statement(0).entry, owner->cap);
+    }
+    have owner->len == 0 by {
+        normalize();
+    }
+    apply(int32_le_transitive(1, at(statement(0).entry, owner->len), at(statement(0).entry, owner->cap))) using {
+        at(statement(0).entry, 1) <= at(statement(0).entry, owner->len);
+        at(statement(0).entry, owner->len) <= at(statement(0).entry, owner->cap);
+    }
+    transport(at(statement(0).entry, 1) <= at(statement(0).entry, owner->cap), 1 <= owner->cap) using {
         at(statement(0).entry, 1) <= at(statement(0).entry, owner->cap);
     }
     assumption();
-    have separate(memory(object(owner)), memory(owner->data[0..owner->cap])) by simp;
+    have separate(memory(object(owner)), memory(owner->data[0..owner->cap])) by {
+        assumption();
+    }
     fold(empty_vector(owner));
-    frame();
-    simp();
+    frame() using {
+    }
+    have owner->len == 0 by {
+        normalize();
+    }
+    assumption();
+    assumption();
 }
 
 int32 vector_pipeline(
@@ -1263,15 +2337,54 @@ int32 vector_pipeline(
     produces empty_vector(owner);
     ensures result == replacement;
 } by {
-    execute_until(statement(3));
-    have owner->len == 0 by simp;
-    have owner->cap == capacity by simp;
+    step() using {
+        1 <= capacity;
+        loadable(owner[0..4]);
+        loadable(data[0..capacity]);
+    }
+    step() using {
+        1 <= capacity;
+        loadable(old(owner[0..4]));
+        loadable(old(data[0..capacity]));
+    }
+    step() using {
+        1 <= capacity;
+        loadable(old(owner[0..4]));
+        loadable(old(data[0..capacity]));
+    }
+    have observed == 0 by {
+        assumption();
+    }
+    have owner->len == 0 by {
+        assumption();
+    }
+    have owner->cap == capacity by {
+        assumption();
+    }
     unfold(empty_vector(owner));
-    have 0 <= owner->len by simp;
-    have owner->len <= owner->cap by simp;
-    have loadable(owner->data[0..owner->len]) by simp;
+    have 0 <= owner->len by {
+        rewrite(owner->len == 0);
+        normalize();
+    }
+    have owner->len <= owner->cap by {
+        rewrite(owner->len == 0);
+        apply(int32_positive_is_nonnegative(owner->cap)) using {
+            1 <= owner->cap;
+        }
+        assumption();
+    }
+    have loadable(owner->data[0..owner->len]) by {
+        rewrite(owner->len == 0);
+        normalize();
+    }
     fold(vector_storage(owner));
-    have owner->len < owner->cap by simp;
+    have owner->len < owner->cap by {
+        rewrite(owner->len == 0);
+        apply(int32_successor_le_implies_lt(0, owner->cap)) using {
+            1 <= owner->cap;
+        }
+        assumption();
+    }
     step() using {
         owner->len < owner->cap;
         loadable(owner->len);
@@ -1280,7 +2393,7 @@ int32 vector_pipeline(
     }
     unfold(vector_storage(owner));
     have owner->len == 1 by {
-        rewrite(owner->len == at(statement(2).exit, owner->len + 1));
+        rewrite(owner->len == at(statement(2).exit, (owner->len + 1)));
         rewrite(at(statement(2).exit, owner->len) == at(statement(2).exit, 0));
         normalize();
     }
@@ -1337,5 +2450,9 @@ int32 vector_pipeline(
     step() using {
         observed == replacement;
     }
-    simp();
+    have result == replacement by {
+        assumption();
+    }
+    assumption();
+    assumption();
 }

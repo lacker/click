@@ -33,6 +33,31 @@ smart planning. Once the material smart sites are expanded, the former must be
 reprofiled against the indexed fact/resource and stable-identity issues rather
 than hidden by further proof-source growth.
 
+On 2026-08-13, checked whole-claim expansion removed every dynamically executed
+smart tactic from the project. (One unused theorem still contains a syntactic
+`simp`; the profile records zero smart attempts.) The warm profile is now:
+
+```text
+7.119s total
+  simple          2.133s  (274 completed, 8ms average, 458ms max)
+  smart               0ms  (0 attempts)
+  control           625ms
+  certification   1.338s
+  verifier core   2.870s
+```
+
+This is the pure-simple scaling regression the issue was missing. Expansion
+removed the planning and mixed-script gate costs, but the project remains above
+the five-second target. The dominant residual is now unambiguously engine work:
+`allocated_vector_push` takes about 3.56 seconds, including about 0.89 seconds
+of certification and 1.49 seconds of verifier core. Its profile shows both an
+approximately 0.70-second independent checked execution and an approximately
+0.70-second contract body symbolic execution, so the existing checked-artifact
+reuse path is not matching this realistic function. `vector_replace_if` also
+spends about 0.57 seconds almost entirely in verifier core, and the broad
+resource operations still show a roughly 0.42-second framed-load derivation
+walk and a roughly 0.24-second representation check.
+
 ## Regression
 
 Keep the complete project as a wall-clock integration workload. Every engine

@@ -74,6 +74,59 @@ pub fn expand_c0_claim_source(
     Ok(expanded)
 }
 
+/// Expands one function claim selected by the same stable label used by
+/// profiling and diagnostics.
+pub fn expand_c0_claim_source_by_label(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    claim_label: &str,
+) -> Result<String, ClickError> {
+    let file = parse_source_with_c_layouts(click_source, c_sources)?;
+    for function in file.function_blocks() {
+        let function_name = function.signature().name();
+        if claim_label == format!("{function_name}.contract") && function.grouped_proof().is_some()
+        {
+            return expand_c0_claim_source(
+                click_source,
+                c_sources,
+                function_name,
+                CProofClaim::Grouped,
+            );
+        }
+        for (index, ensure) in function.ensures().iter().enumerate() {
+            let label = ensure.name().map_or_else(
+                || format!("{function_name}.ensures_{index}"),
+                |name| format!("{function_name}.{name}"),
+            );
+            if label == claim_label {
+                return expand_c0_claim_source(
+                    click_source,
+                    c_sources,
+                    function_name,
+                    CProofClaim::Ensure(index),
+                );
+            }
+        }
+        for (index, effect) in function.effects().iter().enumerate() {
+            let kind = match effect.effect() {
+                Effect::Immutable => "immutable",
+                Effect::Mutable(_) => "mutable",
+            };
+            if claim_label == format!("{function_name}.{kind}_{index}") {
+                return expand_c0_claim_source(
+                    click_source,
+                    c_sources,
+                    function_name,
+                    CProofClaim::Effect(index),
+                );
+            }
+        }
+    }
+    Err(ClickError::new(format!(
+        "could not locate function claim `{claim_label}`"
+    )))
+}
+
 pub use crate::lang::SourcePosition;
 
 /// One source-selectable smart tactic in a parsed `.click` sidecar.

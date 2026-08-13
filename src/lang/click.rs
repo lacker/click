@@ -71,8 +71,8 @@ mod verification;
 use checking::*;
 pub use expansion::{
     CProofClaim, SmartTacticSourceSite, SourcePosition, c0_smart_tactic_source_sites,
-    c0_tactic_source_position, expand_c0_claim_source, expand_c0_tactic_source_at,
-    verifying_source_paths,
+    c0_tactic_source_position, expand_c0_claim_source, expand_c0_claim_source_by_label,
+    expand_c0_tactic_source_at, verifying_source_paths,
 };
 use expansion::{ExpansionCapture, ProofSite, VerificationTarget, verification_target_at};
 use lowering::*;

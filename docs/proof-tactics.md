@@ -172,6 +172,10 @@ vocabulary. Expansion starts from a correct selected proof unit and verifies
 that complete proof unit again after rewriting it. It does not emit a partial
 rewrite when a later tactic in the same proof is failing.
 
+`click expand --claim LABEL` applies the same checked rewrite to every smart
+tactic in one function claim. This avoids manual site-by-site work when the
+aggregate search cost is significant even though each smart tactic is prompt.
+
 `click profile` reports smart and simple work under the same concepts:
 statement transitions are `step`, checked loop transitions are `loop`,
 fact transports are `transport`, frame certificates are `frame`, and atomic
