@@ -1019,6 +1019,9 @@ impl Assumptions {
         for fact in self.prop_facts.iter() {
             fingerprint ^= Self::fingerprint(2, fact);
         }
+        for resources in self.resource_compositions.iter() {
+            fingerprint ^= Self::fingerprint(3, resources);
+        }
         if self.defer_non_exact_loadability_obligations {
             fingerprint ^= 1 << 56;
         }
@@ -1176,6 +1179,7 @@ impl Assumptions {
 
     pub(super) fn clear_proposition_facts(&mut self) {
         self.prop_facts = std::sync::Arc::new(BTreeSet::new());
+        self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_shape_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.memory_separation_facts = std::sync::Arc::new(BTreeMap::new());
@@ -1351,6 +1355,12 @@ impl Assumptions {
     }
 
     pub(super) fn insert_proposition_fact(&mut self, proposition: Proposition) {
+        if let Proposition::CResourceComposition(resources) = proposition {
+            if std::sync::Arc::make_mut(&mut self.resource_compositions).insert(resources.clone()) {
+                self.content_fingerprint ^= Self::fingerprint(3, &resources);
+            }
+            return;
+        }
         if std::sync::Arc::make_mut(&mut self.prop_facts).insert(proposition.clone()) {
             self.adjust_memory_loadable_fact(&proposition, true);
             self.adjust_memory_separation_fact(&proposition, true);
@@ -1406,6 +1416,10 @@ impl Assumptions {
                 &other.memory_load_condition_facts,
             )
             && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
+            && std::sync::Arc::ptr_eq(
+                &self.resource_compositions,
+                &other.resource_compositions,
+            )
             && std::sync::Arc::ptr_eq(&self.memory_loadable_facts, &other.memory_loadable_facts)
             && std::sync::Arc::ptr_eq(
                 &self.memory_loadable_shape_facts,
@@ -1441,6 +1455,7 @@ impl Assumptions {
     /// to detect ownership conflicts that a contradictory fact from the same
     /// definition must not conceal.
     pub(crate) fn without_explicit_separation_facts(mut self) -> Self {
+        self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
         self.retain_proposition_facts(|proposition| {
             !matches!(
                 proposition,
@@ -1644,6 +1659,10 @@ impl Assumptions {
                 .prop_facts
                 .iter()
                 .all(|proposition| self.prop_facts.contains(proposition))
+            && required
+                .resource_compositions
+                .iter()
+                .all(|resources| self.resource_compositions.contains(resources))
     }
 }
 

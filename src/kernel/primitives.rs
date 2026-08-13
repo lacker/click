@@ -1505,6 +1505,10 @@ pub enum Proposition {
         left: CResource,
         right: CResource,
     },
+    /// Internal carrier for an already-validated resource composition.
+    /// Assumptions store this as indexed kernel authority rather than as an
+    /// ambient proposition visible to proof search.
+    CResourceComposition(ResourceContext),
     CResourceContains {
         parent: CResource,
         child: CResource,
@@ -1636,6 +1640,7 @@ pub struct Assumptions {
     pub(super) bitvector_equality_facts:
         std::sync::Arc<std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeSet<Bitvector32Term>>>>,
     pub(super) prop_facts: std::sync::Arc<BTreeSet<Proposition>>,
+    pub(super) resource_compositions: std::sync::Arc<BTreeSet<ResourceContext>>,
     pub(super) memory_loadable_facts: std::sync::Arc<BTreeMap<PointerBlock, BTreeSet<Proposition>>>,
     pub(super) memory_loadable_shape_facts:
         std::sync::Arc<std::sync::OnceLock<BTreeMap<(PointerBlock, u64), BTreeSet<Proposition>>>>,
@@ -1655,6 +1660,7 @@ impl PartialEq for Assumptions {
         self.content_fingerprint == other.content_fingerprint
             && self.condition_facts == other.condition_facts
             && self.prop_facts == other.prop_facts
+            && self.resource_compositions == other.resource_compositions
             && self.defer_non_exact_loadability_obligations
                 == other.defer_non_exact_loadability_obligations
             && self.defer_non_exact_condition_reasoning == other.defer_non_exact_condition_reasoning

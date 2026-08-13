@@ -168,6 +168,7 @@ pub(in crate::kernel) fn collect_implication_antecedent_order_facts(
         | Proposition::CMemoryCanStore { .. }
         | Proposition::CMemoryDisjoint { .. }
         | Proposition::CResourceSeparate { .. }
+        | Proposition::CResourceComposition(_)
         | Proposition::CResourceContains { .. }
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CMemoryEffectSummary { .. }

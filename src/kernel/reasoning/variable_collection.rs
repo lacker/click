@@ -153,6 +153,9 @@ pub(in crate::kernel) fn collect_proposition_bitvector_variables(
             collect_c_resource_bitvector_variables(left, variables);
             collect_c_resource_bitvector_variables(right, variables);
         }
+        Proposition::CResourceComposition(resources) => {
+            collect_resource_context_bitvector_variables(resources, variables);
+        }
         Proposition::CResourceContains { parent, child } => {
             collect_c_resource_bitvector_variables(parent, variables);
             collect_c_resource_bitvector_variables(child, variables);

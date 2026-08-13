@@ -1,5 +1,23 @@
 use super::*;
 
+thread_local! {
+    static RESOURCE_COMPOSITION_QUERY_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+struct ResourceCompositionQueryGuard;
+
+impl ResourceCompositionQueryGuard {
+    fn enter() -> Option<Self> {
+        RESOURCE_COMPOSITION_QUERY_ACTIVE.with(|active| (!active.replace(true)).then_some(Self))
+    }
+}
+
+impl Drop for ResourceCompositionQueryGuard {
+    fn drop(&mut self) {
+        RESOURCE_COMPOSITION_QUERY_ACTIVE.with(|active| active.set(false));
+    }
+}
+
 impl ResourceContext {
     pub fn new() -> Self {
         Self::default()
@@ -84,6 +102,38 @@ impl ResourceContext {
             .into_iter()
             .flatten()
             .map(|index| &self.facts[*index])
+    }
+
+    pub(crate) fn proves_owned_resources_separate(
+        &self,
+        left: &CResource,
+        right: &CResource,
+        assumptions: &Assumptions,
+    ) -> bool {
+        let Some(_guard) = ResourceCompositionQueryGuard::enter() else {
+            return false;
+        };
+        let left_view = CResourceFact::View(left.clone());
+        let right_view = CResourceFact::View(right.clone());
+        let Some(left_positions) = self.direct_match_candidate_positions(&left_view) else {
+            return false;
+        };
+        let Some(right_positions) = self.direct_match_candidate_positions(&right_view) else {
+            return false;
+        };
+        left_positions.iter().any(|left_position| {
+            self.facts[*left_position].is_own()
+                && resource_fact_entails(&self.facts[*left_position], &left_view, assumptions)
+                && right_positions.iter().any(|right_position| {
+                    left_position != right_position
+                        && self.facts[*right_position].is_own()
+                        && resource_fact_entails(
+                            &self.facts[*right_position],
+                            &right_view,
+                            assumptions,
+                        )
+                })
+        })
     }
 
     fn direct_match_candidate_positions(&self, fact: &CResourceFact) -> Option<&Vec<usize>> {
@@ -336,6 +386,9 @@ impl ResourceContext {
                 .extend(resource_family_algebra(family).observable_facts(&facts, assumptions));
         }
         propositions.extend(self.cross_family_separate_facts());
+        if self.facts.iter().filter(|fact| fact.is_own()).count() >= 2 {
+            propositions.push(Proposition::CResourceComposition(self.clone()));
+        }
         propositions
     }
 

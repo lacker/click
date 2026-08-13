@@ -1474,6 +1474,7 @@ pub(in crate::lang::click) fn simp_proposition(
         | Proposition::CMemoryCanStore { .. }
         | Proposition::CMemoryDisjoint { .. }
         | Proposition::CResourceSeparate { .. }
+        | Proposition::CResourceComposition(_)
         | Proposition::CResourceContains { .. }
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CMemoryEffectSummary { .. }

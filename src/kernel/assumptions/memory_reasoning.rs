@@ -1036,6 +1036,12 @@ impl Assumptions {
             return true;
         }
 
+        if self.resource_compositions.iter().any(|resources| {
+            resources.proves_owned_resources_separate(left, right, self)
+        }) {
+            return true;
+        }
+
         if let (CResource::Memory(left), CResource::Memory(right)) = (left, right) {
             return self.range_covered_by_resource_separate_ranges(left, right)
                 || self.range_covered_by_resource_separate_ranges(right, left);

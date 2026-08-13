@@ -234,10 +234,8 @@ fn observable_structural_separation_does_not_materialize_owned_pairs() {
                         .observable_facts(&Assumptions::new())
                         .expect("structurally disjoint memory ranges should compose")
                 });
-                assert!(
-                    facts.is_empty(),
-                    "size-{size} projection materialized pairs"
-                );
+                assert_eq!(facts.len(), 1, "size-{size} projection materialized pairs");
+                assert!(matches!(facts[0], Proposition::CResourceComposition(_)));
                 assert!(Assumptions::new().proves(&Proposition::CResourceSeparate {
                     left: context.facts()[0].resource().clone(),
                     right: context.facts()[size - 1].resource().clone(),
@@ -515,7 +513,8 @@ fn resource_context_observes_write_separation() {
         .observable_facts(&Assumptions::new())
         .expect("adjacent writes should be a valid resource context");
 
-    assert!(facts.is_empty());
+    assert_eq!(facts.len(), 1);
+    assert!(matches!(facts[0], Proposition::CResourceComposition(_)));
     assert!(Assumptions::new().proves(&Proposition::CResourceSeparate {
         left: CResource::Memory(left),
         right: CResource::Memory(right),
