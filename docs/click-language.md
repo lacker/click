@@ -492,6 +492,16 @@ than folding or unfolding the body. Contract clauses currently transfer one
 unit at a time; symbolic quantities such as `owns n of object_ref(obj)` are
 not part of this slice.
 
+Population bodies preserved across opaque calls must have a resource footprint
+determined entirely by the declared resource arguments. A body whose owned
+range or contained resource is selected by mutable memory, a changing guard,
+or a recursive path is not supported across a call that can change that
+selector. Click does not currently have transition authority that can retire
+the exact pre-call footprint before activating the post-call footprint without
+risking stale or duplicated ownership. Use a stable-footprint resource design;
+support for dynamic population footprints is not part of the current language
+contract.
+
 Composite resources are declared resources with a body:
 
 ```click

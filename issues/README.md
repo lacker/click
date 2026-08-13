@@ -100,26 +100,28 @@ Keep one file per independent open problem. Put durable implementation design
 in `docs/`, and delete an issue when its fix, regression coverage, and
 documentation land.
 
+## Parser robustness
+
+- [Bound deeply parenthesized contract parsing](deep-parenthesized-contract-expression-overflows-parser-stack.md):
+  valid input must parse or receive a deterministic nesting diagnostic, never
+  overflow the native stack.
+
 ## Verification performance burndown
 
 The governing invariant is [Verification Efficiency](../docs/advanced/verification-efficiency.md).
-Work these independent issues in dependency-aware order:
+Two demonstrated asymptotic violations remain, in dependency-aware order:
 
-1. [Index proof facts and surface spellings](indexed-proof-fact-and-surface-spelling-stores.md).
-2. [Replace pairwise resource-context work with indexed algebra](indexed-resource-algebra-avoids-pairwise-context-work.md).
-3. [Remove context-wide proof minimization and contradiction scans](proof-derivation-avoids-context-wide-scans.md).
-4. [Give verifier caches stable shallow identities](stable-content-identities-for-verifier-caches.md).
-5. [Share checked replay authority between smart tactics and the expansion gate](smart-proof-search-and-expansion-gate-share-checked-replay.md).
+1. [Replace pairwise resource-context work with indexed algebra](indexed-resource-algebra-avoids-pairwise-context-work.md).
+2. [Remove context-wide proof minimization and contradiction scans](proof-derivation-avoids-context-wide-scans.md).
 
 The deterministic scaling gate is complete: every default curve records total
 cooperative work plus named operation/tactic work for actionable failures.
-Items 1--5 can land as
-separate green chunks with an asymptotic regression each. Checked execution
-reuse across proof and contract certification is complete and documented in
-the governing efficiency guide. Use
-`examples/owned-string`, `examples/binary-tree`, and
-[owned-vector](owned-vector-exceeds-interactive-verification-budget.md) are the
-full-project integration workloads; their wall times corroborate the scaling
-gates but do not replace them. Owned-string and binary-tree now verify in about
-four seconds on the development baseline and have no open project-level
-performance issue.
+Each remaining fix must land with an asymptotic regression. Broad proof-store,
+cache-identity, replay-deduplication, and project-wall-time proposals are not
+open roadmap items without a failing deterministic curve; file a narrow issue
+if new evidence exposes one. Checked execution reuse across proof and contract
+certification is complete and documented in the governing efficiency guide.
+Use `examples/owned-string`, `examples/binary-tree`, and
+`examples/owned-vector` as full-project integration workloads; their wall times
+corroborate the scaling gates but do not replace them. They have no open
+project-level performance issue.
