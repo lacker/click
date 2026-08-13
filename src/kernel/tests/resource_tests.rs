@@ -78,6 +78,37 @@ fn adjacent_memory_normalization_has_linearithmic_deterministic_work() {
 }
 
 #[test]
+fn disjoint_concrete_range_validity_scales_near_linearly() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let base = Pointer {
+                block: "p".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let context = ResourceContext::new().unchecked_with_facts((0..size).map(|index| {
+                CResourceFact::own_memory(memory_range(
+                    base.clone(),
+                    (index * 2) as u32,
+                    (index * 2 + 1) as u32,
+                ))
+            }));
+            let (error, work) = crate::instrumentation::measure_deterministic_work(|| {
+                context.validity_error(&Assumptions::new())
+            });
+            assert!(error.is_none());
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "concrete range validation is superlinear: {samples:?}"
+        );
+    }
+}
+
+#[test]
 fn resource_family_cores_are_view_facts() {
     let base = Pointer {
         block: "p".into(),

@@ -164,6 +164,46 @@ impl ResourceContext {
         assumptions: &Assumptions,
     ) -> Option<ResourceContextValidityError> {
         for positions in self.index().memory_by_block.values() {
+            let owned = positions
+                .iter()
+                .filter_map(|index| {
+                    let fact = &self.facts[*index];
+                    fact.memory_own_range().map(|range| (fact, range))
+                })
+                .collect::<Vec<_>>();
+            let one_concrete_base = owned.first().map(|(_, range)| range.base()).filter(|base| {
+                owned.iter().all(|(_, range)| {
+                    range.base() == *base
+                        && range.start().as_const().is_some()
+                        && range.end().as_const().is_some()
+                })
+            });
+            if one_concrete_base.is_some() {
+                let mut ordered = owned;
+                ordered.sort_by_key(|(_, range)| {
+                    (
+                        range.start().as_const().unwrap(),
+                        range.end().as_const().unwrap(),
+                    )
+                });
+                let mut furthest: Option<(&CResourceFact, &CMemoryRange)> = None;
+                for (fact, range) in ordered {
+                    crate::instrumentation::record_deterministic_work(1);
+                    if let Some((left, left_range)) = furthest {
+                        if let Some(error) = resource_family_algebra(left.family())
+                            .pair_validity_error(left, fact, assumptions)
+                        {
+                            return Some(error);
+                        }
+                        if range.end().as_const().unwrap() > left_range.end().as_const().unwrap() {
+                            furthest = Some((fact, range));
+                        }
+                    } else {
+                        furthest = Some((fact, range));
+                    }
+                }
+                continue;
+            }
             for (offset, left_index) in positions.iter().enumerate() {
                 let left = &self.facts[*left_index];
                 if left.memory_own_range().is_none() {

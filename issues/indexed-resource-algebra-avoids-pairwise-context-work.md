@@ -38,3 +38,23 @@ query that must not emit all pairwise separations.
 - Normalizing `R` ordered adjacent ranges is `O(R log R)` or better.
 - Fixed resource tactics pass the resource-count scaling gate.
 - Resource validity and consumption regressions remain semantically unchanged.
+
+## 2026-08-13 progress
+
+`ResourceContext` now maintains exact, family, resource-shape, memory-block,
+and endpoint indexes. Exact lookup is index-only, normalization selects
+same-resource or adjacent-endpoint candidates instead of restarting an
+all-pairs scan, and the default kernel regressions guard exact lookup,
+unrelated normalization, and adjacent merging.
+
+Validation of an existing context now recognizes the common same-base,
+constant-interval case and uses an ordered sweep. A four-size deterministic
+regression covers disjoint concrete ranges, so adding more unrelated ranges
+cannot silently restore the former quadratic validation curve. Symbolic or
+provably aliased bases still use the proof-aware pair checks.
+
+The issue remains open for incremental insertion, lazy separation projection,
+and fixed permission-query gates over mixed symbolic resources. In particular,
+`observable_facts` still materializes pairwise separation propositions; that
+must be replaced only together with indexed on-demand derivation so existing
+certificates retain the same authority.
