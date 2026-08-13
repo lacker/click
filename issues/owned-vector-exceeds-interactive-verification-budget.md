@@ -136,6 +136,22 @@ same-shape comparisons; those proof-aware entailments account for about
 shallow identities for resource contexts and queries, or a narrower certified
 snapshot/range relation, rather than another ambient candidate filter.
 
+Deeper range attribution rejects the broad memo as the immediate answer. The
+profile enters `range_covered_by_fact_range` only 28 times, but those distinct
+queries total about 0.39--0.41s and the three slowest each take roughly
+60--71ms. Repeating a completed query under one assumptions identity therefore
+does not explain the integration cost. The range prover must make each unique
+query local—especially its snapshot-aware endpoint equality and final order
+decisions—rather than adding another deep structural cache key.
+
+The slow queries are not ordinary scalar intervals. Their pointer offsets
+contain nested loads from successive call-havoc snapshots, so even constructing
+and ordering equality or inequality goals can walk large snapshot-bearing
+terms. The memory snapshots themselves have shallow arena identities, but
+surrounding ordered term keys still retain structural ordering. This ties the
+local range fix to shallow proposition and term identities, not to a larger
+search bound.
+
 ## Regression
 
 Keep the complete project as a wall-clock integration workload. Every engine

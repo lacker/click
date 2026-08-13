@@ -82,3 +82,12 @@ discipline. A deterministic regression requires a repeated distinctness query
 to consume no additional verifier work. This removes thousands of repeated
 explicit-range subqueries in the owned integration profiles, but callers still
 need an enclosing shallow assumptions scope to use the memo.
+
+Owned-vector exposes the next identity boundary in 28 unique range-coverage
+queries totaling about 0.4s. The range bases and endpoints contain nested
+memory loads from successive call-havoc snapshots. `SharedCMemory` equality
+and hashing are shallow within one arena, but ordered proposition and term keys
+still structurally compare the surrounding trees. The eventual term identity
+must preserve deterministic structural presentation order separately from hot
+lookup identity, just as the proof-fact stores do; another memo with deep term
+keys is explicitly not the fix.

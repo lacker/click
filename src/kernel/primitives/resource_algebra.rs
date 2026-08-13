@@ -1254,33 +1254,66 @@ pub(in crate::kernel) fn memory_range_covers(
     if available.base().blocks_proven_distinct(required.base()) {
         return false;
     }
-    if assumptions.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
-        available, required,
+    if crate::instrumentation::measure_operation(
+        "kernel",
+        "memory range coverage",
+        "memory range coverage: explicit separation",
+        || {
+            assumptions.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+                available, required,
+            )
+        },
     ) {
         return false;
     }
-    if (pointers_proven_equal_for_memory_resolution(available.base(), required.base(), assumptions)
-        || pointer_bases_equal_with_load_bridging(available.base(), required.base(), assumptions))
-        && range_endpoint_terms_equal(available.start(), required.start(), assumptions)
-        && range_endpoint_terms_equal(available.end(), required.end(), assumptions)
-    {
+    if crate::instrumentation::measure_operation(
+        "kernel",
+        "memory range coverage",
+        "memory range coverage: exact endpoints",
+        || {
+            (pointers_proven_equal_for_memory_resolution(
+                available.base(),
+                required.base(),
+                assumptions,
+            ) || pointer_bases_equal_with_load_bridging(
+                available.base(),
+                required.base(),
+                assumptions,
+            )) && range_endpoint_terms_equal(available.start(), required.start(), assumptions)
+                && range_endpoint_terms_equal(available.end(), required.end(), assumptions)
+        },
+    ) {
         return true;
     }
     if let Some(covers) = memory_range_structurally_covers(available, required) {
         return covers;
     }
-    if crate::kernel::assumptions::memory_range_contained_for_memory_resolution(
-        required,
-        available,
-        assumptions,
+    if crate::instrumentation::measure_operation(
+        "kernel",
+        "memory range coverage",
+        "memory range coverage: derived containment",
+        || {
+            crate::kernel::assumptions::memory_range_contained_for_memory_resolution(
+                required,
+                available,
+                assumptions,
+            )
+        },
     ) {
         return true;
     }
-    assumptions.range_covered_by_fact_range(
-        required,
-        available.base(),
-        available.start(),
-        available.end(),
+    crate::instrumentation::measure_operation(
+        "kernel",
+        "memory range coverage",
+        "memory range coverage: fact range",
+        || {
+            assumptions.range_covered_by_fact_range(
+                required,
+                available.base(),
+                available.start(),
+                available.end(),
+            )
+        },
     )
 }
 

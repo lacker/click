@@ -68,3 +68,10 @@ the remaining all-pairs fallback, but it prevents one proof-branch routing
 decision from recomputing that fallback hundreds of times over an unchanged
 context. A deterministic regression requires the second query not to perform
 another full context scan.
+
+Owned-vector's remaining resource entailment also isolates 28 unique
+`range_covered_by_fact_range` fallbacks totaling about 0.4s. These are not
+duplicate memo hits: their final endpoint/order proof is individually broad.
+The open derivation work must index or directly derive those local range
+relations; a cache keyed by complete range terms would only hide the scan and
+violate the stable-identity requirement.
