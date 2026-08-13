@@ -533,6 +533,29 @@ fn zip_surface_branches(existing: &mut [SimpleProofStep], incoming: &[SimpleProo
     true
 }
 
+fn uniform_surface_leaf_suffix(steps: &[SimpleProofStep]) -> Option<Vec<SimpleProofStep>> {
+    fn collect(steps: &[SimpleProofStep], leaves: &mut Vec<Vec<SimpleProofStep>>) {
+        if let [
+            SimpleProofStep::If {
+                then_proof,
+                else_proof,
+                ..
+            },
+        ] = steps
+        {
+            collect(then_proof.steps(), leaves);
+            collect(else_proof.steps(), leaves);
+        } else {
+            leaves.push(steps.to_vec());
+        }
+    }
+
+    let mut leaves = Vec::new();
+    collect(steps, &mut leaves);
+    let first = leaves.first()?.clone();
+    leaves.iter().all(|leaf| *leaf == first).then_some(first)
+}
+
 /// The enclosing builder saved while one tactic runs against a scoped view.
 pub(super) struct TacticSurfaceScope {
     saved: SimpleProofBuilder,
@@ -571,7 +594,21 @@ pub(super) fn end_tactic_surface_scope(
         match op {
             SurfaceScopeOp::Push(step) => enclosing.push_step(step),
             SurfaceScopeOp::ReplaceTrailingBranch(steps) => {
-                enclosing.replace_trailing_branch(steps);
+                if enclosing.path_choices.is_empty() {
+                    enclosing.replace_trailing_branch(steps);
+                } else if let Some(suffix) = uniform_surface_leaf_suffix(&steps) {
+                    // The scoped tactic sees only the trailing execution
+                    // branch skeleton, not the enclosing proof-case choice.
+                    // When every execution leaf constructed the same checked
+                    // suffix, keep that suffix after the choice point. Zipping
+                    // it into the earlier branch would make the supposedly
+                    // common pre-choice prefix depend on this proof arm.
+                    enclosing.steps.extend(suffix);
+                } else {
+                    enclosing.block(
+                        "a tactic inside a proof case produced path-dependent surface branches",
+                    );
+                }
             }
         }
     }
