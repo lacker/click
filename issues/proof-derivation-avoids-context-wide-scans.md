@@ -29,6 +29,11 @@ and quantified implication while adding unrelated facts of every other kind.
 Measure both decision and derivation construction. Add explicit long-path
 order cases whose cost is proportional to the returned path.
 
+Scaling axis: `exact_contradiction_lookup_scales_near_linearly` holds one
+contradiction fixed while growing unrelated condition facts. The issue closes
+when corresponding fixed arithmetic, loadability, quantified-match, and
+long-order-path curves cover their named decision/derivation operation spans.
+
 ## Acceptance criteria
 
 - Atomic derivation does not rerun the prover once per ambient premise.

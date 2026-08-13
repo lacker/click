@@ -871,6 +871,7 @@ fn profile_from_events(
                 claim,
                 name,
                 elapsed,
+                work: _,
             } => TimingEvent::Operation(ProfileOperation {
                 function: function.clone(),
                 claim: claim.clone(),

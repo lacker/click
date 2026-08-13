@@ -154,6 +154,11 @@ law. Performance-sensitive changes need deterministic scaling regressions that
 generate at least four sizes, normally `N`, `2N`, `4N`, and `8N`, and measure
 verifier work rather than host time.
 
+Each sample also records deterministic work attributed to named verifier
+operations and tactic kinds. A failed growth curve must report those named
+curves so the aggregate regression points to the responsible checker or phase;
+wall-clock profiler attribution is corroboration, not the scaling authority.
+
 The scaling suite should cover independent axes:
 
 - number of unrelated functions and verified rules;

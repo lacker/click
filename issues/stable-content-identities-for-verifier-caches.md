@@ -30,6 +30,11 @@ then query a hit and a miss whose semantic input size is fixed. Separately
 prove that equal persistent views share a key and that a one-field change does
 not. Count key-construction and lookup work.
 
+Scaling axis: cache entry count with one fixed-size hit and miss, measured
+separately from semantic input size. Each migrated cache must add this
+four-size curve plus the equal-view/one-field-change identity regression before
+the issue can close.
+
 ## Acceptance criteria
 
 - Cache lookup is logarithmic or constant in entry count after key creation.

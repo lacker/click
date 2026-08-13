@@ -31,6 +31,12 @@ mergeable ranges, and one fixed permission query independently. Include a
 linear-output case that explicitly observes every named member and a fixed
 query that must not emit all pairwise separations.
 
+Scaling axes: `unrelated_resource_normalization_has_linear_deterministic_work`,
+`adjacent_memory_normalization_has_linearithmic_deterministic_work`,
+`disjoint_concrete_range_validity_scales_near_linearly`, and the fixed-candidate
+resource lookup/consumption regressions isolate ambient resource count,
+mergeable interval count, and relevant candidate count independently.
+
 ## Acceptance criteria
 
 - Inserting or querying one resource touches only its indexed candidate set.

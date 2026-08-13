@@ -76,6 +76,7 @@ pub enum VerificationEvent {
         claim: String,
         name: String,
         elapsed: Duration,
+        work: usize,
     },
     DeadlineExceeded(ActiveVerificationWork),
     Diagnostic(String),
@@ -679,12 +680,15 @@ pub fn measure_operation<T>(
         return operation();
     }
     let started = TacticInstant::now();
+    let counter = WorkCounterGuard::enter();
     let result = operation();
+    let work = counter.finish();
     emit(VerificationEvent::OperationFinished {
         function: function.to_string(),
         claim: claim.to_string(),
         name: name.into(),
         elapsed: started.elapsed(),
+        work,
     });
     result
 }
@@ -693,7 +697,7 @@ pub fn measure_operation<T>(
 /// placed in a closure (for example, a loop that mutates and moves outer
 /// replay state). Dropping the guard records the completed span.
 pub struct OperationTiming {
-    measurement: Option<(String, String, String, TacticInstant)>,
+    measurement: Option<(String, String, String, TacticInstant, WorkCounterGuard)>,
 }
 
 impl OperationTiming {
@@ -705,6 +709,7 @@ impl OperationTiming {
                     claim.to_string(),
                     name.into(),
                     TacticInstant::now(),
+                    WorkCounterGuard::enter(),
                 )
             }),
         }
@@ -713,14 +718,16 @@ impl OperationTiming {
 
 impl Drop for OperationTiming {
     fn drop(&mut self) {
-        let Some((function, claim, name, started)) = self.measurement.take() else {
+        let Some((function, claim, name, started, counter)) = self.measurement.take() else {
             return;
         };
+        let work = counter.finish();
         emit(VerificationEvent::OperationFinished {
             function,
             claim,
             name,
             elapsed: started.elapsed(),
+            work,
         });
     }
 }
@@ -925,9 +932,10 @@ fn render_legacy(event: &VerificationEvent) -> String {
             claim,
             name,
             elapsed,
+            work,
         } => format!(
-            "click timing: operation {name} {function} {claim} {:.6}s",
-            elapsed.as_secs_f64()
+            "click timing: operation {name} {function} {claim} {:.6}s {work} work",
+            elapsed.as_secs_f64(),
         ),
         VerificationEvent::DeadlineExceeded(active) => {
             format!("click timing: deadline exceeded in {active:?}")
@@ -1227,5 +1235,28 @@ mod tests {
 
         assert_eq!(inner, 2);
         assert_eq!(outer, 4);
+    }
+
+    #[test]
+    fn named_operation_events_include_deterministic_work() {
+        let (_, events) = collect(|| {
+            measure_operation("function", "claim", "measured operation", || {
+                assert!(!deadline_exceeded());
+                assert!(!deadline_exceeded());
+            });
+            let _timing = OperationTiming::new("function", "claim", "guarded operation");
+            assert!(!deadline_exceeded());
+        });
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            VerificationEvent::OperationFinished { name, work: 2, .. }
+                if name == "measured operation"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            VerificationEvent::OperationFinished { name, work: 1, .. }
+                if name == "guarded operation"
+        )));
     }
 }

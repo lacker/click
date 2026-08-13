@@ -1,9 +1,63 @@
 use super::*;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct ScalingSample {
     size: usize,
     work: usize,
+    named_work: BTreeMap<String, usize>,
+}
+
+fn scaling_sample<R>(size: usize, operation: impl FnOnce() -> R) -> (R, ScalingSample) {
+    let ((result, work), events) = crate::instrumentation::collect(|| {
+        crate::instrumentation::measure_deterministic_work(operation)
+    });
+    let mut named_work = BTreeMap::<String, usize>::new();
+    for event in events {
+        let (name, work) = match event {
+            crate::instrumentation::VerificationEvent::OperationFinished { name, work, .. } => {
+                (format!("operation `{name}`"), work)
+            }
+            crate::instrumentation::VerificationEvent::TacticFinished { tactic, work, .. } => (
+                format!("{} tactic `{}`", tactic.class, tactic.tactic_name),
+                work,
+            ),
+            _ => continue,
+        };
+        *named_work.entry(name).or_default() += work;
+    }
+    (
+        result,
+        ScalingSample {
+            size,
+            work,
+            named_work,
+        },
+    )
+}
+
+fn named_growth_diagnostic(samples: &[ScalingSample]) -> String {
+    let mut names = BTreeSet::new();
+    for sample in samples {
+        names.extend(sample.named_work.keys().cloned());
+    }
+    let mut curves = names
+        .into_iter()
+        .map(|name| {
+            let work = samples
+                .iter()
+                .map(|sample| sample.named_work.get(&name).copied().unwrap_or(0))
+                .collect::<Vec<_>>();
+            (work.last().copied().unwrap_or(0), name, work)
+        })
+        .filter(|(last, _, _)| *last != 0)
+        .collect::<Vec<_>>();
+    curves.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    curves
+        .into_iter()
+        .take(8)
+        .map(|(_, name, work)| format!("{name}: {work:?}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Accepts the fixed-cost noise present in a complete verifier transaction
@@ -28,7 +82,8 @@ fn near_linear_scaling(samples: &[ScalingSample]) -> bool {
 fn assert_near_linear_scaling(axis: &str, samples: &[ScalingSample]) {
     assert!(
         near_linear_scaling(samples),
-        "{axis}: deterministic work grows faster than the simple-verification contract: {samples:?}"
+        "{axis}: deterministic work grows faster than the simple-verification contract: {samples:?}; named work: {}",
+        named_growth_diagnostic(samples),
     );
 }
 
@@ -164,9 +219,8 @@ fn simple_unrelated_functions_have_a_deterministic_scaling_control() {
                 .iter()
                 .map(|(name, source)| (name.as_str(), source.as_str()))
                 .collect::<Vec<_>>();
-            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
-                verify_c0_sources(&click_source, &source_refs)
-            });
+            let (verified, sample) =
+                scaling_sample(size, || verify_c0_sources(&click_source, &source_refs));
             let verified = verified.unwrap_or_else(|error| {
                 panic!(
                     "size {size} simple scaling fixture failed: {}",
@@ -174,7 +228,7 @@ fn simple_unrelated_functions_have_a_deterministic_scaling_control() {
                 )
             });
             assert_eq!(verified.len(), size);
-            ScalingSample { size, work }
+            sample
         })
         .collect::<Vec<_>>();
 
@@ -188,7 +242,7 @@ fn targeted_simple_verification_does_not_verify_unrelated_theorems() {
         .into_iter()
         .map(|size| {
             let click_source = target_with_unrelated_theorems(size);
-            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let (verified, sample) = scaling_sample(size, || {
                 verify_c0_sources_functions(
                     &click_source,
                     &[("target.c", c_source)],
@@ -202,7 +256,7 @@ fn targeted_simple_verification_does_not_verify_unrelated_theorems() {
                 )
             });
             assert_eq!(verified.len(), 1);
-            ScalingSample { size, work }
+            sample
         })
         .collect::<Vec<_>>();
 
@@ -246,7 +300,7 @@ fn straight_line_simple_steps_scale_near_linearly_with_retained_snapshots() {
             .into_iter()
             .map(|size| {
                 let (c_source, click_source) = straight_line_project(size, snapshot_claim);
-                let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let (verified, sample) = scaling_sample(size, || {
                     verify_c0_sources(&click_source, &[("straight.c", c_source.as_str())])
                 });
                 verified.unwrap_or_else(|error| {
@@ -255,7 +309,7 @@ fn straight_line_simple_steps_scale_near_linearly_with_retained_snapshots() {
                         error.message()
                     )
                 });
-                ScalingSample { size, work }
+                sample
             })
             .collect::<Vec<_>>();
         assert_near_linear_scaling("straight-line simple steps", &samples);
@@ -268,9 +322,7 @@ fn exact_assumption_scales_near_linearly_with_unrelated_ambient_facts() {
         .into_iter()
         .map(|size| {
             let source = theorem_with_unrelated_exact_facts(size);
-            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
-                verify_click_theorems(&source)
-            });
+            let (verified, sample) = scaling_sample(size, || verify_click_theorems(&source));
             let verified = verified.unwrap_or_else(|error| {
                 panic!(
                     "size {size} exact-fact scaling fixture failed: {}",
@@ -278,7 +330,7 @@ fn exact_assumption_scales_near_linearly_with_unrelated_ambient_facts() {
                 )
             });
             assert_eq!(verified.len(), 1);
-            ScalingSample { size, work }
+            sample
         })
         .collect::<Vec<_>>();
 
@@ -294,7 +346,7 @@ fn explicit_step_scales_near_linearly_with_unrelated_ambient_facts() {
                 size,
                 "    step() using {\n        target == 7;\n    }\n    assumption();\n",
             );
-            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let (verified, sample) = scaling_sample(size, || {
                 verify_c0_sources(&click_source, &[("exact_fact_target.c", c_source.as_str())])
             });
             verified.unwrap_or_else(|error| {
@@ -303,7 +355,7 @@ fn explicit_step_scales_near_linearly_with_unrelated_ambient_facts() {
                     error.message()
                 )
             });
-            ScalingSample { size, work }
+            sample
         })
         .collect::<Vec<_>>();
 
@@ -319,7 +371,7 @@ fn explicit_transport_scales_near_linearly_with_unrelated_ambient_facts() {
                 size,
                 "    step() using {\n        target == 7;\n    }\n    transport(target == 7, result == 7) using {\n        target == 7;\n    }\n    assumption();\n",
             );
-            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let (verified, sample) = scaling_sample(size, || {
                 verify_c0_sources(
                     &click_source,
                     &[("exact_fact_target.c", c_source.as_str())],
@@ -331,7 +383,7 @@ fn explicit_transport_scales_near_linearly_with_unrelated_ambient_facts() {
                     error.message()
                 )
             });
-            ScalingSample { size, work }
+            sample
         })
         .collect::<Vec<_>>();
 
@@ -344,16 +396,14 @@ fn same_kernel_fact_with_many_surface_spellings_scales_near_linearly() {
         .into_iter()
         .map(|size| {
             let source = theorem_with_many_spellings(size);
-            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
-                verify_click_theorems(&source)
-            });
+            let (verified, sample) = scaling_sample(size, || verify_click_theorems(&source));
             verified.unwrap_or_else(|error| {
                 panic!(
                     "size {size} surface-spelling scaling fixture failed: {}",
                     error.message()
                 )
             });
-            ScalingSample { size, work }
+            sample
         })
         .collect::<Vec<_>>();
 
@@ -366,7 +416,7 @@ fn grouped_claims_share_one_execution_with_near_linear_work() {
         .into_iter()
         .map(|size| {
             let (c_source, click_source) = grouped_claim_project(size);
-            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let (verified, sample) = scaling_sample(size, || {
                 verify_c0_sources(&click_source, &[("shared_claims.c", c_source.as_str())])
             });
             let verified = verified.unwrap_or_else(|error| {
@@ -376,7 +426,7 @@ fn grouped_claims_share_one_execution_with_near_linear_work() {
                 )
             });
             assert_eq!(verified.len(), size);
-            ScalingSample { size, work }
+            sample
         })
         .collect::<Vec<_>>();
 
@@ -389,7 +439,7 @@ fn composite_definition_members_scale_near_linearly() {
         .into_iter()
         .map(|size| {
             let (c_source, click_source) = resource_member_project(size);
-            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let (verified, sample) = scaling_sample(size, || {
                 verify_c0_sources(&click_source, &[("preserve_bundle.c", c_source.as_str())])
             });
             let verified = verified.unwrap_or_else(|error| {
@@ -399,7 +449,7 @@ fn composite_definition_members_scale_near_linearly() {
                 )
             });
             assert!(!verified.is_empty());
-            ScalingSample { size, work }
+            sample
         })
         .collect::<Vec<_>>();
 
@@ -413,7 +463,12 @@ fn scaling_assertion_rejects_a_quadratic_curve() {
         .map(|size| ScalingSample {
             size,
             work: size * size,
+            named_work: BTreeMap::from([(
+                "operation `quadratic reference`".to_string(),
+                size * size,
+            )]),
         })
         .collect::<Vec<_>>();
     assert!(!near_linear_scaling(&quadratic));
+    assert!(named_growth_diagnostic(&quadratic).contains("quadratic reference"));
 }

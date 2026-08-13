@@ -105,14 +105,15 @@ documentation land.
 The governing invariant is [Verification Efficiency](../docs/advanced/verification-efficiency.md).
 Work these independent issues in dependency-aware order:
 
-1. [Add deterministic scaling gates for simple verification](verification-scaling-benchmark-gate.md).
-2. [Index proof facts and surface spellings](indexed-proof-fact-and-surface-spelling-stores.md).
-3. [Replace pairwise resource-context work with indexed algebra](indexed-resource-algebra-avoids-pairwise-context-work.md).
-4. [Remove context-wide proof minimization and contradiction scans](proof-derivation-avoids-context-wide-scans.md).
-5. [Give verifier caches stable shallow identities](stable-content-identities-for-verifier-caches.md).
-6. [Share checked replay authority between smart tactics and the expansion gate](smart-proof-search-and-expansion-gate-share-checked-replay.md).
+1. [Index proof facts and surface spellings](indexed-proof-fact-and-surface-spelling-stores.md).
+2. [Replace pairwise resource-context work with indexed algebra](indexed-resource-algebra-avoids-pairwise-context-work.md).
+3. [Remove context-wide proof minimization and contradiction scans](proof-derivation-avoids-context-wide-scans.md).
+4. [Give verifier caches stable shallow identities](stable-content-identities-for-verifier-caches.md).
+5. [Share checked replay authority between smart tactics and the expansion gate](smart-proof-search-and-expansion-gate-share-checked-replay.md).
 
-The first issue establishes the measurement gate. Items 2--6 can then land as
+The deterministic scaling gate is complete: every default curve records total
+cooperative work plus named operation/tactic work for actionable failures.
+Items 1--5 can land as
 separate green chunks with an asymptotic regression each. Checked execution
 reuse across proof and contract certification is complete and documented in
 the governing efficiency guide. Use
