@@ -3506,3 +3506,62 @@ fn pure_folded_constant_successor_simp_expands_to_successor_bound() {
     assert!(!expanded.contains("simp()"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded constant successor proof should replay");
 }
+
+#[test]
+fn unfolded_conjunction_have_simp_expands_to_a_split_certificate() {
+    let c_source = r#"
+            struct pair {
+                int32 low;
+                int32 high;
+            };
+
+            void set_pair(struct pair* pair, int32 bound) {
+                pair->low = 0;
+                pair->high = bound;
+            }
+        "#;
+    let click_source = r#"
+            predicate ordered_pair(pair: struct pair*) {
+                0 <= pair->low and pair->low <= pair->high
+            }
+
+            verifying "set_pair.c";
+
+            void set_pair(struct pair* pair, int32 bound) {
+                requires 0 <= bound;
+                owns object(pair);
+                mutable pair->low, pair->high;
+
+                ensures ordered_pair(pair);
+            } by {
+                execute();
+                have ordered_pair(pair) by {
+                    unfold(ordered_pair);
+                    simp();
+                }
+                frame();
+                simp();
+            }
+        "#;
+    let offset = click_source.find("have ordered_pair").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("set_pair.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the unfolded conjunction have simp should expand to a split certificate");
+    assert!(expanded.contains("split();"), "{expanded}");
+    assert!(expanded.contains("have 0 <= pair->low"), "{expanded}");
+    assert!(
+        expanded.contains("have pair->low <= pair->high"),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &[("set_pair.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "the expanded split certificate should replay: {}\n{expanded}",
+            error.message()
+        )
+    });
+}

@@ -604,3 +604,101 @@ fn tactic_certificate_treats_an_omitted_nested_proof_as_auto() {
         ]
     );
 }
+
+const ORDERED_PAIR_C: &str = r#"
+    struct pair {
+        int32 low;
+        int32 high;
+    };
+
+    void set_pair(struct pair* pair, int32 bound) {
+        pair->low = 0;
+        pair->high = bound;
+    }
+"#;
+
+const ORDERED_PAIR_CLICK: &str = r#"
+    predicate ordered_pair(pair: struct pair*) {
+        0 <= pair->low and pair->low <= pair->high
+    }
+
+    verifying "set_pair.c";
+
+    void set_pair(struct pair* pair, int32 bound) {
+        requires 0 <= bound;
+        owns object(pair);
+        mutable pair->low, pair->high;
+
+        ensures ordered_pair(pair);
+    } by {
+        execute();
+        have ordered_pair(pair) by {
+            unfold(ordered_pair);
+            simp();
+        }
+        frame();
+        simp();
+    }
+"#;
+
+#[test]
+fn smart_have_splits_an_unfolded_predicate_conjunction_goal() {
+    // The `have`'s smart `simp` closes a predicate body that unfolds to a
+    // conjunction of scalar bounds. The constructed certificate must split
+    // the conjunction into per-conjunct `have` certificates; before the
+    // split, the whole-conjunction goal had no explicit simple certificate.
+    verify_c0_sources(ORDERED_PAIR_CLICK, &[("set_pair.c", ORDERED_PAIR_C)]).unwrap_or_else(
+        |error| {
+            panic!(
+                "the unfolded conjunction goal should split per conjunct: {}",
+                error.message()
+            )
+        },
+    );
+}
+
+#[test]
+fn grouped_outcome_simp_splits_an_unfold_active_conjunction_ensure() {
+    // The final `simp` certifies `ordered_pair(pair)` while `unfold` is
+    // active, so the kernel goal is already the body conjunction while the
+    // surface goal is the predicate call. The certificate must unfold the
+    // surface goal in step and split the conjunction.
+    let c_source = r#"
+        struct pair {
+            int32 low;
+            int32 high;
+        };
+
+        void bump(struct pair* pair) {
+            pair->low = pair->low + 1;
+        }
+    "#;
+    let click_source = r#"
+        predicate ordered_pair(pair: struct pair*) {
+            0 <= pair->low and pair->low <= pair->high
+        }
+
+        verifying "bump.c";
+
+        void bump(struct pair* pair) {
+            requires ordered_pair(pair);
+            requires pair->low < pair->high;
+            owns object(pair);
+            mutable pair->low;
+
+            ensures ordered_pair(pair);
+        } by {
+            unfold(ordered_pair);
+            execute();
+            frame();
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("bump.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "the unfold-active conjunction ensure should split per conjunct: {}",
+            error.message()
+        )
+    });
+}

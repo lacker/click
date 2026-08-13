@@ -1911,7 +1911,12 @@ pub(super) fn finish_ordered_proof_replay(
                                     pairs,
                                 )
                             } else {
-                                lower_outcome_simp_tactics(
+                                // Route through the structural certificate
+                                // constructor so a conjunction goal splits
+                                // into per-conjunct `have` certificates
+                                // closed by `split()`, exactly as the other
+                                // outcome `simp` sites construct it.
+                                lower_outcome_simp_proof(
                                     &certificate_replay,
                                     &surface_goal,
                                     &unfolded_goal,
@@ -1924,6 +1929,12 @@ pub(super) fn finish_ordered_proof_replay(
                                     predicate_environment,
                                     click_function_environment,
                                 )
+                                .and_then(|proof| match proof {
+                                    Proof::Script(tactics) => Ok(tactics),
+                                    _ => Err(ClickError::new(
+                                        "smart `have` closer produced a non-script certificate",
+                                    )),
+                                })
                             }
                             .map_err(|error| {
                                 ClickError::new(format!(

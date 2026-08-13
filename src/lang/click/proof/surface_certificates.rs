@@ -3271,6 +3271,7 @@ fn plan_explicit_positive_predecessor_is_nonnegative(
     None
 }
 
+
 fn plan_explicit_one_le_predecessor(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
@@ -3689,7 +3690,7 @@ fn collect_definable_predicate_names(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lower_outcome_simp_proof(
+pub(super) fn lower_outcome_simp_proof(
     replay: &TacticReplayState,
     surface_goal: &ClickProposition,
     goal: &Proposition,
@@ -3735,9 +3736,28 @@ fn lower_outcome_simp_proof(
             unfolding_replay
                 .unfolded_predicates
                 .extend(opaque_names.iter().cloned());
+            // Unfold the surface goal in step with the kernel goal: the
+            // structural certificate constructor matches surface and kernel
+            // shapes together, so a predicate body that unfolds to a
+            // conjunction only splits when the surface spelling is the body
+            // conjunction too. The emitted `unfold(...)` prefix makes replay
+            // lower the inner spellings under the same unfolds. Non-And
+            // bodies keep the predicate-call spelling: the universal-goal
+            // machinery matches the call form and unfolds on its own terms.
+            let unfolded_surface = unfold_structural_invariant_proposition(
+                predicate_environment,
+                surface_goal,
+                &opaque_names,
+            )
+            .ok()
+            .filter(|unfolded_surface| {
+                matches!(unfolded_surface, ClickProposition::And(_, _))
+                    && matches!(unfolded_goal, Proposition::And(_, _))
+            })
+            .unwrap_or_else(|| surface_goal.clone());
             if let Ok(Proof::Script(inner_tactics)) = lower_outcome_simp_proof_direct(
                 &unfolding_replay,
-                surface_goal,
+                &unfolded_surface,
                 &unfolded_goal,
                 available,
                 parameters,
@@ -3763,9 +3783,27 @@ fn lower_outcome_simp_proof(
         let mut surface_names = replay.unfolded_predicates.clone();
         surface_names.retain(|name| predicate_environment.get(name).is_some());
         if !surface_names.is_empty() {
+            // The kernel goal was lowered with these unfolds active, so a
+            // predicate-call surface spelling here already stands for its
+            // body. Unfold the surface goal to the matching body spelling so
+            // the structural constructor can split a body conjunction; the
+            // emitted `unfold(...)` prefix reproduces the same spelling
+            // during replay. Non-And bodies keep the predicate-call
+            // spelling for the universal-goal machinery.
+            let unfolded_surface = unfold_structural_invariant_proposition(
+                predicate_environment,
+                surface_goal,
+                &surface_names,
+            )
+            .ok()
+            .filter(|unfolded_surface| {
+                matches!(unfolded_surface, ClickProposition::And(_, _))
+                    && matches!(goal, Proposition::And(_, _))
+            })
+            .unwrap_or_else(|| surface_goal.clone());
             let inner = lower_outcome_simp_proof_direct(
                 replay,
-                surface_goal,
+                &unfolded_surface,
                 goal,
                 available,
                 parameters,
