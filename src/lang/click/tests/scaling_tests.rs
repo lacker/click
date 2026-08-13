@@ -102,6 +102,31 @@ fn theorem_with_unrelated_exact_facts(fact_count: usize) -> String {
     )
 }
 
+fn function_with_unrelated_facts(fact_count: usize, proof: &str) -> (String, String) {
+    let c_source = "int32 exact_fact_target(int32 target) { return target; }\n".to_string();
+    let mut click_source = String::from(
+        "verifying \"exact_fact_target.c\";\n\nint32 exact_fact_target(int32 target) {\n    requires target == 7;\n",
+    );
+    for index in 0..fact_count {
+        click_source.push_str(&format!("    requires target != {};\n", index + 100));
+    }
+    click_source.push_str("    ensures result == 7;\n} by {\n");
+    click_source.push_str(proof);
+    click_source.push_str("}\n");
+    (c_source, click_source)
+}
+
+fn theorem_with_many_spellings(spelling_count: usize) -> String {
+    let mut requirements = String::new();
+    for zero_count in 0..spelling_count {
+        let expression = format!("target{}", " + 0".repeat(zero_count));
+        requirements.push_str(&format!("    requires {expression} == 7;\n"));
+    }
+    format!(
+        "theorem surface_spelling_scaling(target: int32) {{\n{requirements}    ensures target == 7 by {{ assumption(); }}\n}}\n"
+    )
+}
+
 fn grouped_claim_project(claim_count: usize) -> (String, String) {
     let c_source = "int32 shared_claims(int32 x) { return x; }\n".to_string();
     let mut click_source =
@@ -258,6 +283,81 @@ fn exact_assumption_scales_near_linearly_with_unrelated_ambient_facts() {
         .collect::<Vec<_>>();
 
     assert_near_linear_scaling("exact assumption with unrelated facts", &samples);
+}
+
+#[test]
+fn explicit_step_scales_near_linearly_with_unrelated_ambient_facts() {
+    let samples = [8, 16, 32, 64]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = function_with_unrelated_facts(
+                size,
+                "    step() using {\n        target == 7;\n    }\n    assumption();\n",
+            );
+            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(&click_source, &[("exact_fact_target.c", c_source.as_str())])
+            });
+            verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} explicit-step scaling fixture failed: {}",
+                    error.message()
+                )
+            });
+            ScalingSample { size, work }
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling("explicit step with unrelated facts", &samples);
+}
+
+#[test]
+fn explicit_transport_scales_near_linearly_with_unrelated_ambient_facts() {
+    let samples = [8, 16, 32, 64]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = function_with_unrelated_facts(
+                size,
+                "    step() using {\n        target == 7;\n    }\n    transport(target == 7, result == 7) using {\n        target == 7;\n    }\n    assumption();\n",
+            );
+            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(
+                    &click_source,
+                    &[("exact_fact_target.c", c_source.as_str())],
+                )
+            });
+            verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} explicit-transport scaling fixture failed: {}",
+                    error.message()
+                )
+            });
+            ScalingSample { size, work }
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling("explicit transport with unrelated facts", &samples);
+}
+
+#[test]
+fn same_kernel_fact_with_many_surface_spellings_scales_near_linearly() {
+    let samples = [4, 8, 16, 32]
+        .into_iter()
+        .map(|size| {
+            let source = theorem_with_many_spellings(size);
+            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+                verify_click_theorems(&source)
+            });
+            verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} surface-spelling scaling fixture failed: {}",
+                    error.message()
+                )
+            });
+            ScalingSample { size, work }
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling("same kernel fact with many surface spellings", &samples);
 }
 
 #[test]

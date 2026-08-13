@@ -33,8 +33,12 @@ separate linear-output test that explicitly names increasing premise counts.
 
 Scaling axis: `exact_assumption_scales_near_linearly_with_unrelated_ambient_facts`
 now guards the fixed exact-assumption case while growing both ambient facts and
-their recorded surface spellings. Dedicated `step() using`, transport, and
-same-kernel/many-spellings curves remain required before this issue is closed.
+their recorded surface spellings. The default gate now also covers a fixed
+explicit `step() using`, a fixed explicit transport, and many shallow surface
+spellings that normalize to one kernel fact. These end-to-end curves protect
+aggregate behavior; named-operation attribution is still required to prove
+that the individual lookup itself does not hide a linear ambient scan beneath
+unavoidable linear project setup.
 
 ## Acceptance criteria
 
