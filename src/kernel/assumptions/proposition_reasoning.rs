@@ -2298,45 +2298,45 @@ impl Assumptions {
             "context inconsistency",
             "context inconsistency: order equality classes",
         );
-        let mut class_of_key = BTreeMap::<Bitvector32Term, usize>::new();
-        let mut next_class = 0usize;
-        {
-            let equality_index = self.bitvector_equality_index();
-            for root in equality_index.keys() {
-                if class_of_key.contains_key(root) {
-                    continue;
-                }
-                let class = next_class;
-                next_class += 1;
-                let mut stack = vec![root.clone()];
-                while let Some(term) = stack.pop() {
-                    crate::instrumentation::record_deterministic_work(1);
-                    if class_of_key.insert(term.clone(), class).is_some() {
-                        continue;
-                    }
-                    if let Some(neighbors) = equality_index.get(&term) {
-                        stack.extend(neighbors.iter().cloned());
-                    }
-                }
-            }
-        }
-        let mut singleton_classes = BTreeMap::<Bitvector32Term, usize>::new();
-        let mut class_for = |term: &Bitvector32Term| -> usize {
+        /// The equality class of one order endpoint, labelling that endpoint's
+        /// component on first use. A term with no equality fact becomes its own
+        /// class, and a component no order fact mentions is never walked, so
+        /// this visits exactly what the pairwise comparisons used to reach.
+        fn order_endpoint_class(
+            term: &Bitvector32Term,
+            equality_index: &BTreeMap<Bitvector32Term, BTreeSet<Bitvector32Term>>,
+            class_of_key: &mut BTreeMap<Bitvector32Term, usize>,
+            next_class: &mut usize,
+        ) -> usize {
             let key = equality_graph_term_key(term);
             if let Some(class) = class_of_key.get(&key) {
                 return *class;
             }
-            let fresh = next_class;
-            *singleton_classes.entry(key).or_insert_with(|| {
-                next_class += 1;
-                fresh
-            })
-        };
+            let class = *next_class;
+            *next_class += 1;
+            let mut stack = vec![key];
+            while let Some(term) = stack.pop() {
+                crate::instrumentation::record_deterministic_work(1);
+                if class_of_key.insert(term.clone(), class).is_some() {
+                    continue;
+                }
+                if let Some(neighbors) = equality_index.get(&term) {
+                    stack.extend(neighbors.iter().cloned());
+                }
+            }
+            class
+        }
+
+        let equality_index = self.bitvector_equality_index();
+        let mut class_of_key = BTreeMap::<Bitvector32Term, usize>::new();
+        let mut next_class = 0usize;
         let order_classes = order_facts
             .iter()
             .map(|(left, right, _)| {
-                crate::instrumentation::record_deterministic_work(1);
-                (class_for(left), class_for(right))
+                (
+                    order_endpoint_class(left, equality_index, &mut class_of_key, &mut next_class),
+                    order_endpoint_class(right, equality_index, &mut class_of_key, &mut next_class),
+                )
             })
             .collect::<Vec<_>>();
         drop(class_timing);
