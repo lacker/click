@@ -674,6 +674,18 @@ impl Assumptions {
         }) {
             return true;
         }
+        if self.resource_compositions.iter().any(|resources| {
+            resources.proves_owned_pointers_separate_by(left, right, |pointer, range| {
+                self.pointer_in_range_by_shallow_fact_graph(
+                    pointer,
+                    range.base(),
+                    range.start(),
+                    range.end(),
+                )
+            })
+        }) {
+            return true;
+        }
 
         // The recursive second phase re-enters offset-equality reasoning.
         // Keep it shallow: nested queries past the expensive-edge budget use
@@ -1381,6 +1393,22 @@ impl Assumptions {
             }
             if pointer_in_memory_range_shallow(pointer, range) {
                 return false;
+            }
+            if self.resource_compositions.iter().any(|resources| {
+                resources.proves_owned_range_separate_from_pointer_shallow(
+                    range,
+                    pointer,
+                    |pointer, available| {
+                        self.pointer_in_range_by_shallow_fact_graph(
+                            pointer,
+                            available.base(),
+                            available.start(),
+                            available.end(),
+                        ) || self.pointer_directly_in_memory_range(pointer, available)
+                    },
+                )
+            }) {
+                return true;
             }
             let direct_index = self.direct_pointer_element_index_from_base(pointer, &range.base);
             if let Some(index) = direct_index.as_ref()

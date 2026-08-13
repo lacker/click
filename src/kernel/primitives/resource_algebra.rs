@@ -197,6 +197,71 @@ impl ResourceContext {
             .is_some_and(|(left, right)| left != right)
     }
 
+    /// Pointer projection using an explicitly bounded caller-supplied
+    /// containment relation. The context contributes only indexed candidates,
+    /// so callers can recognize shallow equality spellings without expanding
+    /// all owned pairs.
+    pub(in crate::kernel) fn proves_owned_pointers_separate_by(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+        contains: impl Fn(&Pointer, &CMemoryRange) -> bool,
+    ) -> bool {
+        let Some(_guard) = ResourceCompositionQueryGuard::enter() else {
+            return false;
+        };
+        if left.block != right.block {
+            return false;
+        }
+        let Some(positions) = self.index().memory_by_block.get(&left.block) else {
+            return false;
+        };
+        let containing = |pointer: &Pointer| {
+            positions.iter().copied().find(|position| {
+                self.facts[*position]
+                    .memory_own_range()
+                    .is_some_and(|range| contains(pointer, range))
+            })
+        };
+        containing(left)
+            .zip(containing(right))
+            .is_some_and(|(left, right)| left != right)
+    }
+
+    /// Projects separation between a structurally identified owned range and
+    /// a pointer identified by a caller's bounded shallow fact graph. This is
+    /// the mixed query used while deciding which memory facts survive a
+    /// store; it avoids materializing every pair in the composition.
+    pub(in crate::kernel) fn proves_owned_range_separate_from_pointer_shallow(
+        &self,
+        range: &CMemoryRange,
+        pointer: &Pointer,
+        contains_pointer: impl Fn(&Pointer, &CMemoryRange) -> bool,
+    ) -> bool {
+        if range.base().block != pointer.block {
+            return false;
+        }
+        let Some(positions) = self.index().memory_by_block.get(&pointer.block) else {
+            return false;
+        };
+        let range_position = positions.iter().copied().find(|position| {
+            self.facts[*position]
+                .memory_own_range()
+                .is_some_and(|available| {
+                    crate::kernel::assumptions::memory_range_shallowly_contained(range, available)
+                })
+        });
+        let Some(range_position) = range_position else {
+            return false;
+        };
+        positions.iter().copied().any(|position| {
+            position != range_position
+                && self.facts[position]
+                    .memory_own_range()
+                    .is_some_and(|available| contains_pointer(pointer, available))
+        })
+    }
+
     /// Refutes one offset-alias guard from this composition without expanding
     /// all memory pairs. Each block bucket is searched twice for the two
     /// containing owned members; the caller supplies the bounded shallow

@@ -2441,6 +2441,51 @@ fn memory_resolution_alias_check_uses_explicit_separation() {
 }
 
 #[test]
+fn memory_resolution_uses_compact_resource_composition_with_shallow_equalities() {
+    let member_left_index = Bitvector32Term::Variable(Variable(93_410));
+    let member_right_index = Bitvector32Term::Variable(Variable(93_411));
+    let query_left_index = Bitvector32Term::Variable(Variable(93_412));
+    let query_right_index = Bitvector32Term::Variable(Variable(93_413));
+    let pointer = |index: Bitvector32Term| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(index, 4),
+    };
+    let left_range = memory_range(pointer(member_left_index.clone()), 0, 4);
+    let right_range = memory_range(pointer(member_right_index.clone()), 0, 4);
+    let context = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_memory(left_range.clone()))
+        .unchecked_with_fact(CResourceFact::own_memory(right_range));
+    let composition = context
+        .observable_facts(&Assumptions::new())
+        .expect("the two owned ranges should compose")
+        .into_iter()
+        .find(|fact| matches!(fact, Proposition::CResourceComposition(_)))
+        .expect("multi-owner contexts should expose one compact authority");
+    let assumptions = Assumptions::new()
+        .assume_proposition(composition)
+        .assume_condition(
+            ConditionTerm::equal(query_left_index.clone(), member_left_index),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::equal(query_right_index.clone(), member_right_index),
+            true,
+        );
+    let query_left = pointer(query_left_index);
+    let query_right = pointer(query_right_index);
+
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &query_left,
+        &query_right,
+        &assumptions,
+    ));
+    assert!(assumptions.ranges_directly_disjoint_from_pointer(
+        &[left_range],
+        &query_right,
+    ));
+}
+
+#[test]
 fn memory_resolution_alias_check_uses_exact_transitive_range_bounds() {
     let owner = Pointer {
         block: "arg-memory".into(),

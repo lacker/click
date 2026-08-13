@@ -108,6 +108,18 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
 ) -> Vec<CStatementExecutionPath> {
     let mut obligations = obligations;
     let effective_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+    // The current owned resource composition is proof authority for memory
+    // separation even when callers retain only surface-spellable pure facts.
+    // Attach its compact carrier directly while executing a write instead of
+    // depending on eagerly materialized pair propositions.
+    let resource_facts = state
+        .resources()
+        .observable_facts_assuming_valid(&effective_assumptions);
+    let effective_assumptions = resource_facts
+        .into_iter()
+        .fold(effective_assumptions, |assumptions, fact| {
+            assumptions.assume_proposition(fact)
+        });
     let Some(value) = coerce_c_value_to_type(
         value,
         lvalue.value_type,
