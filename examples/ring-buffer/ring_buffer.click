@@ -151,7 +151,6 @@ int32 ring_buffer_pipeline(
         contains(linear_ring(owner), memory(owner->tail));
         contains(linear_ring(owner), memory(owner->data));
         contains(linear_ring(owner), owned_ring_storage(owner->data));
-        owner->data == owner->data;
     }
     simp();
 }

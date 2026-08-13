@@ -184,7 +184,41 @@ int32 owned_segmented_buffer_swap(struct owned_segmented_buffer* owner) {
     have 1 <= owner->second_len by simp;
     fold(owned_segmented_buffer(owner));
     frame();
-    simp();
+    have result == old(owner->second_len) by {
+        normalize();
+    }
+    have owner->first_len == old(owner->second_len) by {
+        normalize();
+    }
+    have owner->second_len == old(owner->first_len) by {
+        normalize();
+    }
+    have 0 < owner->first_len by {
+        apply(int32_successor_le_implies_lt(0, owner->first_len)) using {
+            1 <= owner->first_len;
+        }
+        assumption();
+    }
+    have 0 < owner->second_len by {
+        apply(int32_successor_le_implies_lt(0, owner->second_len)) using {
+            1 <= owner->second_len;
+        }
+        assumption();
+    }
+    have owner->first_data == old(owner->second_data) by {
+        normalize();
+    }
+    have owner->second_data == old(owner->first_data) by {
+        normalize();
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }
 
 int32 owned_segmented_buffer_pipeline(

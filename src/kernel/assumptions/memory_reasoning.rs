@@ -595,7 +595,7 @@ impl Assumptions {
         })
     }
 
-    fn pointer_in_range_by_shallow_fact_graph(
+    pub(in crate::kernel) fn pointer_in_range_by_shallow_fact_graph(
         &self,
         pointer: &Pointer,
         base: &Pointer,
@@ -626,6 +626,16 @@ impl Assumptions {
         let Some(index) = index else {
             return false;
         };
+        if self.exact_condition_value(&ConditionTerm::signed_less_equal(
+            start.clone(),
+            index.clone(),
+        )) == Some(true)
+            && self
+                .exact_condition_value(&ConditionTerm::signed_less_than(index.clone(), end.clone()))
+                == Some(true)
+        {
+            return true;
+        }
         let (Some(offset), Some(length)) = (
             affine_bitvector_difference_constant(&index, start),
             affine_bitvector_difference_constant(end, start),

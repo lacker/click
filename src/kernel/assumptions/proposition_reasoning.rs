@@ -2207,7 +2207,17 @@ impl Assumptions {
                         block: range.base().block.clone(),
                         offset: offset.clone(),
                     };
-                    self.pointer_in_range(&pointer, range.base(), range.start(), range.end())
+                    // Keep this contradiction rule bounded. Calling the
+                    // general `pointer_in_range` prover here recursively
+                    // re-enters context-wide contradiction search once for
+                    // every separation fact. Deeper range consequences may
+                    // be proved directly, but are not a routing precondition.
+                    self.pointer_in_range_by_shallow_fact_graph(
+                        &pointer,
+                        range.base(),
+                        range.start(),
+                        range.end(),
+                    )
                 };
                 holds(first, left) && holds(second, right)
                     || holds(first, right) && holds(second, left)
