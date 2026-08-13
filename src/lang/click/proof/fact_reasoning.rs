@@ -577,6 +577,39 @@ pub(super) fn proposition_has_contextual_derivation_rules(proposition: &Proposit
     )
 }
 
+fn minimize_derivation_premises(
+    initial: PropositionDerivation,
+    derive: impl Fn(&[Proposition]) -> Option<PropositionDerivation>,
+) -> Result<PropositionDerivation, ClickError> {
+    fn remove_group(
+        selected: Vec<Proposition>,
+        candidates: &[Proposition],
+        derive: &impl Fn(&[Proposition]) -> Option<PropositionDerivation>,
+    ) -> Result<Vec<Proposition>, ClickError> {
+        check_verification_deadline()?;
+        let candidate_set = candidates.iter().collect::<BTreeSet<_>>();
+        let reduced = selected
+            .iter()
+            .filter(|premise| !candidate_set.contains(premise))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !reduced.is_empty() && derive(&reduced).is_some() {
+            return Ok(reduced);
+        }
+        if candidates.len() <= 1 {
+            return Ok(selected);
+        }
+        let middle = candidates.len() / 2;
+        let selected = remove_group(selected, &candidates[..middle], derive)?;
+        remove_group(selected, &candidates[middle..], derive)
+    }
+
+    let candidates = initial.context_premises();
+    let selected = remove_group(candidates.clone(), &candidates, &derive)?;
+    check_verification_deadline()?;
+    Ok(derive(&selected).unwrap_or(initial))
+}
+
 pub(super) fn minimal_proposition_derivation(
     proposition: &Proposition,
     available: &[Proposition],
@@ -598,20 +631,8 @@ pub(super) fn minimal_proposition_derivation(
         check_verification_deadline()?;
         return Ok(None);
     };
-    let mut selected = initial.context_premises().to_vec();
-    let mut index = 0;
-    while index < selected.len() {
-        check_verification_deadline()?;
-        let mut reduced = selected.clone();
-        reduced.remove(index);
-        if derive(&reduced).is_some() {
-            selected = reduced;
-        } else {
-            index += 1;
-        }
-    }
     check_verification_deadline()?;
-    Ok(derive(&selected))
+    Ok(Some(minimize_derivation_premises(initial, derive)?))
 }
 
 pub(super) fn minimal_simp_proposition_derivation(
@@ -629,20 +650,8 @@ pub(super) fn minimal_simp_proposition_derivation(
         check_verification_deadline()?;
         return Ok(None);
     };
-    let mut selected = initial.context_premises().to_vec();
-    let mut index = 0;
-    while index < selected.len() {
-        check_verification_deadline()?;
-        let mut reduced = selected.clone();
-        reduced.remove(index);
-        if derive(&reduced).is_some() {
-            selected = reduced;
-        } else {
-            index += 1;
-        }
-    }
     check_verification_deadline()?;
-    Ok(derive(&selected))
+    Ok(Some(minimize_derivation_premises(initial, derive)?))
 }
 
 fn condition_search_budget_error(proposition: &Proposition, candidate_count: usize) -> ClickError {
