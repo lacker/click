@@ -128,3 +128,13 @@ exact-only deduplication experiment left a stale view usable after its
 allocation was freed in allocated-linked-list, and was rejected. The next fix
 must accelerate or canonicalize that snapshot equivalence without retaining
 both views.
+
+General resource satisfaction now uses the same block/name-and-arity candidate
+index for non-exact entailment and for its post-normalization retry. It no
+longer scans every member of a resource family before entering the actual
+proof-aware comparison. A four-size regression holds one non-exact memory
+subrange query fixed while adding unrelated blocks and requires constant
+deterministic work. The owned-vector profile confirms that the remaining
+return-resource cost is inside 634 relevant indexed entailment calls (about
+262ms), rather than unrelated-family enumeration; repeated same-shape
+snapshot/range proofs remain the next boundary.

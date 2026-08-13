@@ -608,6 +608,11 @@ fn execute_verified_function_rule(
         let mut obligations = arguments_path.obligations;
         let mut facts = arguments_path.facts;
         let mut established_requirements = Vec::new();
+        let requirement_timing = crate::instrumentation::OperationTiming::new(
+            function.name(),
+            "verified function rule application",
+            "verified call requirement checking",
+        );
         for requirement in function.contract_requires() {
             let requirement_assumptions =
                 assumptions_with_path_context(&path_assumptions, &facts, &obligations);
@@ -711,6 +716,7 @@ fn execute_verified_function_rule(
                 established_requirements.push(guarded_requirement);
             }
         }
+        drop(requirement_timing);
 
         let effective_assumptions =
             assumptions_with_path_context(assumptions, &facts, &obligations);
@@ -719,6 +725,11 @@ fn execute_verified_function_rule(
         let footprint_state = entry_contract_state.clone();
         let mut mutable_ranges = Vec::new();
         let mut footprint_error = None;
+        let footprint_timing = crate::instrumentation::OperationTiming::new(
+            function.name(),
+            "verified function rule application",
+            "verified call mutable footprint lowering",
+        );
         for segment in function.contract_mutable() {
             if segment.guard().is_some_and(|guard| {
                 evaluate_guarded_contract_condition(
@@ -745,6 +756,7 @@ fn execute_verified_function_rule(
                 }
             }
         }
+        drop(footprint_timing);
         if let Some(message) = footprint_error {
             paths.push(CFunctionPath {
                 outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
@@ -787,6 +799,11 @@ fn execute_verified_function_rule(
             .clone()
             .with_resource_context(transfer.callee_resources.clone());
         let mut population_obligations = Vec::new();
+        let population_timing = crate::instrumentation::OperationTiming::new(
+            function.name(),
+            "verified function rule application",
+            "verified call population transition",
+        );
         let population_transition = match apply_counted_population_transitions(
             caller_state,
             &mut transition_state,
@@ -808,6 +825,7 @@ fn execute_verified_function_rule(
                 continue;
             }
         };
+        drop(population_timing);
         post_state.counted_populations = transition_state.counted_populations;
         for obligation in population_obligations {
             facts.push(ExecutionPureFact::certified(
@@ -837,6 +855,11 @@ fn execute_verified_function_rule(
         let output_resource_state =
             with_contract_argument_views(&post_state, function, &arguments_path.values);
 
+        let return_resource_timing = crate::instrumentation::OperationTiming::new(
+            function.name(),
+            "verified function rule application",
+            "verified call return resource evaluation",
+        );
         let return_resources = match evaluate_function_return_resources(
             &caller_resources_after_requirements,
             &output_resource_state,
@@ -854,6 +877,12 @@ fn execute_verified_function_rule(
                 continue;
             }
         };
+        drop(return_resource_timing);
+        let lifetime_timing = crate::instrumentation::OperationTiming::new(
+            function.name(),
+            "verified function rule application",
+            "verified call allocation lifetime effects",
+        );
         let (memory, lifetime_effects) = match apply_verified_allocation_lifetime_effects(
             post_state.memory.clone(),
             &transfer.callee_resources,
@@ -871,6 +900,7 @@ fn execute_verified_function_rule(
                 continue;
             }
         };
+        drop(lifetime_timing);
         facts.extend(lifetime_effects);
         let return_resources =
             activate_population_body_resources(return_resources, &population_transition);
@@ -879,6 +909,11 @@ fn execute_verified_function_rule(
         let post_contract_state =
             with_contract_argument_views(&post_state, function, &arguments_path.values);
 
+        let ensure_timing = crate::instrumentation::OperationTiming::new(
+            function.name(),
+            "verified function rule application",
+            "verified call ensure lowering",
+        );
         for ensure in function.contract_ensures() {
             let ensure_assumptions =
                 assumptions_with_path_context(&effective_assumptions, &facts, &obligations);
@@ -905,6 +940,7 @@ fn execute_verified_function_rule(
                 )));
             }
         }
+        drop(ensure_timing);
 
         let mut return_state = caller_state.clone();
         return_state.memory = post_state.memory;

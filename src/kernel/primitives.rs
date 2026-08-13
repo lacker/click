@@ -1244,7 +1244,6 @@ pub struct ResourceContext {
 #[derive(Debug, Default)]
 pub(super) struct ResourceContextIndex {
     pub(super) exact: BTreeMap<CResourceFact, Vec<usize>>,
-    pub(super) by_family: BTreeMap<ResourceFamily, Vec<usize>>,
     pub(super) by_resource: BTreeMap<CResource, Vec<usize>>,
     pub(super) exact_shapes: BTreeMap<(ResourceFamily, String, usize), Vec<usize>>,
     pub(super) memory_by_block: BTreeMap<PointerBlock, Vec<usize>>,

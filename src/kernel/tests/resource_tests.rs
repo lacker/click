@@ -86,6 +86,47 @@ fn direct_resource_match_candidates_ignore_unrelated_shapes_and_blocks() {
 }
 
 #[test]
+fn nonexact_memory_entailment_ignores_unrelated_blocks() {
+    let target_base = Pointer {
+        block: "target-block".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let required = CResourceFact::view_memory(memory_range(target_base.clone(), 2, 6));
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let context = ResourceContext::new()
+                .unchecked_with_facts((0..size).map(|index| {
+                    CResourceFact::view_memory(memory_range(
+                        Pointer {
+                            block: format!("unrelated-{index}").into(),
+                            offset: PointerOffsetTerm::Constant(0),
+                        },
+                        0,
+                        8,
+                    ))
+                }))
+                .unchecked_with_fact(CResourceFact::own_memory(memory_range(
+                    target_base.clone(),
+                    0,
+                    8,
+                )));
+            assert_eq!(context.direct_match_candidates(&required).count(), 1);
+            let (satisfied, work) = crate::instrumentation::measure_deterministic_work(|| {
+                context.satisfies_fact(&required, &Assumptions::new())
+            });
+            assert!(satisfied);
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        samples.windows(2).all(|pair| pair[1].1 <= pair[0].1 + 1),
+        "fixed memory entailment should not inspect unrelated blocks: {samples:?}"
+    );
+}
+
+#[test]
 fn unrelated_resource_normalization_has_linear_deterministic_work() {
     let samples = [16, 32, 64, 128]
         .into_iter()

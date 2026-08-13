@@ -126,6 +126,16 @@ to about 5.45s; branch-routing contradiction work fell from about 523ms to
 378ms and repeated downstream inconsistency work is shared. The result is
 closer to, but still above, the comfortably-under-five-second closure target.
 
+Verified-call attribution now identifies return-resource evaluation as about
+0.54s of the 1.1s call-assignment aggregate. Routing non-exact satisfaction
+through the existing block/name-and-arity index removes its ambient-family
+scan and adds a deterministic unrelated-block scaling gate. It does not move
+this project's wall time because owned-vector's 634 candidates are relevant
+same-shape comparisons; those proof-aware entailments account for about
+0.26s, including one roughly 0.10s query. The next change needs reusable
+shallow identities for resource contexts and queries, or a narrower certified
+snapshot/range relation, rather than another ambient candidate filter.
+
 ## Regression
 
 Keep the complete project as a wall-clock integration workload. Every engine

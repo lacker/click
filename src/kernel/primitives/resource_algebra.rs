@@ -21,11 +21,6 @@ impl ResourceContext {
                     .entry(fact.resource().clone())
                     .or_default()
                     .push(position);
-                index
-                    .by_family
-                    .entry(fact.family())
-                    .or_default()
-                    .push(position);
                 if let Some(range) = fact.memory_range() {
                     let mode = fact.is_own();
                     index
@@ -66,15 +61,6 @@ impl ResourceContext {
             }
             index
         })
-    }
-
-    fn family_facts(&self, family: ResourceFamily) -> impl Iterator<Item = &CResourceFact> {
-        self.index()
-            .by_family
-            .get(&family)
-            .into_iter()
-            .flatten()
-            .map(|index| &self.facts[*index])
     }
 
     fn memory_block_facts(&self, block: &PointerBlock) -> impl Iterator<Item = &CResourceFact> {
@@ -386,10 +372,15 @@ impl ResourceContext {
         if fact.is_view() && self.index().by_resource.contains_key(fact.resource()) {
             return true;
         }
-        if self
-            .family_facts(fact.family())
-            .any(|available| resource_fact_entails(available, fact, assumptions))
-        {
+        if crate::instrumentation::measure_operation(
+            "kernel",
+            "resource satisfaction",
+            "resource satisfaction: indexed direct entailment",
+            || {
+                self.direct_match_candidates(fact)
+                    .any(|available| resource_fact_entails(available, fact, assumptions))
+            },
+        ) {
             return true;
         }
         // A required fact may span several adjacent held resources; merge
@@ -407,16 +398,20 @@ impl ResourceContext {
         // query.
         if fact.is_own()
             && !self
-                .family_facts(fact.family())
-                .any(|available| available.is_own() && available.family() == fact.family())
+                .direct_match_candidates(fact)
+                .any(CResourceFact::is_own)
         {
             return false;
         }
-        let normalized = self.clone().normalized(assumptions);
+        let normalized = crate::instrumentation::measure_operation(
+            "kernel",
+            "resource satisfaction",
+            "resource satisfaction: normalization fallback",
+            || self.clone().normalized(assumptions),
+        );
         normalized.facts.len() < self.facts.len()
             && normalized
-                .facts
-                .iter()
+                .direct_match_candidates(fact)
                 .any(|available| resource_fact_entails(available, fact, assumptions))
     }
 
