@@ -1192,6 +1192,7 @@ pub(super) struct ResourceContextIndex {
     pub(super) memory_by_block: BTreeMap<PointerBlock, Vec<usize>>,
     pub(super) memory_starts: BTreeMap<(PointerBlock, bool, Bitvector32Term), Vec<usize>>,
     pub(super) memory_ends: BTreeMap<(PointerBlock, bool, Bitvector32Term), Vec<usize>>,
+    pub(super) concrete_memory_by_base: BTreeMap<(Pointer, bool), BTreeMap<(u32, u32), Vec<usize>>>,
 }
 
 impl PartialEq for ResourceContext {

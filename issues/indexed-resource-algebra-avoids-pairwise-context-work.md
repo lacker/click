@@ -53,8 +53,15 @@ regression covers disjoint concrete ranges, so adding more unrelated ranges
 cannot silently restore the former quadratic validation curve. Symbolic or
 provably aliased bases still use the proof-aware pair checks.
 
-The issue remains open for incremental insertion, lazy separation projection,
-and fixed permission-query gates over mixed symbolic resources. In particular,
+The same ordered interval index now narrows insertion into an already-valid
+same-base concrete context to the duplicate interval and immediate neighbors;
+it does not compare the new range with every existing range. Index
+construction remains linear in the persistent context size and is included in
+the deterministic regression.
+
+The issue remains open for persistent incremental index updates, lazy
+separation projection, and fixed permission-query gates over mixed symbolic
+resources. In particular,
 `observable_facts` still materializes pairwise separation propositions; that
 must be replaced only together with indexed on-demand derivation so existing
 certificates retain the same authority.

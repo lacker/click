@@ -43,6 +43,17 @@ impl ResourceContext {
                         .entry((range.base().block.clone(), mode, range.end().clone()))
                         .or_default()
                         .push(position);
+                    if let (Some(start), Some(end)) =
+                        (range.start().as_const(), range.end().as_const())
+                    {
+                        index
+                            .concrete_memory_by_base
+                            .entry((range.base().clone(), mode))
+                            .or_default()
+                            .entry((start, end))
+                            .or_default()
+                            .push(position);
+                    }
                 } else if let CResource::Composite { name, arguments }
                 | CResource::Token { name, arguments } = fact.resource()
                 {
@@ -138,6 +149,62 @@ impl ResourceContext {
             let Some(right_range) = right.memory_own_range() else {
                 continue;
             };
+            let same_base_concrete = right_range
+                .start()
+                .as_const()
+                .zip(right_range.end().as_const())
+                .and_then(|(start, end)| {
+                    let block_positions = self
+                        .index()
+                        .memory_by_block
+                        .get(&right_range.base().block)?;
+                    let ranges = self
+                        .index()
+                        .concrete_memory_by_base
+                        .get(&(right_range.base().clone(), true))?;
+                    let represented = ranges.values().map(Vec::len).sum::<usize>();
+                    let owned_in_block = block_positions
+                        .iter()
+                        .filter(|position| self.facts[**position].memory_own_range().is_some())
+                        .count();
+                    (represented == owned_in_block).then_some((start, end, ranges))
+                });
+            if let Some((start, end, ranges)) = same_base_concrete {
+                let key = (start, end);
+                let mut candidates = BTreeSet::new();
+                if let Some(duplicates) = ranges.get(&key) {
+                    candidates.extend(
+                        duplicates
+                            .iter()
+                            .copied()
+                            .filter(|position| *position != right_index),
+                    );
+                }
+                if let Some((_, positions)) = ranges.range(..key).next_back()
+                    && let Some(position) = positions.last()
+                {
+                    candidates.insert(*position);
+                }
+                if let Some((_, positions)) = ranges
+                    .range((std::ops::Bound::Excluded(key), std::ops::Bound::Unbounded))
+                    .next()
+                    && let Some(position) = positions.first()
+                {
+                    candidates.insert(*position);
+                }
+                for left_index in candidates {
+                    crate::instrumentation::record_deterministic_work(1);
+                    let left = &self.facts[left_index];
+                    if let Some(error) = resource_family_algebra(left.family()).pair_validity_error(
+                        left,
+                        right,
+                        assumptions,
+                    ) {
+                        return Err(error);
+                    }
+                }
+                continue;
+            }
             for left in self
                 .memory_block_facts(&right_range.base().block)
                 .take_while(|left| !std::ptr::eq(*left, right))

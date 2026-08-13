@@ -109,6 +109,36 @@ fn disjoint_concrete_range_validity_scales_near_linearly() {
 }
 
 #[test]
+fn inserting_a_disjoint_concrete_range_uses_interval_neighbors() {
+    for size in [16, 32, 64, 128] {
+        let base = Pointer {
+            block: "p".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let context = ResourceContext::new().unchecked_with_facts((0..size).map(|index| {
+            CResourceFact::own_memory(memory_range(
+                base.clone(),
+                (index * 2) as u32,
+                (index * 2 + 1) as u32,
+            ))
+        }));
+        let next =
+            CResourceFact::own_memory(memory_range(base, (size * 2) as u32, (size * 2 + 1) as u32));
+        let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+            context.try_compose_into_valid_context_delaying_normalization(
+                std::iter::once(next),
+                &Assumptions::new(),
+            )
+        });
+        assert!(result.is_ok());
+        assert!(
+            work <= size + 4,
+            "indexed insertion did too much work for {size} existing ranges: {work}"
+        );
+    }
+}
+
+#[test]
 fn resource_family_cores_are_view_facts() {
     let base = Pointer {
         block: "p".into(),
