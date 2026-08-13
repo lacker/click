@@ -74,7 +74,7 @@ pub enum VerificationEvent {
     OperationFinished {
         function: String,
         claim: String,
-        name: &'static str,
+        name: String,
         elapsed: Duration,
     },
     DeadlineExceeded(ActiveVerificationWork),
@@ -672,7 +672,7 @@ fn operation_measurement_enabled() -> bool {
 pub fn measure_operation<T>(
     function: &str,
     claim: &str,
-    name: &'static str,
+    name: impl Into<String>,
     operation: impl FnOnce() -> T,
 ) -> T {
     if !operation_measurement_enabled() {
@@ -683,7 +683,7 @@ pub fn measure_operation<T>(
     emit(VerificationEvent::OperationFinished {
         function: function.to_string(),
         claim: claim.to_string(),
-        name,
+        name: name.into(),
         elapsed: started.elapsed(),
     });
     result
@@ -693,17 +693,17 @@ pub fn measure_operation<T>(
 /// placed in a closure (for example, a loop that mutates and moves outer
 /// replay state). Dropping the guard records the completed span.
 pub struct OperationTiming {
-    measurement: Option<(String, String, &'static str, TacticInstant)>,
+    measurement: Option<(String, String, String, TacticInstant)>,
 }
 
 impl OperationTiming {
-    pub fn new(function: &str, claim: &str, name: &'static str) -> Self {
+    pub fn new(function: &str, claim: &str, name: impl Into<String>) -> Self {
         Self {
             measurement: operation_measurement_enabled().then(|| {
                 (
                     function.to_string(),
                     claim.to_string(),
-                    name,
+                    name.into(),
                     TacticInstant::now(),
                 )
             }),

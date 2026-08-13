@@ -176,6 +176,7 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
     surface_source: &ClickProposition,
     surface_target: &ClickProposition,
     surface_premises: Option<&[ClickProposition]>,
+    function_name: &str,
     claim_label: &str,
     path_index: usize,
     tactic_index: usize,
@@ -225,6 +226,11 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
     }
 
     let mut explicit_premises = Vec::new();
+    let premise_timing = crate::instrumentation::OperationTiming::new(
+        function_name,
+        claim_label,
+        "fact transport explicit premise lowering",
+    );
     if let Some(surface_premises) = surface_premises {
         for surface_premise in surface_premises {
             let premise =
@@ -247,7 +253,13 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
             }
         }
     }
+    drop(premise_timing);
 
+    let source_timing = crate::instrumentation::OperationTiming::new(
+        function_name,
+        claim_label,
+        "fact transport source lowering",
+    );
     let recorded_source = surface_propositions
         .available_kernel(surface_source, available)
         .cloned();
@@ -290,22 +302,30 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
         available.push(source.clone());
     }
     surface_propositions.record_lowering(surface_source, &source)?;
-    let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
-    let selected_assumptions = if surface_premises.is_some() {
-        let resource_facts = post_state
-            .resources()
-            .observable_facts_assuming_valid(&explicit_assumptions);
-        available
-            .iter()
-            .filter(|fact| is_implicit_fact_transport_context(fact))
-            .cloned()
-            .chain(resource_facts)
-            .fold(explicit_assumptions, |assumptions, fact| {
-                assumptions.assume_proposition(fact)
-            })
-    } else {
-        assumptions_from_propositions(available)
-    };
+    drop(source_timing);
+    let selected_assumptions = crate::instrumentation::measure_operation(
+        function_name,
+        claim_label,
+        "fact transport assumption selection",
+        || {
+            let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
+            if surface_premises.is_some() {
+                let resource_facts = post_state
+                    .resources()
+                    .observable_facts_assuming_valid(&explicit_assumptions);
+                available
+                    .iter()
+                    .filter(|fact| is_implicit_fact_transport_context(fact))
+                    .cloned()
+                    .chain(resource_facts)
+                    .fold(explicit_assumptions, |assumptions, fact| {
+                        assumptions.assume_proposition(fact)
+                    })
+            } else {
+                assumptions_from_propositions(available)
+            }
+        },
+    );
     // The source occupies its own checked slot in `transport(source, target)`.
     // It may therefore come from the recorded execution history; `using`
     // names only the auxiliary facts needed to replay the transport.
@@ -337,12 +357,18 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
             direct_lowering_facts.push(premise.clone());
         }
     }
+    let target_timing = crate::instrumentation::OperationTiming::new(
+        function_name,
+        claim_label,
+        "fact transport target lowering",
+    );
     let target = lower(surface_target, &direct_lowering_facts).map_err(|message| {
         ClickError::new(format!(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: could not lower `transport` target: {message}"
         ))
     })?;
     surface_propositions.record_lowering(surface_target, &target)?;
+    drop(target_timing);
     let certificate_available = surface_premises.is_none().then(|| available.clone());
 
     if exact_fact_is_available(&target, available)
@@ -358,12 +384,20 @@ pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
                 assumptions.assume_proposition(fact.proposition().clone())
             })
             .assume_proposition(source.clone());
-        if !certified_fact_transport_reaches(
-            &source,
-            &target,
-            post_state.memory(),
-            &transport_assumptions,
-        ) {
+        let reaches = crate::instrumentation::measure_operation(
+            function_name,
+            claim_label,
+            "certified fact transport reachability",
+            || {
+                certified_fact_transport_reaches(
+                    &source,
+                    &target,
+                    post_state.memory(),
+                    &transport_assumptions,
+                )
+            },
+        );
+        if !reaches {
             return Err(ClickError::new(format!(
                 "`{claim_label}` path {path_index}, tactic {tactic_index}: no certified frame transport applies to the exact source fact"
             )));

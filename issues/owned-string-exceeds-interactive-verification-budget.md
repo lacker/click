@@ -95,3 +95,30 @@ leaving most of it as exclusive control-container time.
   container crosses its budget.
 - No speedup comes from weakening claims, changing the C, raising budgets,
   caching an uncertified result, or retaining ambient `derive` reconstruction.
+
+## 2026-08-13 update: production gate restored; certification target remains
+
+Bounded alias-guard routing removed the recursive context-wide range proofs
+that dominated the previous 35-second run. Expanding the verified smart sites
+in `owned_string_push` and `owned_string_pop` then made both grouped scripts
+fully simple, so they no longer repeat smart planning or whole-claim replay.
+Finally, direct resource matching now tries exact and targeted framed-load
+transport before its broader recursive pointer-effect fallback.
+
+A complete profile is now about 7.9 seconds and the project repeatedly passes
+the unchanged 30-second production gate, so it is no longer quarantined. The
+under-five-second interactive target remains open. Current exclusive totals
+are approximately 1.0s simple, 0.4s smart, 0.7s control, 4.4s certification,
+and 1.3s verifier core. The profiler now identifies deterministic nested
+`have` replay by source tactic and proposition; the former 806ms separation
+transport is about 367ms after the local-rule ordering fix.
+
+The next dominant duplication is precise: final certification re-executes
+eight of ten function bodies (about 2.4s total). In particular, the two
+`*_preserves_first` checked executions carry the surface-level opaque
+`terminated_at(data, len)` resource fact, while the kernel's independently
+lowered contract entry contains its unfolded primitive equality. All other
+sealed authority fields match. Reuse correctly refuses to treat those
+contexts as identical. Close that surface/kernel resource-fact authority gap
+without accepting unchecked ambient predicates; then reassess the remaining
+claim and representation checks against the five-second target.

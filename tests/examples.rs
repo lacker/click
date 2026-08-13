@@ -16,10 +16,7 @@ const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 /// suite is a meaningful green gate. Run one with `CLICK_EXAMPLE=<name>`, or
 /// all of them with `CLICK_RUN_QUARANTINED=1`. Each entry names the reason;
 /// remove entries as they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[(
-    "owned-string",
-    "issues/owned-string-exceeds-interactive-verification-budget.md: the fully certificated project takes ~35s warm, past its 30s deadline",
-)];
+const QUARANTINED: &[(&str, &str)] = &[];
 
 #[test]
 fn example_projects() {

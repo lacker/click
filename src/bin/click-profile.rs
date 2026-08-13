@@ -171,7 +171,7 @@ struct ProjectProfile {
 struct ProfileOperation {
     function: String,
     claim: String,
-    name: &'static str,
+    name: String,
     elapsed: Duration,
 }
 
@@ -874,7 +874,7 @@ fn profile_from_events(
             } => TimingEvent::Operation(ProfileOperation {
                 function: function.clone(),
                 claim: claim.clone(),
-                name,
+                name: name.clone(),
                 elapsed: *elapsed,
             }),
             VerificationEvent::DeadlineExceeded(active) => TimingEvent::Interrupted(match active {

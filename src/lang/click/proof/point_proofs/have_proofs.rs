@@ -826,6 +826,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 target: surface_target,
                 premises: surface_premises,
             } => {
+                let profile_function = claim_label.split('.').next().unwrap_or(claim_label);
                 let lower = |surface: &ClickProposition, facts: &[Proposition]| {
                     surface_propositions
                         .and_then(|propositions| {
@@ -847,6 +848,11 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             )
                         })
                 };
+                let premise_timing = crate::instrumentation::OperationTiming::new(
+                    profile_function,
+                    claim_label,
+                    "point transport explicit premise lowering",
+                );
                 let mut explicit_premises = surface_premises
                     .iter()
                     .map(|premise| lower(premise, &available))
@@ -868,7 +874,13 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         )));
                     }
                 }
+                drop(premise_timing);
 
+                let source_timing = crate::instrumentation::OperationTiming::new(
+                    profile_function,
+                    claim_label,
+                    "point transport source lowering",
+                );
                 let ordinary_source = lower(surface_source, &available).map_err(|message| {
                     ClickError::new(format!(
                         "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `transport` source: {message}"
@@ -897,6 +909,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 } else {
                     ordinary_source.clone()
                 };
+                drop(source_timing);
                 // Materialization proved the surface source, while the
                 // symbolic spelling retains the load identity required by
                 // the explicit frame transport. This is the same checked
@@ -914,18 +927,26 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         explicit_premises.push(source.clone());
                     }
                 }
-                let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
-                let resource_facts = state
-                    .resources()
-                    .observable_facts_assuming_valid(&explicit_assumptions);
-                let selected_assumptions = available
-                    .iter()
-                    .filter(|fact| is_implicit_fact_transport_context(fact))
-                    .cloned()
-                    .chain(resource_facts)
-                    .fold(explicit_assumptions, |assumptions, fact| {
-                        assumptions.assume_proposition(fact)
-                    });
+                let selected_assumptions = crate::instrumentation::measure_operation(
+                    profile_function,
+                    claim_label,
+                    "point transport assumption selection",
+                    || {
+                        let explicit_assumptions =
+                            assumptions_from_propositions(&explicit_premises);
+                        let resource_facts = state
+                            .resources()
+                            .observable_facts_assuming_valid(&explicit_assumptions);
+                        available
+                            .iter()
+                            .filter(|fact| is_implicit_fact_transport_context(fact))
+                            .cloned()
+                            .chain(resource_facts)
+                            .fold(explicit_assumptions, |assumptions, fact| {
+                                assumptions.assume_proposition(fact)
+                            })
+                    },
+                );
                 if !exact_fact_is_available(&source, &explicit_premises)
                     && selected_assumptions
                         .derive_atomic_proposition(&source)
@@ -941,6 +962,11 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 // the fact being established at this proof frontier. Looking
                 // it up in the recorded-surface map can silently select the
                 // older source again when the two surface spellings coincide.
+                let target_timing = crate::instrumentation::OperationTiming::new(
+                    profile_function,
+                    claim_label,
+                    "point transport target lowering",
+                );
                 let target = lower_point_proposition_with_values(
                     surface_target,
                     &available,
@@ -958,6 +984,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `transport` target: {message}"
                     ))
                 })?;
+                drop(target_timing);
                 if !exact_fact_is_available(&target, &available)
                     && materialization_equivalent_available_fact(&target, &available).is_none()
                 {
@@ -969,13 +996,21 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             assumptions.assume_proposition(fact.proposition().clone())
                         })
                         .assume_proposition(source.clone());
-                    if !certified_fact_transport_reaches_through(
-                        &source,
-                        &target,
-                        state.memory(),
-                        &transport_assumptions,
-                        &transition_facts,
-                    ) {
+                    let reaches = crate::instrumentation::measure_operation(
+                        profile_function,
+                        claim_label,
+                        "point certified fact transport reachability",
+                        || {
+                            certified_fact_transport_reaches_through(
+                                &source,
+                                &target,
+                                state.memory(),
+                                &transport_assumptions,
+                                &transition_facts,
+                            )
+                        },
+                    );
+                    if !reaches {
                         let internal = std::env::var_os(FULL_DIAGNOSTICS_ENV).is_some().then(|| {
                             format!(
                                 "\n  kernel source: {}\n  kernel target: {}\n  explicit premises: {}\n  implicit frame facts: {}\n  transition facts: {}\n  current memory: {}",

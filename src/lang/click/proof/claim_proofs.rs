@@ -1897,38 +1897,49 @@ pub(super) fn finish_ordered_proof_replay(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: `have` requires a return outcome"
                                     )));
                                 };
-                                let mut certificate_available = path_requirements.clone();
-                                for fact in &replay.effect_facts {
-                                    if matches!(
-                                        fact.proposition(),
-                                        Proposition::CMemoryMutatesOnly { .. }
-                                            | Proposition::CMemoryEffectSummary { .. }
-                                            | Proposition::CHeapLifetimeRetired { .. }
-                                    ) && !certificate_available.contains(fact.proposition())
-                                    {
-                                        certificate_available.push(fact.proposition().clone());
-                                    }
-                                }
-                                for equation in
-                                    crate::kernel::certified_store_equations(&replay.effect_facts)
-                                {
-                                    if !certificate_available.contains(&equation) {
-                                        certificate_available.push(equation);
-                                    }
-                                }
+                                let certificate_available =
+                                    crate::instrumentation::measure_operation(
+                                        function_block.signature().name(),
+                                        &proof_label,
+                                        "post-execution have context assembly",
+                                        || {
+                                            let mut available = path_requirements.clone();
+                                            for fact in &replay.effect_facts {
+                                                if matches!(
+                                                    fact.proposition(),
+                                                    Proposition::CMemoryMutatesOnly { .. }
+                                                        | Proposition::CMemoryEffectSummary { .. }
+                                                        | Proposition::CHeapLifetimeRetired { .. }
+                                                ) && !available.contains(fact.proposition())
+                                                {
+                                                    available.push(fact.proposition().clone());
+                                                }
+                                            }
+                                            for equation in crate::kernel::certified_store_equations(
+                                                &replay.effect_facts,
+                                            ) {
+                                                if !available.contains(&equation) {
+                                                    available.push(equation);
+                                                }
+                                            }
+                                            for fact in
+                                                crate::kernel::certified_store_loadability_facts(
+                                                    &replay.effect_facts,
+                                                )
+                                            {
+                                                if !available.contains(&fact) {
+                                                    available.push(fact);
+                                                }
+                                            }
+                                            available
+                                        },
+                                    );
                                 // Post-execution proof certificates replay against
                                 // the same kernel-certified loadability consequences
                                 // of stores that were available while planning them.
                                 // Restricting these facts to hand-written `derive`
                                 // scripts let smart `simp` search succeed and then
                                 // fail when its generated certificate was replayed.
-                                for fact in crate::kernel::certified_store_loadability_facts(
-                                    &replay.effect_facts,
-                                ) {
-                                    if !certificate_available.contains(&fact) {
-                                        certificate_available.push(fact);
-                                    }
-                                }
                                 let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
                                 let (surface_have, fact) = if let Some(smart_unfolds) =
                                     smart_unfolds
@@ -2223,32 +2234,41 @@ pub(super) fn finish_ordered_proof_replay(
                                             Some(path_index),
                                         )
                                     };
-                                    let fact = match replay_have(&certificate_available) {
-                                        Ok(fact) => fact,
-                                        Err(error) => {
-                                            if !error
-                                                .message()
-                                                .contains("missing pure fact: loadable(")
-                                            {
-                                                return Err(error);
-                                            }
-                                            let mut loadable_available =
-                                                certificate_available.clone();
-                                            for fact in
-                                                crate::kernel::certified_store_loadability_facts(
-                                                    &replay.effect_facts,
-                                                )
-                                            {
-                                                if !loadable_available.contains(&fact) {
-                                                    loadable_available.push(fact);
+                                    let have_replay_operation = format!(
+                                        "post-execution simple have replay (source tactic {tactic_index}: {})",
+                                        describe_click_proposition(&have.proposition),
+                                    );
+                                    let fact = crate::instrumentation::measure_operation(
+                                        function_block.signature().name(),
+                                        &proof_label,
+                                        &have_replay_operation,
+                                        || match replay_have(&certificate_available) {
+                                            Ok(fact) => Ok(fact),
+                                            Err(error) => {
+                                                if !error
+                                                    .message()
+                                                    .contains("missing pure fact: loadable(")
+                                                {
+                                                    return Err(error);
                                                 }
+                                                let mut loadable_available =
+                                                    certificate_available.clone();
+                                                for fact in
+                                                    crate::kernel::certified_store_loadability_facts(
+                                                        &replay.effect_facts,
+                                                    )
+                                                {
+                                                    if !loadable_available.contains(&fact) {
+                                                        loadable_available.push(fact);
+                                                    }
+                                                }
+                                                if loadable_available == certificate_available {
+                                                    return Err(error);
+                                                }
+                                                replay_have(&loadable_available)
                                             }
-                                            if loadable_available == certificate_available {
-                                                return Err(error);
-                                            }
-                                            replay_have(&loadable_available)?
-                                        }
-                                    };
+                                        },
+                                    )?;
                                     let mut surface_tactic = ProofTactic::Have(have.clone());
                                     if let Err(error) = SimpleProof::from_proof_tactics(
                                         std::slice::from_ref(&surface_tactic),
@@ -2326,6 +2346,7 @@ pub(super) fn finish_ordered_proof_replay(
                                     source,
                                     target,
                                     premises.as_deref(),
+                                    function_block.signature().name(),
                                     &proof_label,
                                     path_index,
                                     *tactic_index,
@@ -2359,10 +2380,11 @@ pub(super) fn finish_ordered_proof_replay(
                                     ))
                                     .expect("explicit fact transport must be a simple certificate");
                                     replay_fact_transport_at_outcome(
-                                source,
-                                target,
-                                Some(premises),
-                                &proof_label,
+                                        source,
+                                        target,
+                                        Some(premises),
+                                        function_block.signature().name(),
+                                        &proof_label,
                                 path_index,
                                 *tactic_index,
                                 &mut certificate_facts,

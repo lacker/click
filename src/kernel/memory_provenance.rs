@@ -77,12 +77,6 @@ fn bitvectors_match_for_resource_replay(
     if assumptions.bitvector_terms_equal_from_facts(left, right) {
         return true;
     }
-    // Resource endpoints are usually the same arithmetic shape with leaf
-    // loads related by explicit field equalities. Check that bounded
-    // structural relation before invoking the broader memory-DAG search.
-    if bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions) {
-        return true;
-    }
     if explicit_atomic_equality_from_memory_derivations(left, right, assumptions) {
         return true;
     }
@@ -100,7 +94,12 @@ fn bitvectors_match_for_resource_replay(
                 })
         })
     };
-    transported_matches(left, right) || transported_matches(right, left)
+    if transported_matches(left, right) || transported_matches(right, left) {
+        return true;
+    }
+    // Resource endpoints normally differ only by a framed load. Keep the
+    // broader recursive solver as the fallback after targeted transport.
+    bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
 }
 
 fn pointer_offsets_match_from_memory_derivations(
@@ -143,9 +142,6 @@ fn pointer_offsets_match_for_resource_replay(
     if pointer_offsets_match_from_memory_derivations(left, right, assumptions) {
         return true;
     }
-    if c_pointer_offsets_proven_equal_for_effect(left, right, assumptions) {
-        return true;
-    }
     let transported_matches = |offset: &PointerOffsetTerm, target: &PointerOffsetTerm| {
         let mut memories = Vec::new();
         collect_pointer_offset_memories(target, &mut memories);
@@ -156,7 +152,10 @@ fn pointer_offsets_match_for_resource_replay(
                 })
         })
     };
-    transported_matches(left, right) || transported_matches(right, left)
+    if transported_matches(left, right) || transported_matches(right, left) {
+        return true;
+    }
+    c_pointer_offsets_proven_equal_for_effect(left, right, assumptions)
 }
 
 fn pointers_match_for_resource_replay(

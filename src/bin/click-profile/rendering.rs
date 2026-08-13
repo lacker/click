@@ -434,11 +434,9 @@ fn render_operations(output: &mut String, profiles: &[ProjectProfile], top_rows:
     .expect("writing a String cannot fail");
     let mut aggregates = std::collections::BTreeMap::new();
     for (project, operation) in &operations {
-        let entry = aggregates.entry((*project, operation.name)).or_insert((
-            Duration::ZERO,
-            0usize,
-            Duration::ZERO,
-        ));
+        let entry = aggregates
+            .entry((*project, operation.name.clone()))
+            .or_insert((Duration::ZERO, 0usize, Duration::ZERO));
         entry.0 += operation.elapsed;
         entry.1 += 1;
         entry.2 = entry.2.max(operation.elapsed);

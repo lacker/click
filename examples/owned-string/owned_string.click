@@ -242,9 +242,51 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
     ensures owner->data[owner->len] == 0;
 } by {
     unfold(owned_string(owner));
-    step();
-    step();
-    step();
+    step() using {
+        defined((owner->len + 1));
+        (owner->len + 1) < owner->cap;
+        separate(memory(owner[0..1]), memory(owner[1..2]));
+        separate(memory(owner[0..1]), memory(owner[2..4]));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner[1..2]), memory(owner[2..4]));
+        loadable(owner[0..1]);
+        loadable((owner + 1)[0..1]);
+        loadable((owner + 2)[0..2]);
+        0 <= owner->len;
+        owner->len < owner->cap;
+    }
+    step() using {
+        at(statement(0).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+        at(statement(0).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+        at(statement(0).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+        at(statement(0).entry, loadable(owner[0..1]));
+        at(statement(0).entry, loadable((owner + 1)[0..1]));
+        at(statement(0).entry, loadable((owner + 2)[0..2]));
+        at(statement(1).entry, (owner->len + 1)) < at(statement(1).entry, owner->cap);
+        at(statement(1).entry, 0) <= at(statement(1).entry, owner->len);
+        at(statement(1).entry, owner->len) < at(statement(1).entry, owner->cap);
+        at(statement(0).entry, defined((owner->len + 1)));
+        at(statement(0).entry, (owner->len + 1)) < at(statement(0).entry, owner->cap);
+        at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+        at(statement(0).entry, 0) <= at(statement(0).entry, owner->len);
+        at(statement(0).entry, owner->len) < at(statement(0).entry, owner->cap);
+    }
+    step() using {
+        at(statement(0).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+        at(statement(0).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+        at(statement(0).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+        at(statement(0).entry, loadable(owner[0..1]));
+        at(statement(0).entry, loadable((owner + 1)[0..1]));
+        at(statement(0).entry, loadable((owner + 2)[0..2]));
+        at(statement(2).entry, (owner->len + 1)) < at(statement(2).entry, owner->cap);
+        at(statement(2).entry, 0) <= at(statement(2).entry, owner->len);
+        at(statement(2).entry, owner->len) < at(statement(2).entry, owner->cap);
+        at(statement(0).entry, defined((owner->len + 1)));
+        at(statement(1).entry, (owner->len + 1)) < at(statement(1).entry, owner->cap);
+        at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+        at(statement(1).entry, 0) <= at(statement(1).entry, owner->len);
+        at(statement(1).entry, owner->len) < at(statement(1).entry, owner->cap);
+    }
     step() using {
         at(statement(0).entry, (owner->len + 1)) < at(statement(0).entry, owner->cap);
         separate(memory(owner->len), memory(owner->cap));
@@ -310,10 +352,7 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         assumption();
     }
     have owner->data == at(statement(4).entry, owner->data) by {
-        simp() using {
-            at(statement(4).entry, owner->data) == old(owner->data);
-            owner->data == old(owner->data);
-        }
+        assumption();
     }
     have owner->len == at(statement(4).entry, (index + 1)) by {
         transport(
@@ -352,7 +391,34 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         rewrite(owner->len == at(statement(4).entry, (index + 1)));
         assumption();
     }
-    step();
+    step() using {
+        at(statement(4).entry, separate(memory(owner->len), memory(owner->cap)));
+        at(statement(4).entry, separate(memory(owner->len), memory(owner->data)));
+        at(statement(4).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+        at(statement(4).entry, separate(memory(owner->cap), memory(owner->data)));
+        at(statement(4).entry, loadable(old(owner->len)));
+        at(statement(4).entry, loadable(old(owner->cap)));
+        at(statement(4).entry, loadable(old(owner->data)));
+        at(statement(4).entry, loadable(old(owner->data[0..owner->cap])));
+        0 <= at(statement(4).entry, index);
+        at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
+        at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
+        at(statement(3).entry, (owner->len + 1)) < at(statement(3).entry, owner->cap);
+        at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
+        at(statement(3).entry, owner->len) < at(statement(3).entry, owner->cap);
+        at(statement(2).entry, (owner->len + 1)) < at(statement(2).entry, owner->cap);
+        at(statement(2).entry, 0) <= at(statement(2).entry, owner->len);
+        at(statement(2).entry, owner->len) < at(statement(2).entry, owner->cap);
+        at(statement(1).entry, (owner->len + 1)) < at(statement(1).entry, owner->cap);
+        at(statement(1).entry, 0) <= at(statement(1).entry, owner->len);
+        at(statement(1).entry, owner->len) < at(statement(1).entry, owner->cap);
+        at(statement(0).entry, defined((owner->len + 1)));
+        at(statement(4).entry, owner->data) == old(owner->data);
+        owner->data == at(statement(4).entry, owner->data);
+        owner->len == at(statement(4).entry, (index + 1));
+        at(statement(5).entry, 0) <= at(statement(5).entry, owner->len);
+        owner->data[owner->len] == 0;
+    }
     have terminated_at(owner->data, owner->len) by {
         unfold(terminated_at);
         assumption();
@@ -440,7 +506,8 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         assumption();
     }
     fold(owned_string(owner));
-    frame();
+    frame() using {
+    }
     have at(statement(3).entry, index) == old(owner->len) by {
         normalize();
     }
@@ -466,23 +533,18 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         assumption();
     }
     have result == (old(owner->len) + 1) by {
-        simp() using {
-            owner->len == (old(owner->len) + 1);
-        }
+        assumption();
     }
     have owner->data[old(owner->len)] == value by {
-        simp() using {
-            at(statement(2).exit, (at(statement(2).entry, owner->data) + 0)[at(statement(2).entry, index)]) == at(statement(2).entry, value);
-            at(statement(3).entry, index) == old(owner->len);
-            owner->data == old(owner->data);
-        }
+        rewrite(at(statement(2).entry, value) == at(statement(2).exit, (at(statement(2).entry, owner->data) + 0)[at(statement(2).entry, index)]));
+        rewrite(owner->data == old(owner->data));
+        assumption();
     }
     have owner->data[owner->len] == 0 by {
-        simp() using {
-            at(statement(4).exit, (at(statement(4).entry, owner->data) + 0)[at(statement(4).entry, (index + 1))]) == at(statement(4).entry, 0);
-            owner->len == (old(owner->len) + 1);
-            owner->data == old(owner->data);
-        }
+        rewrite(at(statement(4).entry, 0) == at(statement(4).exit, (at(statement(4).entry, owner->data) + 0)[at(statement(4).entry, (index + 1))]));
+        rewrite(owner->len == (old(owner->len) + 1));
+        rewrite(owner->data == old(owner->data));
+        assumption();
     }
     assumption();
     assumption();
@@ -583,8 +645,30 @@ int32 owned_string_pop(struct owned_string* owner) {
     ensures owner->data[owner->len] == 0;
 } by {
     unfold(owned_string(owner));
-    have 0 <= owner->len - 1 by simp;
-    have owner->len - 1 < owner->len by simp;
+    have 0 <= (owner->len - 1) by {
+        have 0 < owner->len by {
+            apply(int32_successor_le_implies_lt(0, owner->len)) using {
+                1 <= owner->len;
+            }
+            assumption();
+        }
+        apply(int32_positive_predecessor_is_nonnegative(owner->len)) using {
+            0 < owner->len;
+        }
+        assumption();
+    }
+    have (owner->len - 1) < owner->len by {
+        have 0 < owner->len by {
+            apply(int32_successor_le_implies_lt(0, owner->len)) using {
+                1 <= owner->len;
+            }
+            assumption();
+        }
+        apply(int32_positive_predecessor_strictly_decreases(owner->len)) using {
+            0 < owner->len;
+        }
+        assumption();
+    }
     step() using {
         1 <= owner->len;
         separate(memory(owner->len), memory(owner->cap));
@@ -750,37 +834,30 @@ int32 owned_string_pop(struct owned_string* owner) {
         unfold(terminated_at);
         normalize();
     }
-    have 0 <= owner->len by simp;
-    have owner->len < owner->cap by simp;
-    have separate(
-        memory(object(owner)),
-        memory(owner->data[0..owner->cap])
-    ) by {
-        simp();
+    have 0 <= owner->len by {
+        assumption();
+    }
+    have owner->len < owner->cap by {
+        apply(int32_lt_transitive(at(statement(5).entry, (owner->len - 1)), at(statement(5).entry, owner->len), at(statement(5).entry, owner->cap))) using {
+            at(statement(5).entry, (owner->len - 1)) < at(statement(5).entry, owner->len);
+            at(statement(5).entry, owner->len) < at(statement(5).entry, owner->cap);
+        }
+        assumption();
+    }
+    have separate(memory(object(owner)), memory(owner->data[0..owner->cap])) by {
+        assumption();
     }
     fold(owned_string(owner));
-    frame();
+    frame() using {
+    }
     have loadable(old((owner->data + (owner->len - 1))[0..1])) by {
-        simp() using {
+        transport(at(statement(6).entry, loadable(old(owner->data[0..owner->cap]))), loadable(old((owner->data + (owner->len - 1))[0..1]))) using {
             at(statement(6).exit, index) < old(owner->len);
             old(owner->len) < owner->cap;
-            0 <= at(statement(6).exit, index);
-            0 <= old(owner->len);
             1 <= old(owner->len);
-            terminated_at(at(statement(0).entry, owner->data), at(statement(0).entry, owner->len));
             at(statement(6).entry, loadable(old(owner->data[0..owner->cap])));
-            at(statement(6).entry, separate(memory(owner->len), memory(owner->cap)));
-            at(statement(6).entry, separate(memory(owner->len), memory(owner->data)));
-            at(statement(6).entry, separate(memory(owner->len), memory(owner->data[0..owner->cap])));
-            at(statement(6).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
-            at(statement(6).entry, separate(memory(owner->cap), memory(owner->data)));
-            at(statement(6).entry, separate(memory(owner->cap), memory(owner->data[0..owner->cap])));
-            at(statement(6).entry, separate(memory(owner->data), memory(owner->data[0..owner->cap])));
-            at(statement(6).entry, contains(owned_string(owner), memory(owner->len)));
-            at(statement(6).entry, contains(owned_string(owner), memory(owner->cap)));
-            at(statement(6).entry, contains(owned_string(owner), memory(owner->data)));
-            at(statement(6).entry, contains(owned_string(owner), memory(owner->data[0..owner->cap])));
         }
+        assumption();
     }
     have result == old(owner->data[(owner->len - 1)]) by {
         normalize();

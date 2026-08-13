@@ -2074,10 +2074,15 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
                     .into_iter()
                     .all(|premise| assumptions.proves(&premise))
         });
+        let body_operation = if reusable.is_some() {
+            "contract checked body reuse"
+        } else {
+            "contract body symbolic execution"
+        };
         let execution = crate::instrumentation::measure_operation(
             function.name(),
             "contract certification",
-            "contract body symbolic execution",
+            body_operation,
             || match reusable {
                 Some(checked) => checked.execution.clone(),
                 None => {
