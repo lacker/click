@@ -87,6 +87,21 @@ fn straight_line_project(statement_count: usize, snapshot_claim: bool) -> (Strin
     (c_source, click_source)
 }
 
+fn theorem_with_unrelated_exact_facts(fact_count: usize) -> String {
+    let mut parameters = String::from("target: int32");
+    let mut requirements = String::from("    requires target == 7;\n");
+    for index in 0..fact_count {
+        parameters.push_str(&format!(", unrelated_{index}: int32"));
+        requirements.push_str(&format!(
+            "    requires unrelated_{index} == {};\n",
+            index as i32
+        ));
+    }
+    format!(
+        "theorem exact_fact_scaling({parameters}) {{\n{requirements}    ensures target == 7 by {{ assumption(); }}\n}}\n"
+    )
+}
+
 #[test]
 fn simple_unrelated_functions_have_a_deterministic_scaling_control() {
     let samples = [4, 8, 16, 32]
@@ -193,6 +208,29 @@ fn straight_line_simple_steps_scale_near_linearly_with_retained_snapshots() {
             .collect::<Vec<_>>();
         assert_near_linear_scaling("straight-line simple steps", &samples);
     }
+}
+
+#[test]
+fn exact_assumption_scales_near_linearly_with_unrelated_ambient_facts() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let source = theorem_with_unrelated_exact_facts(size);
+            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+                verify_click_theorems(&source)
+            });
+            let verified = verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} exact-fact scaling fixture failed: {}",
+                    error.message()
+                )
+            });
+            assert_eq!(verified.len(), 1);
+            ScalingSample { size, work }
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling("exact assumption with unrelated facts", &samples);
 }
 
 #[test]

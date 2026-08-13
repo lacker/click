@@ -31,6 +31,11 @@ increasing numbers of unrelated facts and unrelated surface spellings. Each
 operation should remain logarithmic after proposition parsing/interning. Add a
 separate linear-output test that explicitly names increasing premise counts.
 
+Scaling axis: `exact_assumption_scales_near_linearly_with_unrelated_ambient_facts`
+now guards the fixed exact-assumption case while growing both ambient facts and
+their recorded surface spellings. Dedicated `step() using`, transport, and
+same-kernel/many-spellings curves remain required before this issue is closed.
+
 ## Acceptance criteria
 
 - Exact fact and surface-spelling lookup is indexed in both directions.

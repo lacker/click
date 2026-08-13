@@ -45,3 +45,11 @@ green control curve must run by default; do not quarantine the entire suite.
 - A linear green control passes on all supported test configurations.
 - Every performance issue in the burndown names the scaling axis that closes
   it.
+
+## Implemented axes
+
+The default in-process gate now covers unrelated functions/rules, unrelated
+global theorems, explicit theorem dependencies, straight-line statements with
+retained program-point snapshots, and exact `assumption()` with geometrically
+increasing unrelated ambient facts/surface spellings. The remaining resource,
+definition-member, and shared-claim axes still need dedicated fixtures.
