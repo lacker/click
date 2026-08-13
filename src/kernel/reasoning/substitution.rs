@@ -1115,55 +1115,61 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
     from: Variable,
     to: &Bitvector32Term,
 ) -> CState {
-    let bindings = std::sync::Arc::new(state
-        .locals
-        .bindings
-        .iter()
-        .map(|(name, binding)| {
-            let binding = match binding {
-                CLocalBinding::Object { value, c_type } => CLocalBinding::Object {
-                    value: substitute_bitvector_variable_in_c_value(value, from, to),
-                    c_type: *c_type,
-                },
-                CLocalBinding::UninitializedObject { c_type } => {
-                    CLocalBinding::UninitializedObject { c_type: *c_type }
-                }
-                CLocalBinding::ArrayObject {
-                    element_type,
-                    length,
-                } => CLocalBinding::ArrayObject {
-                    element_type: *element_type,
-                    length: *length,
-                },
-            };
-            (name.clone(), binding)
-        })
-        .collect());
+    let bindings = std::sync::Arc::new(
+        state
+            .locals
+            .bindings
+            .iter()
+            .map(|(name, binding)| {
+                let binding = match binding {
+                    CLocalBinding::Object { value, c_type } => CLocalBinding::Object {
+                        value: substitute_bitvector_variable_in_c_value(value, from, to),
+                        c_type: *c_type,
+                    },
+                    CLocalBinding::UninitializedObject { c_type } => {
+                        CLocalBinding::UninitializedObject { c_type: *c_type }
+                    }
+                    CLocalBinding::ArrayObject {
+                        element_type,
+                        length,
+                    } => CLocalBinding::ArrayObject {
+                        element_type: *element_type,
+                        length: *length,
+                    },
+                };
+                (name.clone(), binding)
+            })
+            .collect(),
+    );
     CState {
         locals: CLocalEnvironment { bindings },
         memory: substitute_bitvector_variable_in_memory(&state.memory, from, to),
         resources: substitute_bitvector_variable_in_resource_context(&state.resources, from, to),
-        counted_populations: std::sync::Arc::new(state
-            .counted_populations
-            .iter()
-            .map(|population| CCountedPopulation {
-                name: population.name.clone(),
-                arguments: population
-                    .arguments
-                    .iter()
-                    .map(|argument| substitute_bitvector_variable_in_c_value(argument, from, to))
-                    .collect(),
-                count: match substitute_bitvector_variable_in_c_value(
-                    &CValue::Int32(population.count.clone()),
-                    from,
-                    to,
-                ) {
-                    CValue::Int32(count) => count,
-                    _ => unreachable!("an int32 population count remains int32"),
-                },
-                family_observation_marker: population.family_observation_marker,
-            })
-            .collect()),
+        counted_populations: std::sync::Arc::new(
+            state
+                .counted_populations
+                .iter()
+                .map(|population| CCountedPopulation {
+                    name: population.name.clone(),
+                    arguments: population
+                        .arguments
+                        .iter()
+                        .map(|argument| {
+                            substitute_bitvector_variable_in_c_value(argument, from, to)
+                        })
+                        .collect(),
+                    count: match substitute_bitvector_variable_in_c_value(
+                        &CValue::Int32(population.count.clone()),
+                        from,
+                        to,
+                    ) {
+                        CValue::Int32(count) => count,
+                        _ => unreachable!("an int32 population count remains int32"),
+                    },
+                    family_observation_marker: population.family_observation_marker,
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -1173,11 +1179,14 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_context(
     to: &Bitvector32Term,
 ) -> ResourceContext {
     ResourceContext {
-        facts: std::sync::Arc::new(resources
-            .facts()
-            .iter()
-            .map(|resource| substitute_bitvector_variable_in_resource(resource, from, to))
-            .collect()),
+        facts: std::sync::Arc::new(
+            resources
+                .facts()
+                .iter()
+                .map(|resource| substitute_bitvector_variable_in_resource(resource, from, to))
+                .collect(),
+        ),
+        index: std::sync::Arc::new(std::sync::OnceLock::new()),
     }
 }
 
@@ -1603,31 +1612,35 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
     from: Variable,
     to: &Bitvector32Term,
 ) -> CMemory {
-    let cells = std::sync::Arc::new(memory
-        .cells
-        .iter()
-        .map(|(pointer, value)| {
-            (
-                substitute_bitvector_variable_in_pointer(pointer, from, to),
-                substitute_bitvector_variable_in_c_value(value, from, to),
-            )
-        })
-        .collect());
-    CMemory {
-        blocks: std::sync::Arc::new(memory
-            .blocks
+    let cells = std::sync::Arc::new(
+        memory
+            .cells
             .iter()
-            .map(|(block, contents)| {
+            .map(|(pointer, value)| {
                 (
-                    block.clone(),
-                    CBlock::with_symbolic_size(substitute_bitvector_variable(
-                        contents.size(),
-                        from,
-                        to,
-                    )),
+                    substitute_bitvector_variable_in_pointer(pointer, from, to),
+                    substitute_bitvector_variable_in_c_value(value, from, to),
                 )
             })
-            .collect()),
+            .collect(),
+    );
+    CMemory {
+        blocks: std::sync::Arc::new(
+            memory
+                .blocks
+                .iter()
+                .map(|(block, contents)| {
+                    (
+                        block.clone(),
+                        CBlock::with_symbolic_size(substitute_bitvector_variable(
+                            contents.size(),
+                            from,
+                            to,
+                        )),
+                    )
+                })
+                .collect(),
+        ),
         cells,
         heap: std::sync::Arc::new(CHeapMemory {
             live_allocations: memory

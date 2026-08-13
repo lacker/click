@@ -351,40 +351,39 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             // and the C `if` entry (plus an empty arm's immediate completion)
             // as explicit steps. Used for contexts that do not rejoin — their
             // certificates replay the branch as a decided case.
-            let retrofit_branch_case = |context: &mut ProofReplayContext,
-                                        take_then: bool,
-                                        empty_arm: bool| {
-                let builder = &mut context.replay.simple_proof_builder;
-                if builder.blocker.is_some() {
-                    return;
-                }
-                let entry_steps = 1 + usize::from(empty_arm);
-                for choice in builder.path_choices.iter_mut().skip(prior_choice_count) {
-                    if choice.tactic_offset >= branch_surface_start {
-                        choice.tactic_offset += entry_steps;
+            let retrofit_branch_case =
+                |context: &mut ProofReplayContext, take_then: bool, empty_arm: bool| {
+                    let builder = &mut context.replay.simple_proof_builder;
+                    if builder.blocker.is_some() {
+                        return;
                     }
-                }
-                builder.path_choices.insert(
-                    prior_choice_count,
-                    SurfacePathChoice {
-                        occurrence: statement_index,
-                        condition: branch_surface_condition.clone(),
-                        value: take_then,
-                        tactic_offset: branch_surface_start,
-                    },
-                );
-                let entry_step = SimpleProof::from_proof_tactics(&[ProofTactic::StepUsing(
-                    Vec::new(),
-                )])
-                .expect("a plain step is a simple tactic")
-                .steps()[0]
-                    .clone();
-                for _ in 0..entry_steps {
-                    builder
-                        .steps
-                        .insert(branch_surface_start.min(builder.steps.len()), entry_step.clone());
-                }
-            };
+                    let entry_steps = 1 + usize::from(empty_arm);
+                    for choice in builder.path_choices.iter_mut().skip(prior_choice_count) {
+                        if choice.tactic_offset >= branch_surface_start {
+                            choice.tactic_offset += entry_steps;
+                        }
+                    }
+                    builder.path_choices.insert(
+                        prior_choice_count,
+                        SurfacePathChoice {
+                            occurrence: statement_index,
+                            condition: branch_surface_condition.clone(),
+                            value: take_then,
+                            tactic_offset: branch_surface_start,
+                        },
+                    );
+                    let entry_step =
+                        SimpleProof::from_proof_tactics(&[ProofTactic::StepUsing(Vec::new())])
+                            .expect("a plain step is a simple tactic")
+                            .steps()[0]
+                            .clone();
+                    for _ in 0..entry_steps {
+                        builder.steps.insert(
+                            branch_surface_start.min(builder.steps.len()),
+                            entry_step.clone(),
+                        );
+                    }
+                };
             let mut completed_contexts = Vec::new();
             let mut continuing_contexts = Vec::new();
             let mut continuing_arm_values = Vec::new();

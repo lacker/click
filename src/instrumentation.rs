@@ -364,12 +364,16 @@ fn with_default_tactic_time_limit<R>(operation: impl FnOnce() -> R) -> R {
     }
 }
 
-fn consume_tactic_work(units: usize) -> bool {
+pub(crate) fn record_deterministic_work(units: usize) {
     WORK_COUNTERS.with(|counters| {
         for counter in counters.borrow_mut().iter_mut() {
             *counter = counter.saturating_add(units);
         }
     });
+}
+
+fn consume_tactic_work(units: usize) -> bool {
+    record_deterministic_work(units);
     let exhausted = ACTIVE_TACTICS.with(|active| {
         let mut active = active.borrow_mut();
         let current = active.last_mut()?;

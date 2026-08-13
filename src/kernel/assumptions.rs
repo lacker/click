@@ -772,6 +772,61 @@ impl Proposition {
 }
 
 impl Assumptions {
+    fn fingerprint<T: std::hash::Hash>(tag: u64, value: &T) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hasher::write_u64(&mut hasher, tag);
+        std::hash::Hash::hash(value, &mut hasher);
+        std::hash::Hasher::finish(&hasher)
+    }
+
+    fn recompute_content_fingerprint(&mut self) {
+        let mut fingerprint = 0;
+        for fact in self.condition_facts.iter() {
+            fingerprint ^= Self::fingerprint(1, &fact);
+        }
+        for fact in self.prop_facts.iter() {
+            fingerprint ^= Self::fingerprint(2, fact);
+        }
+        if self.defer_non_exact_loadability_obligations {
+            fingerprint ^= 1 << 56;
+        }
+        if self.defer_non_exact_condition_reasoning {
+            fingerprint ^= 1 << 57;
+        }
+        if self.prefer_symbolic_external_loads {
+            fingerprint ^= 1 << 58;
+        }
+        if self.force_symbolic_external_loads {
+            fingerprint ^= 1 << 59;
+        }
+        if self.allow_symbolic_contract_loads {
+            fingerprint ^= 1 << 60;
+        }
+        self.content_fingerprint = fingerprint;
+    }
+
+    pub(super) fn clear_proposition_facts(&mut self) {
+        self.prop_facts = std::sync::Arc::new(BTreeSet::new());
+        self.recompute_content_fingerprint();
+    }
+
+    pub(super) fn retain_proposition_facts(&mut self, keep: impl FnMut(&Proposition) -> bool) {
+        std::sync::Arc::make_mut(&mut self.prop_facts).retain(keep);
+        self.recompute_content_fingerprint();
+    }
+
+    pub(super) fn insert_proposition_fact(&mut self, proposition: Proposition) {
+        if std::sync::Arc::make_mut(&mut self.prop_facts).insert(proposition.clone()) {
+            self.content_fingerprint ^= Self::fingerprint(2, &proposition);
+        }
+    }
+
+    pub(super) fn remove_proposition_fact(&mut self, proposition: &Proposition) {
+        if std::sync::Arc::make_mut(&mut self.prop_facts).remove(proposition) {
+            self.content_fingerprint ^= Self::fingerprint(2, proposition);
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn reset_condition_implication_antecedent_checks() {
         CONDITION_IMPLICATION_ANTECEDENT_CHECKS.with(|checks| checks.set(0));
@@ -794,12 +849,23 @@ impl Assumptions {
         Self::default()
     }
 
+    #[cfg(test)]
+    pub(crate) fn shares_fact_storage_with(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.condition_facts, &other.condition_facts)
+            && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn memo_fingerprint(&self) -> u64 {
+        self.content_fingerprint
+    }
+
     /// Removes separation propositions while preserving arithmetic, equality,
     /// and other contextual facts. Resource-definition projection uses this
     /// to detect ownership conflicts that a contradictory fact from the same
     /// definition must not conceal.
     pub(crate) fn without_explicit_separation_facts(mut self) -> Self {
-        self.prop_facts.retain(|proposition| {
+        self.retain_proposition_facts(|proposition| {
             !matches!(
                 proposition,
                 Proposition::CMemoryDisjoint { .. } | Proposition::CResourceSeparate { .. }
@@ -815,7 +881,10 @@ impl Assumptions {
     /// Condition reasoning is unchanged: this flag only controls the
     /// obligation boundary used by the evaluator.
     pub(crate) fn defer_non_exact_loadability_obligations(mut self) -> Self {
-        self.defer_non_exact_loadability_obligations = true;
+        if !self.defer_non_exact_loadability_obligations {
+            self.defer_non_exact_loadability_obligations = true;
+            self.content_fingerprint ^= 1 << 56;
+        }
         self
     }
 
@@ -827,7 +896,10 @@ impl Assumptions {
     /// candidate spelling before comparing it with an already-certified
     /// kernel proposition. Ordinary proof checking must not enable it.
     pub(crate) fn allow_symbolic_contract_loads(mut self) -> Self {
-        self.allow_symbolic_contract_loads = true;
+        if !self.allow_symbolic_contract_loads {
+            self.allow_symbolic_contract_loads = true;
+            self.content_fingerprint ^= 1 << 60;
+        }
         self
     }
 
@@ -836,7 +908,10 @@ impl Assumptions {
     }
 
     pub(crate) fn defer_non_exact_condition_reasoning(mut self) -> Self {
-        self.defer_non_exact_condition_reasoning = true;
+        if !self.defer_non_exact_condition_reasoning {
+            self.defer_non_exact_condition_reasoning = true;
+            self.content_fingerprint ^= 1 << 57;
+        }
         self
     }
 
@@ -845,7 +920,10 @@ impl Assumptions {
     }
 
     pub(crate) fn prefer_symbolic_external_loads(mut self) -> Self {
-        self.prefer_symbolic_external_loads = true;
+        if !self.prefer_symbolic_external_loads {
+            self.prefer_symbolic_external_loads = true;
+            self.content_fingerprint ^= 1 << 58;
+        }
         self
     }
 
@@ -854,7 +932,10 @@ impl Assumptions {
     }
 
     pub(crate) fn force_symbolic_external_loads(mut self) -> Self {
-        self.force_symbolic_external_loads = true;
+        if !self.force_symbolic_external_loads {
+            self.force_symbolic_external_loads = true;
+            self.content_fingerprint ^= 1 << 59;
+        }
         self
     }
 
@@ -899,7 +980,12 @@ impl Assumptions {
                 value,
             );
         }
-        self.condition_facts.insert(condition, value);
+        let old =
+            std::sync::Arc::make_mut(&mut self.condition_facts).insert(condition.clone(), value);
+        if let Some(old) = old {
+            self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), old));
+        }
+        self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));
         self
     }
 
@@ -917,11 +1003,11 @@ impl Assumptions {
                     self = self.assume_condition(condition, !value);
                 }
                 body => {
-                    self.prop_facts.insert(Proposition::Not(Box::new(body)));
+                    self.insert_proposition_fact(Proposition::Not(Box::new(body)));
                 }
             },
             proposition => {
-                self.prop_facts.insert(proposition);
+                self.insert_proposition_fact(proposition);
             }
         }
         self
@@ -939,14 +1025,15 @@ impl Assumptions {
 
     fn without_free_bitvector_variable(&self, variable: Variable) -> Self {
         let mut assumptions = self.clone();
-        assumptions.condition_facts.retain(|condition, _| {
+        std::sync::Arc::make_mut(&mut assumptions.condition_facts).retain(|condition, _| {
             let mut variables = BTreeSet::new();
             collect_condition_bitvector_variables(condition, &mut variables);
             !variables.contains(&variable)
         });
-        assumptions
-            .prop_facts
-            .retain(|proposition| !proposition_has_free_bitvector_variable(proposition, variable));
+        assumptions.retain_proposition_facts(|proposition| {
+            !proposition_has_free_bitvector_variable(proposition, variable)
+        });
+        assumptions.recompute_content_fingerprint();
         assumptions
     }
 
@@ -1123,7 +1210,7 @@ impl PropositionDerivation {
                     return false;
                 }
                 let mut base = available.clone();
-                base.prop_facts.remove(disjunction);
+                base.remove_proposition_fact(disjunction);
                 cases.iter().zip(expected_cases).all(|(proof, case)| {
                     proof.conclusion == self.conclusion
                         && proof.replay(&base.clone().assume_proposition(case))

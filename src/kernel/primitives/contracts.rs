@@ -378,8 +378,7 @@ impl CExecutionEnvironment {
     }
 
     pub fn with_function(mut self, function: CFunction) -> Self {
-        std::sync::Arc::make_mut(&mut self.functions)
-            .insert(function.name().to_string(), function);
+        std::sync::Arc::make_mut(&mut self.functions).insert(function.name().to_string(), function);
         self
     }
 

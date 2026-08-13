@@ -1876,9 +1876,7 @@ pub(super) fn fold_composite_resources_on_outcome(
                 let required_text = describe_pure_fact(&required, parameters, arguments);
                 let identically_printed = available_pure_facts
                     .iter()
-                    .filter(|fact| {
-                        describe_pure_fact(fact, parameters, arguments) == required_text
-                    })
+                    .filter(|fact| describe_pure_fact(fact, parameters, arguments) == required_text)
                     .count();
                 let snapshot_note = if identically_printed > 0 {
                     format!(

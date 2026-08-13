@@ -118,10 +118,8 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
             Some((Proposition::Not(Box::new(body)), changed))
         }
         Proposition::Implies(antecedent, consequent) => {
-            let (antecedent, antecedent_changed) =
-                rewrite_child(antecedent, equality, available)?;
-            let (consequent, consequent_changed) =
-                rewrite_child(consequent, equality, available)?;
+            let (antecedent, antecedent_changed) = rewrite_child(antecedent, equality, available)?;
+            let (consequent, consequent_changed) = rewrite_child(consequent, equality, available)?;
             Some((
                 Proposition::Implies(Box::new(antecedent), Box::new(consequent)),
                 antecedent_changed || consequent_changed,
@@ -432,10 +430,9 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                 )
             };
             match term {
-                Bitvector32Term::MemoryLoad(memory, pointer) => Bitvector32Term::MemoryLoad(
-                    memory.clone(),
-                    Box::new(rewrite_pointer(pointer)),
-                ),
+                Bitvector32Term::MemoryLoad(memory, pointer) => {
+                    Bitvector32Term::MemoryLoad(memory.clone(), Box::new(rewrite_pointer(pointer)))
+                }
                 Bitvector32Term::Add(left_term, right_term) => {
                     let (left, right) = binary(left_term, right_term);
                     Bitvector32Term::Add(left, right)
@@ -513,9 +510,7 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                 Proposition::ConditionIs(rewritten, *expected)
             }
             _ => {
-                return Err(
-                    "`rewrite` pointer equality expects a condition goal".to_string(),
-                );
+                return Err("`rewrite` pointer equality expects a condition goal".to_string());
             }
         };
         if &rewritten == goal {
@@ -593,12 +588,10 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
                     _ => Bitvector32Term::Subtract(left, right),
                 }
             }
-            Bitvector32Term::Multiply(left, right) => {
-                Bitvector32Term::multiply(
-                    rewrite_term(left, from, to),
-                    rewrite_term(right, from, to),
-                )
-            }
+            Bitvector32Term::Multiply(left, right) => Bitvector32Term::multiply(
+                rewrite_term(left, from, to),
+                rewrite_term(right, from, to),
+            ),
             Bitvector32Term::Divide(left, right) => {
                 let (left, right) = binary(left, right);
                 Bitvector32Term::Divide(left, right)

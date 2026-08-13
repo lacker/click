@@ -2093,9 +2093,9 @@ pub(super) fn certify_general_smart_have(
             proposition: have.proposition.clone(),
             proof: Proof::Script(candidate_tactics),
         };
-        let Ok(proof) = SimpleProof::from_proof_tactics(std::slice::from_ref(
-            &ProofTactic::Have(candidate.clone()),
-        )) else {
+        let Ok(proof) = SimpleProof::from_proof_tactics(std::slice::from_ref(&ProofTactic::Have(
+            candidate.clone(),
+        ))) else {
             continue;
         };
         let replayed = prove_have_at_current_point(

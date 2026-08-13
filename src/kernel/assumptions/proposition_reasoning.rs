@@ -1,5 +1,37 @@
 use super::*;
 
+fn canonical_contradiction_condition(condition: &ConditionTerm) -> ConditionTerm {
+    fn ordered<T: Ord + Clone>(left: &T, right: &T) -> (T, T) {
+        if left <= right {
+            (left.clone(), right.clone())
+        } else {
+            (right.clone(), left.clone())
+        }
+    }
+
+    match condition {
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            let (left, right) = ordered(left.as_ref(), right.as_ref());
+            ConditionTerm::equal(left, right)
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            let (left, right) = ordered(left.as_ref(), right.as_ref());
+            ConditionTerm::pointer_offset_equal(left, right)
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            let (left, right) = ordered(left.as_ref(), right.as_ref());
+            ConditionTerm::pointer_equal(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            ConditionTerm::signed_less_than(right.as_ref().clone(), left.as_ref().clone())
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            ConditionTerm::signed_less_equal(right.as_ref().clone(), left.as_ref().clone())
+        }
+        _ => condition.clone(),
+    }
+}
+
 /// The finite instantiation table of a constant-bounded universal goal, in
 /// deterministic range order. `None` when the binder chain has no
 /// guard-derived constant range or the table would exceed the finite
@@ -255,6 +287,14 @@ impl Assumptions {
         proposition: &Proposition,
         for_simp: bool,
     ) -> Option<(Assumptions, u64)> {
+        if self.proves_exact(proposition) {
+            let exact = Assumptions::new().assume_proposition(proposition.clone());
+            let (proved, premises_id) =
+                exact.proves_atomic_for_derivation_with_id(proposition, for_simp);
+            if proved {
+                return Some((exact, premises_id));
+            }
+        }
         let condition_goal = match proposition {
             Proposition::ConditionIs(_, _) => true,
             Proposition::Not(body) => matches!(body.as_ref(), Proposition::ConditionIs(_, _)),
@@ -266,37 +306,44 @@ impl Assumptions {
             return proved.then(|| (self.clone(), premises_id));
         }
         if condition_goal {
-            // Arithmetic and equality reasoning should emit the condition
-            // facts that actually establish the atomic result, rather than
-            // retaining unrelated memory and resource propositions from the
-            // ambient proof state. Start with the condition theory alone, then
-            // delete every premise whose absence preserves the derivation.
-            //
-            // This is cheap compared with minimizing the complete context:
-            // condition replay is bounded and structural, while proposition
-            // facts can re-enter quantified, memory, and alias reasoning.
+            // Keep the connected condition component. Order/equality
+            // reasoning can only cross a fact that shares a symbolic term
+            // with the component already reachable from the goal. Growing
+            // that component once selects a conservative proof graph without
+            // rerunning the prover once per ambient premise.
             let mut candidate = self.clone();
-            candidate.prop_facts.clear();
-            if candidate.proves_atomic_for_derivation(proposition, for_simp) {
-                let conditions = candidate
-                    .condition_facts
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                for condition in conditions {
-                    if !consume_simp_reasoning_fuel() {
-                        return None;
-                    }
-                    let Some(value) = candidate.condition_facts.remove(&condition) else {
+            candidate.clear_proposition_facts();
+            let mut connected_variables = BTreeSet::new();
+            collect_proposition_bitvector_variables(proposition, &mut connected_variables);
+            let mut selected = BTreeMap::new();
+            let mut changed = true;
+            while changed {
+                changed = false;
+                for (condition, value) in self.condition_facts.iter() {
+                    if selected.contains_key(condition) {
                         continue;
-                    };
-                    if !candidate.proves_atomic_for_derivation(proposition, for_simp) {
-                        candidate.condition_facts.insert(condition, value);
+                    }
+                    let mut variables = BTreeSet::new();
+                    collect_condition_bitvector_variables(condition, &mut variables);
+                    let exact_goal_fact = matches!(
+                        proposition,
+                        Proposition::ConditionIs(goal, expected)
+                            if goal == condition && expected == value
+                    );
+                    if exact_goal_fact
+                        || (!variables.is_empty() && !variables.is_disjoint(&connected_variables))
+                    {
+                        connected_variables.extend(variables);
+                        selected.insert(condition.clone(), *value);
+                        changed = true;
                     }
                 }
-                let (proved, premises_id) =
-                    candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
-                debug_assert!(proved);
+            }
+            candidate.condition_facts = std::sync::Arc::new(selected);
+            candidate.recompute_content_fingerprint();
+            let (proved, premises_id) =
+                candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
+            if proved {
                 return Some((candidate, premises_id));
             }
         }
@@ -329,8 +376,10 @@ impl Assumptions {
             && let Some(premises) = self.adjacent_loadable_region_facts(memory, base, bytes)
         {
             let mut candidate = self.clone();
-            candidate.prop_facts.retain(|fact| !candidate_family(fact));
-            candidate.prop_facts.extend(premises);
+            candidate.clear_proposition_facts();
+            for premise in premises {
+                candidate.insert_proposition_fact(premise);
+            }
             let (proved, premises_id) =
                 candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
             if proved {
@@ -343,8 +392,8 @@ impl Assumptions {
                     return None;
                 }
                 let mut candidate = self.clone();
-                candidate.prop_facts.retain(|fact| !candidate_family(fact));
-                candidate.prop_facts.insert(selected.clone());
+                candidate.clear_proposition_facts();
+                candidate.insert_proposition_fact(selected.clone());
                 let (proved, premises_id) =
                     candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
                 if proved {
@@ -358,9 +407,9 @@ impl Assumptions {
                             return None;
                         }
                         let mut candidate = self.clone();
-                        candidate.prop_facts.retain(|fact| !candidate_family(fact));
-                        candidate.prop_facts.insert(candidates[first].clone());
-                        candidate.prop_facts.insert(candidates[second].clone());
+                        candidate.clear_proposition_facts();
+                        candidate.insert_proposition_fact(candidates[first].clone());
+                        candidate.insert_proposition_fact(candidates[second].clone());
                         let (proved, premises_id) =
                             candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
                         if proved {
@@ -1076,14 +1125,14 @@ impl Assumptions {
         if !matches!(proposition, Proposition::Or(_, _)) {
             return None;
         }
-        for disjunction in &self.prop_facts {
+        for disjunction in self.prop_facts.iter() {
             let mut cases = Vec::new();
             collect_or_cases(disjunction, &mut cases);
             if cases.len() < 2 || cases.len() > DISJUNCTION_CASE_LIMIT {
                 continue;
             }
             let mut base = self.clone();
-            base.prop_facts.remove(disjunction);
+            base.remove_proposition_fact(disjunction);
             let Some(proofs) = cases
                 .iter()
                 .map(|case| {
@@ -1108,7 +1157,7 @@ impl Assumptions {
             return false;
         }
 
-        for disjunction in &self.prop_facts {
+        for disjunction in self.prop_facts.iter() {
             let mut cases = Vec::new();
             collect_or_cases(disjunction, &mut cases);
             if cases.len() < 2 || cases.len() > DISJUNCTION_CASE_LIMIT {
@@ -1116,7 +1165,7 @@ impl Assumptions {
             }
 
             let mut base = self.clone();
-            base.prop_facts.remove(disjunction);
+            base.remove_proposition_fact(disjunction);
             if cases.iter().all(|case| {
                 base.clone()
                     .assume_proposition(case.clone())
@@ -1234,7 +1283,7 @@ impl Assumptions {
         variable: Variable,
     ) -> Option<FiniteForAllRange> {
         let mut range = IntegerRangeFacts::default();
-        for (condition, value) in &self.condition_facts {
+        for (condition, value) in self.condition_facts.iter() {
             let Some((left, right, strict)) = condition_as_order_fact(condition, *value) else {
                 continue;
             };
@@ -1296,7 +1345,7 @@ impl Assumptions {
         condition: &ConditionTerm,
         order_facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
     ) {
-        for proposition in &self.prop_facts {
+        for proposition in self.prop_facts.iter() {
             for instance in self.forall_instantiations_for_condition(proposition, condition) {
                 self.collect_derived_order_facts_from_proposition(&instance, order_facts);
             }
@@ -2017,7 +2066,15 @@ impl Assumptions {
         let mut order_facts = Vec::new();
         let mut equal_facts = Vec::new();
         let mut disequal_facts = Vec::new();
-        for (condition, value) in &self.condition_facts {
+        let mut condition_polarities = BTreeMap::new();
+        for (condition, value) in self.condition_facts.iter() {
+            let key = canonical_contradiction_condition(condition);
+            if condition_polarities
+                .insert(key, *value)
+                .is_some_and(|prior| prior != *value)
+            {
+                return true;
+            }
             match (condition, value) {
                 (ConditionTerm::Constant(actual), expected) if actual != expected => return true,
                 (ConditionTerm::Bitvector32Equal(left, right), true) => {
@@ -2030,19 +2087,6 @@ impl Assumptions {
                     if let Some(order_fact) = condition_as_order_fact(condition, *value) {
                         order_facts.push(order_fact);
                     }
-                }
-            }
-        }
-
-        let condition_facts = self.condition_facts.iter().collect::<Vec<_>>();
-        for left_index in 0..condition_facts.len() {
-            for right_index in left_index + 1..condition_facts.len() {
-                let ((left_condition, left_value), (right_condition, right_value)) =
-                    (condition_facts[left_index], condition_facts[right_index]);
-                if left_value != right_value
-                    && self.condition_matches(left_condition, right_condition)
-                {
-                    return true;
                 }
             }
         }

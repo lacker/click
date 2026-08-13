@@ -393,7 +393,7 @@ impl Assumptions {
         let mut seen = BTreeSet::from([left.clone()]);
         let mut frontier = vec![left.clone()];
         while let Some(current) = frontier.pop() {
-            for (condition, value) in &self.condition_facts {
+            for (condition, value) in self.condition_facts.iter() {
                 if !*value {
                     continue;
                 }
@@ -614,7 +614,7 @@ impl Assumptions {
                     ));
                 }
             }
-            for (condition, value) in &self.condition_facts {
+            for (condition, value) in self.condition_facts.iter() {
                 if crate::instrumentation::deadline_exceeded() {
                     return false;
                 }

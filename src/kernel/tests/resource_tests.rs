@@ -1,5 +1,82 @@
 use super::*;
 
+fn unrelated_token_context(size: usize) -> ResourceContext {
+    ResourceContext::new().unchecked_with_facts(
+        (0..size).map(|index| {
+            CResourceFact::own_token(format!("token_{index}"), vec![int32(index as u32)])
+        }),
+    )
+}
+
+#[test]
+fn exact_resource_lookup_is_indexed_after_context_construction() {
+    let required = CResourceFact::own_token("target".to_string(), vec![int32(0)]);
+    for size in [16, 32, 64, 128] {
+        let context = unrelated_token_context(size).unchecked_with_fact(required.clone());
+        assert!(context.satisfies_fact(&required, &Assumptions::new()));
+        let (satisfied, work) = crate::instrumentation::measure_deterministic_work(|| {
+            context.satisfies_fact(&required, &Assumptions::new())
+        });
+        assert!(satisfied);
+        assert_eq!(
+            work, 0,
+            "indexed exact lookup scanned a size-{size} context"
+        );
+    }
+}
+
+#[test]
+fn unrelated_resource_normalization_has_linear_deterministic_work() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let context = unrelated_token_context(size);
+            let (normalized, work) = crate::instrumentation::measure_deterministic_work(|| {
+                context.normalized(&Assumptions::new())
+            });
+            assert_eq!(normalized.facts().len(), size);
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "resource normalization is superlinear: {samples:?}"
+        );
+    }
+}
+
+#[test]
+fn adjacent_memory_normalization_has_linearithmic_deterministic_work() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let base = Pointer {
+                block: "p".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let context = ResourceContext::new().unchecked_with_facts((0..size).map(|index| {
+                CResourceFact::own_memory(memory_range(
+                    base.clone(),
+                    index as u32,
+                    index as u32 + 1,
+                ))
+            }));
+            let (normalized, work) = crate::instrumentation::measure_deterministic_work(|| {
+                context.normalized(&Assumptions::new())
+            });
+            assert_eq!(normalized.facts().len(), 1);
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "adjacent resource normalization is superlinear: {samples:?}"
+        );
+    }
+}
+
 #[test]
 fn resource_family_cores_are_view_facts() {
     let base = Pointer {

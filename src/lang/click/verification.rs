@@ -33,9 +33,12 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
                         collect_applied_theorems(tactics, names);
                     }
                 }
-                for proof in [clause.initialize_proof.as_ref(), clause.preserve_proof.as_ref()]
-                    .into_iter()
-                    .flatten()
+                for proof in [
+                    clause.initialize_proof.as_ref(),
+                    clause.preserve_proof.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
                 {
                     if let Proof::Script(tactics) = proof {
                         collect_applied_theorems(tactics, names);
@@ -53,10 +56,7 @@ fn collect_applied_theorems_from_proof(proof: &Proof, names: &mut BTreeSet<Strin
     }
 }
 
-fn collect_function_theorem_dependencies(
-    function: &FunctionBlock,
-    names: &mut BTreeSet<String>,
-) {
+fn collect_function_theorem_dependencies(function: &FunctionBlock, names: &mut BTreeSet<String>) {
     if let Some(proof) = function.grouped_proof() {
         collect_applied_theorems_from_proof(proof, names);
     }
@@ -70,9 +70,12 @@ fn collect_function_theorem_dependencies(
         for item in &clause.items {
             collect_applied_theorems_from_proof(&item.proof, names);
         }
-        for proof in [clause.initialize_proof.as_ref(), clause.preserve_proof.as_ref()]
-            .into_iter()
-            .flatten()
+        for proof in [
+            clause.initialize_proof.as_ref(),
+            clause.preserve_proof.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
         {
             collect_applied_theorems_from_proof(proof, names);
         }
@@ -666,12 +669,12 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
         // discharge obligations the surface proof established by `apply`.
         let mut theorem_certification_facts = BTreeMap::<String, Vec<Proposition>>::new();
         for theorem in verified_theorems.iter().filter(|theorem| {
-                theorem
-                    .theorem_definition
-                    .parameters()
-                    .iter()
-                    .all(|parameter| matches!(parameter.c_type(), C0Type::Int32))
-            }) {
+            theorem
+                .theorem_definition
+                .parameters()
+                .iter()
+                .all(|parameter| matches!(parameter.c_type(), C0Type::Int32))
+        }) {
             let implication = theorem.requires.iter().rev().fold(
                 theorem.conclusion.clone(),
                 |body, requirement| {

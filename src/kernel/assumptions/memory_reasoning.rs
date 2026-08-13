@@ -997,7 +997,7 @@ impl Assumptions {
             if self.resource_contains_builtin(&current, child) {
                 return true;
             }
-            for proposition in &self.prop_facts {
+            for proposition in self.prop_facts.iter() {
                 let Proposition::CResourceContains {
                     parent: fact_parent,
                     child: fact_child,
@@ -1165,7 +1165,7 @@ impl Assumptions {
             if endpoint_matches(&term, right) {
                 return true;
             }
-            for (condition, value) in &self.condition_facts {
+            for (condition, value) in self.condition_facts.iter() {
                 if !*value {
                     continue;
                 }
@@ -1201,7 +1201,7 @@ impl Assumptions {
         other: &CMemoryRange,
     ) -> bool {
         let mut intervals = Vec::new();
-        for proposition in &self.prop_facts {
+        for proposition in self.prop_facts.iter() {
             let Proposition::CResourceSeparate { left, right } = proposition else {
                 continue;
             };
@@ -1239,7 +1239,7 @@ impl Assumptions {
         other: &CMemoryRange,
     ) -> bool {
         let mut intervals = Vec::new();
-        for proposition in &self.prop_facts {
+        for proposition in self.prop_facts.iter() {
             let Proposition::CMemoryDisjoint {
                 left_base,
                 left_start,

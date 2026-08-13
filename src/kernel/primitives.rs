@@ -534,8 +534,7 @@ pub struct CFunctionSpecification {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CExecutionEnvironment {
     pub(super) functions: std::sync::Arc<BTreeMap<String, CFunction>>,
-    pub(super) verified_function_rules:
-        std::sync::Arc<BTreeMap<String, CVerifiedFunctionRule>>,
+    pub(super) verified_function_rules: std::sync::Arc<BTreeMap<String, CVerifiedFunctionRule>>,
     pub(super) verified_function_termination_rules:
         std::sync::Arc<BTreeMap<String, CVerifiedFunctionTerminationRule>>,
     pub(super) verified_loop_rules: std::sync::Arc<Vec<CVerifiedLoopRule>>,
@@ -1178,9 +1177,47 @@ pub struct CCountedPopulation {
     pub(super) family_observation_marker: bool,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Default)]
 pub struct ResourceContext {
     pub(super) facts: std::sync::Arc<Vec<CResourceFact>>,
+    pub(super) index: std::sync::Arc<std::sync::OnceLock<ResourceContextIndex>>,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct ResourceContextIndex {
+    pub(super) exact: BTreeMap<CResourceFact, Vec<usize>>,
+    pub(super) by_family: BTreeMap<ResourceFamily, Vec<usize>>,
+    pub(super) by_resource: BTreeMap<CResource, Vec<usize>>,
+    pub(super) exact_shapes: BTreeMap<(ResourceFamily, String, usize), Vec<usize>>,
+    pub(super) memory_by_block: BTreeMap<PointerBlock, Vec<usize>>,
+    pub(super) memory_starts: BTreeMap<(PointerBlock, bool, Bitvector32Term), Vec<usize>>,
+    pub(super) memory_ends: BTreeMap<(PointerBlock, bool, Bitvector32Term), Vec<usize>>,
+}
+
+impl PartialEq for ResourceContext {
+    fn eq(&self, other: &Self) -> bool {
+        self.facts == other.facts
+    }
+}
+
+impl Eq for ResourceContext {}
+
+impl std::hash::Hash for ResourceContext {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.facts.hash(state);
+    }
+}
+
+impl Ord for ResourceContext {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.facts.cmp(&other.facts)
+    }
+}
+
+impl PartialOrd for ResourceContext {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1521,15 +1558,38 @@ pub(super) enum PropositionDerivationRule {
     },
 }
 
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct Assumptions {
-    pub(super) condition_facts: BTreeMap<ConditionTerm, bool>,
-    pub(super) prop_facts: BTreeSet<Proposition>,
+    pub(super) condition_facts: std::sync::Arc<BTreeMap<ConditionTerm, bool>>,
+    pub(super) prop_facts: std::sync::Arc<BTreeSet<Proposition>>,
+    pub(super) content_fingerprint: u64,
     pub(super) defer_non_exact_loadability_obligations: bool,
     pub(super) defer_non_exact_condition_reasoning: bool,
     pub(super) prefer_symbolic_external_loads: bool,
     pub(super) force_symbolic_external_loads: bool,
     pub(super) allow_symbolic_contract_loads: bool,
+}
+
+impl PartialEq for Assumptions {
+    fn eq(&self, other: &Self) -> bool {
+        self.content_fingerprint == other.content_fingerprint
+            && self.condition_facts == other.condition_facts
+            && self.prop_facts == other.prop_facts
+            && self.defer_non_exact_loadability_obligations
+                == other.defer_non_exact_loadability_obligations
+            && self.defer_non_exact_condition_reasoning == other.defer_non_exact_condition_reasoning
+            && self.prefer_symbolic_external_loads == other.prefer_symbolic_external_loads
+            && self.force_symbolic_external_loads == other.force_symbolic_external_loads
+            && self.allow_symbolic_contract_loads == other.allow_symbolic_contract_loads
+    }
+}
+
+impl Eq for Assumptions {}
+
+impl std::hash::Hash for Assumptions {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.content_fingerprint);
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

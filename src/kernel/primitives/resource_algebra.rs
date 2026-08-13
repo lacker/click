@@ -5,13 +5,83 @@ impl ResourceContext {
         Self::default()
     }
 
+    fn facts_mut(&mut self) -> &mut Vec<CResourceFact> {
+        self.index = std::sync::Arc::new(std::sync::OnceLock::new());
+        std::sync::Arc::make_mut(&mut self.facts)
+    }
+
+    fn index(&self) -> &ResourceContextIndex {
+        self.index.get_or_init(|| {
+            let mut index = ResourceContextIndex::default();
+            for (position, fact) in self.facts.iter().enumerate() {
+                crate::instrumentation::record_deterministic_work(1);
+                index.exact.entry(fact.clone()).or_default().push(position);
+                index
+                    .by_resource
+                    .entry(fact.resource().clone())
+                    .or_default()
+                    .push(position);
+                index
+                    .by_family
+                    .entry(fact.family())
+                    .or_default()
+                    .push(position);
+                if let Some(range) = fact.memory_range() {
+                    let mode = fact.is_own();
+                    index
+                        .memory_by_block
+                        .entry(range.base().block.clone())
+                        .or_default()
+                        .push(position);
+                    index
+                        .memory_starts
+                        .entry((range.base().block.clone(), mode, range.start().clone()))
+                        .or_default()
+                        .push(position);
+                    index
+                        .memory_ends
+                        .entry((range.base().block.clone(), mode, range.end().clone()))
+                        .or_default()
+                        .push(position);
+                } else if let CResource::Composite { name, arguments }
+                | CResource::Token { name, arguments } = fact.resource()
+                {
+                    index
+                        .exact_shapes
+                        .entry((fact.family(), name.clone(), arguments.len()))
+                        .or_default()
+                        .push(position);
+                }
+            }
+            index
+        })
+    }
+
+    fn family_facts(&self, family: ResourceFamily) -> impl Iterator<Item = &CResourceFact> {
+        self.index()
+            .by_family
+            .get(&family)
+            .into_iter()
+            .flatten()
+            .map(|index| &self.facts[*index])
+    }
+
+    fn memory_block_facts(&self, block: &PointerBlock) -> impl Iterator<Item = &CResourceFact> {
+        self.index()
+            .memory_by_block
+            .get(block)
+            .into_iter()
+            .flatten()
+            .map(|index| &self.facts[*index])
+    }
+
     /// Adds a resource fact without checking validity or normalizing the
     /// context.
     ///
     /// Prefer `try_compose_with_fact` when proposition assumptions are
     /// available.
     pub fn unchecked_with_fact(mut self, fact: CResourceFact) -> Self {
-        std::sync::Arc::make_mut(&mut self.facts).push(fact);
+        self.facts_mut().push(fact);
         self
     }
 
@@ -21,7 +91,7 @@ impl ResourceContext {
     /// Prefer `try_compose_with_facts` when proposition assumptions are
     /// available.
     pub fn unchecked_with_facts(mut self, facts: impl IntoIterator<Item = CResourceFact>) -> Self {
-        std::sync::Arc::make_mut(&mut self.facts).extend(facts);
+        self.facts_mut().extend(facts);
         self
     }
 
@@ -62,13 +132,17 @@ impl ResourceContext {
         assumptions: &Assumptions,
     ) -> Result<Self, ResourceContextValidityError> {
         let first_new = self.facts.len();
-        std::sync::Arc::make_mut(&mut self.facts).extend(facts);
+        self.facts_mut().extend(facts);
         for right_index in first_new..self.facts.len() {
             let right = &self.facts[right_index];
-            for left in &self.facts[..right_index] {
-                if left.family() != right.family() {
-                    continue;
-                }
+            let Some(right_range) = right.memory_own_range() else {
+                continue;
+            };
+            for left in self
+                .memory_block_facts(&right_range.base().block)
+                .take_while(|left| !std::ptr::eq(*left, right))
+            {
+                crate::instrumentation::record_deterministic_work(1);
                 if let Some(error) = resource_family_algebra(left.family()).pair_validity_error(
                     left,
                     right,
@@ -89,18 +163,25 @@ impl ResourceContext {
         &self,
         assumptions: &Assumptions,
     ) -> Option<ResourceContextValidityError> {
-        for i in 0..self.facts.len() {
-            for right in &self.facts[i + 1..] {
-                let left = &self.facts[i];
-                if left.family() != right.family() {
+        for positions in self.index().memory_by_block.values() {
+            for (offset, left_index) in positions.iter().enumerate() {
+                let left = &self.facts[*left_index];
+                if left.memory_own_range().is_none() {
                     continue;
                 }
-                if let Some(error) = resource_family_algebra(left.family()).pair_validity_error(
-                    left,
-                    right,
-                    assumptions,
-                ) {
-                    return Some(error);
+                for right_index in &positions[offset + 1..] {
+                    crate::instrumentation::record_deterministic_work(1);
+                    let right = &self.facts[*right_index];
+                    if right.memory_own_range().is_none() {
+                        continue;
+                    }
+                    if let Some(error) = resource_family_algebra(left.family()).pair_validity_error(
+                        left,
+                        right,
+                        assumptions,
+                    ) {
+                        return Some(error);
+                    }
                 }
             }
         }
@@ -164,12 +245,11 @@ impl ResourceContext {
     }
 
     pub fn satisfies_fact(&self, fact: &CResourceFact, assumptions: &Assumptions) -> bool {
-        if self.facts.contains(fact) {
+        if self.index().exact.contains_key(fact) {
             return true;
         }
         if self
-            .facts
-            .iter()
+            .family_facts(fact.family())
             .any(|available| resource_fact_entails(available, fact, assumptions))
         {
             return true;
@@ -189,8 +269,7 @@ impl ResourceContext {
         // query.
         if fact.is_own()
             && !self
-                .facts
-                .iter()
+                .family_facts(fact.family())
                 .any(|available| available.is_own() && available.family() == fact.family())
         {
             return false;
@@ -216,7 +295,7 @@ impl ResourceContext {
         if self.permits_memory_read_structurally(pointer, byte_width, assumptions) {
             return true;
         }
-        self.facts.iter().any(|resource| {
+        self.memory_block_facts(&pointer.block).any(|resource| {
             memory_resource_fact_permits_read(resource, pointer, byte_width, assumptions)
         })
     }
@@ -227,7 +306,7 @@ impl ResourceContext {
         byte_width: u32,
         assumptions: &Assumptions,
     ) -> bool {
-        for resource in self.facts.iter() {
+        for resource in self.memory_block_facts(&pointer.block) {
             let Some(range) = resource_fact_read_core_range(resource) else {
                 continue;
             };
@@ -246,7 +325,7 @@ impl ResourceContext {
         byte_width: u32,
         assumptions: &Assumptions,
     ) -> Option<&CMemoryRange> {
-        for resource in self.facts.iter() {
+        for resource in self.memory_block_facts(&pointer.block) {
             let CResourceFact::Own(CResource::Memory(range), _) = resource else {
                 continue;
             };
@@ -278,8 +357,8 @@ impl ResourceContext {
     }
 
     pub(crate) fn without_exact_representation(mut self, fact: &CResourceFact) -> Option<Self> {
-        let index = self.facts.iter().position(|available| available == fact)?;
-        std::sync::Arc::make_mut(&mut self.facts).remove(index);
+        let index = *self.index().exact.get(fact)?.first()?;
+        self.facts_mut().remove(index);
         Some(self)
     }
 
@@ -306,17 +385,42 @@ impl ResourceContext {
         assumptions: &Assumptions,
     ) -> bool {
         let algebra = resource_family_algebra(fact.family());
-        for index in 0..self.facts.len() {
-            let available = &self.facts[index];
-            if available.family() != fact.family() {
-                continue;
+        let mut candidates = self
+            .index()
+            .exact
+            .get(fact)
+            .into_iter()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        let exact_candidates = candidates.iter().copied().collect::<BTreeSet<_>>();
+        if let Some(family) = self.index().by_family.get(&fact.family()) {
+            candidates.extend(
+                family
+                    .iter()
+                    .copied()
+                    .filter(|index| !exact_candidates.contains(index)),
+            );
+        }
+        for index in candidates {
+            // Exact representation is the common path and needs no algebraic
+            // decomposition. In particular, splitting an exactly matching
+            // symbolic memory range can require arithmetic facts that are
+            // irrelevant to consuming the range itself.
+            if self.facts[index] == *fact {
+                if fact.is_view() {
+                    return true;
+                }
+                self.facts_mut().remove(index);
+                return true;
             }
+            let available = &self.facts[index];
             let Some(consumption) = algebra.consume(available, fact, assumptions) else {
                 continue;
             };
             if let ResourceFactConsumption::Replace(residual) = consumption {
-                std::sync::Arc::make_mut(&mut self.facts).remove(index);
-                std::sync::Arc::make_mut(&mut self.facts).extend(residual);
+                self.facts_mut().remove(index);
+                self.facts_mut().extend(residual);
             }
             return true;
         }
@@ -324,28 +428,127 @@ impl ResourceContext {
     }
 
     pub(in crate::kernel) fn normalized(mut self, assumptions: &Assumptions) -> Self {
+        let mut slots = self.facts.iter().cloned().map(Some).collect::<Vec<_>>();
+        let mut index = ResourceNormalizationIndex::default();
+        for (position, fact) in self.facts.iter().enumerate() {
+            index.insert(position, fact);
+        }
         let mut i = 0;
-        while i < self.facts.len() {
+        while i < slots.len() {
+            let Some(fact) = slots[i].clone() else {
+                i += 1;
+                continue;
+            };
             let mut changed = false;
-            let mut j = i + 1;
-            while j < self.facts.len() {
-                if let Some(merged) =
-                    normalize_resource_fact_pair(&self.facts[i], &self.facts[j], assumptions)
-                {
-                    std::sync::Arc::make_mut(&mut self.facts)[i] = merged;
-                    std::sync::Arc::make_mut(&mut self.facts).remove(j);
+            for j in index.candidates_after(i, &fact) {
+                crate::instrumentation::record_deterministic_work(1);
+                let Some(right) = slots[j].as_ref() else {
+                    continue;
+                };
+                if let Some(merged) = normalize_resource_fact_pair(&fact, right, assumptions) {
+                    index.remove(i, &fact);
+                    index.remove(j, right);
+                    slots[j] = None;
+                    slots[i] = Some(merged.clone());
+                    index.insert(i, &merged);
                     changed = true;
                     break;
                 }
-                j += 1;
             }
-            if changed {
-                i = 0;
-            } else {
+            if !changed {
                 i += 1;
             }
         }
+        self.facts = std::sync::Arc::new(slots.into_iter().flatten().collect());
+        self.index = std::sync::Arc::new(std::sync::OnceLock::new());
         self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum ResourceNormalizationKey {
+    Resource(CResource),
+    ExactShape(ResourceFamily, String, usize),
+    MemoryStart(PointerBlock, bool, Bitvector32Term),
+    MemoryEnd(PointerBlock, bool, Bitvector32Term),
+}
+
+#[derive(Default)]
+struct ResourceNormalizationIndex {
+    positions: BTreeMap<ResourceNormalizationKey, BTreeSet<usize>>,
+}
+
+impl ResourceNormalizationIndex {
+    fn keys(fact: &CResourceFact) -> Vec<ResourceNormalizationKey> {
+        let mut keys = vec![ResourceNormalizationKey::Resource(fact.resource().clone())];
+        match fact.resource() {
+            CResource::Memory(range) => {
+                keys.push(ResourceNormalizationKey::MemoryStart(
+                    range.base().block.clone(),
+                    fact.is_own(),
+                    range.start().clone(),
+                ));
+                keys.push(ResourceNormalizationKey::MemoryEnd(
+                    range.base().block.clone(),
+                    fact.is_own(),
+                    range.end().clone(),
+                ));
+            }
+            CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
+                keys.push(ResourceNormalizationKey::ExactShape(
+                    fact.family(),
+                    name.clone(),
+                    arguments.len(),
+                ));
+            }
+        }
+        keys
+    }
+
+    fn insert(&mut self, position: usize, fact: &CResourceFact) {
+        for key in Self::keys(fact) {
+            self.positions.entry(key).or_default().insert(position);
+        }
+    }
+
+    fn remove(&mut self, position: usize, fact: &CResourceFact) {
+        for key in Self::keys(fact) {
+            if let Some(positions) = self.positions.get_mut(&key) {
+                positions.remove(&position);
+            }
+        }
+    }
+
+    fn candidates_after(&self, position: usize, fact: &CResourceFact) -> Vec<usize> {
+        let mut keys = vec![ResourceNormalizationKey::Resource(fact.resource().clone())];
+        match fact.resource() {
+            CResource::Memory(range) => {
+                keys.push(ResourceNormalizationKey::MemoryEnd(
+                    range.base().block.clone(),
+                    fact.is_own(),
+                    range.start().clone(),
+                ));
+                keys.push(ResourceNormalizationKey::MemoryStart(
+                    range.base().block.clone(),
+                    fact.is_own(),
+                    range.end().clone(),
+                ));
+            }
+            CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
+                keys.push(ResourceNormalizationKey::ExactShape(
+                    fact.family(),
+                    name.clone(),
+                    arguments.len(),
+                ));
+            }
+        }
+        let mut candidates = BTreeSet::new();
+        for key in keys {
+            if let Some(positions) = self.positions.get(&key) {
+                candidates.extend(positions.range((position + 1)..).copied());
+            }
+        }
+        candidates.into_iter().collect()
     }
 }
 

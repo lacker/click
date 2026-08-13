@@ -262,7 +262,7 @@ impl Assumptions {
 
         let mut lower = i64::from(i32::MIN);
         let mut upper = i64::from(i32::MAX);
-        for (condition, value) in &self.condition_facts {
+        for (condition, value) in self.condition_facts.iter() {
             let Some((fact_left, fact_right, strict)) = condition_as_order_fact(condition, *value)
             else {
                 continue;

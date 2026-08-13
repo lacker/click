@@ -426,10 +426,8 @@ fn canonical_tactic_printer_round_trips_cases_certificate() {
         operator: ComparisonOperator::LessThan,
         right: ContractExpression::CFragment(CExpression::Value(int32(0))),
     };
-    let disjunction = ClickProposition::Or(
-        Box::new(nonnegative.clone()),
-        Box::new(negative.clone()),
-    );
+    let disjunction =
+        ClickProposition::Or(Box::new(nonnegative.clone()), Box::new(negative.clone()));
     let tactics = vec![
         ProofTactic::Have(ProofHave {
             proposition: disjunction.clone(),

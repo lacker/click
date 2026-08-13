@@ -101,7 +101,10 @@ fn simple_unrelated_functions_have_a_deterministic_scaling_control() {
                 verify_c0_sources(&click_source, &source_refs)
             });
             let verified = verified.unwrap_or_else(|error| {
-                panic!("size {size} simple scaling fixture failed: {}", error.message())
+                panic!(
+                    "size {size} simple scaling fixture failed: {}",
+                    error.message()
+                )
             });
             assert_eq!(verified.len(), size);
             ScalingSample { size, work }
@@ -126,7 +129,10 @@ fn targeted_simple_verification_does_not_verify_unrelated_theorems() {
                 )
             });
             let verified = verified.unwrap_or_else(|error| {
-                panic!("size {size} targeted scaling fixture failed: {}", error.message())
+                panic!(
+                    "size {size} targeted scaling fixture failed: {}",
+                    error.message()
+                )
             });
             assert_eq!(verified.len(), 1);
             ScalingSample { size, work }

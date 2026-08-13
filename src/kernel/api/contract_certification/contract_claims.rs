@@ -1217,14 +1217,13 @@ pub(in crate::kernel) fn c_effect_memory_advances_over_internal_heap_state(
         return false;
     }
     let mut stripped = after.clone();
-    std::sync::Arc::make_mut(&mut stripped.blocks)
-        .retain(|block, _| !fresh_blocks.contains(block));
+    std::sync::Arc::make_mut(&mut stripped.blocks).retain(|block, _| !fresh_blocks.contains(block));
     std::sync::Arc::make_mut(&mut stripped.cells)
         .retain(|pointer, _| !fresh_blocks.contains(&pointer.block));
     std::sync::Arc::make_mut(&mut stripped.heap)
         .live_allocations
         .retain(|pointer, _| {
-        !fresh_blocks.contains(&pointer.block) && !added_allocation_claims.contains(pointer)
+            !fresh_blocks.contains(&pointer.block) && !added_allocation_claims.contains(pointer)
         });
     std::sync::Arc::make_mut(&mut stripped.heap)
         .retired_allocations

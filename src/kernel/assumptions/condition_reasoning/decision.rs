@@ -277,7 +277,7 @@ impl Assumptions {
             if let Some(value) = current.as_const() {
                 return Some(value);
             }
-            for (condition, value) in &self.condition_facts {
+            for (condition, value) in self.condition_facts.iter() {
                 let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value)
                 else {
                     continue;
@@ -347,7 +347,7 @@ impl Assumptions {
             if equality_graph_terms_match(&term, right) {
                 return true;
             }
-            for (condition, value) in &self.condition_facts {
+            for (condition, value) in self.condition_facts.iter() {
                 if !*value {
                     continue;
                 }
@@ -596,7 +596,7 @@ impl Assumptions {
         };
 
         let mut range = IntegerRangeFacts::default();
-        for (condition, value) in &self.condition_facts {
+        for (condition, value) in self.condition_facts.iter() {
             let Some((fact_left, fact_right, strict)) = condition_as_order_fact(condition, *value)
             else {
                 continue;
@@ -634,7 +634,7 @@ impl Assumptions {
             return Some(value);
         }
 
-        for (condition, value) in &self.condition_facts {
+        for (condition, value) in self.condition_facts.iter() {
             let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value) else {
                 continue;
             };
@@ -844,7 +844,7 @@ impl Assumptions {
             }
             _ => true,
         };
-        for (condition, value) in &self.condition_facts {
+        for (condition, value) in self.condition_facts.iter() {
             let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value) else {
                 continue;
             };

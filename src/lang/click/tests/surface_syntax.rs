@@ -281,11 +281,9 @@ fn pure_simp_after_unfold_exposes_an_explicit_certificate() {
     let tactics = verified[0]
         .proof_tactics()
         .expect("unfolded simp should commit a surface certificate");
-    assert!(
-        tactics
-            .iter()
-            .any(|tactic| matches!(tactic, ProofTactic::UnfoldPredicate(name) if name == "equality_chain"))
-    );
+    assert!(tactics.iter().any(
+        |tactic| matches!(tactic, ProofTactic::UnfoldPredicate(name) if name == "equality_chain")
+    ));
     assert!(
         tactics
             .iter()
@@ -637,7 +635,6 @@ fn proof_source_printing_preserves_proposition_precedence() {
     let proof_source =
         format!("int32 example(int32 x) {{ ensures result == x; }} by {{\n{source}\n}}");
     parser::parse(&proof_source).expect("printed quantified proof source should parse");
-
 }
 
 #[test]

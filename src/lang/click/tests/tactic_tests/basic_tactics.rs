@@ -458,7 +458,11 @@ fn rejects_redundant_exact_premise_spellings_with_migrations() {
         }
     "#;
     let error = parse(old_derive).expect_err("removed derive tactic should be rejected");
-    assert!(error.message().contains("unknown tactic `derive`"), "{}", error.message());
+    assert!(
+        error.message().contains("unknown tactic `derive`"),
+        "{}",
+        error.message()
+    );
 
     let old_fact_prefix = r#"
         theorem legacy(x: int32) {

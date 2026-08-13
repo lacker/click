@@ -793,8 +793,7 @@ fn loop_semantics_explicitly_select_verification_or_verified_rules() {
     let base_environment = CExecutionEnvironment::new();
     let cloned_environment = base_environment.clone();
     assert!(base_environment.shares_all_storage_with(&cloned_environment));
-    let loop_environment =
-        cloned_environment.with_verified_loop_rules([ignored_rule]);
+    let loop_environment = cloned_environment.with_verified_loop_rules([ignored_rule]);
     assert!(base_environment.shares_project_storage_with(&loop_environment));
     let verified_directly = prove_symbolic_c_statement_verification_paths_with_environment(
         state.clone(),

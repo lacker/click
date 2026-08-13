@@ -82,10 +82,7 @@ fn resolution_query_memo_id(assumptions: &Assumptions) -> Option<(u64, bool)> {
 /// cached per memory-DAG derivation generation (new faithful edges can turn
 /// it true) and never when the search was truncated by ambient fuel or depth
 /// guards, exactly like the `decide` memo.
-fn memoized_resolution_query(
-    key: Option<ResolutionQueryKey>,
-    run: impl FnOnce() -> bool,
-) -> bool {
+fn memoized_resolution_query(key: Option<ResolutionQueryKey>, run: impl FnOnce() -> bool) -> bool {
     let Some(key) = key else {
         return run();
     };

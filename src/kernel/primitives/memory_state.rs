@@ -218,7 +218,8 @@ impl CMemory {
         }
         let Some(bytes) = std::sync::Arc::make_mut(&mut self.heap)
             .live_allocations
-            .remove(pointer) else {
+            .remove(pointer)
+        else {
             return Err(
                 if self
                     .heap
@@ -239,7 +240,9 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut self.heap)
             .retired_allocations
             .insert(pointer.clone(), bytes.clone());
-        std::sync::Arc::make_mut(&mut self.heap).uninitialized_allocations.remove(pointer);
+        std::sync::Arc::make_mut(&mut self.heap)
+            .uninitialized_allocations
+            .remove(pointer);
         std::sync::Arc::make_mut(&mut self.cells)
             .retain(|cell, _| !heap_allocation_may_contain_pointer(pointer, cell));
         if let Some(base) = base {
@@ -300,7 +303,9 @@ impl CMemory {
             Some(existing) if existing != &bytes => None,
             Some(_) => Some(self),
             None => {
-                std::sync::Arc::make_mut(&mut self.heap).live_allocations.insert(base, bytes);
+                std::sync::Arc::make_mut(&mut self.heap)
+                    .live_allocations
+                    .insert(base, bytes);
                 Some(self)
             }
         }
@@ -652,11 +657,14 @@ impl CState {
         count: Bitvector32Term,
     ) -> Self {
         let name = name.into();
-        if let Some(population) = std::sync::Arc::make_mut(&mut self.counted_populations).iter_mut().find(|population| {
-            !population.family_observation_marker
-                && population.name == name
-                && population.arguments == arguments
-        }) {
+        if let Some(population) = std::sync::Arc::make_mut(&mut self.counted_populations)
+            .iter_mut()
+            .find(|population| {
+                !population.family_observation_marker
+                    && population.name == name
+                    && population.arguments == arguments
+            })
+        {
             population.count = count;
         } else {
             std::sync::Arc::make_mut(&mut self.counted_populations).push(CCountedPopulation {

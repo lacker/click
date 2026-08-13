@@ -1506,3 +1506,19 @@ fn decision_memo_distinguishes_equal_shaped_fact_sets_by_content() {
         assert_eq!(assumes_true.decide(&below), Some(true));
     }
 }
+
+#[test]
+fn assumptions_clones_share_facts_and_cache_keys_are_content_stable() {
+    let condition = ConditionTerm::signed_less_than(
+        Bitvector32Term::Variable(Variable(9)),
+        Bitvector32Term::Constant(10),
+    );
+    let first = Assumptions::new().assume_condition(condition.clone(), true);
+    let clone = first.clone();
+    let rebuilt = Assumptions::new().assume_condition(condition.clone(), true);
+    let changed = Assumptions::new().assume_condition(condition, false);
+
+    assert!(first.shares_fact_storage_with(&clone));
+    assert_eq!(first.memo_fingerprint(), rebuilt.memo_fingerprint());
+    assert_ne!(first.memo_fingerprint(), changed.memo_fingerprint());
+}

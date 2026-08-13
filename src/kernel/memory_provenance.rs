@@ -952,7 +952,7 @@ fn load_unchanged_via_effect_chain(
     // individually certified effects. The effect graph is finite, so a proof
     // must not fail merely because its certified chain is long.
     let mut steps = Vec::new();
-    for proposition in &assumptions.prop_facts {
+    for proposition in assumptions.prop_facts.iter() {
         match proposition {
             Proposition::CMemoryMutatesOnly {
                 before: step_before,
@@ -1047,7 +1047,7 @@ pub(crate) fn c_memories_connected_by_effects(
     assumptions: &Assumptions,
 ) -> bool {
     let mut steps = Vec::new();
-    for proposition in &assumptions.prop_facts {
+    for proposition in assumptions.prop_facts.iter() {
         match proposition {
             Proposition::CMemoryMutatesOnly {
                 before: step_before,

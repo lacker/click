@@ -33,7 +33,7 @@ impl Assumptions {
         }
         let mut facts = Vec::new();
         let mut complete = true;
-        for (condition, value) in &self.condition_facts {
+        for (condition, value) in self.condition_facts.iter() {
             if crate::instrumentation::deadline_exceeded() {
                 complete = false;
                 break;
@@ -61,7 +61,7 @@ impl Assumptions {
         &self,
         order_facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
     ) {
-        for proposition in &self.prop_facts {
+        for proposition in self.prop_facts.iter() {
             self.collect_derived_order_facts_from_proposition(proposition, order_facts);
         }
     }

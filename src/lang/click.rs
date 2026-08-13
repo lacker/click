@@ -429,9 +429,8 @@ impl SurfacePropositionMap {
         }
         let surface_key = format!("{surface:?}");
         let bucket = self.by_surface.entry(surface_key).or_default();
-        let lowerings = if let Some((_, lowerings)) = bucket
-            .iter_mut()
-            .find(|(recorded, _)| recorded == surface)
+        let lowerings = if let Some((_, lowerings)) =
+            bucket.iter_mut().find(|(recorded, _)| recorded == surface)
         {
             lowerings
         } else {
@@ -794,16 +793,13 @@ fn program_point_balance(
             pivot.point.clone(),
             pivot.state.clone(),
             pivot.left.clone(),
-            Some(program_point_node(
-                point,
-                state,
-                pivot.right.clone(),
-                right,
-            )),
+            Some(program_point_node(point, state, pivot.right.clone(), right)),
         );
     }
     if balance < -1 {
-        let right_root = right.as_ref().expect("right-heavy AVL node has a right child");
+        let right_root = right
+            .as_ref()
+            .expect("right-heavy AVL node has a right child");
         if program_point_height(right_root.right.as_ref())
             < program_point_height(right_root.left.as_ref())
         {
@@ -827,12 +823,7 @@ fn program_point_balance(
         return program_point_node(
             pivot.point.clone(),
             pivot.state.clone(),
-            Some(program_point_node(
-                point,
-                state,
-                left,
-                pivot.left.clone(),
-            )),
+            Some(program_point_node(point, state, left, pivot.left.clone())),
             pivot.right.clone(),
         );
     }
@@ -860,12 +851,9 @@ fn program_point_insert(
             root.left.clone(),
             Some(program_point_insert(root.right.as_ref(), point, state)),
         ),
-        std::cmp::Ordering::Equal => program_point_node(
-            point,
-            state,
-            root.left.clone(),
-            root.right.clone(),
-        ),
+        std::cmp::Ordering::Equal => {
+            program_point_node(point, state, root.left.clone(), root.right.clone())
+        }
     }
 }
 

@@ -806,7 +806,7 @@ pub(super) fn c_function_contract_certification_assumptions(
     // sized array parameters) carry loadability that is part of the calling
     // convention; assume them before lowering requirements so requirement
     // side-obligations can be certified against them.
-    for fact in &selection_assumptions.prop_facts {
+    for fact in selection_assumptions.prop_facts.iter() {
         if matches!(fact, Proposition::CMemoryLoadable { .. }) {
             assumptions = assumptions.assume_proposition(fact.clone());
         }
@@ -2001,7 +2001,7 @@ fn load_spellings_of<'a>(
     if let Bitvector32Term::MemoryLoad(memory, pointer) = term {
         loads.push((&**memory, pointer.as_ref()));
     }
-    for (condition, value) in &assumptions.condition_facts {
+    for (condition, value) in assumptions.condition_facts.iter() {
         if !*value {
             continue;
         }

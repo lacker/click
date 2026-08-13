@@ -720,12 +720,7 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches(
                 body: target_body,
             },
         ) if source_var == target_var && source_sort == target_sort => {
-            return certified_fact_transport_reaches(
-                source_body,
-                target_body,
-                after,
-                assumptions,
-            );
+            return certified_fact_transport_reaches(source_body, target_body, after, assumptions);
         }
         (
             Proposition::Implies(source_antecedent, source_consequent),
@@ -741,19 +736,21 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches(
                 &consequent_assumptions,
             );
         }
-        (Proposition::And(source_left, source_right), Proposition::And(target_left, target_right))
-        | (Proposition::Or(source_left, source_right), Proposition::Or(target_left, target_right)) => {
-            return certified_fact_transport_reaches(
-                source_left,
-                target_left,
-                after,
-                assumptions,
-            ) && certified_fact_transport_reaches(
-                source_right,
-                target_right,
-                after,
-                assumptions,
-            );
+        (
+            Proposition::And(source_left, source_right),
+            Proposition::And(target_left, target_right),
+        )
+        | (
+            Proposition::Or(source_left, source_right),
+            Proposition::Or(target_left, target_right),
+        ) => {
+            return certified_fact_transport_reaches(source_left, target_left, after, assumptions)
+                && certified_fact_transport_reaches(
+                    source_right,
+                    target_right,
+                    after,
+                    assumptions,
+                );
         }
         (Proposition::Not(source_body), Proposition::Not(target_body)) => {
             return equivalent(source_body, target_body);

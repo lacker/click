@@ -182,13 +182,10 @@ fn instantiate_theorem_application(
             theorem_application_error(claim_label, path_index, tactic_index, message)
         })?;
         lowered = normalize_direct_atomic_memory_loads(&lowered);
-        if !available
-            .iter()
-            .any(|fact| {
-                let fact = normalize_direct_atomic_memory_loads(fact);
-                fact == lowered || condition_polarity_equivalent(&fact, &lowered)
-            })
-            && !matches!(normalize_proposition(&lowered), SimpProposition::True)
+        if !available.iter().any(|fact| {
+            let fact = normalize_direct_atomic_memory_loads(fact);
+            fact == lowered || condition_polarity_equivalent(&fact, &lowered)
+        }) && !matches!(normalize_proposition(&lowered), SimpProposition::True)
         {
             return Err(theorem_application_error(
                 claim_label,

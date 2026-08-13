@@ -1000,12 +1000,14 @@ fn every_claim_proof_form_carries_a_replayable_certificate() {
     let verified = verify_c0_sources(click_source, &[("clamp.c", c_source)])
         .expect("every claim proof form should verify");
     for theorem in &verified {
-        theorem.expanded_proof_certificate().unwrap_or_else(|error| {
-            panic!(
-                "a verified claim must carry its whole-claim certificate: {}",
-                error.message()
-            )
-        });
+        theorem
+            .expanded_proof_certificate()
+            .unwrap_or_else(|error| {
+                panic!(
+                    "a verified claim must carry its whole-claim certificate: {}",
+                    error.message()
+                )
+            });
     }
 }
 
@@ -1046,7 +1048,9 @@ fn mid_execution_witness_simp_have_expands_to_a_simple_certificate() {
         panic!("the expanded have should carry an explicit script: {have:?}");
     };
     assert!(
-        !body.iter().any(|tactic| matches!(tactic, ProofTactic::Simp)),
+        !body
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::Simp)),
         "the expanded have body should replace its smart simp: {body:?}"
     );
     SimpleProof::from_proof_tactics(&expanded)
