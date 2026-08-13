@@ -84,3 +84,15 @@ passes facts with the same outer logical shape. On the unchanged sidecar the
 largest completed `have` is now 12ms. Ordinary source verification is green;
 the whole-claim call/store replay failure above remains the blocker, so this is
 still not a complete optimization profile and the project remains quarantined.
+
+The remaining hard-gate failure is now narrower than “call facts are lost.”
+`allocated_vector_push` produces three proof/execution contexts around the
+outer capacity branch and the inner `grown == 0` return branch. Claim-level
+surface synthesis retains only two builders, with path-choice depths `[2, 1]`.
+When those builders merge, the one-sided inner choice is discarded and the
+resulting whole-contract certificate contains a flat `step() using { grown ==
+0; }` instead of a checked inner branch. Fresh replay therefore has the public
+call-result disjunction but no assumption selecting the zero result, and
+correctly rejects the step. Fix certificate synthesis/claim aggregation so the
+returning inner arm and continuing sibling remain paired under their C branch;
+do not accept the missing premise contextually or special-case this local.
