@@ -22,10 +22,6 @@ const QUARANTINED: &[(&str, &str)] = &[
         "issues/binary-tree-verification-exceeds-slow-test-threshold.md: aggregate verification cost rides the 30s project deadline (25s warm CPU), so the project flakes with machine load even though every tactic is inside its deterministic work budget",
     ),
     (
-        "bounded-pool",
-        "issues/bounded-pool-outcome-conjunction-certificate-missing.md: outcome conjunction with a resource count has no explicit simple certificate",
-    ),
-    (
         "owned-string",
         "issues/owned-string-exceeds-interactive-verification-budget.md: the fully certificated project takes ~35s warm, past its 30s deadline; the truncation then reports as a ghost-region mismatch (issues/deadline-truncation-masquerades-as-ghost-region-mismatch.md)",
     ),
