@@ -26,6 +26,35 @@ fn exact_resource_lookup_is_indexed_after_context_construction() {
 }
 
 #[test]
+fn direct_resource_match_candidates_ignore_unrelated_shapes_and_blocks() {
+    let target = CResourceFact::own_token("target".to_string(), vec![int32(0)]);
+    let target_memory = CResourceFact::view_memory(memory_range(
+        Pointer {
+            block: "target-block".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        0,
+        1,
+    ));
+    let context = unrelated_token_context(128)
+        .unchecked_with_facts((0..128).map(|index| {
+            CResourceFact::view_memory(memory_range(
+                Pointer {
+                    block: format!("unrelated-{index}").into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                0,
+                1,
+            ))
+        }))
+        .unchecked_with_fact(target.clone())
+        .unchecked_with_fact(target_memory.clone());
+
+    assert_eq!(context.direct_match_candidates(&target).count(), 1);
+    assert_eq!(context.direct_match_candidates(&target_memory).count(), 1);
+}
+
+#[test]
 fn unrelated_resource_normalization_has_linear_deterministic_work() {
     let samples = [16, 32, 64, 128]
         .into_iter()

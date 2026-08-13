@@ -1341,13 +1341,11 @@ pub(in crate::kernel) fn resource_contexts_definitionally_equal_with_definitions
     let directly_equal = |left: &ResourceContext, right: &ResourceContext| {
         left.facts().iter().all(|fact| {
             right
-                .facts()
-                .iter()
+                .direct_match_candidates(fact)
                 .any(|available| facts_directly_match(available, fact))
                 || right.satisfies_fact(fact, assumptions)
         }) && right.facts().iter().all(|fact| {
-            left.facts()
-                .iter()
+            left.direct_match_candidates(fact)
                 .any(|available| facts_directly_match(available, fact))
                 || left.satisfies_fact(fact, assumptions)
         })

@@ -86,3 +86,12 @@ vector-backed prototype changed smart-search order and made
 subrange fact fixed while adding 128 loadability facts for unrelated blocks
 and requires exactly one candidate. Derivation candidate selection remains
 global until it can consume this index without changing its provenance search.
+
+Direct resource-context equality now also consults the existing memory-block
+and composite/token name-and-arity indexes before invoking proof-aware resource
+matching. The comparator and its fallback semantics are unchanged, but a fact
+is no longer compared with every unrelated fact on the opposite side. A fixed
+candidate regression adds 128 unrelated token shapes and 128 unrelated memory
+blocks and requires one candidate for each target. Same-shape symbolic pointer
+comparisons remain expensive (notably `tree_rotate_left`); indexing removes the
+ambient-resource multiplier but not that proof cost.

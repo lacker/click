@@ -86,6 +86,27 @@ impl ResourceContext {
             .map(|index| &self.facts[*index])
     }
 
+    /// Necessary-shape candidates for proof-aware direct resource matching.
+    /// Snapshot-insensitive matching cannot change a pointer block, resource
+    /// family, composite/token name, or arity, so unrelated facts need not
+    /// enter the expensive memory-resolution comparator.
+    pub(in crate::kernel) fn direct_match_candidates(
+        &self,
+        fact: &CResourceFact,
+    ) -> impl Iterator<Item = &CResourceFact> {
+        let positions = match fact.resource() {
+            CResource::Memory(range) => self.index().memory_by_block.get(&range.base().block),
+            CResource::Composite { name, arguments } | CResource::Token { name, arguments } => self
+                .index()
+                .exact_shapes
+                .get(&(fact.family(), name.clone(), arguments.len())),
+        };
+        positions
+            .into_iter()
+            .flatten()
+            .map(|index| &self.facts[*index])
+    }
+
     /// Adds a resource fact without checking validity or normalizing the
     /// context.
     ///

@@ -58,6 +58,15 @@ spends about 0.57 seconds almost entirely in verifier core, and the broad
 resource operations still show a roughly 0.42-second framed-load derivation
 walk and a roughly 0.24-second representation check.
 
+A rejected reuse prototype changed independent certification to start from a
+canonical contract resource spelling so its checked artifact matched final
+contract certification. It reduced owned-vector to about 5.65 seconds, but made
+binary-tree exceed its 30-second project deadline. Removing proof-entry branch
+facts also broke certified outcome pairing. Reuse therefore needs a kernel
+certificate relating definitionally equivalent entry resource states and a
+checked composition of complementary path frontiers; substituting the caller
+state before certification is not semantics/performance neutral.
+
 ## Regression
 
 Keep the complete project as a wall-clock integration workload. Every engine
