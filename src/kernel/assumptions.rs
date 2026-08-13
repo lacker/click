@@ -2083,7 +2083,10 @@ fn exact_less_equal_for_memory_resolution(
         })
 }
 
-fn pointer_in_memory_range_shallow(pointer: &Pointer, range: &CMemoryRange) -> bool {
+pub(in crate::kernel) fn pointer_in_memory_range_shallow(
+    pointer: &Pointer,
+    range: &CMemoryRange,
+) -> bool {
     pointer_in_range_shallow(pointer, range.base(), range.start(), range.end())
 }
 

@@ -172,6 +172,31 @@ impl ResourceContext {
         })
     }
 
+    pub(in crate::kernel) fn proves_owned_pointers_separate_shallow(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+    ) -> bool {
+        if left.block != right.block {
+            return false;
+        }
+        let Some(positions) = self.index().memory_by_block.get(&left.block) else {
+            return false;
+        };
+        let containing = |pointer: &Pointer| {
+            positions.iter().copied().find(|position| {
+                self.facts[*position]
+                    .memory_own_range()
+                    .is_some_and(|range| {
+                        crate::kernel::assumptions::pointer_in_memory_range_shallow(pointer, range)
+                    })
+            })
+        };
+        containing(left)
+            .zip(containing(right))
+            .is_some_and(|(left, right)| left != right)
+    }
+
     fn direct_match_candidate_positions(&self, fact: &CResourceFact) -> Option<&Vec<usize>> {
         match fact.resource() {
             CResource::Memory(range) => self.index().memory_by_block.get(&range.base().block),

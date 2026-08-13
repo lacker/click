@@ -593,6 +593,9 @@ impl Assumptions {
                     right_range.end(),
                 )
             })
+            || self.resource_compositions.iter().any(|resources| {
+                resources.proves_owned_pointers_separate_shallow(left, right)
+            })
     }
 
     pub(in crate::kernel) fn pointer_in_range_by_shallow_fact_graph(
@@ -663,6 +666,11 @@ impl Assumptions {
                 && pointer_in_memory_range_shallow(right, right_range)
                 || pointer_in_memory_range_shallow(right, left_range)
                     && pointer_in_memory_range_shallow(left, right_range)
+        }) {
+            return true;
+        }
+        if self.resource_compositions.iter().any(|resources| {
+            resources.proves_owned_pointers_separate_shallow(left, right)
         }) {
             return true;
         }
