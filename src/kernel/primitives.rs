@@ -1629,6 +1629,12 @@ pub struct Assumptions {
     /// without deciding them.
     pub(super) memory_load_condition_facts:
         std::sync::Arc<std::sync::OnceLock<BTreeMap<(PointerBlock, u64), BTreeSet<ConditionTerm>>>>,
+    /// True bitvector and int32-scaled pointer-offset equalities, indexed as
+    /// an undirected adjacency graph. Memory-load vertices use their
+    /// assumption-free canonical snapshot spelling. Derived lazily from
+    /// `condition_facts` and shared by unchanged clones.
+    pub(super) bitvector_equality_facts:
+        std::sync::Arc<std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeSet<Bitvector32Term>>>>,
     pub(super) prop_facts: std::sync::Arc<BTreeSet<Proposition>>,
     pub(super) memory_loadable_facts: std::sync::Arc<BTreeMap<PointerBlock, BTreeSet<Proposition>>>,
     pub(super) memory_loadable_shape_facts:

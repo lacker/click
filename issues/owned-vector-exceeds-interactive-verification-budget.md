@@ -169,6 +169,15 @@ query never enters proof-aware pointer resolution. Owned-vector is now at the
 nominal five-second target on this baseline, but not yet comfortably below it
 under host variance, so the issue remains open.
 
+The next contradiction attribution found roughly 31,000 equality-graph and
+28,000 theory-equality endpoint checks under the derived all-pairs order
+fallback. A canonical-load-aware equality adjacency index removes the repeated
+ambient condition scans, while a constructor filter keeps ordinary scalar
+terms out of irrelevant deep theories. Context inconsistency fell from about
+0.28s to 0.25s and the current warm project profile is about 4.88s. This is
+still too close to the five-second boundary to close the project issue; the
+remaining all-pairs order comparison is tracked by the derivation issue.
+
 ## Regression
 
 Keep the complete project as a wall-clock integration workload. Every engine

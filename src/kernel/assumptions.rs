@@ -4,6 +4,7 @@ use super::prelude::*;
 thread_local! {
     static CONDITION_IMPLICATION_ANTECEDENT_CHECKS: Cell<usize> = const { Cell::new(0) };
     static MEMORY_SEPARATION_CANDIDATE_CHECKS: Cell<usize> = const { Cell::new(0) };
+    static BITVECTOR_EQUALITY_INDEX_FACT_VISITS: Cell<usize> = const { Cell::new(0) };
 }
 use std::cell::{Cell, RefCell};
 
@@ -261,26 +262,16 @@ pub(super) fn resources_equal_ignoring_memories(left: &CResource, right: &CResou
     }
 }
 
-fn equality_graph_terms_match(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
-    if left == right {
-        return true;
-    }
-    let (
-        Bitvector32Term::MemoryLoad(left_memory, left_pointer),
-        Bitvector32Term::MemoryLoad(right_memory, right_pointer),
-    ) = (left, right)
-    else {
-        return false;
+fn equality_graph_term_key(term: &Bitvector32Term) -> Bitvector32Term {
+    let Bitvector32Term::MemoryLoad(memory, pointer) = term else {
+        return term.clone();
     };
-    left_pointer == right_pointer
-        && (left_memory == right_memory
-            || super::reasoning::canonical_memory_for_shared_pointer_load(
-                left_memory,
-                left_pointer,
-            ) == super::reasoning::canonical_memory_for_shared_pointer_load(
-                right_memory,
-                right_pointer,
-            ))
+    Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(super::reasoning::canonical_memory_for_shared_pointer_load(
+            memory, pointer,
+        )),
+        pointer.clone(),
+    )
 }
 
 thread_local! {
@@ -994,6 +985,16 @@ impl Proposition {
 }
 
 impl Assumptions {
+    #[cfg(test)]
+    pub(crate) fn reset_bitvector_equality_index_fact_visits() {
+        BITVECTOR_EQUALITY_INDEX_FACT_VISITS.with(|visits| visits.set(0));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bitvector_equality_index_fact_visits() -> usize {
+        BITVECTOR_EQUALITY_INDEX_FACT_VISITS.with(Cell::get)
+    }
+
     pub(in crate::kernel) fn has_same_reasoning_policy(&self, other: &Self) -> bool {
         self.defer_non_exact_loadability_obligations
             == other.defer_non_exact_loadability_obligations
@@ -1080,6 +1081,38 @@ impl Assumptions {
 
     pub(super) fn rebuild_memory_load_condition_facts(&mut self) {
         self.memory_load_condition_facts = std::sync::Arc::new(std::sync::OnceLock::new());
+        self.bitvector_equality_facts = std::sync::Arc::new(std::sync::OnceLock::new());
+    }
+
+    fn bitvector_equality_index(&self) -> &BTreeMap<Bitvector32Term, BTreeSet<Bitvector32Term>> {
+        self.bitvector_equality_facts.get_or_init(|| {
+            let mut index = BTreeMap::<Bitvector32Term, BTreeSet<Bitvector32Term>>::new();
+            for (condition, value) in self.condition_facts.iter() {
+                #[cfg(test)]
+                BITVECTOR_EQUALITY_INDEX_FACT_VISITS.with(|visits| visits.set(visits.get() + 1));
+                if !*value {
+                    continue;
+                }
+                let pair = match condition {
+                    ConditionTerm::Bitvector32Equal(left, right) => {
+                        Some((left.as_ref().clone(), right.as_ref().clone()))
+                    }
+                    ConditionTerm::PointerOffsetEqual(left, right) => {
+                        int32_element_index_from_offset(left)
+                            .zip(int32_element_index_from_offset(right))
+                    }
+                    _ => None,
+                };
+                let Some((left, right)) = pair else {
+                    continue;
+                };
+                let left = equality_graph_term_key(&left);
+                let right = equality_graph_term_key(&right);
+                index.entry(left.clone()).or_default().insert(right.clone());
+                index.entry(right).or_default().insert(left);
+            }
+            index
+        })
     }
 
     fn memory_load_condition_index(

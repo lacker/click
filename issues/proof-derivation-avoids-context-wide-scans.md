@@ -82,3 +82,14 @@ without changing the symbolic case: symbolic offsets retain the existing
 snapshot-aware canonicalizer because owned-string depends on it. A focused
 counter regression proves the constant shifted-range case performs no
 proof-aware pointer-index query.
+
+Attribution inside whole-context inconsistency found that its residual cost is
+the non-structural order-conflict fallback: an owned-vector run issued about
+31,000 equality-graph endpoint comparisons and 28,000 deeper theory-equality
+comparisons from the all-pairs loop. Equality-graph comparisons now use the
+shared adjacency index instead of rescanning the complete condition map, and
+ordinary variable/constant pairs skip theories that cannot relate their
+constructors. This reduced context-inconsistency time from about 0.28s to
+0.25s and a current project profile from about 4.96s to 4.88s. The all-pairs
+order loop and its roughly 22,000 remaining theory comparisons are still open;
+closing them requires the indexed order/equality provenance described above.

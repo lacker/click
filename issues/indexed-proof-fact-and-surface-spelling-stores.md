@@ -122,3 +122,14 @@ checks its intentional deferral exemption before attempting any ambient-fact
 scan. Non-exit replay retains snapshot bridging and materialization-equivalent
 fallbacks, so the optimization changes candidate access rather than proof
 authority.
+
+Bitvector equality facts now also have a lazy shared adjacency index. The
+index includes true scalar equalities and int32-scaled pointer-offset
+equalities, and keys top-level loads by the same assumption-free canonical
+snapshot spelling previously used by the equality graph's scan. Distinct
+endpoint queries therefore build the condition-fact index once and walk only
+their connected equality component; they no longer rescan every condition
+fact. A counter regression fixes 32 distinct connected queries while adding
+128 unrelated order facts and requires exactly one index build. The index is
+still invalidated on condition insertion, so the issue's broader persistent
+insertion requirement remains open.

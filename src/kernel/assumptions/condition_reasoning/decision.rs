@@ -353,44 +353,19 @@ impl Assumptions {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> bool {
+        let equality_index = self.bitvector_equality_index();
+        let right = equality_graph_term_key(right);
         let mut seen = BTreeSet::new();
-        let mut stack = vec![left.clone()];
+        let mut stack = vec![equality_graph_term_key(left)];
         while let Some(term) = stack.pop() {
             if !seen.insert(term.clone()) {
                 continue;
             }
-            if equality_graph_terms_match(&term, right) {
+            if term == right {
                 return true;
             }
-            for (condition, value) in self.condition_facts.iter() {
-                if !*value {
-                    continue;
-                }
-                match condition {
-                    ConditionTerm::Bitvector32Equal(fact_left, fact_right) => {
-                        if equality_graph_terms_match(fact_left, &term) {
-                            stack.push(fact_right.as_ref().clone());
-                        }
-                        if equality_graph_terms_match(fact_right, &term) {
-                            stack.push(fact_left.as_ref().clone());
-                        }
-                    }
-                    ConditionTerm::PointerOffsetEqual(fact_left, fact_right) => {
-                        let (Some(fact_left), Some(fact_right)) = (
-                            int32_element_index_from_offset(fact_left),
-                            int32_element_index_from_offset(fact_right),
-                        ) else {
-                            continue;
-                        };
-                        if equality_graph_terms_match(&fact_left, &term) {
-                            stack.push(fact_right.clone());
-                        }
-                        if equality_graph_terms_match(&fact_right, &term) {
-                            stack.push(fact_left);
-                        }
-                    }
-                    _ => {}
-                }
+            if let Some(neighbors) = equality_index.get(&term) {
+                stack.extend(neighbors.iter().cloned());
             }
         }
 

@@ -45,6 +45,34 @@ fn canonical_contradiction_condition(condition: &ConditionTerm) -> ConditionTerm
     }
 }
 
+/// Cheap necessary condition for the assumption-sensitive equalities checked
+/// by [`Assumptions::bitvector_terms_proven_equal`]. Exact equality and
+/// explicit equality-graph paths are handled separately by its caller.
+///
+/// The remaining theory rules can only relate two conditionals, two folds, an
+/// additive spelling (including a split fold), or a memory load that resolves
+/// to another spelling. Keeping ordinary variables and constants out of those
+/// recursive theories is important when contradiction checking considers
+/// order endpoints.
+fn bitvector_terms_may_be_theory_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    matches!(
+        left,
+        Bitvector32Term::MemoryLoad(_, _) | Bitvector32Term::Add(_, _)
+    ) || matches!(
+        right,
+        Bitvector32Term::MemoryLoad(_, _) | Bitvector32Term::Add(_, _)
+    ) || matches!(
+        (left, right),
+        (Bitvector32Term::If { .. }, Bitvector32Term::If { .. })
+    ) || matches!(
+        (left, right),
+        (
+            Bitvector32Term::RangeFold { .. },
+            Bitvector32Term::RangeFold { .. }
+        )
+    )
+}
+
 /// The finite instantiation table of a constant-bounded universal goal, in
 /// deterministic range order. `None` when the binder chain has no
 /// guard-derived constant range or the table would exceed the finite
@@ -2146,6 +2174,11 @@ impl Assumptions {
     fn is_inconsistent_unmemoized(&self) -> bool {
         #[cfg(test)]
         CONTEXT_INCONSISTENCY_FULL_SCANS.with(|scans| scans.set(scans.get() + 1));
+        let fact_scan_timing = crate::instrumentation::OperationTiming::new(
+            "kernel",
+            "context inconsistency",
+            "context inconsistency: fact scan and exact indexes",
+        );
         let mut order_facts = Vec::new();
         let mut equal_facts = Vec::new();
         let mut disequal_facts = Vec::new();
@@ -2194,7 +2227,13 @@ impl Assumptions {
                 }
             }
         }
+        drop(fact_scan_timing);
 
+        let exact_timing = crate::instrumentation::OperationTiming::new(
+            "kernel",
+            "context inconsistency",
+            "context inconsistency: exact conflicts",
+        );
         if exact_equal_pairs
             .iter()
             .any(|pair| exact_disequal_pairs.contains(pair))
@@ -2215,7 +2254,18 @@ impl Assumptions {
         }) {
             return true;
         }
+        drop(exact_timing);
 
+        let derived_pair_timing = crate::instrumentation::OperationTiming::new(
+            "kernel",
+            "context inconsistency",
+            "context inconsistency: derived pair conflicts",
+        );
+        let equality_conflict_timing = crate::instrumentation::OperationTiming::new(
+            "kernel",
+            "context inconsistency",
+            "context inconsistency: derived equality conflicts",
+        );
         for (equal_left, equal_right) in &equal_facts {
             crate::instrumentation::record_deterministic_work(1);
             if disequal_facts
@@ -2229,11 +2279,19 @@ impl Assumptions {
                 return true;
             }
         }
+        drop(equality_conflict_timing);
 
         let terms_equal = |left: &Bitvector32Term, right: &Bitvector32Term| {
-            self.bitvector_terms_proven_equal(left, right)
+            left == right
                 || self.bitvector_terms_equal_from_facts(left, right)
+                || bitvector_terms_may_be_theory_equal(left, right)
+                    && self.bitvector_terms_proven_equal(left, right)
         };
+        let order_conflict_timing = crate::instrumentation::OperationTiming::new(
+            "kernel",
+            "context inconsistency",
+            "context inconsistency: derived order conflicts",
+        );
         for (left, right, strict) in &order_facts {
             crate::instrumentation::record_deterministic_work(1);
             if *strict && terms_equal(left, right) {
@@ -2259,12 +2317,24 @@ impl Assumptions {
                 return true;
             }
         }
+        drop(order_conflict_timing);
+        drop(derived_pair_timing);
 
-        if finite_integer_range_exhausted(&order_facts, &equal_facts, &disequal_facts) {
+        if crate::instrumentation::measure_operation(
+            "kernel",
+            "context inconsistency",
+            "context inconsistency: finite range",
+            || finite_integer_range_exhausted(&order_facts, &equal_facts, &disequal_facts),
+        ) {
             return true;
         }
 
-        if self.alias_guard_refuted_by_separation() {
+        if crate::instrumentation::measure_operation(
+            "kernel",
+            "context inconsistency",
+            "context inconsistency: alias separation",
+            || self.alias_guard_refuted_by_separation(),
+        ) {
             return true;
         }
 

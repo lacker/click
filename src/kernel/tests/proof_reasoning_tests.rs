@@ -63,6 +63,41 @@ fn exact_contradiction_lookup_scales_near_linearly() {
 }
 
 #[test]
+fn equality_graph_queries_share_one_condition_fact_index_build() {
+    let root = Bitvector32Term::Variable(Variable(210_000));
+    let mut assumptions = Assumptions::new();
+    let mut connected = Vec::new();
+    for index in 0..32 {
+        let term = Bitvector32Term::Variable(Variable(210_001 + index));
+        assumptions =
+            assumptions.assume_condition(ConditionTerm::equal(root.clone(), term.clone()), true);
+        connected.push(term);
+    }
+    for index in 0..128 {
+        assumptions = assumptions.assume_condition(
+            ConditionTerm::signed_less_than(
+                Bitvector32Term::Variable(Variable(220_000 + index)),
+                Bitvector32Term::Constant(index as u32),
+            ),
+            true,
+        );
+    }
+    let expected_visits = assumptions.condition_facts.len();
+    let _scope = assumptions.enter_id_scope();
+    Assumptions::reset_bitvector_equality_index_fact_visits();
+
+    for term in &connected {
+        assert!(assumptions.bitvector_terms_equal_from_facts(&root, term));
+    }
+
+    assert_eq!(
+        Assumptions::bitvector_equality_index_fact_visits(),
+        expected_visits,
+        "distinct equality queries must share one index build instead of rescanning ambient facts"
+    );
+}
+
+#[test]
 fn closed_forall_cache_accepts_only_kernel_proved_facts() {
     let variable = Variable(91_000);
     let reflexive = Proposition::ForAll {
