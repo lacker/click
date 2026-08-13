@@ -1750,11 +1750,14 @@ fn replay_linear_tactics_without_frontier_loops(
                 if !surface_premises.is_empty() {
                     let all_pure_facts = requirement_pure_facts.clone();
                     let pre_state = replay.old_reference_state(&state).clone();
+                    let deferred_ordered_exit =
+                        replay.ordered_finalization && replay.is_at_function_exit();
                     for surface_premise in surface_premises {
                         let premise = if let Some(recorded) = replay
                             .surface_propositions
-                            .available_kernel(surface_premise, &all_pure_facts)
-                        {
+                            .available_kernel_matching(surface_premise, |kernel| {
+                                assumptions.contains_assumed_exact(kernel)
+                            }) {
                             recorded.clone()
                         } else {
                             lower_point_proposition(
@@ -1779,11 +1782,12 @@ fn replay_linear_tactics_without_frontier_loops(
                         replay
                             .surface_propositions
                             .record_lowering(surface_premise, &premise)?;
-                        if !(exact_fact_is_available_across_effects(
-                            &premise,
-                            &all_pure_facts,
-                            &replay.effect_facts,
-                        ) || replay.ordered_finalization && replay.is_at_function_exit())
+                        if !deferred_ordered_exit
+                            && !exact_fact_is_available_across_effects(
+                                &premise,
+                                &all_pure_facts,
+                                &replay.effect_facts,
+                            )
                             && materialization_equivalent_available_fact(&premise, &all_pure_facts)
                                 .is_none()
                         {

@@ -85,6 +85,14 @@ recursive-resource probe was measured at 9.5 seconds and is explicitly
 excluded. The remaining vector cost is about 2.16 seconds of simple replay,
 2.89 seconds of verifier core work, and 0.64 seconds of control overhead.
 
+Explicit-frame attribution now isolates its resource transition. The
+`allocated_vector_push` frame's roughly 0.4-second tail is almost entirely
+return-resource core projection, specifically proving that a post-state
+`owner->data` view matches an older snapshot spelling. Premise lowering and
+exact lookup are no longer the material cost. Exact-only core deduplication is
+not valid—it leaves stale views across frees—so this remaining tail needs a
+faster certified snapshot-equivalence path.
+
 ## Regression
 
 Keep the complete project as a wall-clock integration workload. Every engine

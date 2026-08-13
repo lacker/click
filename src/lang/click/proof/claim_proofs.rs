@@ -2785,84 +2785,99 @@ pub(super) fn finish_ordered_proof_replay(
                                 // established by a preceding `have` keeps that
                                 // current-outcome meaning instead of the spelling's
                                 // obsolete pre-`have` lowering.
-                                let indexed_requirements =
-                                    ExactReplayFactIndex::new(&path_requirements);
-                                let mut facts = Vec::with_capacity(premises.len());
-                                for premise in premises {
-                                    let fact = current_outcome_surface_propositions
-                                .available_kernel_matching(premise, |kernel| {
-                                    indexed_requirements.contains_exact(kernel)
-                                })
-                                .or_else(|| {
-                                    outcome_surface_propositions
-                                        .available_kernel_matching(premise, |kernel| {
-                                            indexed_requirements.contains_exact(kernel)
-                                        })
-                                })
-                                .cloned()
-                                .map(Ok)
-                                .unwrap_or_else(|| {
-                                    lower_outcome_proposition_with_program_points(
-                                        parsed_function.parameters(),
-                                        arguments,
-                                        pre_state,
-                                        post_state,
-                                        result,
-                                        &path_requirements,
-                                        premise,
-                                        predicate_environment,
-                                        click_function_environment,
-                                        &replay.program_point_states,
-                                    )
-                                    .or_else(|_| {
-                                        lower_outcome_proposition_with_memory_resolution(
-                                            parsed_function.parameters(),
-                                            arguments,
-                                            pre_state,
-                                            post_state,
-                                            result,
-                                            &path_requirements,
-                                            premise,
-                                            predicate_environment,
-                                            click_function_environment,
-                                            &replay.program_point_states,
-                                        )
-                                    })
-                                })
-                                .map_err(|message| {
-                                    ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: could not lower `frame using` premise `{}`: {message}",
-                                        describe_click_proposition(premise)
-                                    ))
-                                })?;
-                                    facts.push(fact);
-                                }
-                                for (premise_index, fact) in facts.iter().enumerate() {
-                                    if !indexed_requirements.contains(fact)
-                                        && !exact_fact_is_available(fact, &path_requirements)
-                                        && materialization_equivalent_available_fact(
-                                            fact,
-                                            &path_requirements,
-                                        )
-                                        .is_none()
-                                    {
-                                        return Err(ClickError::new(format!(
-                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: `frame using` requires an exact premise that has not been established: {}{}",
-                                            describe_pure_fact(
-                                                fact,
-                                                parsed_function.parameters(),
-                                                arguments,
-                                            ),
-                                            premises
-                                                .get(premise_index)
-                                                .map(|surface| format!(
-                                                    "\n  surface premise: {}",
-                                                    describe_click_proposition(surface)
-                                                ))
-                                                .unwrap_or_default(),
-                                        )));
-                                    }
-                                }
+                                let facts = crate::instrumentation::measure_operation(
+                                    function_block.signature().name(),
+                                    &proof_label,
+                                    "frame premise lowering and validation",
+                                    || -> Result<Vec<Proposition>, ClickError> {
+                                        let indexed_requirements =
+                                            ExactReplayFactIndex::new(&path_requirements);
+                                        let mut facts = Vec::with_capacity(premises.len());
+                                        for premise in premises {
+                                            let fact = current_outcome_surface_propositions
+                                                .available_kernel_matching(premise, |kernel| {
+                                                    indexed_requirements.contains_exact(kernel)
+                                                })
+                                                .or_else(|| {
+                                                    outcome_surface_propositions
+                                                        .available_kernel_matching(
+                                                            premise,
+                                                            |kernel| {
+                                                                indexed_requirements
+                                                                    .contains_exact(kernel)
+                                                            },
+                                                        )
+                                                })
+                                                .cloned()
+                                                .map(Ok)
+                                                .unwrap_or_else(|| {
+                                                    lower_outcome_proposition_with_program_points(
+                                                        parsed_function.parameters(),
+                                                        arguments,
+                                                        pre_state,
+                                                        post_state,
+                                                        result,
+                                                        &path_requirements,
+                                                        premise,
+                                                        predicate_environment,
+                                                        click_function_environment,
+                                                        &replay.program_point_states,
+                                                    )
+                                                    .or_else(|_| {
+                                                        lower_outcome_proposition_with_memory_resolution(
+                                                            parsed_function.parameters(),
+                                                            arguments,
+                                                            pre_state,
+                                                            post_state,
+                                                            result,
+                                                            &path_requirements,
+                                                            premise,
+                                                            predicate_environment,
+                                                            click_function_environment,
+                                                            &replay.program_point_states,
+                                                        )
+                                                    })
+                                                })
+                                                .map_err(|message| {
+                                                    ClickError::new(format!(
+                                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: could not lower `frame using` premise `{}`: {message}",
+                                                        describe_click_proposition(premise)
+                                                    ))
+                                                })?;
+                                            facts.push(fact);
+                                        }
+                                        for (premise_index, fact) in facts.iter().enumerate() {
+                                            if !indexed_requirements.contains(fact)
+                                                && !exact_fact_is_available(
+                                                    fact,
+                                                    &path_requirements,
+                                                )
+                                                && materialization_equivalent_available_fact(
+                                                    fact,
+                                                    &path_requirements,
+                                                )
+                                                .is_none()
+                                            {
+                                                return Err(ClickError::new(format!(
+                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: `frame using` requires an exact premise that has not been established: {}{}",
+                                                    describe_pure_fact(
+                                                        fact,
+                                                        parsed_function.parameters(),
+                                                        arguments,
+                                                    ),
+                                                    premises
+                                                        .get(premise_index)
+                                                        .map(|surface| format!(
+                                                            "\n  surface premise: {}",
+                                                            describe_click_proposition(surface)
+                                                        ))
+                                                        .unwrap_or_default(),
+                                                )));
+                                            }
+                                        }
+                                        Ok(facts)
+                                    },
+                                )?;
                                 let mut closed_effect = false;
                                 for (claim_index, claim) in claims.iter().enumerate() {
                                     if !matches!(claim, FunctionClaimRef::Effect(_, _)) {
@@ -2872,30 +2887,44 @@ pub(super) fn finish_ordered_proof_replay(
                                         function_block.signature().name(),
                                         claim,
                                     );
-                                    check_effect_claim_exact(
-                                        &claim_label,
-                                        path_index,
-                                        &path.execution_facts(),
-                                        &facts,
-                                        claim,
-                                        parsed_function.parameters(),
-                                        arguments,
-                                        pre_state,
-                                        &outcome,
+                                    crate::instrumentation::measure_operation(
+                                        function_block.signature().name(),
+                                        &proof_label,
+                                        "frame exact effect check",
+                                        || {
+                                            check_effect_claim_exact(
+                                                &claim_label,
+                                                path_index,
+                                                &path.execution_facts(),
+                                                &facts,
+                                                claim,
+                                                parsed_function.parameters(),
+                                                arguments,
+                                                pre_state,
+                                                &outcome,
+                                            )
+                                        },
                                     )?;
                                     closures[claim_index] = ClaimClosure::by_exact_check();
                                     closed_effect = true;
                                 }
                                 if closed_effect {
-                                    apply_checked_contract_resource_transition(
-                                        &mut outcome,
-                                        pre_state,
-                                        function,
-                                        arguments,
-                                        &path_requirements,
-                                        &path.execution_facts(),
+                                    crate::instrumentation::measure_operation(
+                                        function_block.signature().name(),
                                         &proof_label,
-                                        path_index,
+                                        "frame resource transition",
+                                        || {
+                                            apply_checked_contract_resource_transition(
+                                                &mut outcome,
+                                                pre_state,
+                                                function,
+                                                arguments,
+                                                &path_requirements,
+                                                &path.execution_facts(),
+                                                &proof_label,
+                                                path_index,
+                                            )
+                                        },
                                     )?;
                                 }
                                 record_post_execution_surface_tactic(

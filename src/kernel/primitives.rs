@@ -1039,9 +1039,28 @@ static NEXT_MEMORY_ARENA_TOKEN: std::sync::atomic::AtomicU32 = std::sync::atomic
 #[derive(Default)]
 struct CMemoryArena {
     identities: std::collections::HashMap<std::sync::Arc<CMemory>, (u32, u64)>,
+    shallow_identities: std::collections::HashMap<CMemoryShallowIdentity, (u32, u64)>,
+    memories: Vec<std::sync::Arc<CMemory>>,
     /// Indexed by arena id; `None` for entry states and for any snapshot
     /// whose first interning did not come from a recorded edge.
     derivations: Vec<Option<std::sync::Arc<CMemoryDerivation>>>,
+}
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+struct CMemoryShallowIdentity {
+    blocks: usize,
+    cells: usize,
+    heap: usize,
+}
+
+impl CMemoryShallowIdentity {
+    fn of(memory: &CMemory) -> Self {
+        Self {
+            blocks: std::sync::Arc::as_ptr(&memory.blocks) as usize,
+            cells: std::sync::Arc::as_ptr(&memory.cells) as usize,
+            heap: std::sync::Arc::as_ptr(&memory.heap) as usize,
+        }
+    }
 }
 
 thread_local! {
@@ -1102,6 +1121,17 @@ fn c_memory_content_hash(memory: &CMemory) -> u64 {
     hasher.finish()
 }
 
+fn record_c_memory_structural_lookup_work(memory: &CMemory) {
+    crate::instrumentation::record_deterministic_work(
+        memory.blocks.len()
+            + memory.cells.len()
+            + memory.heap.live_allocations.len()
+            + memory.heap.retired_allocations.len()
+            + memory.heap.pending_allocations.len()
+            + memory.heap.uninitialized_allocations.len(),
+    );
+}
+
 /// Interns a memory snapshot in the thread-local arena. Structurally equal
 /// snapshots interned on the same thread share one allocation and identity;
 /// snapshots that cross threads still compare correctly through the content
@@ -1109,6 +1139,16 @@ fn c_memory_content_hash(memory: &CMemory) -> u64 {
 pub fn intern_c_memory(memory: CMemory) -> SharedCMemory {
     C_MEMORY_ARENA.with(|(token, arena)| {
         let mut arena = arena.borrow_mut();
+        let shallow_identity = CMemoryShallowIdentity::of(&memory);
+        if let Some((id, content_hash)) = arena.shallow_identities.get(&shallow_identity).copied() {
+            return SharedCMemory {
+                arena: *token,
+                id,
+                content_hash,
+                memory: arena.memories[id as usize].clone(),
+            };
+        }
+        record_c_memory_structural_lookup_work(&memory);
         if let Some((stored, (id, content_hash))) = arena.identities.get_key_value(&memory) {
             return SharedCMemory {
                 arena: *token,
@@ -1121,6 +1161,10 @@ pub fn intern_c_memory(memory: CMemory) -> SharedCMemory {
         let content_hash = c_memory_content_hash(&memory);
         let stored = std::sync::Arc::new(memory);
         arena.identities.insert(stored.clone(), (id, content_hash));
+        arena
+            .shallow_identities
+            .insert(shallow_identity, (id, content_hash));
+        arena.memories.push(stored.clone());
         arena.derivations.push(None);
         SharedCMemory {
             arena: *token,
@@ -1137,6 +1181,16 @@ pub fn intern_c_memory(memory: CMemory) -> SharedCMemory {
 pub fn intern_c_memory_ref(memory: &CMemory) -> SharedCMemory {
     C_MEMORY_ARENA.with(|(token, arena)| {
         let mut arena = arena.borrow_mut();
+        let shallow_identity = CMemoryShallowIdentity::of(memory);
+        if let Some((id, content_hash)) = arena.shallow_identities.get(&shallow_identity).copied() {
+            return SharedCMemory {
+                arena: *token,
+                id,
+                content_hash,
+                memory: arena.memories[id as usize].clone(),
+            };
+        }
+        record_c_memory_structural_lookup_work(memory);
         if let Some((stored, (id, content_hash))) = arena.identities.get_key_value(memory) {
             return SharedCMemory {
                 arena: *token,
@@ -1149,6 +1203,10 @@ pub fn intern_c_memory_ref(memory: &CMemory) -> SharedCMemory {
         let content_hash = c_memory_content_hash(memory);
         let stored = std::sync::Arc::new(memory.clone());
         arena.identities.insert(stored.clone(), (id, content_hash));
+        arena
+            .shallow_identities
+            .insert(shallow_identity, (id, content_hash));
+        arena.memories.push(stored.clone());
         arena.derivations.push(None);
         SharedCMemory {
             arena: *token,

@@ -379,6 +379,13 @@ impl ResourceContext {
         if self.index().exact.contains_key(fact) {
             return true;
         }
+        // Exact ownership of a resource definitionally includes its exact
+        // view. The resource-key index already erases access mode and owned
+        // quantity, so answer this common core-projection query without
+        // entering proof-aware memory/snapshot entailment.
+        if fact.is_view() && self.index().by_resource.contains_key(fact.resource()) {
+            return true;
+        }
         if self
             .family_facts(fact.family())
             .any(|available| resource_fact_entails(available, fact, assumptions))

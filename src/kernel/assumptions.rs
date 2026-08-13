@@ -1479,11 +1479,24 @@ impl Assumptions {
         if solve_builtin_prop(proposition) {
             return true;
         }
-        let proved = match proposition {
+        let proved = self.contains_assumed_exact(proposition);
+        if proved {
+            record_implicit_reasoning_provenance(self, proposition);
+        }
+        proved
+    }
+
+    /// Exact membership in the explicitly assumed fact set, without builtin
+    /// solving or proof-provenance side effects. This is the indexed analogue
+    /// of searching an ambient proposition slice for an atomic conjunct.
+    pub(crate) fn contains_assumed_exact(&self, proposition: &Proposition) -> bool {
+        match proposition {
             Proposition::ConditionIs(condition, value) => {
                 self.condition_facts.get(condition) == Some(value)
             }
-            Proposition::And(left, right) => self.proves_exact(left) && self.proves_exact(right),
+            Proposition::And(left, right) => {
+                self.contains_assumed_exact(left) && self.contains_assumed_exact(right)
+            }
             Proposition::Not(body) => match body.as_ref() {
                 Proposition::ConditionIs(condition, value) => {
                     self.condition_facts.get(condition) == Some(&!*value)
@@ -1491,11 +1504,7 @@ impl Assumptions {
                 _ => self.prop_facts.contains(proposition),
             },
             _ => self.prop_facts.contains(proposition),
-        };
-        if proved {
-            record_implicit_reasoning_provenance(self, proposition);
         }
-        proved
     }
 
     pub fn assume_condition(mut self, condition: ConditionTerm, value: bool) -> Self {

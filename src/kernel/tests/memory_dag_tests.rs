@@ -1,5 +1,29 @@
 use super::*;
 
+#[test]
+fn reinterning_retained_memory_uses_shallow_component_identity() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let mut memory = CMemory::new();
+            for index in 0..size {
+                memory = memory.with_block(format!("shallow-memory-{size}-{index}"), 4);
+            }
+            let first = crate::kernel::intern_c_memory_ref(&memory);
+            let (second, work) = crate::instrumentation::measure_deterministic_work(|| {
+                crate::kernel::intern_c_memory_ref(&memory)
+            });
+            assert_eq!(first.arena_id(), second.arena_id());
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        samples.iter().all(|(_, work)| *work == 0),
+        "reinterning retained memory should not hash its contents: {samples:?}"
+    );
+}
+
 // --- named-memory-states arc: the derivation DAG -------------------------
 // See docs/advanced/memory-dag.md. These pin the two invariants
 // the arc's safety argument rests on (advisory-only, and parent id < child

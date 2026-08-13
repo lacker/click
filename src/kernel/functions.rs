@@ -1437,11 +1437,18 @@ fn evaluate_function_return_resources(
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
-    let ensured_resources = match evaluate_function_resource_context(
-        post_state,
-        function.resource_ensures(),
-        assumptions,
-        budget,
+    let ensured_resources = match crate::instrumentation::measure_operation(
+        function.name(),
+        "contract resource transition",
+        "ensured resource lowering",
+        || {
+            evaluate_function_resource_context(
+                post_state,
+                function.resource_ensures(),
+                assumptions,
+                budget,
+            )
+        },
     )? {
         Ok(resources) => resources,
         Err(error) => return Ok(Err(error)),
@@ -1450,34 +1457,66 @@ fn evaluate_function_return_resources(
     // not create another persistent capability. Keeping both spellings would
     // make a later valid mutation or free look as though a stale borrow were
     // still live.
-    let newly_ensured_resources = ensured_resources.facts().iter().filter(|fact| {
-        !fact.is_view() || !caller_resources_after_requirements.satisfies_fact(fact, assumptions)
-    });
-    let return_resources = match caller_resources_after_requirements
-        .clone()
-        .try_compose_with_facts_delaying_normalization(
-            newly_ensured_resources.cloned(),
-            assumptions,
-        ) {
+    let newly_ensured_resources = crate::instrumentation::measure_operation(
+        function.name(),
+        "contract resource transition",
+        "ensured resource view deduplication",
+        || {
+            ensured_resources
+                .facts()
+                .iter()
+                .filter(|fact| {
+                    !fact.is_view()
+                        || !caller_resources_after_requirements.satisfies_fact(fact, assumptions)
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        },
+    );
+    let return_resources = match crate::instrumentation::measure_operation(
+        function.name(),
+        "contract resource transition",
+        "ensured resource composition",
+        || {
+            caller_resources_after_requirements
+                .clone()
+                .try_compose_with_facts_delaying_normalization(newly_ensured_resources, assumptions)
+        },
+    ) {
         Ok(resources) => resources,
         Err(error) => return Ok(Err(resource_context_runtime_error(error))),
     };
-    let Some(expanded_ensured_resources) = expand_all_composite_resource_facts(
-        &ensured_resources,
-        function.composite_resource_definitions(),
-        post_state.memory(),
-        assumptions,
+    let Some(expanded_ensured_resources) = crate::instrumentation::measure_operation(
+        function.name(),
+        "contract resource transition",
+        "ensured resource expansion",
+        || {
+            expand_all_composite_resource_facts(
+                &ensured_resources,
+                function.composite_resource_definitions(),
+                post_state.memory(),
+                assumptions,
+            )
+        },
     ) else {
         return Ok(Err(CRuntimeError::FunctionContract(format!(
             "could not expand ensured composite resources after call: {ensured_resources:?}"
         ))));
     };
-    let projected_cores = expanded_ensured_resources
-        .facts()
-        .iter()
-        .filter_map(CResourceFact::core)
-        .filter(|core| !return_resources.satisfies_fact(core, assumptions))
-        .collect::<Vec<_>>();
+    let projected_cores = crate::instrumentation::measure_operation(
+        function.name(),
+        "contract resource transition",
+        "ensured resource core projection",
+        || {
+            let _assumptions_id_scope = crate::kernel::AssumptionsIdScope::enter(assumptions);
+            expanded_ensured_resources
+                .facts()
+                .iter()
+                .filter_map(CResourceFact::core)
+                .filter(|core| !return_resources.satisfies_fact(core, assumptions))
+                .collect::<Vec<_>>()
+        },
+    );
     // The callee has already certified every ensured composite and its
     // instantiated body. Its duplicable cores are therefore observations of
     // certified ownership, not newly composed ownership that needs another
@@ -2010,13 +2049,20 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
             function.name()
         ))));
     };
-    let transfer = match prepare_function_resource_transfer(
-        caller_state,
-        &callee_state,
-        function,
-        assumptions,
-        budget,
-        true,
+    let transfer = match crate::instrumentation::measure_operation(
+        function.name(),
+        "contract resource transition",
+        "contract resource transfer preparation",
+        || {
+            prepare_function_resource_transfer(
+                caller_state,
+                &callee_state,
+                function,
+                assumptions,
+                budget,
+                true,
+            )
+        },
     )? {
         Ok(transfer) => transfer,
         Err(error) => return Ok(Err(error)),
@@ -3524,35 +3570,56 @@ fn function_outcome_from_body_with_resource_transfer(
             .locals
             .set_typed("result".to_string(), value.clone(), function.return_type());
     }
-    let population_transition = match apply_counted_population_transitions(
-        caller_state,
-        &mut state,
-        function,
-        argument_values,
-        assumptions,
-        &mut obligations,
-        reestablish_population_invariants,
-        false,
-        budget,
+    let population_transition = match crate::instrumentation::measure_operation(
+        function.name(),
+        "contract resource transition",
+        "return counted population transition",
+        || {
+            apply_counted_population_transitions(
+                caller_state,
+                &mut state,
+                function,
+                argument_values,
+                assumptions,
+                &mut obligations,
+                reestablish_population_invariants,
+                false,
+                budget,
+            )
+        },
     )? {
         Ok(transition) => transition,
         Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
     };
-    let caller_resources_after_requirements = match apply_counted_population_transition_resources(
-        transfer.caller_resources_after_requirements.clone(),
-        &population_transition,
-        assumptions,
+    let caller_resources_after_requirements = match crate::instrumentation::measure_operation(
+        function.name(),
+        "contract resource transition",
+        "return population resource update",
+        || {
+            apply_counted_population_transition_resources(
+                transfer.caller_resources_after_requirements.clone(),
+                &population_transition,
+                assumptions,
+            )
+        },
     ) {
         Ok(resources) => resources,
         Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
     };
     let output_resource_state = with_contract_argument_views(&state, function, argument_values);
-    let return_resources = match evaluate_function_return_resources(
-        &caller_resources_after_requirements,
-        &output_resource_state,
-        function,
-        assumptions,
-        budget,
+    let return_resources = match crate::instrumentation::measure_operation(
+        function.name(),
+        "contract resource transition",
+        "return resource evaluation",
+        || {
+            evaluate_function_return_resources(
+                &caller_resources_after_requirements,
+                &output_resource_state,
+                function,
+                assumptions,
+                budget,
+            )
+        },
     )? {
         Ok(resources) => resources,
         Err(CRuntimeError::TypeMismatch) => {
@@ -3566,7 +3633,12 @@ fn function_outcome_from_body_with_resource_transfer(
         }
         Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
     };
-    match unreturned_allocation_obligation(&state, &return_resources, function, assumptions) {
+    match crate::instrumentation::measure_operation(
+        function.name(),
+        "contract resource transition",
+        "return allocation obligation check",
+        || unreturned_allocation_obligation(&state, &return_resources, function, assumptions),
+    ) {
         Ok(Some(allocation)) => {
             return Ok((
                 CFunctionOutcome::RuntimeError(CRuntimeError::LiveAllocationLeak { allocation }),
@@ -3635,16 +3707,23 @@ pub(super) fn apply_verified_contract_resource_transition(
         }
         CFunctionOutcome::RuntimeError(error) => return Ok(Err(error)),
     };
-    let (outcome, obligations) = function_outcome_from_body_with_resource_transfer(
-        caller_state,
-        function,
-        statement_outcome,
-        Vec::new(),
-        assumptions,
-        &transfer,
-        &argument_values,
-        false,
-        budget,
+    let (outcome, obligations) = crate::instrumentation::measure_operation(
+        function.name(),
+        "contract resource transition",
+        "contract resource outcome reconstruction",
+        || {
+            function_outcome_from_body_with_resource_transfer(
+                caller_state,
+                function,
+                statement_outcome,
+                Vec::new(),
+                assumptions,
+                &transfer,
+                &argument_values,
+                false,
+                budget,
+            )
+        },
     )?;
     match outcome {
         CFunctionOutcome::RuntimeError(error) => Ok(Err(error)),

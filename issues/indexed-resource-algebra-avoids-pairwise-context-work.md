@@ -112,3 +112,19 @@ composite expansion. Establishing one assumptions memo-identity scope for the
 whole representation certificate reduced that check from roughly 251ms to
 205ms. Stable base/interval identities are still required to remove the
 remaining range-proof cost.
+
+Exact ownership-to-view satisfaction now uses `ResourceContext`'s existing
+resource-key index. Return-resource core projection previously missed this
+definitionally exact case and could send owned-memory cores through the
+proof-aware snapshot/range comparator. Non-exact resource spellings still use
+the proof-aware entailment path when an operation actually requires that
+semantic judgment.
+
+Return-resource transition profiling now separates lowering, composition,
+expansion, core projection, and allocation checking. In owned-vector, core
+projection dominates because a post-state `owner->data` view must be compared
+with an older snapshot spelling. The comparison is semantically required: an
+exact-only deduplication experiment left a stale view usable after its
+allocation was freed in allocated-linked-list, and was rejected. The next fix
+must accelerate or canonicalize that snapshot equivalence without retaining
+both views.

@@ -26,6 +26,37 @@ fn exact_resource_lookup_is_indexed_after_context_construction() {
 }
 
 #[test]
+fn exact_owned_resource_satisfies_view_without_entailment_scan() {
+    let range = memory_range(
+        Pointer {
+            block: "owned-view-target".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        0,
+        8,
+    );
+    let owned = CResourceFact::own_memory(range.clone());
+    let required = CResourceFact::view_memory(range);
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let context = unrelated_token_context(size).unchecked_with_fact(owned.clone());
+            assert!(context.satisfies_fact(&required, &Assumptions::new()));
+            let (satisfied, work) = crate::instrumentation::measure_deterministic_work(|| {
+                context.satisfies_fact(&required, &Assumptions::new())
+            });
+            assert!(satisfied);
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        samples.windows(2).all(|pair| pair[1].1 <= pair[0].1 + 1),
+        "exact ownership-to-view lookup should ignore unrelated resources: {samples:?}"
+    );
+}
+
+#[test]
 fn direct_resource_match_candidates_ignore_unrelated_shapes_and_blocks() {
     let target = CResourceFact::own_token("target".to_string(), vec![int32(0)]);
     let target_memory = CResourceFact::view_memory(memory_range(

@@ -114,3 +114,11 @@ An all-exact certificate therefore never normalizes every ambient proposition
 just in case a later premise needs equivalence matching. A focused four-size
 regression checks both constant exact-query work and that the materialization
 index remains uninitialized; non-exact callers retain the same lazy fallback.
+
+The first replay pass for explicit `frame using` premises now queries the
+already-maintained exact indexes in `Assumptions` instead of calling
+`Vec::contains` once per recorded lowering. Ordered exit finalization also
+checks its intentional deferral exemption before attempting any ambient-fact
+scan. Non-exit replay retains snapshot bridging and materialization-equivalent
+fallbacks, so the optimization changes candidate access rather than proof
+authority.

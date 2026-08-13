@@ -55,3 +55,13 @@ measurement showed that using the general recursive relation as a cache-key
 equivalence test costs about 9.5 seconds by itself. Stable shallow identities
 for recursive resource projections are therefore a prerequisite to extending
 that reuse path; fresh body execution remains the bounded fallback.
+
+The memory arena now has a session-local shallow index keyed by the identities
+of `CMemory`'s immutable block, cell, and heap components. Re-interning an
+already-retained snapshot therefore avoids hashing and comparing the complete
+memory. Independently constructed equal snapshots retain the structural
+fallback; their temporary component addresses are deliberately not cached,
+because the arena does not retain those alternate components and allocator
+reuse would make such a key unsound. This removes one deep-key cost from
+memory-DAG and memo lookups, but the broader cache-key issue remains open for
+states, assumptions, environments, and resource projections.
