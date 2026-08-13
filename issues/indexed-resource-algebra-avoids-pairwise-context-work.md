@@ -73,15 +73,13 @@ distinct allocation blocks project no quadratic separation set. A four-size
 deterministic regression covers both shapes and checks that an arbitrary
 first/last separation remains provable without a materialized premise.
 
-The issue remains open for persistent incremental index updates, lazy
+The issue remains open for persistent incremental index updates, complete lazy
 separation projection, and fixed permission-query gates over mixed symbolic
-resources. In particular,
-`observable_facts` still materializes proof-dependent pairs within symbolic
-same-block memory buckets and pairs involving abstract token/composite
-ownership. Those cases must be replaced only together with indexed on-demand
-derivation so existing certificates retain the same authority; a rejected
-opaque-composition prototype preserved direct separation queries but hid
-evidence used by condition contradiction and snapshot-framing replay.
+resources. Abstract token/composite ownership no longer materializes pairs:
+one internal `CResourceComposition` carrier is stored outside the ambient
+proposition set, and direct separation queries use the resource indexes.
+Symbolic same-block memory buckets still materialize proof-dependent pairs
+until every certificate consumer can request the needed consequence lazily.
 
 `Assumptions` now also maintains an incremental memory-separation index keyed
 by the two base blocks. Pointer-disjointness replay selects only relevant
@@ -155,3 +153,23 @@ deterministic work. The owned-vector profile confirms that the remaining
 return-resource cost is inside 634 relevant indexed entailment calls (about
 262ms), rather than unrelated-family enumeration; repeated same-shape
 snapshot/range proofs remain the next boundary.
+
+Compact composition authority now also serves the shallow memory-range,
+pointer, alias-contradiction, and write-invalidation paths. Writes attach the
+current state's compact resource observation directly, so correctness no
+longer depends on a caller preserving an internal carrier in a vector of
+surface-spellable facts. A regression retains only the compact carrier, relates
+two pointer spellings through exact shallow equalities, and proves both pointer
+and range/pointer separation without a materialized pair.
+
+A full no-memory-pair experiment is now a precise three-part frontier. First,
+post-execution surface certificate planning can use the compact authority to
+solve its goal but cannot yet spell the requested separation consequence as a
+simple certificate premise. Second, call-havoc/resource-representation
+certification still loses enough separation evidence to report differing
+memory snapshots and folded resources. Third, one modular call-snapshot replay
+falls from its direct certificate path into much more expensive smart search.
+The final deletion should therefore add one proof-producing on-demand
+projection shared by certificate planning and representation replay; widening
+snapshot-aware pointer search globally was measured, crossed the deterministic
+smart-work budget, and was rejected.
