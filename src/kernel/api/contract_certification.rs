@@ -2307,22 +2307,22 @@ pub(in crate::kernel) fn certification_proves_context_free_forall(
         return false;
     }
     thread_local! {
-        static PROVED: std::cell::RefCell<Vec<Proposition>> =
-            const { std::cell::RefCell::new(Vec::new()) };
+        static PROVED: std::cell::RefCell<BTreeSet<Proposition>> =
+            const { std::cell::RefCell::new(BTreeSet::new()) };
     }
-    let proved_facts = PROVED.with(|proved| proved.borrow().clone());
-    if proved_facts.contains(proposition) {
+    if PROVED.with(|proved| proved.borrow().contains(proposition)) {
         return true;
     }
+    let proved_facts = PROVED.with(|proved| proved.borrow().iter().cloned().collect::<Vec<_>>());
     let closed_assumptions = assumptions_with_propositions(&Assumptions::new(), &proved_facts);
     let proved = certification_proves_proposition(&closed_assumptions, proposition);
     if proved && crate::instrumentation::exceeded_verification_limit_context().is_none() {
         PROVED.with(|cache| {
             let mut cache = cache.borrow_mut();
             if cache.len() >= 128 {
-                cache.remove(0);
+                cache.pop_first();
             }
-            cache.push(proposition.clone());
+            cache.insert(proposition.clone());
         });
     }
     proved

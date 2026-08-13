@@ -37,3 +37,14 @@ not. Count key-construction and lookup work.
 - Entries structurally share their large immutable inputs.
 - Cache scope is tied to a verification session.
 - Existing success-only and deadline-safety regressions remain green.
+
+## 2026-08-13 progress
+
+The closed context-free `forall` success cache now uses an ordered exact set.
+A hit no longer clones the complete cache and then scans it linearly; only a
+miss materializes the retained closed facts needed to prove a new entry. The
+success-only and active-limit exclusion policy is unchanged.
+
+The larger issue remains open: independent execution and resource
+representation caches still retain bounded vectors with deep structural keys,
+and cache lifetime is not yet tied to one verification session.
