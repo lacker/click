@@ -2911,13 +2911,25 @@ fn consume_resource_fact_definitionally(
         {
             return Some(available.clone());
         }
-        if let Some(remaining) = available
-            .clone()
-            .without_fact_delaying_normalization(required, assumptions)
-        {
+        let direct_remaining = crate::instrumentation::measure_operation(
+            "kernel",
+            "resource containment",
+            "resource containment: direct consumption",
+            || {
+                available
+                    .clone()
+                    .without_fact_delaying_normalization(required, assumptions)
+            },
+        );
+        if let Some(remaining) = direct_remaining {
             return Some(remaining);
         }
-        let normalized = available.clone().normalized(assumptions);
+        let normalized = crate::instrumentation::measure_operation(
+            "kernel",
+            "resource containment",
+            "resource containment: normalization",
+            || available.clone().normalized(assumptions),
+        );
         if &normalized != available
             && let Some(remaining) =
                 normalized.without_fact_delaying_normalization(required, assumptions)
@@ -2926,12 +2938,19 @@ fn consume_resource_fact_definitionally(
         }
 
         let required_context = ResourceContext::new().unchecked_with_fact(required.clone());
-        if let Some(expanded_required) = expand_composite_resource_fact(
-            &required_context,
-            required,
-            definitions,
-            memory,
-            assumptions,
+        if let Some(expanded_required) = crate::instrumentation::measure_operation(
+            "kernel",
+            "resource containment",
+            "resource containment: expand required",
+            || {
+                expand_composite_resource_fact(
+                    &required_context,
+                    required,
+                    definitions,
+                    memory,
+                    assumptions,
+                )
+            },
         ) {
             let mut remaining = available.clone();
             for child in expanded_required.facts() {
@@ -2945,12 +2964,19 @@ fn consume_resource_fact_definitionally(
             .iter()
             .filter(|fact| matches!(fact.resource(), CResource::Composite { .. }))
         {
-            let Some(expanded_available) = expand_composite_resource_fact(
-                available,
-                composite,
-                definitions,
-                memory,
-                assumptions,
+            let Some(expanded_available) = crate::instrumentation::measure_operation(
+                "kernel",
+                "resource containment",
+                "resource containment: expand available",
+                || {
+                    expand_composite_resource_fact(
+                        available,
+                        composite,
+                        definitions,
+                        memory,
+                        assumptions,
+                    )
+                },
             ) else {
                 continue;
             };

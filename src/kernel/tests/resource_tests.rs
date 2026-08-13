@@ -286,6 +286,35 @@ fn declared_resource_quantities_are_part_of_context_equality() {
 }
 
 #[test]
+fn resource_consumption_ignores_unrelated_exact_shapes() {
+    let required = CResourceFact::view_token("target".to_string(), vec![int32(7)]);
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let context = ResourceContext::new()
+                .unchecked_with_facts((0..size).map(|index| {
+                    CResourceFact::own_token(format!("unrelated_{index}"), vec![int32(index)])
+                }))
+                .unchecked_with_fact(CResourceFact::own_token(
+                    "target".to_string(),
+                    vec![int32(7)],
+                ));
+            assert_eq!(context.direct_match_candidates(&required).count(), 1);
+            let (remaining, work) = crate::instrumentation::measure_deterministic_work(|| {
+                context.without_fact_delaying_normalization(&required, &Assumptions::new())
+            });
+            assert!(remaining.is_some());
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        samples.windows(2).all(|pair| pair[1].1 <= pair[0].1 + 1),
+        "fixed token consumption should not inspect unrelated resource shapes: {samples:?}"
+    );
+}
+
+#[test]
 fn missing_composite_query_ignores_ambient_memory_splits() {
     let base = Pointer {
         block: "backing".into(),

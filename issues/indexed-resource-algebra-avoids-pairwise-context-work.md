@@ -95,3 +95,20 @@ candidate regression adds 128 unrelated token shapes and 128 unrelated memory
 blocks and requires one candidate for each target. Same-shape symbolic pointer
 comparisons remain expensive (notably `tree_rotate_left`); indexing removes the
 ambient-resource multiplier but not that proof cost.
+
+Definitional resource consumption now uses those same necessary-shape
+candidates rather than falling back from exact lookup to every fact in the
+resource family. A deterministic four-size regression consumes one token view
+while adding unrelated token names and requires constant candidate work. For
+memory resources, candidates are limited to the pointer block and ordered with
+snapshot-insensitive matching bases first; the proof-aware algebra remains the
+authority and all same-block candidates remain available as fallbacks.
+
+Nested attribution also separates direct consumption, normalization, required
+composite expansion, and available composite expansion. In the owned-vector
+integration workload, the remaining `allocated_vector_push` containment cost
+is three same-block symbolic range proofs, not candidate enumeration or
+composite expansion. Establishing one assumptions memo-identity scope for the
+whole representation certificate reduced that check from roughly 251ms to
+205ms. Stable base/interval identities are still required to remove the
+remaining range-proof cost.

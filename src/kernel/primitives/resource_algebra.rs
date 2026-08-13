@@ -94,17 +94,20 @@ impl ResourceContext {
         &self,
         fact: &CResourceFact,
     ) -> impl Iterator<Item = &CResourceFact> {
-        let positions = match fact.resource() {
+        self.direct_match_candidate_positions(fact)
+            .into_iter()
+            .flatten()
+            .map(|index| &self.facts[*index])
+    }
+
+    fn direct_match_candidate_positions(&self, fact: &CResourceFact) -> Option<&Vec<usize>> {
+        match fact.resource() {
             CResource::Memory(range) => self.index().memory_by_block.get(&range.base().block),
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => self
                 .index()
                 .exact_shapes
                 .get(&(fact.family(), name.clone(), arguments.len())),
-        };
-        positions
-            .into_iter()
-            .flatten()
-            .map(|index| &self.facts[*index])
+        }
     }
 
     /// Adds a resource fact without checking validity or normalizing the
@@ -522,15 +525,35 @@ impl ResourceContext {
             .copied()
             .collect::<Vec<_>>();
         let exact_candidates = candidates.iter().copied().collect::<BTreeSet<_>>();
-        if let Some(family) = self.index().by_family.get(&fact.family()) {
-            candidates.extend(
-                family
-                    .iter()
-                    .copied()
-                    .filter(|index| !exact_candidates.contains(index)),
-            );
+        if let Some(shape) = self.direct_match_candidate_positions(fact) {
+            let remaining = shape
+                .iter()
+                .copied()
+                .filter(|index| !exact_candidates.contains(index));
+            if let CResource::Memory(required_range) = fact.resource() {
+                let remaining = remaining.collect::<Vec<_>>();
+                candidates.extend(remaining.iter().copied().filter(|index| {
+                    self.facts[*index].memory_range().is_some_and(|available| {
+                        crate::kernel::assumptions::pointers_equal_ignoring_memories(
+                            available.base(),
+                            required_range.base(),
+                        )
+                    })
+                }));
+                candidates.extend(remaining.into_iter().filter(|index| {
+                    !self.facts[*index].memory_range().is_some_and(|available| {
+                        crate::kernel::assumptions::pointers_equal_ignoring_memories(
+                            available.base(),
+                            required_range.base(),
+                        )
+                    })
+                }));
+            } else {
+                candidates.extend(remaining);
+            }
         }
         for index in candidates {
+            crate::instrumentation::record_deterministic_work(1);
             // Exact representation is the common path and needs no algebraic
             // decomposition. In particular, splitting an exactly matching
             // symbolic memory range can require arithmetic facts that are

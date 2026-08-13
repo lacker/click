@@ -550,6 +550,8 @@ fn certify_c_function_execution_path_resource_representation_uncached(
         .ok()?;
     premises.extend(observable_resource_facts);
     let assumptions = assumptions_with_propositions(&path.assumptions, &premises);
+    let _assumptions_memo_scope =
+        crate::kernel::assumptions::AssumptionsIdScope::enter(&assumptions);
     let values_equal = crate::instrumentation::measure_operation(
         function.name(),
         "resource representation",
