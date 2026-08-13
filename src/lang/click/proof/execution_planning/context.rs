@@ -461,9 +461,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         // of the replay-visible set.
         let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
         for fact in &transition.path_facts {
-            if !certificate_facts.contains(fact) {
-                certificate_facts.push(fact.clone());
-            }
+            certificate_facts.insert(fact.clone());
         }
         let local_sources = transition
             .fact_transports
@@ -477,9 +475,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
             .iter()
             .filter(|transport| transport.statement_local)
         {
-            if !certificate_facts.contains(&transport.target) {
-                certificate_facts.push(transport.target.clone());
-            }
+            certificate_facts.insert(transport.target.clone());
         }
     }
     // Definedness guards are exact `step() using` premises, so Selected
@@ -589,8 +585,8 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     // transition adds over the planning context.
     let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
     for fact in &transition.pure_facts {
-        if !available.contains(fact) && !certificate_facts.contains(fact) {
-            certificate_facts.push(fact.clone());
+        if !available.contains(fact) {
+            certificate_facts.insert(fact.clone());
         }
     }
 }

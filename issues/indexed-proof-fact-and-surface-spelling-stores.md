@@ -47,3 +47,27 @@ unavoidable linear project setup.
 - Unrelated facts do not materially change fixed-tactic deterministic work.
 - Explicitly listing `K` premises costs `O(K polylog N)`.
 - Diagnostics retain deterministic source order.
+
+## 2026-08-13 progress: certificate and spelling insertion indexes
+
+`SimpleProofBuilder` no longer accumulates replay-visible certificate facts in
+a bare vector. `ProofFactStore` keeps insertion order for emitted certificates
+and diagnostics while maintaining an exact ordered index; adding a fact no
+longer scans every prior certificate fact. All mutation sites now use the
+store, including statement execution, planned transports, and replay-builder
+construction. A focused invariant regression covers insertion, duplicate
+suppression, order, and indexed retention, while the existing explicit-step,
+transport, exact-assumption, and surface-spelling scaling curves remain green.
+
+`SurfacePropositionMap` likewise separates deterministic presentation from
+membership. Kernel-to-surface insertion uses a debug-key bucket followed by
+collision-safe structural equality only inside that bucket, and each surface
+spelling's kernel lowerings have an exact ordered index. Thus unrelated prior
+spellings and lowerings are not rescanned on every record operation.
+
+The issue remains open. `available_kernel` still receives an unindexed
+`&[Proposition]`, so resolving one lowering can scan the caller's complete
+available slice. Several proof contexts also retain ambient facts as vectors.
+Closing the issue requires routing these callers through the persistent fact
+store (or an exact `Assumptions` view) and giving proposition keys stable
+shallow identities rather than relying on deep ordered comparisons.

@@ -576,9 +576,7 @@ pub(super) fn execute_branch_step_from_execution_point(
             restore_construction_point_view(replay, restore);
             let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
             for fact in &condition_transition.path_facts {
-                if !certificate_facts.contains(fact) {
-                    certificate_facts.push(fact.clone());
-                }
+                certificate_facts.insert(fact.clone());
             }
         }
     }
@@ -1791,9 +1789,7 @@ pub(super) fn execute_step_from_execution_point(
             let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
             match operation {
                 ConstructionEvidence::CertifiedFactTransport { target, .. } => {
-                    if !certificate_facts.contains(target) {
-                        certificate_facts.push(target.clone());
-                    }
+                    certificate_facts.insert(target.clone());
                 }
                 ConstructionEvidence::FinishCertifiedFactTransports(sources) => {
                     certificate_facts.retain(|fact| {

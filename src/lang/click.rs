@@ -409,11 +409,42 @@ pub enum ClickProposition {
 /// to in one proof context.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SurfacePropositionMap {
-    by_kernel: BTreeMap<Proposition, Vec<ClickProposition>>,
+    by_kernel: BTreeMap<Proposition, KernelSurfaceSpellings>,
     // The debug spelling is a deterministic structural bucket key. Exact
     // equality inside the bucket preserves soundness even if two future
     // syntax variants ever acquire the same debug rendering.
-    by_surface: BTreeMap<String, Vec<(ClickProposition, Vec<Proposition>)>>,
+    by_surface: BTreeMap<String, Vec<(ClickProposition, KernelLowerings)>>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct KernelSurfaceSpellings {
+    ordered: Vec<ClickProposition>,
+    by_debug_key: BTreeMap<String, Vec<ClickProposition>>,
+}
+
+impl KernelSurfaceSpellings {
+    fn insert(&mut self, surface: &ClickProposition, debug_key: &str) {
+        let bucket = self.by_debug_key.entry(debug_key.to_string()).or_default();
+        if bucket.contains(surface) {
+            return;
+        }
+        bucket.push(surface.clone());
+        self.ordered.push(surface.clone());
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct KernelLowerings {
+    ordered: Vec<Proposition>,
+    exact: BTreeSet<Proposition>,
+}
+
+impl KernelLowerings {
+    fn insert(&mut self, kernel: &Proposition) {
+        if self.exact.insert(kernel.clone()) {
+            self.ordered.push(kernel.clone());
+        }
+    }
 }
 
 impl SurfacePropositionMap {
@@ -422,26 +453,24 @@ impl SurfacePropositionMap {
         surface: &ClickProposition,
         kernel: &Proposition,
     ) -> Result<(), ClickError> {
-        let spellings = self.by_kernel.entry(kernel.clone()).or_default();
-        if !spellings.contains(surface) {
-            spellings.push(surface.clone());
-        }
         let surface_key = format!("{surface:?}");
+        self.by_kernel
+            .entry(kernel.clone())
+            .or_default()
+            .insert(surface, &surface_key);
         let bucket = self.by_surface.entry(surface_key).or_default();
         let lowerings = if let Some((_, lowerings)) =
             bucket.iter_mut().find(|(recorded, _)| recorded == surface)
         {
             lowerings
         } else {
-            bucket.push((surface.clone(), Vec::new()));
+            bucket.push((surface.clone(), KernelLowerings::default()));
             &mut bucket
                 .last_mut()
                 .expect("surface lowering was just inserted")
                 .1
         };
-        if !lowerings.contains(kernel) {
-            lowerings.push(kernel.clone());
-        }
+        lowerings.insert(kernel);
         match (surface, kernel) {
             (ClickProposition::And(surface_left, surface_right), Proposition::And(left, right))
             | (ClickProposition::Or(surface_left, surface_right), Proposition::Or(left, right))
@@ -486,7 +515,7 @@ impl SurfacePropositionMap {
     pub fn surface(&self, kernel: &Proposition) -> Result<&ClickProposition, ClickError> {
         self.by_kernel
             .get(kernel)
-            .and_then(|spellings| spellings.last())
+            .and_then(|spellings| spellings.ordered.last())
             .ok_or_else(|| {
                 ClickError::new(format!(
                     "kernel proposition has no recorded Click surface spelling: {kernel:?}"
@@ -498,7 +527,7 @@ impl SurfacePropositionMap {
         self.by_kernel
             .get(kernel)
             .into_iter()
-            .flat_map(|spellings| spellings.iter())
+            .flat_map(|spellings| spellings.ordered.iter())
     }
 
     pub fn kernel_facts(&self) -> impl Iterator<Item = &Proposition> {
@@ -516,6 +545,7 @@ impl SurfacePropositionMap {
             .get(&surface_key)?
             .iter()
             .find_map(|(recorded, lowerings)| (recorded == surface).then_some(lowerings))?
+            .ordered
             .iter()
             .filter(|kernel| available.contains(kernel));
         let kernel = matches.next()?;
@@ -529,6 +559,7 @@ impl SurfacePropositionMap {
             .get(&surface_key)?
             .iter()
             .find_map(|(recorded, lowerings)| (recorded == surface).then_some(lowerings))?
+            .ordered
             .iter();
         let kernel = lowerings.next()?;
         lowerings.next().is_none().then_some(kernel)
@@ -541,7 +572,7 @@ impl SurfacePropositionMap {
             .into_iter()
             .flatten()
             .find_map(|(recorded, lowerings)| (recorded == surface).then_some(lowerings))
-            .is_some_and(|lowerings| lowerings.iter().any(|lowered| lowered != kernel))
+            .is_some_and(|lowerings| lowerings.ordered.iter().any(|lowered| lowered != kernel))
     }
 
     pub fn checked_surface<F>(
@@ -558,7 +589,7 @@ impl SurfacePropositionMap {
             ))
         })?;
         let mut last_mismatch = None;
-        for surface in spellings.iter().rev() {
+        for surface in spellings.ordered.iter().rev() {
             match lower_at_current_point(surface) {
                 Ok(lowered) if &lowered == kernel => return Ok(surface.clone()),
                 Ok(lowered) => last_mismatch = Some(format!("{surface:?} -> {lowered:?}")),

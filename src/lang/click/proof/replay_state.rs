@@ -139,10 +139,56 @@ pub(super) struct SimpleProofBuilder {
     /// rewrites, and explicit surface transports across each step. Premises
     /// are spelled against this replay-visible set so every generated
     /// `using` list names a fact its replay can actually check.
-    pub(super) certificate_facts: Vec<Proposition>,
+    pub(super) certificate_facts: ProofFactStore,
     /// Prevents the planner-metadata wrapper for a statement transition from
     /// re-entering itself while it emits the ordinary surface step.
     pub(super) lowering_planned_transition: bool,
+}
+
+/// Deterministically ordered proof facts with an exact-membership index.
+///
+/// Certificate emission and diagnostics retain insertion order, while a
+/// named premise never scans unrelated earlier facts. All mutation stays
+/// behind this type so the two views cannot diverge.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct ProofFactStore {
+    ordered: Vec<Proposition>,
+    exact: BTreeSet<Proposition>,
+}
+
+impl ProofFactStore {
+    pub(super) fn from_ordered(facts: Vec<Proposition>) -> Self {
+        let mut store = Self::default();
+        for fact in facts {
+            store.insert(fact);
+        }
+        store
+    }
+
+    pub(super) fn insert(&mut self, fact: Proposition) -> bool {
+        if !self.exact.insert(fact.clone()) {
+            return false;
+        }
+        self.ordered.push(fact);
+        true
+    }
+
+    pub(super) fn retain(&mut self, mut keep: impl FnMut(&Proposition) -> bool) {
+        self.ordered.retain(|fact| keep(fact));
+        self.exact = self.ordered.iter().cloned().collect();
+    }
+
+    pub(super) fn as_slice(&self) -> &[Proposition] {
+        &self.ordered
+    }
+}
+
+impl std::ops::Deref for ProofFactStore {
+    type Target = [Proposition];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
 }
 
 /// Environments a planning executor needs to construct the [`SimpleProofStep`]
@@ -1036,6 +1082,33 @@ impl TacticReplayState {
                 tactic,
                 surface_recorded: false,
             });
+    }
+}
+
+#[cfg(test)]
+mod proof_fact_store_tests {
+    use super::*;
+
+    fn fact(value: bool) -> Proposition {
+        Proposition::ConditionIs(ConditionTerm::Constant(value), true)
+    }
+
+    #[test]
+    fn proof_fact_store_preserves_order_and_indexes_exact_membership() {
+        let first = fact(true);
+        let second = fact(false);
+        let mut facts = ProofFactStore::default();
+
+        assert!(facts.insert(first.clone()));
+        assert!(facts.insert(second.clone()));
+        assert!(!facts.insert(first.clone()));
+        assert_eq!(facts.as_slice(), &[first.clone(), second.clone()]);
+        assert!(facts.exact.contains(&first));
+
+        facts.retain(|candidate| candidate != &first);
+        assert_eq!(facts.as_slice(), std::slice::from_ref(&second));
+        assert!(!facts.exact.contains(&first));
+        assert!(facts.exact.contains(&second));
     }
 }
 

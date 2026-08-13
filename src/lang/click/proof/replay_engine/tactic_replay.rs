@@ -1309,7 +1309,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 planning_replay.planned_statement_transitions.clear();
                 planning_replay.simple_proof_builder = SimpleProofBuilder {
                     last_step_entry: replay.simple_proof_builder.last_step_entry.clone(),
-                    certificate_facts: requirement_pure_facts.clone(),
+                    certificate_facts: ProofFactStore::from_ordered(requirement_pure_facts.clone()),
                     ..SimpleProofBuilder::default()
                 };
                 let mut planning_state = state.clone();
@@ -1373,7 +1373,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 });
                 let planning_builder = |certificate_facts: &[Proposition]| SimpleProofBuilder {
                     last_step_entry: replay.simple_proof_builder.last_step_entry.clone(),
-                    certificate_facts: certificate_facts.to_vec(),
+                    certificate_facts: ProofFactStore::from_ordered(certificate_facts.to_vec()),
                     ..SimpleProofBuilder::default()
                 };
                 let mut planning_replay = replay.clone();
@@ -1462,7 +1462,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 planning_replay.planned_statement_transitions.clear();
                 planning_replay.simple_proof_builder = SimpleProofBuilder {
                     last_step_entry: replay.simple_proof_builder.last_step_entry.clone(),
-                    certificate_facts: requirement_pure_facts.clone(),
+                    certificate_facts: ProofFactStore::from_ordered(requirement_pure_facts.clone()),
                     ..SimpleProofBuilder::default()
                 };
                 let mut planning_state = state.clone();
@@ -1673,7 +1673,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 construction_replay.simple_proof_builder = SimpleProofBuilder {
                     steps: surface_branch_skeleton(&replay.simple_proof_builder.steps),
                     last_step_entry: replay.simple_proof_builder.last_step_entry.clone(),
-                    certificate_facts: requirement_pure_facts.clone(),
+                    certificate_facts: ProofFactStore::from_ordered(requirement_pure_facts.clone()),
                     ..SimpleProofBuilder::default()
                 };
                 construct_simple_step_for_planned_operation(
