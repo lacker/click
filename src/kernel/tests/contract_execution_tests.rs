@@ -1815,10 +1815,12 @@ fn assumptions_clones_share_facts_and_cache_keys_are_content_stable() {
     );
     let first = Assumptions::new().assume_condition(condition.clone(), true);
     let clone = first.clone();
+    let idempotent = clone.clone().assume_condition(condition.clone(), true);
     let rebuilt = Assumptions::new().assume_condition(condition.clone(), true);
     let changed = Assumptions::new().assume_condition(condition, false);
 
     assert!(first.shares_fact_storage_with(&clone));
+    assert!(clone.shares_fact_storage_with(&idempotent));
     assert_eq!(first.memo_fingerprint(), rebuilt.memo_fingerprint());
     assert_ne!(first.memo_fingerprint(), changed.memo_fingerprint());
 }

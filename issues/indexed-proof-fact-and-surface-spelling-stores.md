@@ -71,3 +71,17 @@ available slice. Several proof contexts also retain ambient facts as vectors.
 Closing the issue requires routing these callers through the persistent fact
 store (or an exact `Assumptions` view) and giving proposition keys stable
 shallow identities rather than relying on deep ordered comparisons.
+
+Condition facts that contain memory-load spellings now have a derived index
+keyed by the loaded pointer's snapshot-blind structural fingerprint. Contract
+lowering checks that exact bucket first, then retains a same-block fallback so
+proved pointer aliases with different syntax remain accepted. The full
+snapshot/effect relation remains the authority for every candidate. A
+four-size deterministic regression holds one load spelling fixed while adding
+same-block loads at unrelated pointer shapes and requires constant query work.
+
+Idempotently assuming an already-present condition also preserves all shared
+fact/index storage instead of triggering `Arc::make_mut` copies of the complete
+context. New condition insertion is still copy-on-write and therefore linear
+in the accumulated context; a genuinely persistent fact store remains
+necessary to meet the acceptance criterion for that case.

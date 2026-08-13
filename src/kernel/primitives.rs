@@ -1566,6 +1566,12 @@ pub struct Assumptions {
     /// synonymous condition spellings when one source fact is replaced.
     pub(super) signed_order_bounds:
         std::sync::Arc<BTreeMap<Bitvector32Term, BTreeMap<(Bitvector32Term, bool, bool), usize>>>,
+    /// Condition facts containing a memory-load atom, indexed by the loaded
+    /// pointer's snapshot-blind structural fingerprint. This is derived from
+    /// `condition_facts`; it narrows snapshot-aware load-spelling checks
+    /// without deciding them.
+    pub(super) memory_load_condition_facts:
+        std::sync::Arc<BTreeMap<(PointerBlock, u64), BTreeSet<ConditionTerm>>>,
     pub(super) prop_facts: std::sync::Arc<BTreeSet<Proposition>>,
     pub(super) memory_loadable_facts: std::sync::Arc<BTreeMap<PointerBlock, BTreeSet<Proposition>>>,
     pub(super) memory_separation_facts: std::sync::Arc<

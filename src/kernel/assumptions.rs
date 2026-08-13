@@ -765,6 +765,223 @@ impl SignedConstantResolution {
     }
 }
 
+fn memory_blind_pointer_fingerprint(pointer: &Pointer) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hash_memory_blind_pointer(pointer, &mut hasher);
+    std::hash::Hasher::finish(&hasher)
+}
+
+fn hash_memory_blind_pointer<H: std::hash::Hasher>(pointer: &Pointer, hasher: &mut H) {
+    std::hash::Hash::hash(&pointer.block, hasher);
+    hash_memory_blind_pointer_offset(&pointer.offset, hasher);
+}
+
+fn hash_memory_blind_pointer_offset<H: std::hash::Hasher>(
+    offset: &PointerOffsetTerm,
+    hasher: &mut H,
+) {
+    std::hash::Hash::hash(&std::mem::discriminant(offset), hasher);
+    match offset {
+        PointerOffsetTerm::Constant(value) => std::hash::Hash::hash(value, hasher),
+        PointerOffsetTerm::Variable(variable) => std::hash::Hash::hash(variable, hasher),
+        PointerOffsetTerm::Add(left, right) => {
+            hash_memory_blind_pointer_offset(left, hasher);
+            hash_memory_blind_pointer_offset(right, hasher);
+        }
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            hash_memory_blind_bitvector(value, hasher);
+            std::hash::Hash::hash(byte_width, hasher);
+        }
+    }
+}
+
+fn hash_memory_blind_condition<H: std::hash::Hasher>(condition: &ConditionTerm, hasher: &mut H) {
+    std::hash::Hash::hash(&std::mem::discriminant(condition), hasher);
+    match condition {
+        ConditionTerm::Constant(value) => std::hash::Hash::hash(value, hasher),
+        ConditionTerm::Variable(variable) => std::hash::Hash::hash(variable, hasher),
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            hash_memory_blind_bitvector(left, hasher);
+            hash_memory_blind_bitvector(right, hasher);
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            hash_memory_blind_pointer_offset(left, hasher);
+            hash_memory_blind_pointer_offset(right, hasher);
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            hash_memory_blind_pointer(left, hasher);
+            hash_memory_blind_pointer(right, hasher);
+        }
+    }
+}
+
+fn hash_memory_blind_bitvector<H: std::hash::Hasher>(term: &Bitvector32Term, hasher: &mut H) {
+    std::hash::Hash::hash(&std::mem::discriminant(term), hasher);
+    match term {
+        Bitvector32Term::Constant(value) => std::hash::Hash::hash(value, hasher),
+        Bitvector32Term::Variable(variable) => std::hash::Hash::hash(variable, hasher),
+        Bitvector32Term::MemoryLoad(_, pointer) => hash_memory_blind_pointer(pointer, hasher),
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right) => {
+            hash_memory_blind_bitvector(left, hasher);
+            hash_memory_blind_bitvector(right, hasher);
+        }
+        Bitvector32Term::BitwiseNot(value) => hash_memory_blind_bitvector(value, hasher),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => {
+            hash_memory_blind_condition(condition, hasher);
+            hash_memory_blind_bitvector(then_term, hasher);
+            hash_memory_blind_bitvector(else_term, hasher);
+        }
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            hash_memory_blind_bitvector(start, hasher);
+            hash_memory_blind_bitvector(end, hasher);
+            hash_memory_blind_bitvector(initial, hasher);
+            std::hash::Hash::hash(accumulator, hasher);
+            std::hash::Hash::hash(item, hasher);
+            hash_memory_blind_bitvector(body, hasher);
+        }
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            std::hash::Hash::hash(name, hasher);
+            for argument in arguments {
+                hash_memory_blind_bitvector(argument, hasher);
+            }
+        }
+    }
+}
+
+fn collect_condition_memory_load_keys(
+    condition: &ConditionTerm,
+    keys: &mut BTreeSet<(PointerBlock, u64)>,
+) {
+    let mut collect_binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        collect_bitvector_memory_load_keys(left, keys);
+        collect_bitvector_memory_load_keys(right, keys);
+    };
+    match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            collect_binary(left, right)
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            collect_pointer_offset_memory_load_keys(left, keys);
+            collect_pointer_offset_memory_load_keys(right, keys);
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            collect_pointer_offset_memory_load_keys(&left.offset, keys);
+            collect_pointer_offset_memory_load_keys(&right.offset, keys);
+        }
+        ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {}
+    }
+}
+
+fn collect_pointer_offset_memory_load_keys(
+    offset: &PointerOffsetTerm,
+    keys: &mut BTreeSet<(PointerBlock, u64)>,
+) {
+    match offset {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+        PointerOffsetTerm::Add(left, right) => {
+            collect_pointer_offset_memory_load_keys(left, keys);
+            collect_pointer_offset_memory_load_keys(right, keys);
+        }
+        PointerOffsetTerm::Int32Scaled { value, .. } => {
+            collect_bitvector_memory_load_keys(value, keys)
+        }
+    }
+}
+
+fn collect_bitvector_memory_load_keys(
+    term: &Bitvector32Term,
+    keys: &mut BTreeSet<(PointerBlock, u64)>,
+) {
+    match term {
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+        Bitvector32Term::MemoryLoad(_, pointer) => {
+            keys.insert((
+                pointer.block.clone(),
+                memory_blind_pointer_fingerprint(pointer),
+            ));
+            collect_pointer_offset_memory_load_keys(&pointer.offset, keys);
+        }
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right) => {
+            collect_bitvector_memory_load_keys(left, keys);
+            collect_bitvector_memory_load_keys(right, keys);
+        }
+        Bitvector32Term::BitwiseNot(value) => collect_bitvector_memory_load_keys(value, keys),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => {
+            collect_condition_memory_load_keys(condition, keys);
+            collect_bitvector_memory_load_keys(then_term, keys);
+            collect_bitvector_memory_load_keys(else_term, keys);
+        }
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            collect_bitvector_memory_load_keys(start, keys);
+            collect_bitvector_memory_load_keys(end, keys);
+            collect_bitvector_memory_load_keys(initial, keys);
+            collect_bitvector_memory_load_keys(body, keys);
+        }
+        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                collect_bitvector_memory_load_keys(argument, keys);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 impl Proposition {
     pub(super) fn peel_implications(&self) -> &Self {
@@ -858,6 +1075,78 @@ impl Assumptions {
         for (condition, value) in facts {
             self.adjust_signed_order_bound(&condition, value, true);
         }
+    }
+
+    fn adjust_memory_load_condition_fact(&mut self, condition: &ConditionTerm, insert: bool) {
+        let mut keys = BTreeSet::new();
+        collect_condition_memory_load_keys(condition, &mut keys);
+        let index = std::sync::Arc::make_mut(&mut self.memory_load_condition_facts);
+        for key in keys {
+            if insert {
+                index.entry(key).or_default().insert(condition.clone());
+                continue;
+            }
+            let remove_key = if let Some(conditions) = index.get_mut(&key) {
+                conditions.remove(condition);
+                conditions.is_empty()
+            } else {
+                false
+            };
+            if remove_key {
+                index.remove(&key);
+            }
+        }
+    }
+
+    pub(super) fn rebuild_memory_load_condition_facts(&mut self) {
+        self.memory_load_condition_facts = std::sync::Arc::new(BTreeMap::new());
+        let conditions = self.condition_facts.keys().cloned().collect::<Vec<_>>();
+        for condition in conditions {
+            self.adjust_memory_load_condition_fact(&condition, true);
+        }
+    }
+
+    pub(crate) fn exact_memory_load_condition_candidates(
+        &self,
+        pointer: &Pointer,
+    ) -> impl Iterator<Item = (&ConditionTerm, bool)> {
+        let exact_key = (
+            pointer.block.clone(),
+            memory_blind_pointer_fingerprint(pointer),
+        );
+        self.memory_load_condition_facts
+            .get(&exact_key)
+            .into_iter()
+            .flat_map(|conditions| conditions.iter())
+            .filter_map(|condition| {
+                self.condition_facts
+                    .get(condition)
+                    .copied()
+                    .map(|value| (condition, value))
+            })
+    }
+
+    pub(crate) fn fallback_memory_load_condition_candidates(
+        &self,
+        pointer: &Pointer,
+    ) -> impl Iterator<Item = (&ConditionTerm, bool)> {
+        let exact_key = (
+            pointer.block.clone(),
+            memory_blind_pointer_fingerprint(pointer),
+        );
+        self.memory_load_condition_facts
+            .range((
+                std::ops::Bound::Included((pointer.block.clone(), 0)),
+                std::ops::Bound::Included((pointer.block.clone(), u64::MAX)),
+            ))
+            .filter(move |(key, _)| **key != exact_key)
+            .flat_map(|(_, conditions)| conditions.iter())
+            .filter_map(|condition| {
+                self.condition_facts
+                    .get(condition)
+                    .copied()
+                    .map(|value| (condition, value))
+            })
     }
 
     pub(super) fn clear_proposition_facts(&mut self) {
@@ -1038,6 +1327,10 @@ impl Assumptions {
     #[cfg(test)]
     pub(crate) fn shares_fact_storage_with(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.condition_facts, &other.condition_facts)
+            && std::sync::Arc::ptr_eq(
+                &self.memory_load_condition_facts,
+                &other.memory_load_condition_facts,
+            )
             && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
             && std::sync::Arc::ptr_eq(&self.memory_loadable_facts, &other.memory_loadable_facts)
             && std::sync::Arc::ptr_eq(
@@ -1172,6 +1465,14 @@ impl Assumptions {
     }
 
     pub fn assume_condition(mut self, condition: ConditionTerm, value: bool) -> Self {
+        // Proof branches frequently restate a path fact (for example while
+        // lowering the consequent of an implication). Preserve the shared
+        // persistent view on that idempotent insertion: `Arc::make_mut`
+        // would otherwise clone the complete fact map and every derived
+        // index before discovering that nothing changed.
+        if self.condition_facts.get(&condition) == Some(&value) {
+            return self;
+        }
         if let ConditionTerm::Bitvector32Equal(left, right) = &condition
             && let Some((left, right)) = bitvector_equality_after_additive_cancellation(left, right)
         {
@@ -1190,6 +1491,8 @@ impl Assumptions {
         if let Some(old) = old {
             self.adjust_signed_order_bound(&condition, old, false);
             self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), old));
+        } else {
+            self.adjust_memory_load_condition_fact(&condition, true);
         }
         self.adjust_signed_order_bound(&condition, value, true);
         self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));
@@ -1238,6 +1541,7 @@ impl Assumptions {
             !variables.contains(&variable)
         });
         assumptions.rebuild_signed_order_bounds();
+        assumptions.rebuild_memory_load_condition_facts();
         assumptions.retain_proposition_facts(|proposition| {
             !proposition_has_free_bitvector_variable(proposition, variable)
         });

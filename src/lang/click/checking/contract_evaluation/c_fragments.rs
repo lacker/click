@@ -298,9 +298,13 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
                 return symbolic_contract_memory_load(memory, pointer, value_type);
             }
             if value_type == CType::Int32
-                && assumptions.pure_facts().iter().any(|fact| {
-                    proposition_certifies_contract_load(fact, memory, &pointer, assumptions)
-                })
+                && assumptions
+                    .exact_memory_load_condition_candidates(&pointer)
+                    .chain(assumptions.fallback_memory_load_condition_candidates(&pointer))
+                    .any(|(condition, _)| {
+                        crate::instrumentation::record_deterministic_work(1);
+                        condition_contains_contract_load(condition, memory, &pointer, assumptions)
+                    })
             {
                 return symbolic_contract_memory_load(memory, pointer, value_type);
             }
@@ -325,6 +329,7 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
     }
 }
 
+#[cfg(test)]
 fn proposition_certifies_contract_load(
     proposition: &Proposition,
     memory: &CMemory,
@@ -529,6 +534,62 @@ mod tests {
             &target_pointer,
             &assumptions,
         ));
+    }
+
+    #[test]
+    fn contract_load_spelling_ignores_unrelated_pointer_shapes() {
+        let memory = CMemory::new();
+        let target = Pointer {
+            block: "target".into(),
+            offset: PointerOffsetTerm::Constant(10_000),
+        };
+        let samples = [16, 32, 64, 128]
+            .into_iter()
+            .map(|size| {
+                let mut assumptions =
+                    Assumptions::new().assume_proposition(Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(Bitvector32Term::MemoryLoad(
+                                crate::kernel::intern_c_memory(memory.clone()),
+                                Box::new(target.clone()),
+                            )),
+                            Box::new(Bitvector32Term::Constant(7)),
+                        ),
+                        true,
+                    ));
+                for index in 0..size {
+                    let unrelated = Pointer {
+                        block: "target".into(),
+                        offset: PointerOffsetTerm::Constant(index as i64),
+                    };
+                    assumptions = assumptions.assume_proposition(Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(Bitvector32Term::MemoryLoad(
+                                crate::kernel::intern_c_memory(memory.clone()),
+                                Box::new(unrelated),
+                            )),
+                            Box::new(Bitvector32Term::Constant(index as u32)),
+                        ),
+                        true,
+                    ));
+                }
+                let (loaded, work) = crate::instrumentation::measure_deterministic_work(|| {
+                    evaluate_contract_memory_load_from_memory(
+                        &memory,
+                        target.clone(),
+                        CType::Int32,
+                        &assumptions,
+                    )
+                });
+                assert!(loaded.is_ok());
+                (size, work)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            samples.windows(2).all(|pair| pair[1].1 <= pair[0].1 + 1),
+            "fixed load spelling should not inspect unrelated pointer shapes: {samples:?}"
+        );
     }
 }
 
