@@ -59,3 +59,12 @@ results are also memoized by fact-set content and term, so nested additions
 reuse their operands' ranges. Snapshot-equivalent and resolved-load bounds
 still use the broader fallback when exact endpoint bounds are insufficient;
 indexing those derived order edges remains part of the open provenance work.
+
+Whole-context inconsistency results are now memoized under the enclosing
+assumptions identity and DAG-bridging mode. Positive contradictions remain
+valid; negative results are scoped to the memory-derivation generation and
+excluded after deadline or search truncation. This is not a replacement for
+the remaining all-pairs fallback, but it prevents one proof-branch routing
+decision from recomputing that fallback hundreds of times over an unchanged
+context. A deterministic regression requires the second query not to perform
+another full context scan.

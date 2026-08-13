@@ -1,4 +1,17 @@
 use super::*;
+use std::collections::HashSet;
+
+thread_local! {
+    static CONTEXT_INCONSISTENCY_POSITIVE_MEMO: RefCell<HashSet<(u64, bool)>> = RefCell::new(HashSet::new());
+    static CONTEXT_INCONSISTENCY_NEGATIVE_MEMO: RefCell<HashSet<(u64, u64, bool)>> = RefCell::new(HashSet::new());
+}
+
+const CONTEXT_INCONSISTENCY_MEMO_LIMIT: usize = 200_000;
+
+#[cfg(test)]
+thread_local! {
+    static CONTEXT_INCONSISTENCY_FULL_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 fn canonical_contradiction_condition(condition: &ConditionTerm) -> ConditionTerm {
     fn ordered<T: Ord + Clone>(left: &T, right: &T) -> (T, T) {
@@ -88,6 +101,16 @@ pub(crate) fn finite_forall_goal_instances(
 }
 
 impl Assumptions {
+    #[cfg(test)]
+    pub(crate) fn reset_context_inconsistency_full_scans() {
+        CONTEXT_INCONSISTENCY_FULL_SCANS.with(|scans| scans.set(0));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn context_inconsistency_full_scans() -> usize {
+        CONTEXT_INCONSISTENCY_FULL_SCANS.with(std::cell::Cell::get)
+    }
+
     pub fn proves(&self, proposition: &Proposition) -> bool {
         if crate::instrumentation::deadline_exceeded() {
             return false;
@@ -197,9 +220,24 @@ impl Assumptions {
             _ => self.prop_facts.contains(proposition),
         };
         let proved = direct
-            || self.is_inconsistent()
-            || self.proves_by_finite_context_split(proposition)
-            || self.proves_by_disjunction_cases(proposition);
+            || crate::instrumentation::measure_operation(
+                "kernel",
+                "general proposition proof",
+                "proposition proof: context inconsistency",
+                || self.is_inconsistent(),
+            )
+            || crate::instrumentation::measure_operation(
+                "kernel",
+                "general proposition proof",
+                "proposition proof: finite context split",
+                || self.proves_by_finite_context_split(proposition),
+            )
+            || crate::instrumentation::measure_operation(
+                "kernel",
+                "general proposition proof",
+                "proposition proof: disjunction cases",
+                || self.proves_by_disjunction_cases(proposition),
+            );
         if proved {
             record_implicit_reasoning_provenance(self, proposition);
         }
@@ -2065,6 +2103,49 @@ impl Assumptions {
     }
 
     pub(in crate::kernel) fn is_inconsistent(&self) -> bool {
+        let Some(assumptions_id) = ambient_assumptions_memo_id(self) else {
+            return self.is_inconsistent_unmemoized();
+        };
+        let bridging = crate::kernel::api::extended_dag_bridging_active();
+        if CONTEXT_INCONSISTENCY_POSITIVE_MEMO
+            .with(|memo| memo.borrow().contains(&(assumptions_id, bridging)))
+        {
+            return true;
+        }
+        let generation = crate::kernel::primitives::c_memory_derivation_generation();
+        if CONTEXT_INCONSISTENCY_NEGATIVE_MEMO.with(|memo| {
+            memo.borrow()
+                .contains(&(generation, assumptions_id, bridging))
+        }) {
+            return false;
+        }
+        let truncations_before = search_truncations();
+        let result = self.is_inconsistent_unmemoized();
+        if result {
+            CONTEXT_INCONSISTENCY_POSITIVE_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= CONTEXT_INCONSISTENCY_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert((assumptions_id, bridging));
+            });
+        } else if !crate::instrumentation::deadline_exceeded()
+            && search_truncations() == truncations_before
+        {
+            CONTEXT_INCONSISTENCY_NEGATIVE_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= CONTEXT_INCONSISTENCY_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert((generation, assumptions_id, bridging));
+            });
+        }
+        result
+    }
+
+    fn is_inconsistent_unmemoized(&self) -> bool {
+        #[cfg(test)]
+        CONTEXT_INCONSISTENCY_FULL_SCANS.with(|scans| scans.set(scans.get() + 1));
         let mut order_facts = Vec::new();
         let mut equal_facts = Vec::new();
         let mut disequal_facts = Vec::new();

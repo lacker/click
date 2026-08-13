@@ -2790,3 +2790,18 @@ fn repeated_resolution_queries_do_not_repay_their_search() {
         "repeated top-level distinctness should share the resolution memo"
     );
 }
+
+#[test]
+fn repeated_context_inconsistency_queries_do_not_rescan_facts() {
+    let x = Bitvector32Term::Variable(Variable(93_201));
+    let y = Bitvector32Term::Variable(Variable(93_202));
+    let assumptions = Assumptions::new()
+        .assume_condition(ConditionTerm::signed_less_than(x.clone(), y.clone()), true)
+        .assume_condition(ConditionTerm::signed_less_than(y, x), true);
+    let _scope = assumptions.enter_id_scope();
+    Assumptions::reset_context_inconsistency_full_scans();
+    assert!(assumptions.is_inconsistent());
+    assert_eq!(Assumptions::context_inconsistency_full_scans(), 1);
+    assert!(assumptions.is_inconsistent());
+    assert_eq!(Assumptions::context_inconsistency_full_scans(), 1);
+}

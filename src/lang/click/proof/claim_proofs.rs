@@ -1423,14 +1423,20 @@ pub(super) fn finish_ordered_proof_replay(
                     let mut path_grouped_surface_closers = Vec::new();
                     let mut path_surface_post_tactics = Vec::new();
                     let mut path_deferred_capture_tactics = Vec::new();
-                    let missing_obligations = path
-                        .obligations()
-                        .iter()
-                        .filter(|obligation| {
-                            !exact_fact_is_available(obligation.proposition(), &pure_facts)
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>();
+                    let missing_obligations = crate::instrumentation::measure_operation(
+                        function_block.signature().name(),
+                        &proof_label,
+                        "path obligation lookup",
+                        || {
+                            path.obligations()
+                                .iter()
+                                .filter(|obligation| {
+                                    !exact_fact_is_available(obligation.proposition(), &pure_facts)
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        },
+                    );
                     if !missing_obligations.is_empty() {
                         return Err(ClickError::new(format!(
                             "execution proof failed for `{proof_label}` path {path_index}: {}",
@@ -1444,10 +1450,20 @@ pub(super) fn finish_ordered_proof_replay(
                             )
                         )));
                     }
-                    let mut outcome = path.outcome().clone();
-                    let mut path_requirements = pure_facts.clone();
-                    path_requirements
-                        .extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+                    let (mut outcome, mut path_requirements) =
+                        crate::instrumentation::measure_operation(
+                            function_block.signature().name(),
+                            &proof_label,
+                            "path fact working-set construction",
+                            || {
+                                let outcome = path.outcome().clone();
+                                let mut path_requirements = pure_facts.clone();
+                                path_requirements.extend(
+                                    path.facts().iter().map(|fact| fact.proposition().clone()),
+                                );
+                                (outcome, path_requirements)
+                            },
+                        );
 
                     let _case_routing_timing = crate::instrumentation::OperationTiming::new(
                         function_block.signature().name(),
@@ -1464,7 +1480,14 @@ pub(super) fn finish_ordered_proof_replay(
                                 "execution proof failed for `{proof_label}` path {path_index}: proof-level `if` requires a return outcome"
                             )));
                         };
+                        let mut routed_assumptions =
+                            assumptions_from_propositions(&path_requirements);
                         for case in &replay.case_assumptions {
+                            let case_lowering_timing = crate::instrumentation::OperationTiming::new(
+                                function_block.signature().name(),
+                                &proof_label,
+                                "proof case condition lowering",
+                            );
                             let fact = if let Some(fact) = &case.fact {
                                 fact.clone()
                             } else {
@@ -1492,20 +1515,28 @@ pub(super) fn finish_ordered_proof_replay(
                                     Proposition::Not(Box::new(condition))
                                 }
                             };
-                            if path_requirements
-                                .iter()
-                                .any(|available| propositions_are_exact_negations(available, &fact))
-                            {
+                            drop(case_lowering_timing);
+                            if crate::instrumentation::measure_operation(
+                                function_block.signature().name(),
+                                &proof_label,
+                                "proof case exact-negation lookup",
+                                || {
+                                    path_requirements.iter().any(|available| {
+                                        propositions_are_exact_negations(available, &fact)
+                                    })
+                                },
+                            ) {
                                 continue 'execution_path;
                             }
-                            // Refute the case fact directly instead of deriving global
-                            // inconsistency: the targeted check is what the branch
-                            // routing needs, and whole-context inconsistency search
-                            // over a concrete path's memory facts is far too slow to
-                            // run per case per path.
-                            if fact_conflicts_with_assumptions(
-                                &fact,
-                                &assumptions_from_propositions(&path_requirements),
+                            // Test the case fact against the incrementally maintained
+                            // path assumptions. Some alias guards genuinely require
+                            // the prover's whole-context inconsistency fallback, whose
+                            // completed result is memoized by assumptions identity.
+                            if crate::instrumentation::measure_operation(
+                                function_block.signature().name(),
+                                &proof_label,
+                                "proof case contradiction check",
+                                || fact_conflicts_with_assumptions(&fact, &routed_assumptions),
                             ) {
                                 // A proof-level branch only owns execution outcomes
                                 // compatible with its assumption.  The sibling branch
@@ -1516,6 +1547,8 @@ pub(super) fn finish_ordered_proof_replay(
                                 // generated from.
                                 continue 'execution_path;
                             }
+                            routed_assumptions =
+                                routed_assumptions.assume_proposition(fact.clone());
                             path_requirements.push(fact);
                         }
                     }
@@ -1597,14 +1630,28 @@ pub(super) fn finish_ordered_proof_replay(
                         },
                     )?;
 
-                    let mut closures = vec![ClaimClosure::default(); claims.len()];
-                    let mut rewritten_claim_goals: Vec<Option<Proposition>> =
-                        vec![None; claims.len()];
-                    let mut frame_certified_claim_goals: Vec<Option<Proposition>> =
-                        vec![None; claims.len()];
-                    let mut existence_tactics = Vec::new();
-                    let mut surface_certificate_facts = path_requirements.clone();
-                    let mut outcome_surface_propositions = replay.surface_propositions.clone();
+                    let (
+                        mut closures,
+                        mut rewritten_claim_goals,
+                        mut frame_certified_claim_goals,
+                        mut existence_tactics,
+                        mut surface_certificate_facts,
+                        mut outcome_surface_propositions,
+                    ) = crate::instrumentation::measure_operation(
+                        function_block.signature().name(),
+                        &proof_label,
+                        "path certificate working-set construction",
+                        || {
+                            (
+                                vec![ClaimClosure::default(); claims.len()],
+                                vec![None::<Proposition>; claims.len()],
+                                vec![None::<Proposition>; claims.len()],
+                                Vec::<ProofTactic>::new(),
+                                path_requirements.clone(),
+                                replay.surface_propositions.clone(),
+                            )
+                        },
+                    );
                     // Facts established after execution all describe this fixed
                     // outcome snapshot. Keep them separately so `fold` can reuse an
                     // exact lowering without accidentally selecting the same surface

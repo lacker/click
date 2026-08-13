@@ -117,6 +117,15 @@ explicit-range aggregate, and independent certification of the branch-heavy
 5.7--6.0s under current host variance, so this is a bounded repeated-query fix
 rather than closure of the aggregate target.
 
+Proof-branch attribution then exposed six targeted contradiction checks that
+recursively invoked whole-context inconsistency 533 times. The branch router
+now maintains its assumptions incrementally, and completed inconsistency
+answers use a truncation-safe assumptions-identity memo. On the same loaded
+host where the attributed baseline was about 7.7s, the complete project fell
+to about 5.45s; branch-routing contradiction work fell from about 523ms to
+378ms and repeated downstream inconsistency work is shared. The result is
+closer to, but still above, the comfortably-under-five-second closure target.
+
 ## Regression
 
 Keep the complete project as a wall-clock integration workload. Every engine
