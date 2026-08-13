@@ -1921,24 +1921,31 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
             .as_deref()
             .is_some_and(|capture| capture.result.is_some());
         let mut context_surface_builders = Vec::new();
-        let theorems = finish_ordered_proof_replay(
-            expansion_capture.as_deref_mut(),
-            context,
-            source_path,
-            function_block,
-            parsed_function,
-            claims,
-            require_explicit_closers,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-            theorem_environment,
-            function_environment,
-            function,
-            arguments,
-            tactics,
-            &mut certification_cache,
-            &mut context_surface_builders,
+        let theorems = crate::instrumentation::measure_operation(
+            function_block.signature().name(),
+            &format!("{}.contract", function_block.signature().name()),
+            "proof context finishing",
+            || {
+                finish_ordered_proof_replay(
+                    expansion_capture.as_deref_mut(),
+                    context,
+                    source_path,
+                    function_block,
+                    parsed_function,
+                    claims,
+                    require_explicit_closers,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function_environment,
+                    function,
+                    arguments,
+                    tactics,
+                    &mut certification_cache,
+                    &mut context_surface_builders,
+                )
+            },
         )?;
         for (claim, builder) in context_surface_builders {
             match claim_surface_builders
@@ -1981,40 +1988,48 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
     // the recorded branch choices; a per-context record must not survive as
     // the claim's expansion.
     if context_count > 1 {
-        for (claim, builders) in claim_surface_builders {
-            // Contexts that recorded branch choices keep their surface `if`
-            // even when every case produced the same steps: replay still
-            // needs the case split to cross the branch statement. Contexts
-            // without choices and identical records collapse to one record.
-            let merged = if builders.iter().all(|builder| {
-                builder.path_choices.is_empty() && builder.steps == builders[0].steps
-            }) {
-                builders
-                    .first()
-                    .and_then(|builder| builder.blocker.clone())
-                    .map(Err)
-                    .unwrap_or_else(|| Ok(builders[0].steps.clone()))
-            } else {
-                synthesize_surface_alternatives(builders)
-            };
-            for theorem in &mut verified {
-                if theorem.claim != claim {
-                    continue;
-                }
-                match &merged {
-                    Ok(steps) => {
-                        theorem.expanded_proof = Some(SimpleProof::from_steps(steps.clone()));
-                        theorem.expansion_blocker = None;
+        crate::instrumentation::measure_operation(
+            function_block.signature().name(),
+            &format!("{}.contract", function_block.signature().name()),
+            "surface context synthesis",
+            || {
+                for (claim, builders) in claim_surface_builders {
+                    // Contexts that recorded branch choices keep their surface `if`
+                    // even when every case produced the same steps: replay still
+                    // needs the case split to cross the branch statement. Contexts
+                    // without choices and identical records collapse to one record.
+                    let merged = if builders.iter().all(|builder| {
+                        builder.path_choices.is_empty() && builder.steps == builders[0].steps
+                    }) {
+                        builders
+                            .first()
+                            .and_then(|builder| builder.blocker.clone())
+                            .map(Err)
+                            .unwrap_or_else(|| Ok(builders[0].steps.clone()))
+                    } else {
+                        synthesize_surface_alternatives(builders)
+                    };
+                    for theorem in &mut verified {
+                        if theorem.claim != claim {
+                            continue;
+                        }
+                        match &merged {
+                            Ok(steps) => {
+                                theorem.expanded_proof =
+                                    Some(SimpleProof::from_steps(steps.clone()));
+                                theorem.expansion_blocker = None;
+                            }
+                            Err(message) => {
+                                theorem.expanded_proof = None;
+                                theorem.expansion_blocker = Some(format!(
+                                    "could not merge the claim's surface record across branch contexts: {message}"
+                                ));
+                            }
+                        }
                     }
-                    Err(message) => {
-                        theorem.expanded_proof = None;
-                        theorem.expansion_blocker = Some(format!(
-                            "could not merge the claim's surface record across branch contexts: {message}"
-                        ));
-                    }
                 }
-            }
-        }
+            },
+        );
     }
     if !captured_paths.is_empty() {
         let tactics = if captured_paths

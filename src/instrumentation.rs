@@ -689,6 +689,42 @@ pub fn measure_operation<T>(
     result
 }
 
+/// RAII form of [`measure_operation`] for code whose control flow cannot be
+/// placed in a closure (for example, a loop that mutates and moves outer
+/// replay state). Dropping the guard records the completed span.
+pub struct OperationTiming {
+    measurement: Option<(String, String, &'static str, TacticInstant)>,
+}
+
+impl OperationTiming {
+    pub fn new(function: &str, claim: &str, name: &'static str) -> Self {
+        Self {
+            measurement: operation_measurement_enabled().then(|| {
+                (
+                    function.to_string(),
+                    claim.to_string(),
+                    name,
+                    TacticInstant::now(),
+                )
+            }),
+        }
+    }
+}
+
+impl Drop for OperationTiming {
+    fn drop(&mut self) {
+        let Some((function, claim, name, started)) = self.measurement.take() else {
+            return;
+        };
+        emit(VerificationEvent::OperationFinished {
+            function,
+            claim,
+            name,
+            elapsed: started.elapsed(),
+        });
+    }
+}
+
 pub fn starts_enabled() -> bool {
     std::env::var_os("CLICK_TIMING_STARTS").is_some()
         || COLLECTORS.with(|collectors| !collectors.borrow().is_empty())

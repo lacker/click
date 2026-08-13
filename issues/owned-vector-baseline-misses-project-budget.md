@@ -118,3 +118,17 @@ replay totals 9.4s, including 8.1s for `allocated_vector_push`. The production
 deadline. The remaining work is aggregate replay/core reduction, not further
 arbitrary tactic expansion; keep the project quarantined until repeated
 production-limit runs pass.
+
+Narrow finishing spans identify the dominant repeated query. Across the source
+pass and whole-contract replay, execution-path preparation takes about 14.3s;
+14.2s of that is proof-case path routing. Routing currently lowers each proof
+`if` assumption and calls the general `Assumptions::proves` engine over 76--146
+path facts to decide whether the concrete execution path contradicts it. One
+`allocated_vector_push` routing call takes about seven seconds. Exact-negation
+and snapshot-shaped candidate checks attempted before the general prover do
+not recognize these memory-load equalities, and treating a fact as available
+under all execution effects incorrectly mixes branch-local evidence and sends
+the later grouped `simp` down the wrong path. The fix needs a sound indexed
+path-condition identity/provenance check (or a certified routing decision
+carried from symbolic execution), not another context-wide semantic proof at
+every proof branch and replay.
