@@ -1335,6 +1335,212 @@ fn contract_certification_reuses_a_matching_kernel_checked_execution() {
 }
 
 #[test]
+fn contract_certification_reuses_complementary_checked_entry_partitions() {
+    let input = Bitvector32Term::Variable(Variable(919_100));
+    let branch = ConditionTerm::signed_less_than(input.clone(), Bitvector32Term::Constant(0));
+    let function = c_function(
+        CType::Int32,
+        "checked_partition",
+        vec![c_parameter("x", CType::Int32)],
+        c_if(
+            c_less_than(c_variable("x"), c_int32_literal(0)),
+            c_return(c_int32_literal(1)),
+            c_return(c_int32_literal(2)),
+        ),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::NotEqual,
+            right: SpecExpression::Value(int32(0)),
+        }],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    );
+    let state = CState::new();
+    let arguments = vec![CExpression::Value(int32(input))];
+    let environment = CExecutionEnvironment::new();
+    let semantics = CExecutionSemantics::EXECUTE_BODIES;
+    let mode = CFunctionContractExecutionMode::VerifyLoops;
+    let _ = crate::kernel::api::take_checked_function_body_execution_count();
+    let checked_true = prove_checked_c_function_execution_with_environment(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Assumptions::new().assume_condition(branch.clone(), true),
+        environment.clone(),
+        semantics,
+        mode,
+    );
+    let checked_false = prove_checked_c_function_execution_with_environment(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Assumptions::new().assume_condition(branch, false),
+        environment.clone(),
+        semantics,
+        mode,
+    );
+    assert_eq!(
+        crate::kernel::api::take_checked_function_body_execution_count(),
+        2
+    );
+
+    let execution = prove_c_function_contract_execution_paths_with_checked_artifacts(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Vec::new(),
+        environment.clone(),
+        semantics,
+        mode,
+        &[checked_true.clone(), checked_false],
+    );
+    assert_eq!(
+        crate::kernel::api::take_checked_function_body_execution_count(),
+        0,
+        "two complete opposite entry cases should compose without executing the body again"
+    );
+    assert_eq!(execution.path_count(), 2);
+    assert!(c_verified_function_contract_claims(&function, &execution).is_some());
+
+    let fallback = prove_c_function_contract_execution_paths_with_checked_artifacts(
+        state,
+        function.clone(),
+        arguments,
+        Vec::new(),
+        environment,
+        semantics,
+        mode,
+        &[checked_true],
+    );
+    assert_eq!(
+        crate::kernel::api::take_checked_function_body_execution_count(),
+        1,
+        "one side of an entry partition is not a complete contract frontier"
+    );
+    assert!(c_verified_function_contract_claims(&function, &fallback).is_some());
+}
+
+#[test]
+fn contract_certification_reuses_definitionally_equal_entry_resources() {
+    let unit = CResourceFact::own_token("entry_unit".to_string(), vec![int32(7)]);
+    let proof_resources = ResourceContext::new()
+        .unchecked_with_fact(unit.clone())
+        .unchecked_with_fact(unit.clone());
+    let contract_resources = ResourceContext::new()
+        .try_compose_with_facts([unit.clone(), unit], &Assumptions::new())
+        .expect("the contract representation should normalize the two units");
+    assert_ne!(proof_resources, contract_resources);
+    assert!(resource_contexts_definitionally_equal_with_definitions(
+        &[],
+        &CMemory::new(),
+        &proof_resources,
+        &CMemory::new(),
+        &contract_resources,
+        &Assumptions::new(),
+    ));
+
+    let function = c_function(
+        CType::Int32,
+        "checked_resource_entry",
+        Vec::new(),
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::Value(int32(0)),
+        }],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    );
+    let proof_state = CState::new().with_resource_context(proof_resources.clone());
+    let contract_state = CState::new().with_resource_context(contract_resources.clone());
+    let environment = CExecutionEnvironment::new();
+    let semantics = CExecutionSemantics::EXECUTE_BODIES;
+    let mode = CFunctionContractExecutionMode::VerifyLoops;
+    let _ = crate::kernel::api::take_checked_function_body_execution_count();
+    let checked = prove_checked_c_function_execution_with_environment(
+        proof_state,
+        function.clone(),
+        Vec::new(),
+        Assumptions::new(),
+        environment.clone(),
+        semantics,
+        mode,
+    );
+    assert_eq!(
+        crate::kernel::api::take_checked_function_body_execution_count(),
+        1
+    );
+
+    let execution = prove_c_function_contract_execution_paths_with_checked_artifacts(
+        contract_state,
+        function.clone(),
+        Vec::new(),
+        Vec::new(),
+        environment,
+        semantics,
+        mode,
+        &[checked],
+    );
+    assert_eq!(
+        crate::kernel::api::take_checked_function_body_execution_count(),
+        0,
+        "definitionally equal ghost entry resources should not rerun the C body"
+    );
+    assert!(c_verified_function_contract_claims(&function, &execution).is_some());
+
+    let recursive_function = function.clone().with_composite_resource_definitions(vec![
+        CCompositeResourceDefinition::new(
+            "recursive_entry",
+            Vec::new(),
+            None,
+            true,
+            Vec::new(),
+            Vec::new(),
+        ),
+    ]);
+    let recursive_checked = prove_checked_c_function_execution_with_environment(
+        CState::new().with_resource_context(proof_resources),
+        recursive_function.clone(),
+        Vec::new(),
+        Assumptions::new(),
+        CExecutionEnvironment::new(),
+        semantics,
+        mode,
+    );
+    assert_eq!(
+        crate::kernel::api::take_checked_function_body_execution_count(),
+        1
+    );
+    let recursive_execution = prove_c_function_contract_execution_paths_with_checked_artifacts(
+        CState::new().with_resource_context(contract_resources),
+        recursive_function.clone(),
+        Vec::new(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        semantics,
+        mode,
+        &[recursive_checked],
+    );
+    assert_eq!(
+        crate::kernel::api::take_checked_function_body_execution_count(),
+        1,
+        "recursive resource representations must fall back without attempting entry rebasing"
+    );
+    assert!(
+        c_verified_function_contract_claims(&recursive_function, &recursive_execution).is_some()
+    );
+}
+
+#[test]
 fn contract_claim_rejects_same_source_function_with_a_different_contract() {
     let body = c_return(c_int32_literal(0));
     let uncontracted = c_function(CType::Int32, "contract_identity", Vec::new(), body.clone());

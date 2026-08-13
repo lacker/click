@@ -1754,6 +1754,106 @@ pub fn prove_checked_c_function_execution_with_environment(
     }
 }
 
+/// Re-expresses a checked execution from a definitionally equal ghost-resource
+/// representation of the same concrete entry state.
+///
+/// Resource folds, unfolds, and observations can leave proof replay with a
+/// different `ResourceContext` than independently reconstructed contract
+/// entry. The program locals, memory, and counted populations must still be
+/// exactly identical, and the kernel's bounded resource equality relation
+/// must prove the two ghost representations equivalent before any execution
+/// theorem is rebuilt at the contract entry state.
+fn checked_execution_at_definitionally_equal_entry_state(
+    checked: &CCheckedFunctionExecution,
+    state: &CState,
+    function: &CFunction,
+    assumptions: &Assumptions,
+) -> Option<SymbolicCExecution> {
+    // Recursive composites can expose an unbounded proof relation between
+    // folded and projected entry contexts. Certification must not turn a
+    // cache probe into that search: until recursive resource states have a
+    // stable shallow identity, use the ordinary fresh execution path.
+    if function
+        .composite_resource_definitions()
+        .iter()
+        .any(CCompositeResourceDefinition::is_recursive)
+    {
+        return None;
+    }
+    let checked_without_resource_difference = checked
+        .state
+        .clone()
+        .with_resource_context(state.resources().clone());
+    if checked_without_resource_difference != *state
+        || !crate::kernel::api::contract_certification::resource_contexts_definitionally_equal_with_definitions(
+            function.composite_resource_definitions(),
+            checked.state.memory(),
+            checked.state.resources(),
+            state.memory(),
+            state.resources(),
+            assumptions,
+        )
+    {
+        return None;
+    }
+
+    let mut paths = Vec::with_capacity(checked.execution.paths.len());
+    for path in &checked.execution.paths {
+        let mut conclusion = path.theorem.proposition();
+        while let Proposition::Implies(_, body) = conclusion {
+            conclusion = body;
+        }
+        let proposition = match conclusion {
+            Proposition::CFunctionExecutes {
+                state: proved_state,
+                function: proved_function,
+                arguments,
+                outcome,
+            } if proved_state == &checked.state
+                && proved_function == function
+                && arguments == &checked.arguments =>
+            {
+                Proposition::CFunctionExecutes {
+                    state: state.clone(),
+                    function: function.clone(),
+                    arguments: arguments.clone(),
+                    outcome: outcome.clone(),
+                }
+            }
+            Proposition::CFunctionVerifies {
+                state: proved_state,
+                function: proved_function,
+                arguments,
+                outcome,
+            } if proved_state == &checked.state
+                && proved_function == function
+                && arguments == &checked.arguments =>
+            {
+                Proposition::CFunctionVerifies {
+                    state: state.clone(),
+                    function: function.clone(),
+                    arguments: arguments.clone(),
+                    outcome: outcome.clone(),
+                }
+            }
+            _ => return None,
+        };
+        paths.push(SymbolicCExecutionPath {
+            assumptions: path.assumptions.clone(),
+            facts: path.facts.clone(),
+            effect_facts: path.effect_facts.clone(),
+            obligations: path.obligations.clone(),
+            theorem: Theorem::new(wrap_proof_facts(
+                proposition,
+                &path.assumptions,
+                &path.facts,
+                &path.obligations,
+            )),
+        });
+    }
+    Some(SymbolicCExecution { paths, limit: None })
+}
+
 /// Produces the only execution frontier accepted for opaque contract
 /// certification.
 ///
@@ -2065,9 +2165,8 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
             }
             entry_state.resources = entry_resources;
         }
-        let reusable = checked_artifacts.iter().find(|checked| {
-            checked.state == state
-                && checked.function == function
+        let matches_execution_metadata_except_state = |checked: &CCheckedFunctionExecution| {
+            checked.function == function
                 && checked.arguments == arguments
                 && checked.environment == environment
                 && checked.execution_semantics == execution_semantics
@@ -2075,14 +2174,113 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
                 && checked.assumptions.has_same_reasoning_policy(&assumptions)
                 && checked.execution.limit().is_none()
                 && !checked.execution.paths().is_empty()
+        };
+        let reusable = checked_artifacts.iter().find(|checked| {
+            checked.state == state
+                && matches_execution_metadata_except_state(checked)
                 && checked
                     .assumptions
                     .pure_facts()
                     .into_iter()
                     .all(|premise| assumptions.proves(&premise))
         });
+        let entry_resource_rebase_supported = !function
+            .composite_resource_definitions()
+            .iter()
+            .any(CCompositeResourceDefinition::is_recursive);
+        let rebased_reuse = (reusable.is_none() && entry_resource_rebase_supported)
+            .then(|| {
+                checked_artifacts
+                    .iter()
+                    .filter(|checked| matches_execution_metadata_except_state(checked))
+                    .find(|checked| {
+                        checked
+                            .assumptions
+                            .pure_facts()
+                            .into_iter()
+                            .all(|premise| assumptions.proves(&premise))
+                    })
+                    .and_then(|checked| {
+                        crate::instrumentation::measure_operation(
+                            function.name(),
+                            "contract certification",
+                            "contract checked entry resource equivalence",
+                            || {
+                                checked_execution_at_definitionally_equal_entry_state(
+                                    checked,
+                                    &state,
+                                    &function,
+                                    &assumptions,
+                                )
+                            },
+                        )
+                    })
+            })
+            .flatten();
+        // A surface proof can split at function entry and independently check
+        // the complete function under `condition` and `not condition`. Neither
+        // artifact alone is valid under the unsplit contract assumptions, but
+        // together their frontiers are exhaustive. Keep this composition in
+        // the kernel: callers cannot manufacture artifacts, the exact
+        // execution metadata must match, every non-branch premise must follow
+        // from the reconstructed contract context, and both polarities of one
+        // exact condition must be present.
+        let partition_reuse =
+            (reusable.is_none() && rebased_reuse.is_none() && entry_resource_rebase_supported)
+                .then(|| {
+                    let candidates = checked_artifacts
+                        .iter()
+                        .filter(|checked| matches_execution_metadata_except_state(checked))
+                        .filter_map(|checked| {
+                            let mut unproved = checked
+                                .assumptions
+                                .pure_facts()
+                                .into_iter()
+                                .filter(|premise| !assumptions.proves(premise));
+                            let premise = unproved.next()?;
+                            if unproved.next().is_some() {
+                                return None;
+                            }
+                            let Proposition::ConditionIs(condition, value) = premise else {
+                                return None;
+                            };
+                            Some((checked, condition, value))
+                        })
+                        .collect::<Vec<_>>();
+                    for (left_index, (left, left_condition, left_value)) in
+                        candidates.iter().enumerate()
+                    {
+                        if let Some((right, _, _)) = candidates[left_index + 1..].iter().find(
+                            |(_, right_condition, right_value)| {
+                                right_condition == left_condition && right_value != left_value
+                            },
+                        ) {
+                            let left = checked_execution_at_definitionally_equal_entry_state(
+                                left,
+                                &state,
+                                &function,
+                                &assumptions,
+                            )?;
+                            let right = checked_execution_at_definitionally_equal_entry_state(
+                                right,
+                                &state,
+                                &function,
+                                &assumptions,
+                            )?;
+                            let mut paths = left.paths;
+                            paths.extend(right.paths);
+                            return Some(SymbolicCExecution { paths, limit: None });
+                        }
+                    }
+                    None
+                })
+                .flatten();
         let body_operation = if reusable.is_some() {
             "contract checked body reuse"
+        } else if rebased_reuse.is_some() {
+            "contract checked body resource-rebased reuse"
+        } else if partition_reuse.is_some() {
+            "contract checked body partition reuse"
         } else {
             "contract body symbolic execution"
         };
@@ -2090,9 +2288,11 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
             function.name(),
             "contract certification",
             body_operation,
-            || match reusable {
-                Some(checked) => checked.execution.clone(),
-                None => {
+            || match (reusable, rebased_reuse, partition_reuse) {
+                (Some(checked), _, _) => checked.execution.clone(),
+                (None, Some(execution), _) => execution,
+                (None, None, Some(execution)) => execution,
+                (None, None, None) => {
                     record_checked_function_body_execution();
                     match mode {
                         CFunctionContractExecutionMode::VerifyLoops => {

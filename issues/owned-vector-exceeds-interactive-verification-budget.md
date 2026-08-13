@@ -67,6 +67,24 @@ certificate relating definitionally equivalent entry resource states and a
 checked composition of complementary path frontiers; substituting the caller
 state before certification is not semantics/performance neutral.
 
+That kernel boundary is now implemented for the bounded cases. Checked
+executions may be rebased only when the concrete entry state is exact and
+non-recursive ghost resource contexts are proved definitionally equal; two
+complete executions under opposite polarities of one exact entry condition may
+also be composed. Incomplete partitions and extra unproved premises still
+force fresh execution, while recursive resources skip the equivalence probe
+entirely. Focused regressions count body executions for every acceptance and
+rejection case.
+
+This removes the second approximately 0.7-second body execution from
+`allocated_vector_push`. A current warm profile is about 6.50 seconds, with
+certification reduced from roughly 1.35 seconds to 0.65 seconds and
+`allocated_vector_push` certification reduced from roughly 0.90 seconds to
+0.20 seconds. Binary-tree remains at its 4.2-second baseline; an unrestricted
+recursive-resource probe was measured at 9.5 seconds and is explicitly
+excluded. The remaining vector cost is about 2.16 seconds of simple replay,
+2.89 seconds of verifier core work, and 0.64 seconds of control overhead.
+
 ## Regression
 
 Keep the complete project as a wall-clock integration workload. Every engine

@@ -48,3 +48,10 @@ success-only and active-limit exclusion policy is unchanged.
 The larger issue remains open: independent execution and resource
 representation caches still retain bounded vectors with deep structural keys,
 and cache lifetime is not yet tied to one verification session.
+
+Checked execution reuse now deliberately refuses to probe definitional entry
+resource equality for recursive composite definitions. A binary-tree
+measurement showed that using the general recursive relation as a cache-key
+equivalence test costs about 9.5 seconds by itself. Stable shallow identities
+for recursive resource projections are therefore a prerequisite to extending
+that reuse path; fresh body execution remains the bounded fallback.

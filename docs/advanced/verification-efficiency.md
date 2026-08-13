@@ -127,10 +127,25 @@ frontier is never reusable. Any mismatch performs fresh symbolic execution.
 Thus reuse removes duplicate C-body interpretation without trusting smart
 search state or weakening independent contract checking.
 
+Proof-directed folds, unfolds, and observations may give the checked artifact
+a different ghost `ResourceContext` from the independently reconstructed
+contract entry. For non-recursive resource definitions, the kernel may rebase
+the artifact only after checking that locals, memory, and counted populations
+are exact and that its bounded resource-equality relation proves the two ghost
+contexts definitionally equal. Recursive resource representations do not enter
+that relation as a cache probe: until they have stable shallow identities they
+fall back immediately to fresh execution.
+
+Likewise, two complete artifacts checked under exactly opposite polarities of
+one entry condition may be composed into one exhaustive frontier. All other
+premises must follow from the reconstructed contract context and every sealed
+execution input must match. One side alone, two unrelated conditions, or any
+additional unproved premise forces fresh execution.
+
 Grouped claims retain the same artifact, so adding claims does not multiply
 whole-function execution. Tests count checked body executions directly and
-also require an artifact containing an unproved extra assumption to be
-rejected.
+also require an artifact containing an unproved extra assumption or an
+incomplete entry partition to be rejected.
 
 ## Regression policy
 
