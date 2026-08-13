@@ -102,6 +102,33 @@ fn theorem_with_unrelated_exact_facts(fact_count: usize) -> String {
     )
 }
 
+fn grouped_claim_project(claim_count: usize) -> (String, String) {
+    let c_source = "int32 shared_claims(int32 x) { return x; }\n".to_string();
+    let mut click_source =
+        String::from("verifying \"shared_claims.c\";\n\nint32 shared_claims(int32 x) {\n");
+    for _ in 0..claim_count {
+        click_source.push_str("    ensures result == x;\n");
+    }
+    click_source.push_str("} by {\n    step();\n    normalize();\n}\n");
+    (c_source, click_source)
+}
+
+fn resource_member_project(member_count: usize) -> (String, String) {
+    let c_source = "int32 preserve_bundle(int32 p[]) { return 0; }\n".to_string();
+    let mut click_source = String::new();
+    for index in 0..member_count {
+        click_source.push_str(&format!("resource member_{index}(value: int32);\n"));
+    }
+    click_source.push_str("\nresource bundle(p: int32*) {\n");
+    for index in 0..member_count {
+        click_source.push_str(&format!("    contains member_{index}({index});\n"));
+    }
+    click_source.push_str(
+        "}\n\nverifying \"preserve_bundle.c\";\n\nint32 preserve_bundle(int32 p[]) {\n    owns bundle(p);\n    immutable;\n    ensures result == 0;\n} by {\n    step();\n    frame();\n    assumption();\n}\n",
+    );
+    (c_source, click_source)
+}
+
 #[test]
 fn simple_unrelated_functions_have_a_deterministic_scaling_control() {
     let samples = [4, 8, 16, 32]
@@ -231,6 +258,52 @@ fn exact_assumption_scales_near_linearly_with_unrelated_ambient_facts() {
         .collect::<Vec<_>>();
 
     assert_near_linear_scaling("exact assumption with unrelated facts", &samples);
+}
+
+#[test]
+fn grouped_claims_share_one_execution_with_near_linear_work() {
+    let samples = [8, 16, 32, 64]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = grouped_claim_project(size);
+            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(&click_source, &[("shared_claims.c", c_source.as_str())])
+            });
+            let verified = verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} shared-claim scaling fixture failed: {}",
+                    error.message()
+                )
+            });
+            assert_eq!(verified.len(), size);
+            ScalingSample { size, work }
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling("claims sharing one execution", &samples);
+}
+
+#[test]
+fn composite_definition_members_scale_near_linearly() {
+    let samples = [8, 16, 32, 64]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = resource_member_project(size);
+            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(&click_source, &[("preserve_bundle.c", c_source.as_str())])
+            });
+            let verified = verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} resource-member scaling fixture failed: {}",
+                    error.message()
+                )
+            });
+            assert_eq!(verified.len(), 3);
+            ScalingSample { size, work }
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling("composite definition members", &samples);
 }
 
 #[test]

@@ -50,6 +50,14 @@ green control curve must run by default; do not quarantine the entire suite.
 
 The default in-process gate now covers unrelated functions/rules, unrelated
 global theorems, explicit theorem dependencies, straight-line statements with
-retained program-point snapshots, and exact `assumption()` with geometrically
-increasing unrelated ambient facts/surface spellings. The remaining resource,
-definition-member, and shared-claim axes still need dedicated fixtures.
+retained program-point snapshots, exact `assumption()` with geometrically
+increasing unrelated ambient facts/surface spellings, composite-resource
+definition members, and claims sharing one checked function execution. Kernel
+resource regressions separately cover exact lookup, unrelated normalization,
+and adjacent interval merging.
+
+The remaining harness work is richer named-operation work attribution: the
+curves currently report total deterministic work and their scaling axis, but
+do not yet break a failed curve down by operation span. Dedicated `step()
+using`, transport, and same-kernel/many-surface-spellings curves remain tracked
+by `indexed-proof-fact-and-surface-spelling-stores.md`.
