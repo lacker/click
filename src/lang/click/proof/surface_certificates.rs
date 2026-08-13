@@ -274,8 +274,40 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
     }
+    // A `rewrite` step substitutes the exact terms of its equality, so its
+    // premise is usable only when the surface spelling lowers at replay to
+    // the same kernel equality the plan rewrote with. A snapshot-bridged
+    // spelling (the same fact recorded against an earlier memory) denotes
+    // the value only through frame reasoning, which the simple rewrite
+    // cannot check; those premises stay available to the transport path.
+    let rewrite_pairs = premise_pairs
+        .iter()
+        .filter(|(kernel, surface)| {
+            replay
+                .surface_propositions
+                .available_kernel(surface, available)
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    lower_point_proposition(
+                        surface,
+                        available,
+                        parameters,
+                        arguments,
+                        replay.old_reference_state(state),
+                        state,
+                        None,
+                        &replay.program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                })
+                .is_ok_and(|lowered| propositions_match_up_to_canonical_loads(&lowered, kernel))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     if let Some(tactics) =
-        plan_explicit_equality_rewrites(&lowered_conclusion, &premise_pairs, available)
+        plan_explicit_equality_rewrites(&lowered_conclusion, &rewrite_pairs, available)
     {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
@@ -312,7 +344,7 @@ pub(super) fn lower_surface_atomic_derivation(
     }
     if let Some(tactics) = plan_explicit_equality_rewrites_then(
         &lowered_conclusion,
-        &premise_pairs,
+        &rewrite_pairs,
         available,
         &|goal| plan_explicit_named_signed_rule(goal, &premise_pairs),
     ) {

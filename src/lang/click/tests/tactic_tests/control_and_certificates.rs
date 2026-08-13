@@ -658,6 +658,77 @@ fn smart_have_splits_an_unfolded_predicate_conjunction_goal() {
 }
 
 #[test]
+fn point_have_certifies_a_post_call_fact_across_a_later_store() {
+    // After the call to `reset`, the fact `pair->low == 0` is recorded
+    // against the call's post-state snapshot; the later store to
+    // `pair->high` moves the current memory past it. The mid-proof `have`
+    // must still produce a replaying certificate for the fact in its
+    // current spelling. (The full stale-spelling rewrite rejection is
+    // exercised by `examples/bounded-pool`'s `pool_pipeline`.)
+    let reset_source = r#"
+        struct pair {
+            int32 low;
+            int32 high;
+        };
+
+        void reset(struct pair* pair) {
+            pair->low = 0;
+        }
+    "#;
+    let touch_source = r#"
+        struct pair {
+            int32 low;
+            int32 high;
+        };
+
+        void touch(struct pair* pair) {
+            reset(pair);
+            pair->high = 5;
+        }
+    "#;
+    let click_source = r#"
+        verifying "reset.c";
+        verifying "touch.c";
+
+        void reset(struct pair* pair) {
+            owns object(pair);
+            mutable pair->low;
+
+            ensures pair->low == 0;
+        } by {
+            execute();
+            frame();
+            simp();
+        }
+
+        void touch(struct pair* pair) {
+            owns object(pair);
+            mutable pair->low, pair->high;
+
+            ensures pair->low == 0;
+        } by {
+            step();
+            step();
+            have pair->low == 0 by simp;
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(
+        click_source,
+        &[("reset.c", reset_source), ("touch.c", touch_source)],
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "the post-call have should certify without a stale-spelling rewrite: {}",
+            error.message()
+        )
+    });
+}
+
+#[test]
 fn grouped_outcome_simp_splits_an_unfold_active_conjunction_ensure() {
     // The final `simp` certifies `ordered_pair(pair)` while `unfold` is
     // active, so the kernel goal is already the body conjunction while the
