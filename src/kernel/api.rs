@@ -2517,6 +2517,37 @@ pub fn prove_int32_positive_predecessor_is_nonnegative(value: Bitvector32Term) -
     ))
 }
 
+/// Decrementing a nonnegative signed int32 value preserves a non-strict
+/// upper bound: nonnegativity rules out the `INT_MIN` wraparound, so the
+/// predecessor stays strictly below the value and hence at most the bound.
+pub fn prove_int32_nonnegative_predecessor_upper_bound(
+    value: Bitvector32Term,
+    bound: Bitvector32Term,
+) -> Theorem {
+    let nonnegative_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), value.clone()),
+        true,
+    );
+    let bound_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(value.clone(), bound.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::Subtract(Box::new(value), Box::new(Bitvector32Term::Constant(1))),
+            bound,
+        ),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(nonnegative_premise),
+        Box::new(Proposition::Implies(
+            Box::new(bound_premise),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
 /// Decrementing a positive signed int32 value strictly decreases it.
 pub fn prove_int32_positive_predecessor_strictly_decreases(value: Bitvector32Term) -> Theorem {
     let premise = Proposition::ConditionIs(

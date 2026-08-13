@@ -3565,3 +3565,59 @@ fn unfolded_conjunction_have_simp_expands_to_a_split_certificate() {
         )
     });
 }
+
+#[test]
+fn outcome_predecessor_bound_simp_expands_to_the_named_rule() {
+    let c_source = r#"
+            struct pair {
+                int32 low;
+                int32 high;
+            };
+
+            void drop_one(struct pair* pair) {
+                pair->low = pair->low - 1;
+            }
+        "#;
+    let click_source = r#"
+            predicate ordered_pair(pair: struct pair*) {
+                0 <= pair->low and pair->low <= pair->high
+            }
+
+            verifying "drop_one.c";
+
+            void drop_one(struct pair* pair) {
+                requires ordered_pair(pair);
+                requires pair->low == 1;
+                owns object(pair);
+                mutable pair->low;
+
+                ensures ordered_pair(pair);
+            } by {
+                unfold(ordered_pair);
+                execute();
+                frame();
+                simp();
+            }
+        "#;
+    let offset = click_source.rfind("simp()").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("drop_one.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the predecessor bound simp should expand to the named rule");
+    assert!(expanded.contains("split();"), "{expanded}");
+    assert!(
+        expanded.contains("apply(int32_nonnegative_predecessor_upper_bound("),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("simp()"), "{expanded}");
+    verify_c0_sources(&expanded, &[("drop_one.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "the expanded predecessor bound certificate should replay: {}\n{expanded}",
+            error.message()
+        )
+    });
+}

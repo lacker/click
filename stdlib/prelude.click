@@ -89,6 +89,13 @@ theorem int32_positive_predecessor_strictly_decreases(value: int32) {
     ensures value - 1 < value;
 }
 
+theorem int32_nonnegative_predecessor_upper_bound(value: int32, bound: int32) {
+    requires 0 <= value;
+    requires value <= bound;
+
+    ensures value - 1 <= bound;
+}
+
 theorem int32_le_lt_transitive(first: int32, middle: int32, last: int32) {
     requires first <= middle;
     requires middle < last;

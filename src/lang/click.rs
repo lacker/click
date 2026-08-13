@@ -47,6 +47,7 @@ use crate::kernel::{
     prove_int32_le_lt_transitive, prove_int32_le_transitive, prove_int32_lt_implies_le,
     prove_int32_lt_le_transitive,
     prove_int32_lt_transitive,
+    prove_int32_nonnegative_predecessor_upper_bound,
     prove_int32_not_lt_implies_ge,
     prove_int32_positive_is_nonnegative, prove_int32_positive_predecessor_is_nonnegative,
     prove_int32_positive_predecessor_strictly_decreases, prove_int32_successor_le_implies_lt,

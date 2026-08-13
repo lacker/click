@@ -208,6 +208,39 @@ fn int32_positive_predecessor_is_nonnegative_axiom_has_the_exact_implication() {
 }
 
 #[test]
+fn int32_nonnegative_predecessor_upper_bound_axiom_has_the_exact_implications() {
+    let value = Bitvector32Term::Variable(Variable(90_030));
+    let bound = Bitvector32Term::Variable(Variable(90_031));
+    let theorem = prove_int32_nonnegative_predecessor_upper_bound(value.clone(), bound.clone());
+    let nonnegative_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), value.clone()),
+        true,
+    );
+    let bound_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(value.clone(), bound.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::Subtract(Box::new(value), Box::new(Bitvector32Term::Constant(1))),
+            bound,
+        ),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(nonnegative_premise),
+            Box::new(Proposition::Implies(
+                Box::new(bound_premise),
+                Box::new(conclusion),
+            )),
+        )
+    );
+}
+
+#[test]
 fn int32_strictly_positive_is_nonnegative_axiom_has_the_exact_implication() {
     let value = Bitvector32Term::Variable(Variable(90_023));
     let theorem = prove_int32_strictly_positive_is_nonnegative(value.clone());

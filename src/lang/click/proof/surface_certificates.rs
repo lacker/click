@@ -1315,7 +1315,13 @@ pub(super) fn lower_outcome_simp_tactics(
         &search_pairs,
         available,
         &|current| pure_fact_is_replay_available(current, available),
-        &|current| plan_explicit_named_signed_rule(current, &search_pairs),
+        &|current| {
+            plan_explicit_named_signed_rule(current, &search_pairs).or_else(|| {
+                // Outcome `have` bodies admit nested `have` steps, so the
+                // predecessor rule may spell its nonnegativity leg here.
+                plan_explicit_predecessor_upper_bound(current, &search_pairs, true)
+            })
+        },
     ) {
         explicit.splice(
             0..0,
@@ -2162,6 +2168,7 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_increment_constant_upper_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_below_max_is_defined(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_predecessor_is_nonnegative(goal, premise_pairs))
+        .or_else(|| plan_explicit_predecessor_upper_bound(goal, premise_pairs, false))
         .or_else(|| plan_explicit_one_le_predecessor(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_predecessor_strictly_decreases(goal, premise_pairs))
         .or_else(|| plan_explicit_le_and_not_lt_implies_eq(goal, premise_pairs))
@@ -3303,6 +3310,98 @@ fn plan_explicit_positive_predecessor_is_nonnegative(
     None
 }
 
+
+/// From `0 <= value` and `value <= bound`, the predecessor keeps the bound:
+/// `value - 1 <= bound` through `int32_nonnegative_predecessor_upper_bound`.
+/// When the nonnegativity leg is not itself a selected premise and
+/// `spell_missing_leg` is set, a nested `have` derives it from the same
+/// premises with the explicit equality-rewrite search (closing by a listed
+/// premise or context-free normalization), so the emitted certificate still
+/// names every dependency. Only outcome contexts pass `spell_missing_leg`:
+/// a pure theorem proof has no `have`, so its planner must not emit one.
+fn plan_explicit_predecessor_upper_bound(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    spell_missing_leg: bool,
+) -> Option<Vec<ProofTactic>> {
+    let (predecessor, goal_upper) = goal_exact_less_equal_parts(goal)?;
+    let Bitvector32Term::Subtract(value, amount) = predecessor else {
+        return None;
+    };
+    if amount.as_ref() != &Bitvector32Term::Constant(1) {
+        return None;
+    }
+    for (bound_kernel, bound_surface) in premise_pairs {
+        let Some((premise_value, premise_bound)) = signed_nonstrict_parts(bound_kernel) else {
+            continue;
+        };
+        if premise_value != value.as_ref() || premise_bound != goal_upper {
+            continue;
+        }
+        let Some((surface_value, surface_bound)) = surface_nonstrict_parts(bound_surface) else {
+            continue;
+        };
+        let nonnegative_kernel = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(
+                Box::new(Bitvector32Term::Constant(0)),
+                value.clone(),
+            ),
+            true,
+        );
+        let mut tactics = Vec::new();
+        let nonnegative_surface = if let Some((_, surface)) = premise_pairs.iter().find(
+            |(kernel, _)| {
+                signed_nonstrict_parts(kernel).is_some_and(|(lower, bounded)| {
+                    lower == &Bitvector32Term::Constant(0) && bounded == value.as_ref()
+                })
+            },
+        ) {
+            surface.clone()
+        } else {
+            if !spell_missing_leg {
+                continue;
+            }
+            let kernel_premises = premise_pairs
+                .iter()
+                .map(|(kernel, _)| kernel.clone())
+                .collect::<Vec<_>>();
+            let Some(sub_tactics) = plan_explicit_equality_rewrites_from(
+                &nonnegative_kernel,
+                premise_pairs,
+                &kernel_premises,
+                &|current| {
+                    kernel_premises.iter().any(|fact| {
+                        fact == current || condition_polarity_equivalent(fact, current)
+                    })
+                },
+                &|_| None,
+            ) else {
+                continue;
+            };
+            let surface_zero = ContractExpression::CFragment(CExpression::Value(int32(0)));
+            let nonnegative = ClickProposition::Comparison {
+                left: surface_zero,
+                operator: ComparisonOperator::LessEqual,
+                right: surface_value.clone(),
+            };
+            tactics.push(ProofTactic::Have(ProofHave {
+                proposition: nonnegative.clone(),
+                proof: Proof::Script(sub_tactics),
+            }));
+            nonnegative
+        };
+        tactics.push(ProofTactic::ApplyTheoremUsing {
+            application: TheoremApplication {
+                name: "int32_nonnegative_predecessor_upper_bound".to_string(),
+                arguments: vec![surface_value, surface_bound],
+            },
+            premises: vec![nonnegative_surface, bound_surface.clone()],
+        });
+        tactics.push(ProofTactic::Assumption);
+        return Some(tactics);
+    }
+    None
+}
 
 fn plan_explicit_one_le_predecessor(
     goal: &Proposition,

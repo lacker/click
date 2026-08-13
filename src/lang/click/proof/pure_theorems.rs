@@ -416,6 +416,7 @@ fn verify_theorem_ensure(
             | "int32_increment_below_max_is_defined"
             | "int32_positive_predecessor_is_nonnegative"
             | "int32_positive_predecessor_strictly_decreases"
+            | "int32_nonnegative_predecessor_upper_bound"
             | "int32_successor_le_implies_lt"
     ) {
         return verify_kernel_standard_theorem_axiom(
@@ -543,6 +544,7 @@ fn verify_kernel_standard_theorem_axiom(
         | "int32_increment_strict_greater_lower_bound"
         | "int32_increment_preserves_order" => (3, 2),
         "int32_successor_le_implies_lt" => (2, 2),
+        "int32_nonnegative_predecessor_upper_bound" => (2, 2),
         "int32_le_antisymmetric" => (2, 2),
         "int32_le_and_not_lt_implies_eq" | "int32_ge_and_not_gt_implies_eq" => (2, 2),
         "int32_ge_implies_reversed_le" => (2, 1),
@@ -634,6 +636,9 @@ fn verify_kernel_standard_theorem_axiom(
         }
         "int32_positive_predecessor_strictly_decreases" => {
             prove_int32_positive_predecessor_strictly_decreases(value)
+        }
+        "int32_nonnegative_predecessor_upper_bound" => {
+            prove_int32_nonnegative_predecessor_upper_bound(value, int32_parameter(1)?)
         }
         "int32_le_lt_transitive" => {
             prove_int32_le_lt_transitive(value, int32_parameter(1)?, int32_parameter(2)?)

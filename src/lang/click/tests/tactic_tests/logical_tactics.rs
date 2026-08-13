@@ -1660,3 +1660,116 @@ fn apply_lt_le_transitive_rejects_a_false_constant_leg() {
     verify_c0_sources(click_source, &[])
         .expect_err("a false constant leg must not be rubber-stamped");
 }
+
+#[test]
+fn apply_predecessor_upper_bound_closes_from_both_listed_legs() {
+    let click_source = r#"
+        theorem predecessor_keeps_bound(value: int32, bound: int32) {
+            requires 0 <= value;
+            requires value <= bound;
+
+            ensures value - 1 <= bound by {
+                apply(int32_nonnegative_predecessor_upper_bound(value, bound)) using {
+                    0 <= value;
+                    value <= bound;
+                };
+                assumption();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[]).expect(
+        "a nonnegative value's predecessor should keep its upper bound through \
+         `int32_nonnegative_predecessor_upper_bound`",
+    );
+}
+
+#[test]
+fn outcome_predecessor_upper_bound_spells_a_rewritten_nonnegative_leg() {
+    // The decrement's kernel derivation pins `p->low` through the spelled
+    // equality, so the nonnegativity leg of the predecessor rule is not a
+    // selected premise. The outcome planner must spell that leg as a nested
+    // `have` closed by explicit rewrites, not silently absorb the
+    // derivation.
+    let c_source = r#"
+        struct pair {
+            int32 low;
+            int32 high;
+        };
+
+        void drop_one(struct pair* pair) {
+            pair->low = pair->low - 1;
+        }
+    "#;
+    let click_source = r#"
+        predicate ordered_pair(pair: struct pair*) {
+            0 <= pair->low and pair->low <= pair->high
+        }
+
+        verifying "drop_one.c";
+
+        void drop_one(struct pair* pair) {
+            requires ordered_pair(pair);
+            requires pair->low == 1;
+            owns object(pair);
+            mutable pair->low;
+
+            ensures ordered_pair(pair);
+        } by {
+            unfold(ordered_pair);
+            execute();
+            frame();
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("drop_one.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "the outcome conjunction should split and close its predecessor bound: {}",
+            error.message()
+        )
+    });
+}
+
+#[test]
+fn apply_predecessor_upper_bound_requires_its_nonnegative_leg_listed() {
+    // Without `0 <= value` established, the theorem's first requirement has
+    // no proof, so the explicit application must fail instead of
+    // rubber-stamping the missing leg.
+    let click_source = r#"
+        theorem predecessor_missing_leg(value: int32, bound: int32) {
+            requires value <= bound;
+
+            ensures value - 1 <= bound by {
+                apply(int32_nonnegative_predecessor_upper_bound(value, bound)) using {
+                    value <= bound
+                };
+                assumption();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect_err("a predecessor bound application missing its nonnegative leg must fail");
+}
+
+#[test]
+fn apply_predecessor_upper_bound_rejects_a_false_nonnegative_leg() {
+    // `0 <= -1` is false, so the nonnegative leg cannot be discharged by
+    // normalization and the application must fail.
+    let click_source = r#"
+        theorem predecessor_false_leg(bound: int32) {
+            requires -1 <= bound;
+
+            ensures -1 - 1 <= bound by {
+                apply(int32_nonnegative_predecessor_upper_bound(-1, bound)) using {
+                    -1 <= bound
+                };
+                assumption();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect_err("a false nonnegative leg must not be rubber-stamped");
+}
