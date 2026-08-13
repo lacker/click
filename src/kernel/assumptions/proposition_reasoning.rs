@@ -2287,32 +2287,131 @@ impl Assumptions {
                 || bitvector_terms_may_be_theory_equal(left, right)
                     && self.bitvector_terms_proven_equal(left, right)
         };
+        // Ordinary variables and constants can only be related by exact
+        // equality or an equality-graph path, so labelling that graph's
+        // connected components once decides every structural endpoint pair
+        // without comparing order facts to each other. Endpoints a
+        // non-structural theory could still relate keep the pairwise
+        // comparison below; see `bitvector_terms_may_be_theory_equal`.
+        let class_timing = crate::instrumentation::OperationTiming::new(
+            "kernel",
+            "context inconsistency",
+            "context inconsistency: order equality classes",
+        );
+        let mut class_of_key = BTreeMap::<Bitvector32Term, usize>::new();
+        let mut next_class = 0usize;
+        {
+            let equality_index = self.bitvector_equality_index();
+            for root in equality_index.keys() {
+                if class_of_key.contains_key(root) {
+                    continue;
+                }
+                let class = next_class;
+                next_class += 1;
+                let mut stack = vec![root.clone()];
+                while let Some(term) = stack.pop() {
+                    crate::instrumentation::record_deterministic_work(1);
+                    if class_of_key.insert(term.clone(), class).is_some() {
+                        continue;
+                    }
+                    if let Some(neighbors) = equality_index.get(&term) {
+                        stack.extend(neighbors.iter().cloned());
+                    }
+                }
+            }
+        }
+        let mut singleton_classes = BTreeMap::<Bitvector32Term, usize>::new();
+        let mut class_for = |term: &Bitvector32Term| -> usize {
+            let key = equality_graph_term_key(term);
+            if let Some(class) = class_of_key.get(&key) {
+                return *class;
+            }
+            let fresh = next_class;
+            *singleton_classes.entry(key).or_insert_with(|| {
+                next_class += 1;
+                fresh
+            })
+        };
+        let order_classes = order_facts
+            .iter()
+            .map(|(left, right, _)| {
+                crate::instrumentation::record_deterministic_work(1);
+                (class_for(left), class_for(right))
+            })
+            .collect::<Vec<_>>();
+        drop(class_timing);
+
         let order_conflict_timing = crate::instrumentation::OperationTiming::new(
             "kernel",
             "context inconsistency",
             "context inconsistency: derived order conflicts",
         );
-        for (left, right, strict) in &order_facts {
+        // A strict edge inside one class contradicts the equality chain that
+        // built the class, and a reverse edge between two classes contradicts
+        // this one when either edge is strict. Both are map lookups, so a
+        // consistent context costs one pass rather than an all-pairs scan.
+        let mut class_order = BTreeMap::<(usize, usize), bool>::new();
+        for ((left_class, right_class), (_, _, strict)) in
+            order_classes.iter().zip(order_facts.iter())
+        {
             crate::instrumentation::record_deterministic_work(1);
-            if *strict && terms_equal(left, right) {
+            if *strict && left_class == right_class {
                 return true;
             }
-            if equal_facts.iter().any(|(equal_left, equal_right)| {
-                crate::instrumentation::record_deterministic_work(1);
-                (terms_equal(left, equal_left) && terms_equal(right, equal_right))
-                    || (terms_equal(left, equal_right) && terms_equal(right, equal_left))
-            }) && *strict
+            if class_order
+                .get(&(*right_class, *left_class))
+                .is_some_and(|reverse_strict| *strict || *reverse_strict)
             {
                 return true;
             }
-            if order_facts
-                .iter()
-                .any(|(other_left, other_right, other_strict)| {
+            class_order
+                .entry((*left_class, *right_class))
+                .and_modify(|existing| *existing |= *strict)
+                .or_insert(*strict);
+        }
+
+        // Non-structural theory equality is not an equality-graph edge, so
+        // endpoints it can relate still need the pairwise comparison. Pairs of
+        // purely structural endpoints are already decided above.
+        let theory_capable = |term: &Bitvector32Term| {
+            matches!(
+                term,
+                Bitvector32Term::MemoryLoad(_, _)
+                    | Bitvector32Term::Add(_, _)
+                    | Bitvector32Term::If { .. }
+                    | Bitvector32Term::RangeFold { .. }
+            )
+        };
+        let theory_equal_facts = equal_facts
+            .iter()
+            .filter(|(left, right)| theory_capable(left) || theory_capable(right))
+            .collect::<Vec<_>>();
+        for (left, right, strict) in &order_facts {
+            let endpoints_theory_capable = theory_capable(left) || theory_capable(right);
+            if endpoints_theory_capable {
+                crate::instrumentation::record_deterministic_work(1);
+                if *strict && terms_equal(left, right) {
+                    return true;
+                }
+            }
+            if *strict
+                && theory_equal_facts.iter().any(|(equal_left, equal_right)| {
                     crate::instrumentation::record_deterministic_work(1);
-                    terms_equal(left, other_right)
-                        && terms_equal(right, other_left)
-                        && (*strict || *other_strict)
+                    (terms_equal(left, equal_left) && terms_equal(right, equal_right))
+                        || (terms_equal(left, equal_right) && terms_equal(right, equal_left))
                 })
+            {
+                return true;
+            }
+            if endpoints_theory_capable
+                && order_facts
+                    .iter()
+                    .any(|(other_left, other_right, other_strict)| {
+                        crate::instrumentation::record_deterministic_work(1);
+                        terms_equal(left, other_right)
+                            && terms_equal(right, other_left)
+                            && (*strict || *other_strict)
+                    })
             {
                 return true;
             }

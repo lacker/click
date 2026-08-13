@@ -2827,6 +2827,36 @@ fn repeated_resolution_queries_do_not_repay_their_search() {
 }
 
 #[test]
+fn consistent_order_context_scales_near_linearly() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let mut assumptions = Assumptions::new();
+            for index in 0..size {
+                assumptions = assumptions.assume_condition(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(Variable(95_000 + index as u64)),
+                        Bitvector32Term::Variable(Variable(96_000 + index as u64)),
+                    ),
+                    true,
+                );
+            }
+            let (inconsistent, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions.is_inconsistent()
+            });
+            assert!(!inconsistent, "unrelated order facts are consistent");
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "consistent order contradiction scanning is superlinear: {samples:?}"
+        );
+    }
+}
+
+#[test]
 fn repeated_context_inconsistency_queries_do_not_rescan_facts() {
     let x = Bitvector32Term::Variable(Variable(93_201));
     let y = Bitvector32Term::Variable(Variable(93_202));
