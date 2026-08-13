@@ -98,3 +98,49 @@ constructors. This reduced context-inconsistency time from about 0.28s to
 0.25s and a current project profile from about 4.96s to 4.88s. The all-pairs
 order loop and its roughly 22,000 remaining theory comparisons are still open;
 closing them requires the indexed order/equality provenance described above.
+
+The all-pairs order loop is now closed. Labelling the equality graph's
+connected components turns every structural endpoint comparison into class
+identity: a strict edge inside one class contradicts the equality chain that
+built it, and a reverse edge between two classes contradicts this one when
+either edge is strict. This subsumes the former single-equal-fact bridge check,
+because a class relates endpoints through the whole chain rather than one fact.
+Only components an order fact actually mentions are labelled, so the pass
+visits what the pairwise comparisons used to reach and no more.
+
+Endpoints that a non-structural theory could relate — a memory load, an
+addition, or two conditionals or folds — keep the pairwise comparison, so no
+conclusion is weakened. `consistent_order_context_scales_near_linearly` holds a
+consistent order context while growing its unrelated facts: deterministic work
+fell from N^2 + 2N to 3N, or 16640 units to 384 at 128 facts. Measured on
+examples/bounded-pool over three runs each, this is neutral on wall time
+(pool_pipeline smart 1.18s before, 1.17s after).
+
+## 2026-08-13 measurement: the premise-rerun criterion has no failing curve
+
+`search_condition_derivation` still literally reruns the prover once per
+candidate and then once per candidate pair, but instrumenting it shows that is
+not a demonstrated asymptotic violation:
+
+- across the complete `examples` corpus it is entered 120 times with 696
+  candidates in total, and the largest single candidate set is 7;
+- `examples/owned-vector` and `examples/binary-tree`, the two large integration
+  workloads, never enter it at all; and
+- growing a function's unrelated ambient conditions from 4 to 32 under
+  `execute()` does not enter it either, because the overflow obligation is
+  discharged by interval reasoning rather than condition-certificate search.
+
+A theorem-level order goal reaches its premises through
+`minimize_derivation_premises`, a binary-search reduction over the premises the
+derivation already returned, not through this scan.
+`transitive_order_derivation_scales_near_linearly_with_unrelated_conditions`
+guards that path and passes as written.
+
+Under the issue policy in `README.md`, this criterion therefore needs a failing
+deterministic curve before it justifies provenance machinery. The candidate set
+is bounded by the `ConditionIs` facts in one available slice and is guarded by
+`check_condition_search_budget`. Anyone resuming should either exhibit a curve
+where that candidate set grows with project size, or narrow the criterion to
+the paths that remain demonstrably open: indexed quantified matching,
+provenance-producing loadability decisions, and the non-structural all-pairs
+fallback for terms equal only through derived theory facts.
