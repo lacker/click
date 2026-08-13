@@ -157,6 +157,25 @@ fn theorem_with_unrelated_exact_facts(fact_count: usize) -> String {
     )
 }
 
+/// A transitive order goal needs exactly two of its ambient conditions, so it
+/// reaches the paired-candidate phase of condition-certificate search rather
+/// than the single-candidate phase.
+fn order_chain_theorem_with_unrelated_conditions(fact_count: usize) -> String {
+    let mut parameters = String::from("low: int32, middle: int32, high: int32");
+    let mut requirements =
+        String::from("    requires low < middle;\n    requires middle < high;\n");
+    for index in 0..fact_count {
+        parameters.push_str(&format!(", unrelated_{index}: int32"));
+        requirements.push_str(&format!(
+            "    requires unrelated_{index} < {};\n",
+            index as i32 + 1_000
+        ));
+    }
+    format!(
+        "theorem order_chain_scaling({parameters}) {{\n{requirements}    ensures low < high by {{ simp(); }}\n}}\n"
+    )
+}
+
 fn function_with_unrelated_facts(fact_count: usize, proof: &str) -> (String, String) {
     let c_source = "int32 exact_fact_target(int32 target) { return target; }\n".to_string();
     let mut click_source = String::from(
@@ -335,6 +354,27 @@ fn exact_assumption_scales_near_linearly_with_unrelated_ambient_facts() {
         .collect::<Vec<_>>();
 
     assert_near_linear_scaling("exact assumption with unrelated facts", &samples);
+}
+
+#[test]
+fn transitive_order_derivation_scales_near_linearly_with_unrelated_conditions() {
+    let samples = [4, 8, 16, 32]
+        .into_iter()
+        .map(|size| {
+            let source = order_chain_theorem_with_unrelated_conditions(size);
+            let (verified, sample) = scaling_sample(size, || verify_click_theorems(&source));
+            let verified = verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} order-chain scaling fixture failed: {}",
+                    error.message()
+                )
+            });
+            assert_eq!(verified.len(), 1);
+            sample
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling("transitive order derivation", &samples);
 }
 
 #[test]
