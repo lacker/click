@@ -107,3 +107,10 @@ indexed available set and requires constant query work. In the owned-vector
 integration profile this removed the simple-tail report from its 25-premise
 `allocated_vector_push` frame (roughly 0.55--0.61s down to 0.47s under the
 current load).
+
+`ExactReplayFactIndex` now follows the same rule: its exact set is immediate,
+but the much more expensive materialized-memory normalization index is lazy.
+An all-exact certificate therefore never normalizes every ambient proposition
+just in case a later premise needs equivalence matching. A focused four-size
+regression checks both constant exact-query work and that the materialization
+index remains uninitialized; non-exact callers retain the same lazy fallback.
