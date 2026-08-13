@@ -1382,10 +1382,6 @@ pub enum ResourceFamily {
     Token,
 }
 
-impl ResourceFamily {
-    const ALL: [Self; 3] = [Self::Memory, Self::Composite, Self::Token];
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResourceAccessMode {
     Own,

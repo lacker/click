@@ -546,14 +546,44 @@ fn resource_context_observes_same_and_cross_family_separation() {
         .observable_facts(&Assumptions::new())
         .expect("distinct owned resources should compose validly");
 
-    assert!(facts.contains(&Proposition::CResourceSeparate {
+    let assumptions = facts
+        .into_iter()
+        .fold(Assumptions::new(), |assumptions, fact| {
+            assumptions.assume_proposition(fact)
+        });
+    assert!(assumptions.proves(&Proposition::CResourceSeparate {
         left: token.clone(),
         right: other_token,
     }));
-    assert!(facts.contains(&Proposition::CResourceSeparate {
+    assert!(assumptions.proves(&Proposition::CResourceSeparate {
         left: memory,
         right: token,
     }));
+}
+
+#[test]
+fn observable_abstract_resources_use_one_indexed_composition() {
+    for size in [16, 32, 64, 128] {
+        let context = ResourceContext::new().unchecked_with_facts((0..size).map(|index| {
+            CResourceFact::own(CResource::Token {
+                name: format!("token_{index}"),
+                arguments: vec![],
+            })
+        }));
+        let facts = context
+            .observable_facts(&Assumptions::new())
+            .expect("distinct token resources should compose");
+        assert_eq!(facts.len(), 1, "size-{size} projection materialized pairs");
+        let assumptions = facts
+            .into_iter()
+            .fold(Assumptions::new(), |assumptions, fact| {
+                assumptions.assume_proposition(fact)
+            });
+        assert!(assumptions.proves(&Proposition::CResourceSeparate {
+            left: context.facts()[0].resource().clone(),
+            right: context.facts()[size - 1].resource().clone(),
+        }));
+    }
 }
 
 #[test]

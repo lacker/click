@@ -376,40 +376,14 @@ impl ResourceContext {
         assumptions: &Assumptions,
     ) -> Vec<Proposition> {
         let mut propositions = Vec::new();
-        for family in ResourceFamily::ALL {
-            let facts = self
-                .facts
-                .iter()
-                .filter(|fact| fact.family() == family)
-                .collect::<Vec<_>>();
-            propositions
-                .extend(resource_family_algebra(family).observable_facts(&facts, assumptions));
-        }
-        propositions.extend(self.cross_family_separate_facts());
-        if self.facts.iter().filter(|fact| fact.is_own()).count() >= 2 {
-            propositions.push(Proposition::CResourceComposition(self.clone()));
-        }
-        propositions
-    }
-
-    fn cross_family_separate_facts(&self) -> Vec<Proposition> {
-        let owned = self
+        let memory_facts = self
             .facts
             .iter()
-            .filter_map(CResourceFact::owned_resource)
+            .filter(|fact| fact.family() == ResourceFamily::Memory)
             .collect::<Vec<_>>();
-        let mut propositions = Vec::new();
-        for i in 0..owned.len() {
-            for right in &owned[i + 1..] {
-                let left = owned[i];
-                if left.family() == right.family() {
-                    continue;
-                }
-                propositions.push(Proposition::CResourceSeparate {
-                    left: (*left).clone(),
-                    right: (**right).clone(),
-                });
-            }
+        propositions.extend(MEMORY_RESOURCE_ALGEBRA.observable_facts(&memory_facts, assumptions));
+        if self.facts.iter().filter(|fact| fact.is_own()).count() >= 2 {
+            propositions.push(Proposition::CResourceComposition(self.clone()));
         }
         propositions
     }
