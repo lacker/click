@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn structural_range_offset_precedes_proof_aware_pointer_resolution() {
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(93_301))),
+            byte_width: 4,
+        },
+    };
+    let required = memory_range(
+        base.offset_by_int32_elements(Bitvector32Term::Constant(2)),
+        0,
+        1,
+    );
+    let assumptions = Assumptions::new();
+    Assumptions::reset_proof_aware_pointer_index_queries();
+
+    assert!(assumptions.range_covered_by_fact_range(
+        &required,
+        &base,
+        &Bitvector32Term::Constant(0),
+        &Bitvector32Term::Constant(8),
+    ));
+    assert_eq!(Assumptions::proof_aware_pointer_index_queries(), 0);
+}
+
+#[test]
 fn safe_positive_subtraction_is_below_its_base() {
     let x = Bitvector32Term::Variable(Variable(87));
     let assumptions = Assumptions::new().assume_condition(

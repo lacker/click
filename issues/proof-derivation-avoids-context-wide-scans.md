@@ -75,3 +75,10 @@ duplicate memo hits: their final endpoint/order proof is individually broad.
 The open derivation work must index or directly derive those local range
 relations; a cache keyed by complete range terms would only hide the scan and
 violate the stable-identity requirement.
+
+Concrete pointer-offset arithmetic now precedes proof-aware pointer equality
+inside fact-range coverage. This removes a large avoidable derivation subtree
+without changing the symbolic case: symbolic offsets retain the existing
+snapshot-aware canonicalizer because owned-string depends on it. A focused
+counter regression proves the constant shifted-range case performs no
+proof-aware pointer-index query.

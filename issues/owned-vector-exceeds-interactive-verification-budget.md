@@ -152,6 +152,23 @@ surrounding ordered term keys still retain structural ordering. This ties the
 local range fix to shallow proposition and term identities, not to a larger
 search bound.
 
+A structural-before-proof ordering fix now handles the concrete subset of
+those pointer-offset relations. `pointer_element_index_from_base` previously
+entered snapshot-aware memory resolution before asking whether exact pointer
+syntax already exposed a constant element delta. Trying that authoritative
+constant calculation first reduced a current owned-vector profile from about
+5.9s to 4.95s: verified-call return-resource evaluation fell from about 0.53s
+to 0.43s, resource core projection from about 0.35s to 0.28s, and several
+downstream proof/certification aggregates also shrank. An initially broader
+structural-first rule broke `owned_string_pop`, because symbolic deltas still
+need proof-aware canonicalization; the accepted rule is deliberately limited
+to concrete deltas and the complete owned-string project verifies again.
+
+The deterministic regression asserts that an exact constant shifted-range
+query never enters proof-aware pointer resolution. Owned-vector is now at the
+nominal five-second target on this baseline, but not yet comfortably below it
+under host variance, so the issue remains open.
+
 ## Regression
 
 Keep the complete project as a wall-clock integration workload. Every engine

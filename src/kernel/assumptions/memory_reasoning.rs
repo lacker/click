@@ -1,6 +1,21 @@
 use super::*;
 
+#[cfg(test)]
+thread_local! {
+    static PROOF_AWARE_POINTER_INDEX_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl Assumptions {
+    #[cfg(test)]
+    pub(crate) fn reset_proof_aware_pointer_index_queries() {
+        PROOF_AWARE_POINTER_INDEX_QUERIES.with(|queries| queries.set(0));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn proof_aware_pointer_index_queries() -> usize {
+        PROOF_AWARE_POINTER_INDEX_QUERIES.with(std::cell::Cell::get)
+    }
+
     pub(in crate::kernel) fn proves_memory_access(
         &self,
         memory: &CMemory,
@@ -761,6 +776,16 @@ impl Assumptions {
         if pointer.block != base.block {
             return None;
         }
+        // Exact syntax and direct offset arithmetic are authoritative on
+        // their own. Resolve them before snapshot-aware equality: generated
+        // range endpoints commonly retain a literal base plus an index, and
+        // sending that shape through memory resolution first recursively
+        // compares every nested load in the base expression.
+        if let Some(index) = pointer.element_index_from_base(base)
+            && index.as_const().is_some()
+        {
+            return Some(index);
+        }
         if let Some(index) =
             self.pointer_element_index_from_base_for_memory_resolution(pointer, base)
         {
@@ -810,8 +835,7 @@ impl Assumptions {
         {
             return Some(Bitvector32Term::Constant(0));
         }
-
-        pointer.element_index_from_base(base)
+        None
     }
 
     fn pointer_element_index_from_base_for_memory_resolution(
@@ -819,6 +843,8 @@ impl Assumptions {
         pointer: &Pointer,
         base: &Pointer,
     ) -> Option<Bitvector32Term> {
+        #[cfg(test)]
+        PROOF_AWARE_POINTER_INDEX_QUERIES.with(|queries| queries.set(queries.get() + 1));
         if pointer.block != base.block {
             return None;
         }
@@ -1595,6 +1621,11 @@ impl Assumptions {
         end: &Bitvector32Term,
     ) -> bool {
         if &range.base == base {
+            let same_base_timing = crate::instrumentation::OperationTiming::new(
+                "kernel",
+                "fact range coverage",
+                "fact range coverage: exact base",
+            );
             let base_delta = relative_range_offset(range.start(), start);
             let range_length =
                 Bitvector32Term::subtract(range.end().clone(), range.start().clone());
@@ -1616,35 +1647,62 @@ impl Assumptions {
             {
                 return true;
             }
+            drop(same_base_timing);
         }
 
         let fact_base = base.offset_by_int32_elements(start.clone());
         let range_base = range.base.offset_by_int32_elements(range.start.clone());
-        if let Some(base_delta) = self.pointer_element_index_from_base(&range_base, &fact_base) {
+        let shifted_base_delta = crate::instrumentation::measure_operation(
+            "kernel",
+            "fact range coverage",
+            "fact range coverage: shifted base relation",
+            || self.pointer_element_index_from_base(&range_base, &fact_base),
+        );
+        if let Some(base_delta) = shifted_base_delta {
             let range_length = Bitvector32Term::subtract(range.end.clone(), range.start.clone());
             let fact_length = Bitvector32Term::subtract(end.clone(), start.clone());
             let range_end = Bitvector32Term::add(base_delta.clone(), range_length);
-            if self.decide(&ConditionTerm::signed_less_equal(
-                Bitvector32Term::Constant(0),
-                base_delta,
-            )) == Some(true)
-                && self.decide(&ConditionTerm::signed_less_equal(range_end, fact_length))
-                    == Some(true)
-            {
+            if crate::instrumentation::measure_operation(
+                "kernel",
+                "fact range coverage",
+                "fact range coverage: shifted bounds",
+                || {
+                    self.decide(&ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Constant(0),
+                        base_delta,
+                    )) == Some(true)
+                        && self.decide(&ConditionTerm::signed_less_equal(range_end, fact_length))
+                            == Some(true)
+                },
+            ) {
                 return true;
             }
         }
 
-        let Some(base_delta) = self.pointer_element_index_from_base(&range.base, base) else {
+        let base_delta = crate::instrumentation::measure_operation(
+            "kernel",
+            "fact range coverage",
+            "fact range coverage: direct base relation",
+            || self.pointer_element_index_from_base(&range.base, base),
+        );
+        let Some(base_delta) = base_delta else {
             return false;
         };
         let range_start = Bitvector32Term::add(base_delta.clone(), range.start.clone());
         let range_end = Bitvector32Term::add(base_delta, range.end.clone());
 
-        self.decide(&ConditionTerm::signed_less_equal(
-            start.clone(),
-            range_start,
-        )) == Some(true)
-            && self.decide(&ConditionTerm::signed_less_equal(range_end, end.clone())) == Some(true)
+        crate::instrumentation::measure_operation(
+            "kernel",
+            "fact range coverage",
+            "fact range coverage: direct bounds",
+            || {
+                self.decide(&ConditionTerm::signed_less_equal(
+                    start.clone(),
+                    range_start,
+                )) == Some(true)
+                    && self.decide(&ConditionTerm::signed_less_equal(range_end, end.clone()))
+                        == Some(true)
+            },
+        )
     }
 }
