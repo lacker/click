@@ -2884,6 +2884,139 @@ fn derived_order_contradiction_uses_theory_equal_endpoints() {
     );
 }
 
+/// The dominant real shape of the order-conflict residue: loads compared
+/// against constants. An owned-vector profile showed 13,343 of 20,777 deep
+/// comparisons were Load~Const with zero successes. A consistent context of
+/// unrelated load-versus-constant order facts must not pay a comparison per
+/// pair of facts.
+#[test]
+fn theory_capable_order_endpoints_scale_near_linearly() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let mut assumptions = Assumptions::new();
+            for index in 0..size {
+                let cell = Pointer {
+                    block: format!("arg-memory-{index}").into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                };
+                let load = Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory(CMemory::new()),
+                    Box::new(cell),
+                );
+                assumptions = assumptions.assume_condition(
+                    ConditionTerm::signed_less_than(load, Bitvector32Term::Constant(index as u32)),
+                    true,
+                );
+            }
+            let (inconsistent, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions.is_inconsistent()
+            });
+            assert!(!inconsistent, "unrelated load-bound facts are consistent");
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "theory-capable order scanning is superlinear: {samples:?}"
+        );
+    }
+}
+
+/// Pins the load-resolution reach of the order-conflict fallback: a load whose
+/// memory determines its value contradicts a strict order against that value.
+/// The comparison enters through `memory_loads_proven_equal`'s resolution step,
+/// not through any equality fact.
+#[test]
+fn derived_order_contradiction_resolves_load_endpoints() {
+    let cell = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = CMemory::new().store(cell.clone(), int32(Bitvector32Term::Constant(7)));
+    let load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(memory),
+        Box::new(cell),
+    );
+    let assumptions = Assumptions::new().assume_condition(
+        ConditionTerm::signed_less_than(load, Bitvector32Term::Constant(7)),
+        true,
+    );
+
+    assert!(
+        assumptions.is_inconsistent(),
+        "a load that resolves to 7 cannot be strictly below 7"
+    );
+}
+
+/// Pins the cross-snapshot reach of the order-conflict fallback: loads of one
+/// untouched cell from two snapshots related by a recorded effect are equal,
+/// so a strict order between them is a contradiction. Neither spelling is an
+/// equality-graph edge.
+#[test]
+fn derived_order_contradiction_bridges_snapshot_loads() {
+    let preserved = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let written = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(4),
+    };
+    let before = CMemory::new();
+    let after = before
+        .clone()
+        .store(written.clone(), int32(Bitvector32Term::Constant(1)));
+    let before_load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(before.clone()),
+        Box::new(preserved.clone()),
+    );
+    let after_load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(after.clone()),
+        Box::new(preserved),
+    );
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CMemoryMutatesOnly {
+            before,
+            after,
+            pointers: vec![written],
+        })
+        .assume_condition(
+            ConditionTerm::signed_less_than(after_load, before_load),
+            true,
+        );
+
+    assert!(
+        assumptions.is_inconsistent(),
+        "loads of an untouched cell across a recorded effect are equal"
+    );
+}
+
+/// Pins the addend-level equality-graph reach of the fallback: `x + 1` and
+/// `y + 1` are related only through the fact `x == y` consumed inside the add
+/// rule's addend comparison — the whole sums never appear in any equality fact.
+#[test]
+fn derived_order_contradiction_uses_graph_equal_addends() {
+    let x = Bitvector32Term::Variable(Variable(97_010));
+    let y = Bitvector32Term::Variable(Variable(97_011));
+    let middle = Bitvector32Term::Variable(Variable(97_012));
+    let left_sum = Bitvector32Term::add(x.clone(), Bitvector32Term::Constant(1));
+    let right_sum = Bitvector32Term::add(y.clone(), Bitvector32Term::Constant(1));
+    let assumptions = Assumptions::new()
+        .assume_condition(ConditionTerm::equal(x, y), true)
+        .assume_condition(
+            ConditionTerm::signed_less_than(left_sum, middle.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_than(middle, right_sum), true);
+
+    assert!(
+        assumptions.is_inconsistent(),
+        "`x + 1 < middle` and `middle < y + 1` contradict through `x == y`"
+    );
+}
+
 #[test]
 fn repeated_context_inconsistency_queries_do_not_rescan_facts() {
     let x = Bitvector32Term::Variable(Variable(93_201));

@@ -2287,28 +2287,201 @@ impl Assumptions {
                 || bitvector_terms_may_be_theory_equal(left, right)
                     && self.bitvector_terms_proven_equal(left, right)
         };
-        // Ordinary variables and constants can only be related by exact
-        // equality or an equality-graph path, so labelling that graph's
-        // connected components once decides every structural endpoint pair
-        // without comparing order facts to each other. Endpoints a
-        // non-structural theory could still relate keep the pairwise
-        // comparison below; see `bitvector_terms_may_be_theory_equal`.
+        // Endpoints that only exact equality or an equality-graph path can
+        // relate are decided entirely by connected-component identity. The
+        // non-structural theories reach further, but each rule's first-line
+        // requirements bound what it can relate: resolution substitutes one
+        // load's determined value (a per-term fact, not a per-pair one), the
+        // add rule requires syntactically equal folded constants and addend
+        // counts before it compares any addend, the load rule requires two
+        // loads once resolution is exhausted, the if rule two conditionals,
+        // and the fold rules a fold spelling. Canonical forms fold the
+        // per-term parts into the component labelling, and the remaining
+        // genuinely pairwise comparisons are bucketed by those first-line
+        // requirements, so unrelated facts are never compared.
         let class_timing = crate::instrumentation::OperationTiming::new(
             "kernel",
             "context inconsistency",
             "context inconsistency: order equality classes",
         );
-        /// The equality class of one order endpoint, labelling that endpoint's
-        /// component on first use. A term with no equality fact becomes its own
-        /// class, and a component no order fact mentions is never walked, so
-        /// this visits exactly what the pairwise comparisons used to reach.
-        fn order_endpoint_class(
+
+        const CANONICAL_ORDER_ENDPOINT_DEPTH: usize = 6;
+
+        /// Depth-bounded canonical spelling of one order endpoint: loads
+        /// resolve to their determined values, constants fold, addends sort,
+        /// an unresolved load keeps its canonical memory, and a sum that
+        /// collapses to one addend becomes that addend. Everything here is
+        /// justified by a kernel equality (resolution, bitvector addition,
+        /// canonical load memories), so terms sharing a canonical form are
+        /// provably equal.
+        fn canonical_order_endpoint(
+            assumptions: &Assumptions,
             term: &Bitvector32Term,
+            depth: usize,
+        ) -> Bitvector32Term {
+            crate::instrumentation::record_deterministic_work(1);
+            if depth == 0 {
+                return term.clone();
+            }
+            match term {
+                Bitvector32Term::MemoryLoad(_, _) => {
+                    if let Some(resolved) = assumptions.resolve_memory_load_term(term) {
+                        return canonical_order_endpoint(assumptions, &resolved, depth - 1);
+                    }
+                    equality_graph_term_key(term)
+                }
+                Bitvector32Term::Add(_, _) => {
+                    let mut raw = Vec::new();
+                    let mut constant = 0u32;
+                    collect_bitvector_add_terms(term, &mut raw, &mut constant);
+                    let mut addends = Vec::new();
+                    for addend in raw {
+                        let canonical = canonical_order_endpoint(assumptions, &addend, depth - 1);
+                        collect_bitvector_add_terms(&canonical, &mut addends, &mut constant);
+                    }
+                    addends.sort();
+                    let mut spelled = if constant == 0 && !addends.is_empty() {
+                        None
+                    } else {
+                        Some(Bitvector32Term::Constant(constant))
+                    };
+                    for addend in addends.into_iter().rev() {
+                        spelled = Some(match spelled {
+                            Some(rest) => Bitvector32Term::add(addend, rest),
+                            None => addend,
+                        });
+                    }
+                    spelled.expect("an add spelling always has at least one part")
+                }
+                Bitvector32Term::If {
+                    condition,
+                    then_term,
+                    else_term,
+                } => Bitvector32Term::If {
+                    condition: condition.clone(),
+                    then_term: Box::new(canonical_order_endpoint(assumptions, then_term, depth - 1)),
+                    else_term: Box::new(canonical_order_endpoint(assumptions, else_term, depth - 1)),
+                },
+                _ => term.clone(),
+            }
+        }
+
+        /// Whether deep pairwise comparison can tell this endpoint anything
+        /// the canonical classes cannot: it contains a load, conditional, or
+        /// fold (whose equalities can depend on assumptions), or it is a sum
+        /// with an addend the equality graph can rewrite inside the add rule.
+        fn order_endpoint_is_theory_sensitive(
+            term: &Bitvector32Term,
+            equality_index: &BTreeMap<Bitvector32Term, BTreeSet<Bitvector32Term>>,
+        ) -> bool {
+            match term {
+                Bitvector32Term::MemoryLoad(_, _)
+                | Bitvector32Term::If { .. }
+                | Bitvector32Term::RangeFold { .. } => true,
+                Bitvector32Term::Add(_, _) => {
+                    let mut addends = Vec::new();
+                    let mut constant = 0u32;
+                    collect_bitvector_add_terms(term, &mut addends, &mut constant);
+                    addends.iter().any(|addend| {
+                        order_endpoint_is_theory_sensitive(addend, equality_index)
+                            || equality_index.contains_key(&equality_graph_term_key(addend))
+                    })
+                }
+                _ => false,
+            }
+        }
+
+        type ResidueBucket = (u8, usize, u32);
+        const LOAD_BUCKET: ResidueBucket = (0, 0, 0);
+        const IF_BUCKET: ResidueBucket = (1, 0, 0);
+        const FOLD_BUCKET: ResidueBucket = (3, 0, 0);
+
+        /// The deep-comparison buckets one endpoint can participate in, from
+        /// each theory rule's own first-line requirements: loads compare with
+        /// loads (and, when resolution substitutes a value, with whatever
+        /// that value can compare with), sums compare only under equal folded
+        /// constants and addend counts, conditionals with conditionals, and
+        /// fold spellings with fold spellings or fold splits. Two endpoints
+        /// with disjoint bucket sets are rejected by the rules themselves, so
+        /// skipping their comparison cannot lose a conclusion.
+        fn residue_bucket_keys(
+            assumptions: &Assumptions,
+            term: &Bitvector32Term,
+            depth: usize,
+            keys: &mut BTreeSet<ResidueBucket>,
+        ) {
+            match term {
+                Bitvector32Term::MemoryLoad(_, _) => {
+                    keys.insert(LOAD_BUCKET);
+                    if depth > 0
+                        && let Some(resolved) = assumptions.resolve_memory_load_term(term)
+                    {
+                        residue_bucket_keys(assumptions, &resolved, depth - 1, keys);
+                    }
+                }
+                Bitvector32Term::Add(_, _) => {
+                    let mut addends = Vec::new();
+                    let mut constant = 0u32;
+                    collect_bitvector_add_terms(term, &mut addends, &mut constant);
+                    keys.insert((2, addends.len(), constant));
+                    if addends
+                        .iter()
+                        .any(|addend| matches!(addend, Bitvector32Term::RangeFold { .. }))
+                    {
+                        keys.insert(FOLD_BUCKET);
+                    }
+                    // The add rule accepts a non-sum opposite side exactly
+                    // when this sum has one addend and no constant, so such a
+                    // sum also participates wherever its addend can.
+                    if addends.len() == 1 && constant == 0 && depth > 0 {
+                        residue_bucket_keys(assumptions, &addends[0], depth - 1, keys);
+                    }
+                }
+                Bitvector32Term::If { .. } => {
+                    keys.insert(IF_BUCKET);
+                }
+                Bitvector32Term::RangeFold { .. } => {
+                    keys.insert(FOLD_BUCKET);
+                }
+                _ => {}
+            }
+        }
+
+        /// Union-find over component labels, so canonical-form identities can
+        /// merge equality-graph components without rebuilding them.
+        struct ClassMerge(Vec<usize>);
+        impl ClassMerge {
+            fn find(&mut self, id: usize) -> usize {
+                while self.0.len() <= id {
+                    let next = self.0.len();
+                    self.0.push(next);
+                }
+                let mut id = id;
+                while self.0[id] != id {
+                    self.0[id] = self.0[self.0[id]];
+                    id = self.0[id];
+                }
+                id
+            }
+            fn union(&mut self, left: usize, right: usize) {
+                let left = self.find(left);
+                let right = self.find(right);
+                if left != right {
+                    self.0[right] = left;
+                }
+            }
+        }
+
+        /// The component label of one key, walking its equality-graph
+        /// component on first use. A key with no equality fact becomes its
+        /// own singleton, and a component no relevant term touches is never
+        /// walked.
+        fn key_component(
+            key: Bitvector32Term,
             equality_index: &BTreeMap<Bitvector32Term, BTreeSet<Bitvector32Term>>,
             class_of_key: &mut BTreeMap<Bitvector32Term, usize>,
             next_class: &mut usize,
         ) -> usize {
-            let key = equality_graph_term_key(term);
             if let Some(class) = class_of_key.get(&key) {
                 return *class;
             }
@@ -2330,14 +2503,54 @@ impl Assumptions {
         let equality_index = self.bitvector_equality_index();
         let mut class_of_key = BTreeMap::<Bitvector32Term, usize>::new();
         let mut next_class = 0usize;
+        let mut merged = ClassMerge(Vec::new());
+        let mut registered = BTreeMap::<Bitvector32Term, usize>::new();
+        let mut sensitive_keys = BTreeMap::<Bitvector32Term, BTreeSet<ResidueBucket>>::new();
+        {
+            let order_endpoints = order_facts
+                .iter()
+                .flat_map(|(left, right, _)| [left, right]);
+            let equal_sides = equal_facts.iter().flat_map(|(left, right)| [left, right]);
+            for term in order_endpoints.chain(equal_sides) {
+                if registered.contains_key(term) {
+                    continue;
+                }
+                crate::instrumentation::record_deterministic_work(1);
+                let canonical =
+                    canonical_order_endpoint(self, term, CANONICAL_ORDER_ENDPOINT_DEPTH);
+                let graph_component = key_component(
+                    equality_graph_term_key(term),
+                    equality_index,
+                    &mut class_of_key,
+                    &mut next_class,
+                );
+                let canonical_component = key_component(
+                    canonical,
+                    equality_index,
+                    &mut class_of_key,
+                    &mut next_class,
+                );
+                merged.union(graph_component, canonical_component);
+                registered.insert(term.clone(), canonical_component);
+                if order_endpoint_is_theory_sensitive(term, equality_index) {
+                    let mut keys = BTreeSet::new();
+                    residue_bucket_keys(
+                        self,
+                        term,
+                        CANONICAL_ORDER_ENDPOINT_DEPTH,
+                        &mut keys,
+                    );
+                    sensitive_keys.insert(term.clone(), keys);
+                }
+            }
+        }
+        let final_class = registered
+            .iter()
+            .map(|(term, component)| (term.clone(), merged.find(*component)))
+            .collect::<BTreeMap<_, _>>();
         let order_classes = order_facts
             .iter()
-            .map(|(left, right, _)| {
-                (
-                    order_endpoint_class(left, equality_index, &mut class_of_key, &mut next_class),
-                    order_endpoint_class(right, equality_index, &mut class_of_key, &mut next_class),
-                )
-            })
+            .map(|(left, right, _)| (final_class[left], final_class[right]))
             .collect::<Vec<_>>();
         drop(class_timing);
 
@@ -2370,50 +2583,139 @@ impl Assumptions {
                 .or_insert(*strict);
         }
 
-        // Non-structural theory equality is not an equality-graph edge, so
-        // endpoints it can relate still need the pairwise comparison. Pairs of
-        // purely structural endpoints are already decided above.
-        let theory_capable = |term: &Bitvector32Term| {
-            matches!(
-                term,
-                Bitvector32Term::MemoryLoad(_, _)
-                    | Bitvector32Term::Add(_, _)
-                    | Bitvector32Term::If { .. }
-                    | Bitvector32Term::RangeFold { .. }
-            )
+        // Deep pairwise comparison is reserved for endpoint pairs where an
+        // assumptions-dependent theory rule could exceed the canonical
+        // classes, and candidates come from bucket indexes rather than a scan
+        // of every other fact. Every comparison still uses the unchanged
+        // `terms_equal` authority.
+        let keys_of = |term: &Bitvector32Term| sensitive_keys.get(term);
+        let buckets_intersect = |left: &BTreeSet<ResidueBucket>, right: &BTreeSet<ResidueBucket>| {
+            left.intersection(right).next().is_some()
         };
-        let theory_equal_facts = equal_facts
-            .iter()
-            .filter(|(left, right)| theory_capable(left) || theory_capable(right))
-            .collect::<Vec<_>>();
-        for (left, right, strict) in &order_facts {
-            let endpoints_theory_capable = theory_capable(left) || theory_capable(right);
-            if endpoints_theory_capable {
-                crate::instrumentation::record_deterministic_work(1);
-                if *strict && terms_equal(left, right) {
-                    return true;
+        let deep_equal = |left: &Bitvector32Term, right: &Bitvector32Term| {
+            crate::instrumentation::record_deterministic_work(1);
+            terms_equal(left, right)
+        };
+        // Class identity, or a bucket-compatible deep comparison. Pairs that
+        // are neither are rejected by the theory rules' own requirements.
+        let connected = |left: &Bitvector32Term, right: &Bitvector32Term| {
+            final_class[left] == final_class[right]
+                || match (keys_of(left), keys_of(right)) {
+                    (Some(left_keys), Some(right_keys)) => {
+                        buckets_intersect(left_keys, right_keys) && deep_equal(left, right)
+                    }
+                    _ => false,
+                }
+        };
+
+        let mut left_sensitive_by_key = BTreeMap::<ResidueBucket, Vec<usize>>::new();
+        let mut right_sensitive_by_key = BTreeMap::<ResidueBucket, Vec<usize>>::new();
+        for (index, (left, right, _)) in order_facts.iter().enumerate() {
+            if let Some(keys) = keys_of(left) {
+                for key in keys {
+                    left_sensitive_by_key.entry(*key).or_default().push(index);
                 }
             }
+            if let Some(keys) = keys_of(right) {
+                for key in keys {
+                    right_sensitive_by_key.entry(*key).or_default().push(index);
+                }
+            }
+        }
+        let mut equal_side_by_key = BTreeMap::<ResidueBucket, Vec<(usize, bool)>>::new();
+        for (index, (left, right)) in equal_facts.iter().enumerate() {
+            if let Some(keys) = keys_of(left) {
+                for key in keys {
+                    equal_side_by_key
+                        .entry(*key)
+                        .or_default()
+                        .push((index, true));
+                }
+            }
+            if let Some(keys) = keys_of(right) {
+                for key in keys {
+                    equal_side_by_key
+                        .entry(*key)
+                        .or_default()
+                        .push((index, false));
+                }
+            }
+        }
+
+        for (index, (left, right, strict)) in order_facts.iter().enumerate() {
+            // A strict edge whose endpoints a deep rule can equate is a
+            // self-contradiction the classes could not see.
             if *strict
-                && theory_equal_facts.iter().any(|(equal_left, equal_right)| {
-                    crate::instrumentation::record_deterministic_work(1);
-                    (terms_equal(left, equal_left) && terms_equal(right, equal_right))
-                        || (terms_equal(left, equal_right) && terms_equal(right, equal_left))
-                })
+                && let (Some(left_keys), Some(right_keys)) = (keys_of(left), keys_of(right))
+                && buckets_intersect(left_keys, right_keys)
+                && deep_equal(left, right)
             {
                 return true;
             }
-            if endpoints_theory_capable
-                && order_facts
-                    .iter()
-                    .any(|(other_left, other_right, other_strict)| {
+            // A strict edge bridged by an equality fact: each endpoint must
+            // reach one side of the fact, and the fact's own edge closes the
+            // cycle. Both-class reaches are already inside one component and
+            // were caught above, so at least one reach is deep.
+            if *strict {
+                for (endpoint, partner_endpoint) in [(left, right), (right, left)] {
+                    let Some(endpoint_keys) = keys_of(endpoint) else {
+                        continue;
+                    };
+                    for key in endpoint_keys {
+                        let Some(sides) = equal_side_by_key.get(key) else {
+                            continue;
+                        };
+                        for (equal_index, side_is_left) in sides {
+                            crate::instrumentation::record_deterministic_work(1);
+                            let (equal_left, equal_right) = &equal_facts[*equal_index];
+                            let (side, partner_side) = if *side_is_left {
+                                (equal_left, equal_right)
+                            } else {
+                                (equal_right, equal_left)
+                            };
+                            if deep_equal(endpoint, side)
+                                && connected(partner_endpoint, partner_side)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            // A reverse edge between this fact and another, where at least
+            // one endpoint match needs a deep rule. Candidates come from the
+            // bucket indexes, so facts no rule could relate are never
+            // visited.
+            for (endpoint, partner_endpoint, candidate_index, deep_side_is_left) in [
+                (left, right, &right_sensitive_by_key, true),
+                (right, left, &left_sensitive_by_key, false),
+            ] {
+                let Some(endpoint_keys) = keys_of(endpoint) else {
+                    continue;
+                };
+                for key in endpoint_keys {
+                    let Some(candidates) = candidate_index.get(key) else {
+                        continue;
+                    };
+                    for other_index in candidates {
                         crate::instrumentation::record_deterministic_work(1);
-                        terms_equal(left, other_right)
-                            && terms_equal(right, other_left)
-                            && (*strict || *other_strict)
-                    })
-            {
-                return true;
+                        let (other_left, other_right, other_strict) = &order_facts[*other_index];
+                        if !*strict && !*other_strict {
+                            continue;
+                        }
+                        let (deep_partner, class_partner) = if deep_side_is_left {
+                            (other_right, other_left)
+                        } else {
+                            (other_left, other_right)
+                        };
+                        if *other_index != index
+                            && deep_equal(endpoint, deep_partner)
+                            && connected(partner_endpoint, class_partner)
+                        {
+                            return true;
+                        }
+                    }
+                }
             }
         }
         drop(order_conflict_timing);
