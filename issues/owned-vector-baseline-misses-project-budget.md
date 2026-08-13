@@ -96,3 +96,25 @@ call-result disjunction but no assumption selecting the zero result, and
 correctly rejects the step. Fix certificate synthesis/claim aggregation so the
 returning inner arm and continuing sibling remain paired under their C branch;
 do not accept the missing premise contextually or special-case this local.
+
+## Update (2026-08-13): certificate replay is sound; aggregate cost remains
+
+Grouped certificate collection now records one checked surface builder per
+declared claim per proof context, rather than deriving builders from the
+theorems emitted by that context. This preserves the surface arm of a context
+that becomes vacuous during certified-path filtering, and the generated
+`allocated_vector_push` certificate now retains and replays the nested
+`grown == 0` branch. Ordinary verification and the line-378 expansion both
+complete successfully.
+
+Several broad `vector_pipeline` simplifications were replaced by their exact
+generated simple certificates after repeated ordinary runs showed that
+heuristic rediscovery could cross the existing two-second tactic limit. The C
+and all claims are unchanged. A complete profile now has zero failed smart
+attempts and no individual simple, smart, or control hotspot, but still takes
+about 31.4s. Of that, 17.2s is verifier-core work; whole-contract certificate
+replay totals 9.4s, including 8.1s for `allocated_vector_push`. The production
+30-second example gate therefore still fails at the outer verifier-core
+deadline. The remaining work is aggregate replay/core reduction, not further
+arbitrary tactic expansion; keep the project quarantined until repeated
+production-limit runs pass.

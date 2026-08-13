@@ -3314,7 +3314,16 @@ pub(super) fn finish_ordered_proof_replay(
                     .is_none()
                     .then(|| SimpleProof::from_steps(expanded.steps.clone()));
                 theorem.expansion_blocker = expanded.blocker.clone();
-                claim_surface_builders.push((theorem.claim.clone(), expanded.clone()));
+            }
+            // Surface synthesis follows proof contexts, not the number of
+            // semantic execution paths they contribute. A proof branch can
+            // be vacuous after certified-path filtering while its checked
+            // surface arm is still required to replay the surrounding `if`.
+            // Record exactly one builder per declared claim for this context;
+            // tying builders to produced theorems silently dropped such arms
+            // (and duplicated builders when a context certified many paths).
+            for claim in claims {
+                claim_surface_builders.push((claim.verified_claim(), expanded.clone()));
             }
         } else {
             for (claim_index, claim) in claims.iter().enumerate() {

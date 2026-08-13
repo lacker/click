@@ -23,7 +23,7 @@ const QUARANTINED: &[(&str, &str)] = &[
     ),
     (
         "owned-vector",
-        "issues/owned-vector-baseline-misses-project-budget.md: whole-claim expansion/replay is not yet stable",
+        "issues/owned-vector-baseline-misses-project-budget.md: complete verification still exceeds the 30s project limit",
     ),
 ];
 

@@ -923,7 +923,22 @@ int32 vector_clear(struct vector* owner) {
     unfold(nonempty_vector(owner));
     execute();
     have owner->len == 0 by simp;
-    have 1 <= owner->cap by simp;
+    apply(int32_le_transitive(
+        1,
+        at(statement(0).entry, owner->len),
+        at(statement(0).entry, owner->cap)
+    )) using {
+        at(statement(0).entry, 1) <= at(statement(0).entry, owner->len);
+        at(statement(0).entry, owner->len) <=
+            at(statement(0).entry, owner->cap);
+    }
+    transport(
+        at(statement(0).entry, 1) <= at(statement(0).entry, owner->cap),
+        1 <= owner->cap
+    ) using {
+        at(statement(0).entry, 1) <= at(statement(0).entry, owner->cap);
+    }
+    assumption();
     have separate(memory(object(owner)), memory(owner->data[0..owner->cap])) by simp;
     fold(empty_vector(owner));
     frame();
@@ -960,28 +975,57 @@ int32 vector_pipeline(
         loadable(owner->data);
     }
     unfold(vector_storage(owner));
-    have owner->len == 1 by simp;
-    have 1 <= owner->len by simp;
+    have owner->len == 1 by {
+        rewrite(owner->len == at(statement(2).exit, owner->len + 1));
+        rewrite(at(statement(2).exit, owner->len) == at(statement(2).exit, 0));
+        normalize();
+    }
+    have 1 <= owner->len by {
+        rewrite(owner->len == 1);
+        normalize();
+    }
     fold(nonempty_vector(owner));
-    have 0 < owner->len by simp;
+    have 0 < owner->len by {
+        rewrite(owner->len == 1);
+        normalize();
+    }
     step() using {
         0 < owner->len;
     }
-    have owner->len == 1 by simp;
-    have 0 < owner->len by simp;
+    have owner->len == 1 by {
+        rewrite(at(statement(3).exit, 1) == at(statement(3).exit, owner->len));
+        assumption();
+    }
+    have 0 < owner->len by {
+        rewrite(owner->len == 1);
+        normalize();
+    }
     step() using {
         0 < owner->len;
     }
-    have owner->len == 1 by simp;
+    have owner->len == 1 by {
+        rewrite(at(statement(3).exit, 1) == at(statement(3).exit, owner->len));
+        assumption();
+    }
     observe(nonempty_vector(owner));
-    have owner->data[0] == replacement by simp;
-    have 0 < owner->len by simp;
+    have owner->data[0] == replacement by {
+        assumption();
+    }
+    have 0 < owner->len by {
+        rewrite(owner->len == 1);
+        normalize();
+    }
     step() using {
         0 < owner->len;
         owner->len == 1;
     }
-    have observed == owner->data[0] by simp;
-    have observed == replacement by simp;
+    have observed == owner->data[0] by {
+        assumption();
+    }
+    apply(int32_equality_transitive(observed, owner->data[0], replacement)) using {
+        observed == owner->data[0];
+        owner->data[0] == replacement;
+    }
     step() using {
         owner->len == 1;
         observed == replacement;
