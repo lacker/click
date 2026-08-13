@@ -49,6 +49,27 @@ needed proof cannot be expressed through the simple tactic surface.
 At the end of an overnight run, report completed work, remaining issues,
 important discoveries, and decisions that need discussion.
 
+## Isolate work from the primary checkout
+
+Unless already operating in a task-specific worktree, create a dedicated Git
+branch and worktree before editing files. Perform implementation, experiments,
+formatting, tests, and commits there. Treat the shared primary checkout as an
+integration checkout, not a development workspace; do not expose other agents
+to partially implemented or failing changes.
+
+Integrate only a coherent green commit. Before integration, run the relevant
+focused and full gates in the task worktree, verify that the primary checkout
+is clean, and confirm that its base has not moved unexpectedly. If the base did
+move, update the task branch and rerun any affected gates before integration.
+Move the tested commit into the primary branch with Git rather than copying
+uncommitted files. Never overwrite unrelated changes in the primary checkout;
+stop and coordinate if it is dirty or integration conflicts.
+
+Keep failed prototypes and incomplete investigations confined to their task
+worktree. Restore or replace them with a green checkpoint before committing,
+and do not merge or push them to the primary branch. These rules apply in both
+day and overnight mode.
+
 ## Existing C is the verification boundary
 
 Click exists to prove properties of existing C programs. Adoption in a large
