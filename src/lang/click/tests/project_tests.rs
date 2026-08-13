@@ -686,7 +686,10 @@ int32 buffer_pipeline(
         execute_until(statement(3));
         unfold(buffer_storage(owner));
         have owner->len == 1 by simp;
-        have 1 <= owner->len by simp;
+        have 1 <= owner->len by {
+            rewrite(owner->len == 1);
+            normalize();
+        }
         fold(nonempty_buffer(owner));
         step() using {};
     }
@@ -1104,8 +1107,15 @@ fn perpetual_service_example_verifies_stably_across_repeated_runs() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/perpetual-service");
     let mut click_paths = std::fs::read_dir(&project)
         .expect("the perpetual-service example project should exist")
-        .map(|entry| entry.expect("example directory entries should be readable").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "click"))
+        .map(|entry| {
+            entry
+                .expect("example directory entries should be readable")
+                .path()
+        })
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "click")
+        })
         .collect::<Vec<_>>();
     click_paths.sort();
     assert!(

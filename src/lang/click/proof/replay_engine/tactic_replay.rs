@@ -1174,8 +1174,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     // snapshot spellings and recorded effects: the recorded
                     // fact and the premise print identically but embed
                     // different memory snapshots.
-                    let premise_is_available =
-                        exact_fact_is_available_across_effects(
+                    let premise_is_available = exact_fact_is_available_across_effects(
                             &premise,
                             &all_pure_facts,
                             &replay.effect_facts,
@@ -1704,8 +1703,8 @@ fn replay_linear_tactics_without_frontier_loops(
                 // The construction is still the tactic's own standalone
                 // expansion even when the drain records the claim-level
                 // steps; a selected `frame()` capture takes it directly.
-                let capture_construction = (!merge_construction && capture_this_tactic)
-                    .then(|| construction.clone());
+                let capture_construction =
+                    (!merge_construction && capture_this_tactic).then(|| construction.clone());
                 let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,
@@ -1902,7 +1901,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         PostExecutionTactic::FrameUsing {
                             region: region_ref.clone(),
                             premises: surface_premises.clone(),
-                            facts: frame_facts,
                         }
                     };
                     replay.defer_post_execution(tactic_index, source_index, deferred);
@@ -2233,21 +2231,19 @@ fn replay_linear_tactics_without_frontier_loops(
                 // the goal is proved exactly when its evidence has been
                 // spelled as a replayable SimpleProof.
                 let smart_result = match &smart_unfolds {
-                    Some(unfolded_predicates) => Some(
-                        construct_smart_have_certificate(
-                            &mut replay,
-                            &state,
-                            &have_facts,
-                            parsed_function.parameters(),
-                            arguments,
-                            predicate_environment,
-                            click_function_environment,
-                            have,
-                            claim_label,
-                            tactic_index,
-                            unfolded_predicates,
-                        )?,
-                    ),
+                    Some(unfolded_predicates) => Some(construct_smart_have_certificate(
+                        &mut replay,
+                        &state,
+                        &have_facts,
+                        parsed_function.parameters(),
+                        arguments,
+                        predicate_environment,
+                        click_function_environment,
+                        have,
+                        claim_label,
+                        tactic_index,
+                        unfolded_predicates,
+                    )?),
                     None => None,
                 };
                 let (fact, surface_certificate) = match smart_result {
@@ -2295,7 +2291,9 @@ fn replay_linear_tactics_without_frontier_loops(
                 // proof's expansion.
                 let surface_certificate = match surface_certificate {
                     Some(certificate) => Some(certificate),
-                    None if SimpleProof::from_proof_tactics(std::slice::from_ref(tactic)).is_err() => {
+                    None if SimpleProof::from_proof_tactics(std::slice::from_ref(tactic))
+                        .is_err() =>
+                    {
                         Some(certify_general_smart_have(
                             have,
                             &fact,

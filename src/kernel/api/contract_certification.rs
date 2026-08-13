@@ -1274,26 +1274,35 @@ pub(in crate::kernel) fn resource_contexts_definitionally_equal_with_definitions
     if left == right {
         return true;
     }
-    let relation_facts = [(left, left_memory), (right, right_memory)]
-        .into_iter()
-        .flat_map(|(resources, memory)| {
-            resources.facts().iter().filter_map(move |fact| {
-                matches!(fact.resource(), CResource::Composite { .. })
-                    .then(|| {
-                        evaluate_composite_resource_relation_propositions(
-                            fact,
-                            composite_resource_definitions,
-                            memory,
-                            assumptions,
-                        )
+    let relation_facts = crate::instrumentation::measure_operation(
+        "kernel",
+        "resource context equality",
+        "resource equality: relation facts",
+        || {
+            [(left, left_memory), (right, right_memory)]
+                .into_iter()
+                .flat_map(|(resources, memory)| {
+                    resources.facts().iter().filter_map(move |fact| {
+                        matches!(fact.resource(), CResource::Composite { .. })
+                            .then(|| {
+                                evaluate_composite_resource_relation_propositions(
+                                    fact,
+                                    composite_resource_definitions,
+                                    memory,
+                                    assumptions,
+                                )
+                            })
+                            .flatten()
                     })
-                    .flatten()
-            })
-        })
-        .flatten()
-        .collect::<Vec<_>>();
+                })
+                .flatten()
+                .collect::<Vec<_>>()
+        },
+    );
     let enriched_assumptions = assumptions_with_propositions(assumptions, &relation_facts);
     let assumptions = &enriched_assumptions;
+    let _assumptions_memo_scope =
+        crate::kernel::assumptions::AssumptionsIdScope::enter(assumptions);
     let facts_directly_match = |left: &CResourceFact, right: &CResourceFact| match (left, right) {
         (CResourceFact::Own(left, left_quantity), CResourceFact::Own(right, right_quantity))
             if left_quantity == right_quantity =>
@@ -1334,33 +1343,59 @@ pub(in crate::kernel) fn resource_contexts_definitionally_equal_with_definitions
                 .is_some()
             })
         };
-    if directly_equal(left, right) {
+    if crate::instrumentation::measure_operation(
+        "kernel",
+        "resource context equality",
+        "resource equality: direct",
+        || directly_equal(left, right),
+    ) {
         return true;
     }
     if left_memory == right_memory
-        && ((definitionally_covers(left, right, left_memory)
-            && definitionally_covers(right, left, left_memory))
-            || resource_contexts_definitionally_equivalent_by_consumption(
-                left,
-                right,
-                composite_resource_definitions,
-                left_memory,
-                assumptions,
-            ))
+        && crate::instrumentation::measure_operation(
+            "kernel",
+            "resource context equality",
+            "resource equality: same-memory definitions",
+            || {
+                (definitionally_covers(left, right, left_memory)
+                    && definitionally_covers(right, left, left_memory))
+                    || resource_contexts_definitionally_equivalent_by_consumption(
+                        left,
+                        right,
+                        composite_resource_definitions,
+                        left_memory,
+                        assumptions,
+                    )
+            },
+        )
     {
         return true;
     }
-    let expanded_left = expand_all_composite_resource_facts(
-        left,
-        composite_resource_definitions,
-        left_memory,
-        assumptions,
+    let expanded_left = crate::instrumentation::measure_operation(
+        "kernel",
+        "resource context equality",
+        "resource equality: expand left",
+        || {
+            expand_all_composite_resource_facts(
+                left,
+                composite_resource_definitions,
+                left_memory,
+                assumptions,
+            )
+        },
     );
-    let expanded_right = expand_all_composite_resource_facts(
-        right,
-        composite_resource_definitions,
-        right_memory,
-        assumptions,
+    let expanded_right = crate::instrumentation::measure_operation(
+        "kernel",
+        "resource context equality",
+        "resource equality: expand right",
+        || {
+            expand_all_composite_resource_facts(
+                right,
+                composite_resource_definitions,
+                right_memory,
+                assumptions,
+            )
+        },
     );
     let Some(left) = expanded_left else {
         return false;
@@ -1369,7 +1404,12 @@ pub(in crate::kernel) fn resource_contexts_definitionally_equal_with_definitions
         return false;
     };
 
-    directly_equal(&left, &right)
+    crate::instrumentation::measure_operation(
+        "kernel",
+        "resource context equality",
+        "resource equality: expanded direct",
+        || directly_equal(&left, &right),
+    )
 }
 
 /// Extracts constant bounds `lo <= var < hi` from a universal premise made
@@ -2022,6 +2062,19 @@ pub(super) fn certification_proves_proposition(
     if assumptions.proves_exact(proposition) {
         return true;
     }
+    if matches!(proposition, Proposition::ForAll { .. })
+        && assumptions
+            .prop_facts
+            .iter()
+            .any(|fact| propositions_alpha_equivalent(fact, proposition))
+    {
+        // Bound variables are freshened independently while the contract
+        // assumptions and proof-derived entry facts are lowered. The
+        // proposition is already assumed modulo that irrelevant binder
+        // spelling, so do not route hundreds of such facts through general
+        // quantified proof search.
+        return true;
+    }
     if let Proposition::ConditionIs(condition, value) = proposition
         && let Some(canonical) = condition_with_canonical_loads(condition)
         && &canonical != condition
@@ -2239,6 +2292,40 @@ pub(super) fn certification_proves_proposition(
         }
         _ => assumptions.proves(proposition),
     }
+}
+
+/// Reuses a closed quantified fact only after the kernel has proved it from
+/// previously proved closed quantified facts. Contract certification sees
+/// the same ordered global theorem facts once per function; this cache keeps
+/// their proof independent of every function entry state. Failures are never
+/// cached because a bounded proof attempt may have observed the active
+/// deadline.
+pub(in crate::kernel) fn certification_proves_context_free_forall(
+    proposition: &Proposition,
+) -> bool {
+    if !matches!(proposition, Proposition::ForAll { .. }) {
+        return false;
+    }
+    thread_local! {
+        static PROVED: std::cell::RefCell<Vec<Proposition>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let proved_facts = PROVED.with(|proved| proved.borrow().clone());
+    if proved_facts.contains(proposition) {
+        return true;
+    }
+    let closed_assumptions = assumptions_with_propositions(&Assumptions::new(), &proved_facts);
+    let proved = certification_proves_proposition(&closed_assumptions, proposition);
+    if proved && crate::instrumentation::exceeded_verification_limit_context().is_none() {
+        PROVED.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.len() >= 128 {
+                cache.remove(0);
+            }
+            cache.push(proposition.clone());
+        });
+    }
+    proved
 }
 
 /// True for a closed universally-quantified implication chain that concludes

@@ -68,6 +68,15 @@ pub enum VerificationEvent {
         key: String,
         elapsed: Duration,
     },
+    /// A nested verifier operation reported for hotspot attribution. These
+    /// spans may sit inside tactics or certification and therefore are not
+    /// added to the top-level non-overlapping accounting buckets.
+    OperationFinished {
+        function: String,
+        claim: String,
+        name: &'static str,
+        elapsed: Duration,
+    },
     DeadlineExceeded(ActiveVerificationWork),
     Diagnostic(String),
 }
@@ -538,6 +547,41 @@ pub fn deadline_context() -> String {
     "verification driver".to_string()
 }
 
+/// Describes an ambient verification limit that has already fired, without
+/// consuming another deterministic work unit.
+///
+/// Kernel queries conservatively return `false`/`None` when a cooperative
+/// checkpoint observes a deadline or tactic limit. Error construction uses
+/// this non-consuming probe so that a semantic-looking diagnostic produced
+/// from that conservative answer cannot hide the active limit. Ordinary
+/// bounded incompleteness (reasoning fuel, depth guards, and cycle cuts) does
+/// not appear here.
+pub fn exceeded_verification_limit_context() -> Option<String> {
+    if PENDING_LIMIT.with(|pending| pending.borrow().is_some())
+        || DEADLINES.with(|deadlines| {
+            deadlines
+                .borrow()
+                .iter()
+                .min()
+                .is_some_and(|deadline| Instant::now() >= *deadline)
+        })
+        || ACTIVE_TACTICS.with(|active| {
+            let active = active.borrow();
+            let Some(active) = active.last() else {
+                return false;
+            };
+            active.work_exhausted
+                || active
+                    .limit
+                    .is_some_and(|limit| active.exclusive + active.running_since.elapsed() >= limit)
+        })
+    {
+        Some(deadline_context())
+    } else {
+        None
+    }
+}
+
 /// Runs `operation` while collecting its structured verification events.
 pub fn collect<R>(operation: impl FnOnce() -> R) -> (R, Vec<VerificationEvent>) {
     COLLECTORS.with(|collectors| collectors.borrow_mut().push(Vec::new()));
@@ -556,6 +600,33 @@ pub fn enabled() -> bool {
         || COLLECTORS.with(|collectors| !collectors.borrow().is_empty())
         || TACTIC_LIMITS.with(|limits| !limits.borrow().is_empty())
         || TACTIC_WORK_LIMITS.with(|limits| !limits.borrow().is_empty())
+}
+
+fn operation_measurement_enabled() -> bool {
+    std::env::var_os("CLICK_TIMINGS").is_some()
+        || COLLECTORS.with(|collectors| !collectors.borrow().is_empty())
+}
+
+/// Measures one named nested operation for profiler attribution without
+/// making it a new deadline or accounting boundary.
+pub fn measure_operation<T>(
+    function: &str,
+    claim: &str,
+    name: &'static str,
+    operation: impl FnOnce() -> T,
+) -> T {
+    if !operation_measurement_enabled() {
+        return operation();
+    }
+    let started = TacticInstant::now();
+    let result = operation();
+    emit(VerificationEvent::OperationFinished {
+        function: function.to_string(),
+        claim: claim.to_string(),
+        name,
+        elapsed: started.elapsed(),
+    });
+    result
 }
 
 pub fn starts_enabled() -> bool {
@@ -751,6 +822,15 @@ fn render_legacy(event: &VerificationEvent) -> String {
             elapsed,
         } => format!(
             "click timing: claim {function} {key} {:.6}s",
+            elapsed.as_secs_f64()
+        ),
+        VerificationEvent::OperationFinished {
+            function,
+            claim,
+            name,
+            elapsed,
+        } => format!(
+            "click timing: operation {name} {function} {claim} {:.6}s",
             elapsed.as_secs_f64()
         ),
         VerificationEvent::DeadlineExceeded(active) => {

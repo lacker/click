@@ -445,6 +445,59 @@ pub fn certify_c_function_execution_path_resource_representation(
     desired_outcome: CFunctionOutcome,
     desired_facts: &[ExecutionPureFact],
 ) -> Option<SymbolicCExecutionPath> {
+    #[derive(Clone)]
+    struct CachedRepresentationCertificate {
+        path: SymbolicCExecutionPath,
+        desired_outcome: CFunctionOutcome,
+        desired_facts: Vec<ExecutionPureFact>,
+        certified: SymbolicCExecutionPath,
+    }
+    thread_local! {
+        static CACHE: std::cell::RefCell<Vec<CachedRepresentationCertificate>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    if let Some(certified) = CACHE.with(|cache| {
+        cache
+            .borrow()
+            .iter()
+            .rev()
+            .find(|entry| {
+                entry.path == *path
+                    && entry.desired_outcome == desired_outcome
+                    && entry.desired_facts == desired_facts
+            })
+            .map(|entry| entry.certified.clone())
+    }) {
+        return Some(certified);
+    }
+    let cache_path = path.clone();
+    let cache_outcome = desired_outcome.clone();
+    let cache_facts = desired_facts.to_vec();
+    let certified = certify_c_function_execution_path_resource_representation_uncached(
+        path,
+        desired_outcome,
+        desired_facts,
+    )?;
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= 64 {
+            cache.remove(0);
+        }
+        cache.push(CachedRepresentationCertificate {
+            path: cache_path,
+            desired_outcome: cache_outcome,
+            desired_facts: cache_facts,
+            certified: certified.clone(),
+        });
+    });
+    Some(certified)
+}
+
+fn certify_c_function_execution_path_resource_representation_uncached(
+    path: &SymbolicCExecutionPath,
+    desired_outcome: CFunctionOutcome,
+    desired_facts: &[ExecutionPureFact],
+) -> Option<SymbolicCExecutionPath> {
     let mut proposition = path.theorem().proposition();
     let mut premises = Vec::new();
     while let Proposition::Implies(premise, body) = proposition {
@@ -497,63 +550,119 @@ pub fn certify_c_function_execution_path_resource_representation(
         .ok()?;
     premises.extend(observable_resource_facts);
     let assumptions = assumptions_with_propositions(&path.assumptions, &premises);
-    let values_equal =
-        c_values_proven_equal_for_memory_resolution(value, desired_value, &assumptions)
-            || return_values_equal_by_certified_stores(
-                value,
-                return_state.memory(),
-                &path.execution_facts(),
-                desired_value,
-                &assumptions,
-            )
-            || return_values_equal_by_certified_stores(
-                value,
-                desired_state.memory(),
-                desired_facts,
-                desired_value,
-                &assumptions,
-            );
-    let memories_equal = c_memories_definitionally_equal(
-        return_state.memory(),
-        desired_state.memory(),
-        &assumptions,
-    ) || {
-        // Execution provenance couples deterministic store chains and two
-        // alpha-renamed encodings of the same bounded call havoc.
-        memories_equal_by_execution_provenance(
-            return_state.memory(),
-            &path.execution_facts(),
-            desired_state.memory(),
-            desired_facts,
-            &assumptions,
-        )
-    };
+    let values_equal = crate::instrumentation::measure_operation(
+        function.name(),
+        "resource representation",
+        "resource representation: values",
+        || {
+            c_values_proven_equal_for_memory_resolution(value, desired_value, &assumptions)
+                || return_values_equal_by_certified_stores(
+                    value,
+                    return_state.memory(),
+                    &path.execution_facts(),
+                    desired_value,
+                    &assumptions,
+                )
+                || return_values_equal_by_certified_stores(
+                    value,
+                    desired_state.memory(),
+                    desired_facts,
+                    desired_value,
+                    &assumptions,
+                )
+        },
+    );
+    let memories_equal = crate::instrumentation::measure_operation(
+        function.name(),
+        "resource representation",
+        "resource representation: memory",
+        || {
+            crate::instrumentation::measure_operation(
+                function.name(),
+                "resource representation",
+                "resource representation: memory definitional",
+                || {
+                    c_memories_definitionally_equal(
+                        return_state.memory(),
+                        desired_state.memory(),
+                        &assumptions,
+                    )
+                },
+            ) || {
+                // Execution provenance couples deterministic store chains and two
+                // alpha-renamed encodings of the same bounded call havoc.
+                crate::instrumentation::measure_operation(
+                    function.name(),
+                    "resource representation",
+                    "resource representation: memory provenance",
+                    || {
+                        memories_equal_by_execution_provenance(
+                            return_state.memory(),
+                            &path.execution_facts(),
+                            desired_state.memory(),
+                            desired_facts,
+                            &assumptions,
+                        )
+                    },
+                )
+            }
+        },
+    );
     if !values_equal || !memories_equal {
         return None;
     }
     let folded_names_differ = owned_composite_resource_names(return_state.resources())
         != owned_composite_resource_names(desired_state.resources());
-    let resources_equal = resource_context_definitionally_contains(
-        return_state.resources(),
-        desired_state.resources(),
-        function.composite_resource_definitions(),
-        return_state.memory(),
-        &assumptions,
-    ) || resource_contexts_definitionally_equal(
-        function,
-        return_state.memory(),
-        return_state.resources(),
-        desired_state.memory(),
-        desired_state.resources(),
-        &assumptions,
-    ) || (folded_names_differ
-        && resource_context_definitionally_contains_without_owned_residue(
-            desired_state.resources(),
-            return_state.resources(),
-            function.composite_resource_definitions(),
-            desired_state.memory(),
-            &assumptions,
-        ));
+    let resources_equal = crate::instrumentation::measure_operation(
+        function.name(),
+        "resource representation",
+        "resource representation: resources",
+        || {
+            crate::instrumentation::measure_operation(
+                function.name(),
+                "resource representation",
+                "resource representation: contains desired",
+                || {
+                    resource_context_definitionally_contains(
+                        return_state.resources(),
+                        desired_state.resources(),
+                        function.composite_resource_definitions(),
+                        return_state.memory(),
+                        &assumptions,
+                    )
+                },
+            ) || (folded_names_differ
+                && crate::instrumentation::measure_operation(
+                    function.name(),
+                    "resource representation",
+                    "resource representation: contains without residue",
+                    || {
+                        resource_context_definitionally_contains_without_owned_residue(
+                            desired_state.resources(),
+                            return_state.resources(),
+                            function.composite_resource_definitions(),
+                            desired_state.memory(),
+                            &assumptions,
+                        )
+                    },
+                ))
+                || crate::instrumentation::measure_operation(
+                    function.name(),
+                    "resource representation",
+                    "resource representation: equal contexts",
+                    || {
+                        resource_contexts_definitionally_equal(
+                            function,
+                            return_state.memory(),
+                            return_state.resources(),
+                            desired_state.memory(),
+                            desired_state.resources(),
+                            &assumptions,
+                        )
+                    },
+                )
+        },
+    );
     if !resources_equal {
         return None;
     }
@@ -1170,12 +1279,19 @@ pub fn c_verified_function_contract_claims(
     }
     let timings = crate::instrumentation::enabled();
     let prepare_started = std::time::Instant::now();
-    let paths = execution
-        .paths()
-        .iter()
-        .map(|path| prepare_function_claim_path(function, path))
-        .collect::<Result<Vec<_>, _>>()
-        .ok()?;
+    let paths = crate::instrumentation::measure_operation(
+        function.name(),
+        "contract certification",
+        "contract path preparation",
+        || {
+            execution
+                .paths()
+                .iter()
+                .map(|path| prepare_function_claim_path(function, path))
+                .collect::<Result<Vec<_>, _>>()
+        },
+    )
+    .ok()?;
     if timings {
         crate::instrumentation::emit(
             crate::instrumentation::VerificationEvent::ClaimPathsPrepared {
@@ -1190,9 +1306,23 @@ pub fn c_verified_function_contract_claims(
         .iter()
         .map(|claim| {
             let claim_started = std::time::Instant::now();
-            let holds = paths
-                .iter()
-                .all(|path| function_claim_holds_on_prepared_path(function, claim, path));
+            let operation_name = match claim.target() {
+                CFunctionContractClaimTarget::BodySafety => "contract claim: body safety",
+                CFunctionContractClaimTarget::EnsureProposition(_) => "contract claim: proposition",
+                CFunctionContractClaimTarget::EnsureResource(_) => "contract claim: resource",
+                CFunctionContractClaimTarget::Effect => "contract claim: effect",
+            };
+            let claim_key = format!("{:?}", claim.key());
+            let holds = crate::instrumentation::measure_operation(
+                function.name(),
+                &claim_key,
+                operation_name,
+                || {
+                    paths
+                        .iter()
+                        .all(|path| function_claim_holds_on_prepared_path(function, claim, path))
+                },
+            );
             if timings {
                 crate::instrumentation::emit(
                     crate::instrumentation::VerificationEvent::ClaimFinished {

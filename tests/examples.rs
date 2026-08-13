@@ -18,16 +18,12 @@ const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 /// remove entries as they are fixed (see docs/advanced/testing-click.md).
 const QUARANTINED: &[(&str, &str)] = &[
     (
-        "binary-tree",
-        "issues/binary-tree-verification-exceeds-slow-test-threshold.md: aggregate verification cost rides the 30s project deadline (25s warm CPU), so the project flakes with machine load even though every tactic is inside its deterministic work budget",
-    ),
-    (
         "owned-string",
-        "issues/owned-string-exceeds-interactive-verification-budget.md: the fully certificated project takes ~35s warm, past its 30s deadline; the truncation then reports as a ghost-region mismatch (issues/deadline-truncation-masquerades-as-ghost-region-mismatch.md)",
+        "issues/owned-string-exceeds-interactive-verification-budget.md: the fully certificated project takes ~35s warm, past its 30s deadline",
     ),
     (
         "owned-vector",
-        "issues/owned-vector-baseline-misses-project-budget.md: several smart proof sites push the project past its deadline",
+        "issues/owned-vector-baseline-misses-project-budget.md: whole-claim expansion/replay is not yet stable",
     ),
 ];
 

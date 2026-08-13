@@ -159,11 +159,20 @@ struct ProjectProfile {
     accounting: TimeAccounting,
     work: WorkMetrics,
     attribution: BTreeMap<String, FunctionAttribution>,
+    operations: Vec<ProfileOperation>,
     /// Reasons a reported step's source position could not be resolved,
     /// counted. Auto-planned loop-phase certificates carry synthesized tactic
     /// indices that no surface proof has, so those steps are reported with
     /// their claim and no location rather than sinking the whole profile.
     unresolved_positions: BTreeMap<String, usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ProfileOperation {
+    function: String,
+    claim: String,
+    name: &'static str,
+    elapsed: Duration,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -703,13 +712,17 @@ enum TimingEvent {
     /// theorem dependencies before function proofs run.
     Environment(Duration),
     /// Number of certification paths prepared for one function.
-    CertificationPaths { function: String, count: usize },
+    CertificationPaths {
+        function: String,
+        count: usize,
+    },
     /// One contract claim completed certification checking.
     ClaimCompleted {
         function: String,
         key: String,
         elapsed: Duration,
     },
+    Operation(ProfileOperation),
     /// Structured snapshot captured at the cooperative deadline checkpoint,
     /// before scope guards close the active tactic or phase.
     Interrupted(InterruptedWork),
@@ -853,6 +866,17 @@ fn profile_from_events(
                 key: key.clone(),
                 elapsed: *elapsed,
             },
+            VerificationEvent::OperationFinished {
+                function,
+                claim,
+                name,
+                elapsed,
+            } => TimingEvent::Operation(ProfileOperation {
+                function: function.clone(),
+                claim: claim.clone(),
+                name,
+                elapsed: *elapsed,
+            }),
             VerificationEvent::DeadlineExceeded(active) => TimingEvent::Interrupted(match active {
                 ActiveVerificationWork::Tactic(tactic) => {
                     InterruptedWork::Tactic(structured_step(tactic, &source_path)?)
@@ -887,6 +911,7 @@ fn build_profile(
     let mut function_certification: BTreeMap<String, Duration> = BTreeMap::new();
     let mut source_files = BTreeSet::new();
     let mut interrupted = None;
+    let mut operations = Vec::new();
     for event in events {
         match event {
             TimingEvent::Source(path) => {
@@ -956,6 +981,7 @@ fn build_profile(
                     .buckets
                     .certification += elapsed;
             }
+            TimingEvent::Operation(operation) => operations.push(operation),
             TimingEvent::Interrupted(work) => interrupted = Some(work),
             TimingEvent::Ignored => {}
             #[cfg(test)]
@@ -983,6 +1009,7 @@ fn build_profile(
         accounting,
         work,
         attribution,
+        operations,
         unresolved_positions: BTreeMap::new(),
     })
 }
@@ -1006,6 +1033,7 @@ fn parse_profile(
     let mut function_certification: BTreeMap<String, Duration> = BTreeMap::new();
     let mut source_files = BTreeSet::new();
     let mut interrupted = None;
+    let mut operations = Vec::new();
     let mut unknown_timing: BTreeMap<String, UnknownTiming> = BTreeMap::new();
     let mut source_path = PathBuf::new();
     for line in output.lines() {
@@ -1084,6 +1112,7 @@ fn parse_profile(
                     .buckets
                     .certification += elapsed;
             }
+            TimingEvent::Operation(operation) => operations.push(operation),
             TimingEvent::Interrupted(work) => interrupted = Some(work),
             TimingEvent::Ignored => {}
             TimingEvent::Unknown => {
@@ -1119,6 +1148,7 @@ fn parse_profile(
         accounting,
         work,
         attribution,
+        operations,
         unresolved_positions: BTreeMap::new(),
     })
 }

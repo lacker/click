@@ -37,3 +37,39 @@ the budget question is reachable again.
   does not reuse a fact after a call that invalidated it.
 - No C source, proof obligation, heuristic, or budget is weakened to make the
   example pass.
+
+## Update (2026-08-12): source proof succeeds, hard gate still fails
+
+The source proof now constructs successfully under the production budgets
+after the `vector_grow` call prerequisites and broad `vector_push` closure
+were made explicit. A missing simple arithmetic certificate was also added
+for `left <= right` plus `left != right` implying `left < right`. The public
+`click verify` command is intentionally not green, because its mandatory
+whole-claim expansion gate catches the replay failure below.
+
+Profiling/expansion remains blocked by a distinct tooling failure. With event
+collection enabled, or when expanding the `step` at line 378, the whole-claim
+certificate generated for `allocated_vector_push` later contains a
+`step() using` premise for a snapshot-local int32 equality that ordinary replay
+does not have exactly. The expansion hard gate correctly rejects it. Preserve
+this full sidecar as the regression: `click expand
+examples/owned-vector/vector.click:378:13` must produce a proof that verifies,
+and `click profile --time-limit 3m examples/owned-vector/vector.click` must be
+a complete correctness run before the quarantine is removed.
+
+Dropping that redundant-looking equality is not a valid local fix. A diagnostic
+experiment then reaches the preceding generated plain `step`, where replay can
+no longer decide the C condition `grown == 0` even though planning split on its
+SSA value. The missing artifact is therefore a replayable transport from the
+opaque call result through the C local store to the later branch load. Fix this
+at the call/store execution-certificate boundary; do not special-case the
+vector proof or silently omit the premise.
+
+A fresh incomplete structured profile took 34.813s on its completed frontier.
+It reported 145 smart source sites (87 dynamic attempts), with
+`allocated_vector_push.contract` at 10.764s and `vector_grow` at 9.103s.
+Independent kernel certification totaled 3.297s and whole-contract replay
+2.155s. The largest completed deterministic tactics were an
+`allocated_vector_push` unfold at 1.982s and frames at 724ms/571ms. These are
+diagnostic-only until the whole-claim replay failure above is fixed; they must
+not be used to justify expansion or unquarantining.

@@ -1273,13 +1273,9 @@ fn post_execution_simp_applies_strict_order_rule() {
             .unwrap_or(0)
         + 1;
 
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("identity.c", c_source)],
-        line,
-        column,
-    )
-    .expect("post-execution strict-order simp should expand");
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("identity.c", c_source)], line, column)
+            .expect("post-execution strict-order simp should expand");
     assert!(
         expanded.contains("apply(int32_lt_implies_le("),
         "{expanded}"
@@ -1355,13 +1351,9 @@ fn post_execution_simp_expands_successor_strict_increase() {
             .unwrap_or(0)
         + 1;
 
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("increment.c", c_source)],
-        line,
-        column,
-    )
-    .expect("post-execution successor proof should expand");
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("increment.c", c_source)], line, column)
+            .expect("post-execution successor proof should expand");
     assert!(
         expanded.contains("apply(int32_increment_strictly_increases("),
         "{expanded}"
@@ -1468,6 +1460,40 @@ fn post_execution_simp_expands_order_equality_closure() {
 }
 
 #[test]
+fn restricted_simp_expands_nonstrict_unequal_order() {
+    let click_source = r#"
+        theorem nonstrict_unequal_is_strict(left: int32, right: int32) {
+            requires left <= right;
+            requires not (left == right);
+            ensures left < right by {
+                simp();
+            }
+        }
+    "#;
+    let offset = click_source.rfind("simp()").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("nonstrict unequal order should expand");
+    assert!(
+        expanded.contains("apply(int32_le_and_neq_implies_lt(left, right)) using"),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("simp()"), "{expanded}");
+    verify_click_theorems(&expanded).expect("nonstrict unequal certificate should replay");
+}
+
+#[test]
 fn post_execution_simp_expands_increment_upper_bound() {
     let c_source = r#"
         int32 increment_below(int32 x) {
@@ -1546,13 +1572,9 @@ fn post_execution_simp_expands_strict_transitivity() {
             .unwrap_or(0)
         + 1;
 
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("return_first.c", c_source)],
-        line,
-        column,
-    )
-    .expect("post-execution strict transitivity should expand");
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("return_first.c", c_source)], line, column)
+            .expect("post-execution strict transitivity should expand");
     assert!(
         expanded.contains("apply(int32_lt_transitive("),
         "{expanded}"
@@ -1594,13 +1616,9 @@ fn post_execution_simp_expands_greater_equal_transitivity() {
             .unwrap_or(0)
         + 1;
 
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("return_last.c", c_source)],
-        line,
-        column,
-    )
-    .expect("post-execution non-strict transitivity should expand");
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("return_last.c", c_source)], line, column)
+            .expect("post-execution non-strict transitivity should expand");
     assert!(
         expanded.contains("apply(int32_ge_transitive("),
         "{expanded}"
@@ -1642,13 +1660,9 @@ fn post_execution_simp_expands_greater_equal_increment_bound() {
             .unwrap_or(0)
         + 1;
 
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("increment_ge.c", c_source)],
-        line,
-        column,
-    )
-    .expect("post-execution greater-equal increment bound should expand");
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("increment_ge.c", c_source)], line, column)
+            .expect("post-execution greater-equal increment bound should expand");
     assert!(
         expanded.contains("apply(int32_increment_greater_equal_lower_bound("),
         "{expanded}"
@@ -1690,13 +1704,9 @@ fn post_execution_simp_expands_strict_greater_increment_bound() {
             .unwrap_or(0)
         + 1;
 
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("increment_gt.c", c_source)],
-        line,
-        column,
-    )
-    .expect("post-execution strict-greater increment bound should expand");
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("increment_gt.c", c_source)], line, column)
+            .expect("post-execution strict-greater increment bound should expand");
     assert!(
         expanded.contains("apply(int32_increment_strict_greater_lower_bound("),
         "{expanded}"
@@ -1738,13 +1748,9 @@ fn post_execution_simp_expands_greater_order_equality() {
             .unwrap_or(0)
         + 1;
 
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("identity_zero.c", c_source)],
-        line,
-        column,
-    )
-    .expect("post-execution greater-order equality should expand");
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("identity_zero.c", c_source)], line, column)
+            .expect("post-execution greater-order equality should expand");
     assert!(
         expanded.contains("apply(int32_ge_and_not_gt_implies_eq("),
         "{expanded}"
@@ -1796,7 +1802,10 @@ fn post_execution_simp_composes_negated_successor_bound() {
         expanded.contains("apply(int32_not_lt_implies_ge("),
         "{expanded}"
     );
-    assert!(expanded.contains("apply(int32_ge_transitive("), "{expanded}");
+    assert!(
+        expanded.contains("apply(int32_ge_transitive("),
+        "{expanded}"
+    );
     assert!(expanded.contains("normalize();"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity_at_least_one.c", c_source)])
@@ -1847,13 +1856,9 @@ fn post_execution_simp_unfolds_predicate_goal_explicitly() {
             .unwrap_or(0)
         + 1;
 
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("compare_swap2.c", c_source)],
-        line,
-        column,
-    )
-    .expect("post-execution predicate goal should expand");
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("compare_swap2.c", c_source)], line, column)
+            .expect("post-execution predicate goal should expand");
     assert!(expanded.contains("unfold(sorted_pair);"), "{expanded}");
     assert!(expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
@@ -2003,8 +2008,7 @@ fn restricted_simp_expands_positive_predecessor_decrease_to_theorem_application(
     let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
         .expect("positive-predecessor decrease simp should expand");
     assert!(
-        expanded
-            .contains("apply(int32_positive_predecessor_strictly_decreases(value)) using"),
+        expanded.contains("apply(int32_positive_predecessor_strictly_decreases(value)) using"),
         "{expanded}"
     );
     assert!(expanded.contains("0 < value;"), "{expanded}");
@@ -2139,6 +2143,140 @@ fn restricted_simp_expands_increment_order_to_theorem_application() {
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+}
+
+#[test]
+fn restricted_simp_rewrites_a_named_successor_before_increment_order() {
+    let c_source = r#"
+        int32 named_successor(int32 value) {
+            int32 successor;
+            successor = value + 1;
+            return successor;
+        }
+    "#;
+    let click_source = r#"
+        verifying "named_successor.c";
+
+        int32 named_successor(int32 value) {
+            requires 0 <= value;
+            requires value < 2147483647;
+            ensures 1 <= result by {
+                execute();
+                simp();
+            }
+        }
+    "#;
+    let offset = click_source.find("simp()").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("named_successor.c", c_source)],
+        line,
+        column,
+    )
+    .expect("named successor order should lower to an explicit rewrite and increment rule");
+    assert!(
+        expanded.contains("apply(int32_increment_preserves_order("),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("at(statement(1).entry, value)"),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("simp()"), "{expanded}");
+    verify_c0_sources(&expanded, &[("named_successor.c", c_source)])
+        .expect("named successor certificate should replay");
+}
+
+#[test]
+fn restricted_simp_certifies_unchanged_prefix_after_indexed_store() {
+    let c_source = r#"
+        struct vector {
+            int32 len;
+            int32 cap;
+            int32* data;
+        };
+
+        int32 vector_push(struct vector* owner, int32 value) {
+            int32 index;
+            int32* data;
+            index = owner->len;
+            data = owner->data;
+            data[index] = value;
+            owner->len = index + 1;
+            return owner->len;
+        }
+    "#;
+    let click_source = r#"
+        resource vector_storage(owner: struct vector*) {
+            owns owner->len;
+            owns owner->cap;
+            owns owner->data;
+            owns owner->data[0..owner->cap];
+            fact 0 <= owner->len;
+            fact owner->len <= owner->cap;
+            fact loadable(owner->data[0..owner->len]);
+            fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        }
+
+        verifying "vector_push.c";
+
+        int32 vector_push(struct vector* owner, int32 value) {
+            requires owner->len < owner->cap;
+            owns vector_storage(owner);
+            mutable owner->len, owner->data[owner->len..owner->len + 1];
+            ensures result == old(owner->len) + 1;
+            ensures owner->len == old(owner->len) + 1;
+            ensures owner->data[old(owner->len)] == value;
+            ensures owner->cap == old(owner->cap);
+            ensures owner->data == old(owner->data);
+            ensures forall (k: int32) {
+                0 <= k and k < old(owner->len) implies
+                    owner->data[k] == old(owner->data[k])
+            };
+        } by {
+            unfold(vector_storage(owner));
+            execute();
+            fold(vector_storage(owner));
+            frame();
+            simp();
+        }
+    "#;
+    let offset = click_source.rfind("simp();").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("vector_push.c", c_source)], line, column)
+            .expect("unchanged-prefix simp should expand to a replayable frame transport");
+    assert!(
+        expanded.contains("transport(old(owner->data[k])"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("k < old(owner->len)"), "{expanded}");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("vector_push.c", c_source)])
+        .expect("unchanged-prefix certificate should replay");
 }
 
 #[test]

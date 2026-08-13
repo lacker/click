@@ -131,6 +131,7 @@ pub(super) fn render_profiles_with_top(
 
     render_accounting(&mut output, profiles);
     render_work_metrics(&mut output, profiles);
+    render_operations(&mut output, profiles, top_attribution_rows);
     render_attribution(&mut output, profiles, top_attribution_rows);
     render_diagnoses(&mut output, profiles);
 
@@ -410,6 +411,67 @@ pub(super) fn render_profiles_with_top(
     }
 
     output
+}
+
+fn render_operations(output: &mut String, profiles: &[ProjectProfile], top_rows: usize) {
+    let mut operations = profiles
+        .iter()
+        .flat_map(|profile| {
+            profile
+                .operations
+                .iter()
+                .map(|operation| (profile.project.as_str(), operation))
+        })
+        .collect::<Vec<_>>();
+    operations.sort_by(|(_, left), (_, right)| right.elapsed.cmp(&left.elapsed));
+    if operations.is_empty() {
+        return;
+    }
+    writeln!(
+        output,
+        "\nNESTED VERIFIER OPERATIONS (overlap parent buckets)"
+    )
+    .expect("writing a String cannot fail");
+    let mut aggregates = std::collections::BTreeMap::new();
+    for (project, operation) in &operations {
+        let entry = aggregates.entry((*project, operation.name)).or_insert((
+            Duration::ZERO,
+            0usize,
+            Duration::ZERO,
+        ));
+        entry.0 += operation.elapsed;
+        entry.1 += 1;
+        entry.2 = entry.2.max(operation.elapsed);
+    }
+    let mut aggregates = aggregates.into_iter().collect::<Vec<_>>();
+    aggregates.sort_by(|(_, left), (_, right)| right.0.cmp(&left.0));
+    writeln!(output, "  AGGREGATES").expect("writing a String cannot fail");
+    for ((project, name), (total, count, max)) in aggregates.into_iter().take(top_rows) {
+        writeln!(
+            output,
+            "  {:>9}  {:>4} calls  avg {:>9}  max {:>9}  {}  {}",
+            format_fractional_duration(total),
+            count,
+            format_fractional_duration(total / count as u32),
+            format_fractional_duration(max),
+            name,
+            project,
+        )
+        .expect("writing a String cannot fail");
+    }
+    writeln!(output, "  SLOWEST INDIVIDUAL CALLS").expect("writing a String cannot fail");
+    for (project, operation) in operations.into_iter().take(top_rows) {
+        writeln!(
+            output,
+            "  {:>9}  {}  {}  {}  {}",
+            format_fractional_duration(operation.elapsed),
+            operation.name,
+            project,
+            operation.function,
+            operation.claim,
+        )
+        .expect("writing a String cannot fail");
+    }
 }
 
 /// Prints where each profiled run's wall-clock time actually went.

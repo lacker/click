@@ -26,6 +26,38 @@ fn verifies_simple_postcondition_with_proof_tactics() {
 }
 
 #[test]
+fn post_execution_frame_using_relowers_a_preceding_have_fact() {
+    let c_source = r#"
+            int32 clear_first(int32* data) {
+                data[0] = 0;
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "clear_first.c";
+
+            int32 clear_first(int32 data[]) {
+                consumes data[0..1];
+                produces data[0..1];
+                mutable data[0..1];
+                ensures data[0] == 0;
+            } by {
+                execute();
+                have data[0] == 0 by {
+                    assumption();
+                }
+                frame() using {
+                    data[0] == 0;
+                }
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("clear_first.c", c_source)])
+        .expect("frame premises should use facts established by preceding exit haves");
+}
+
+#[test]
 fn ordinary_verification_stops_at_the_tactic_deadline() {
     let c_source = r#"
             int32 identity(int32 x) {

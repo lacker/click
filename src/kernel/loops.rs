@@ -665,6 +665,9 @@ fn verify_lowered_invariant_path(
             .derive_proposition_without_premise_minimization(proposition)
             .or_else(|| local.derive_simp_proposition(proposition))
         else {
+            if let Some(context) = crate::instrumentation::exceeded_verification_limit_context() {
+                return Err(format!("verification budget exhausted inside {context}"));
+            }
             return Err(format!(
                 "invariant {check_index} is missing path obligation: {proposition:?}"
             ));
@@ -679,6 +682,9 @@ fn verify_lowered_invariant_path(
         .derive_proposition_without_premise_minimization(&path.proposition)
         .or_else(|| local.derive_simp_proposition(&path.proposition))
     else {
+        if let Some(context) = crate::instrumentation::exceeded_verification_limit_context() {
+            return Err(format!("verification budget exhausted inside {context}"));
+        }
         return Err(format!(
             "invariant {check_index} is missing path goal: {:?}",
             path.proposition

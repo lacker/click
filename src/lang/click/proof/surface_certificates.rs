@@ -259,9 +259,9 @@ pub(super) fn lower_surface_atomic_derivation(
     }
     if let Proposition::Not(body) = &lowered_conclusion
         && let Proposition::ConditionIs(condition, expected) = body.as_ref()
-        && let Some((_, surface)) = premise_pairs.iter().find(|(kernel, _)| {
-            kernel == &Proposition::ConditionIs(condition.clone(), !expected)
-        })
+        && let Some((_, surface)) = premise_pairs
+            .iter()
+            .find(|(kernel, _)| kernel == &Proposition::ConditionIs(condition.clone(), !expected))
     {
         let tactics = vec![
             ProofTactic::Intro,
@@ -280,32 +280,68 @@ pub(super) fn lower_surface_atomic_derivation(
     // spelling (the same fact recorded against an earlier memory) denotes
     // the value only through frame reasoning, which the simple rewrite
     // cannot check; those premises stay available to the transport path.
-    let rewrite_pairs = premise_pairs
+    let surface_replays_kernel = |kernel: &Proposition, surface: &ClickProposition| {
+        replay
+            .surface_propositions
+            .available_kernel(surface, available)
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| {
+                lower_point_proposition(
+                    surface,
+                    available,
+                    parameters,
+                    arguments,
+                    replay.old_reference_state(state),
+                    state,
+                    None,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+            })
+            .is_ok_and(|lowered| propositions_match_up_to_canonical_loads(&lowered, kernel))
+    };
+    let mut rewrite_pairs = premise_pairs
         .iter()
-        .filter(|(kernel, surface)| {
-            replay
-                .surface_propositions
-                .available_kernel(surface, available)
-                .cloned()
-                .map(Ok)
-                .unwrap_or_else(|| {
-                    lower_point_proposition(
-                        surface,
-                        available,
-                        parameters,
-                        arguments,
-                        replay.old_reference_state(state),
-                        state,
-                        None,
-                        &replay.program_point_states,
-                        predicate_environment,
-                        click_function_environment,
-                    )
-                })
-                .is_ok_and(|lowered| propositions_match_up_to_canonical_loads(&lowered, kernel))
-        })
+        .filter(|(kernel, surface)| surface_replays_kernel(kernel, surface))
         .cloned()
         .collect::<Vec<_>>();
+    // Atomic premise minimization can legitimately discard an execution
+    // equality after the kernel has used it to resolve a named local to the
+    // arithmetic term that a selected order rule proves. Certificate
+    // construction still needs that equality to spell the rewrite from the
+    // surface goal. Recover only exact, replayable int32 equalities from the
+    // available state; the rewrite planner retains only the ones it selects.
+    for premise in available {
+        if !matches!(
+            premise,
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
+        ) || rewrite_pairs.iter().any(|(kernel, _)| kernel == premise)
+        {
+            continue;
+        }
+        let Ok(surface) = checked_surface_comparison_fact_at_point(
+            replay,
+            premise,
+            SurfaceFactMatch::ReplayEquivalent,
+            available,
+            parameters,
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+        ) else {
+            continue;
+        };
+        let surface = match anchor_point {
+            Some(point) => surface_with_source_site(&surface, point)?,
+            None => surface,
+        };
+        if surface_replays_kernel(premise, &surface) {
+            rewrite_pairs.push((premise.clone(), surface));
+        }
+    }
     if let Some(tactics) =
         plan_explicit_equality_rewrites(&lowered_conclusion, &rewrite_pairs, available)
     {
@@ -324,8 +360,17 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
     }
-    if let Some(tactics) = plan_explicit_forall_instantiation(&lowered_conclusion, &premise_pairs)
+    if let Some(tactics) =
+        plan_explicit_increment_lower_bound_transport(&conclusion, &premise_pairs)
     {
+        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "increment transport produced a non-simple atomic derivation: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, Proof::Script(tactics)));
+    }
+    if let Some(tactics) = plan_explicit_forall_instantiation(&lowered_conclusion, &premise_pairs) {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "universal instantiation produced a non-simple expansion: {error:?}"
@@ -333,8 +378,14 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
     }
-    if let Some(tactics) = plan_explicit_forall_goal(&lowered_conclusion, &conclusion, &premise_pairs)
-    {
+    if let Some(tactics) = plan_explicit_forall_goal(
+        &lowered_conclusion,
+        &conclusion,
+        &premise_pairs,
+        available,
+        &replay.effect_facts,
+        state,
+    ) {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "universal goal discharge produced a non-simple expansion: {error:?}"
@@ -404,14 +455,21 @@ pub(super) fn lower_surface_atomic_derivation(
         ) else {
             continue;
         };
-        let tactics = vec![
-            ProofTactic::TransportUsing {
-                source: surface_source.clone(),
-                target: conclusion.clone(),
-                premises,
-            },
-            ProofTactic::Assumption,
-        ];
+        let mut extracted_premises = Vec::new();
+        let mut transport_premises = Vec::new();
+        for premise in premises {
+            flatten_transport_premise(&premise, &mut extracted_premises, &mut transport_premises);
+        }
+        let mut tactics = extracted_premises
+            .into_iter()
+            .map(ProofTactic::Extract)
+            .collect::<Vec<_>>();
+        tactics.push(ProofTactic::TransportUsing {
+            source: surface_source.clone(),
+            target: conclusion.clone(),
+            premises: transport_premises,
+        });
+        tactics.push(ProofTactic::Assumption);
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "atomic transport produced a non-simple expansion: {error:?}"
@@ -419,10 +477,48 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
     }
+    let internal = std::env::var_os(FULL_DIAGNOSTICS_ENV).is_some().then(|| {
+        format!(
+            "\n  kernel goal: {}\n  kernel premises: {}",
+            bounded_debug(&lowered_conclusion),
+            bounded_debug(
+                &premise_pairs
+                    .iter()
+                    .map(|(kernel, _)| kernel)
+                    .collect::<Vec<_>>()
+            )
+        )
+    });
     Err(ClickError::new(format!(
-        "smart reasoning found a derivation, but Click has no explicit simple certificate for {}",
+        "smart reasoning found a derivation, but Click has no explicit simple certificate for {}\n  selected premises: {}\n  replayable equality rewrites: {}{}",
         describe_pure_fact(&lowered_conclusion, parameters, arguments),
+        premise_pairs
+            .iter()
+            .map(|(_, surface)| describe_click_proposition(surface))
+            .collect::<Vec<_>>()
+            .join(", "),
+        rewrite_pairs
+            .iter()
+            .map(|(_, surface)| describe_click_proposition(surface))
+            .collect::<Vec<_>>()
+            .join(", "),
+        internal.as_deref().unwrap_or(""),
     )))
+}
+
+fn flatten_transport_premise(
+    premise: &ClickProposition,
+    extracted: &mut Vec<ClickProposition>,
+    leaves: &mut Vec<ClickProposition>,
+) {
+    let ClickProposition::And(left, right) = premise else {
+        leaves.push(premise.clone());
+        return;
+    };
+    for child in [left.as_ref(), right.as_ref()] {
+        extracted.push(child.clone());
+        flatten_transport_premise(child, extracted, leaves);
+    }
 }
 
 enum OutcomeSimpSelection {
@@ -1233,6 +1329,9 @@ pub(super) fn lower_outcome_simp_tactics(
                 &fully_unfolded_goal,
                 &unfolded_surface,
                 &premise_pairs,
+                available,
+                &replay.effect_facts,
+                post_state,
             )
             .or_else(|| {
                 plan_outcome_finite_forall_enumeration(
@@ -1265,14 +1364,22 @@ pub(super) fn lower_outcome_simp_tactics(
             }
         }
     }
-    if let Some(tactics) = plan_explicit_unchanged_load_transport(surface_goal, &premise_pairs) {
+    if let Some(tactics) = plan_explicit_unchanged_load_transport(
+        goal,
+        surface_goal,
+        &premise_pairs,
+        available,
+        &replay.effect_facts,
+        post_state,
+        &[],
+    ) {
         return Ok(tactics);
     }
     if let Some(tactics) = plan_explicit_loadability_transport(goal, surface_goal, &premise_pairs) {
         return Ok(tactics);
     }
     if let Some(tactics) =
-        plan_explicit_field_increment_lower_bound_transport(surface_goal, &premise_pairs)
+        plan_explicit_increment_lower_bound_transport(surface_goal, &premise_pairs)
     {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
@@ -1289,7 +1396,14 @@ pub(super) fn lower_outcome_simp_tactics(
         })?;
         return Ok(tactics);
     }
-    if let Some(tactics) = plan_explicit_forall_goal(goal, surface_goal, &premise_pairs) {
+    if let Some(tactics) = plan_explicit_forall_goal(
+        goal,
+        surface_goal,
+        &premise_pairs,
+        available,
+        &replay.effect_facts,
+        post_state,
+    ) {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "universal goal discharge produced a non-simple expansion: {error:?}"
@@ -1300,12 +1414,7 @@ pub(super) fn lower_outcome_simp_tactics(
     let mut search_pairs = premise_pairs.clone();
     let mut extracted_surfaces = Vec::new();
     for (kernel, surface) in &premise_pairs {
-        collect_surface_conjunct_pairs(
-            kernel,
-            surface,
-            &mut search_pairs,
-            &mut extracted_surfaces,
-        );
+        collect_surface_conjunct_pairs(kernel, surface, &mut search_pairs, &mut extracted_surfaces);
     }
     // One search-time vocabulary: the shared explicit-certificate search with
     // the full named-rule list. A derivation this cannot spell is a failure of
@@ -1637,10 +1746,7 @@ fn collect_surface_conjunct_pairs(
         (kernel_left.as_ref(), surface_left.as_ref()),
         (kernel_right.as_ref(), surface_right.as_ref()),
     ] {
-        if !pairs
-            .iter()
-            .any(|(existing, _)| existing == kernel_child)
-        {
+        if !pairs.iter().any(|(existing, _)| existing == kernel_child) {
             pairs.push((kernel_child.clone(), surface_child.clone()));
             extracted.push(surface_child.clone());
         }
@@ -1648,20 +1754,16 @@ fn collect_surface_conjunct_pairs(
     }
 }
 
-fn plan_explicit_field_increment_lower_bound_transport(
+fn plan_explicit_increment_lower_bound_transport(
     surface_goal: &ClickProposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    // A post-store field bound can be proved at the latest retained program
-    // point and then transported to the outcome. Keep those two proof steps
-    // explicit: the arithmetic theorem does not itself know about stores,
-    // and `transport using` is the simple rule that crosses the snapshots.
-    let (goal_lower, goal_value) = surface_nonstrict_parts(surface_goal)?;
-    if goal_lower != ContractExpression::CFragment(CExpression::Value(int32(0)))
-        || !matches!(goal_value, ContractExpression::Field { .. })
-    {
-        return None;
-    }
+    // A named local or post-store field bound can be proved at the latest
+    // retained program point and then transported to the requested surface
+    // spelling. Keep those two proof steps explicit: the arithmetic theorem
+    // does not itself know about stores or snapshot drift, and `transport
+    // using` is the simple rule that crosses them.
+    let (goal_lower, _) = surface_nonstrict_parts(surface_goal)?;
     let normalized_pairs = premise_pairs
         .iter()
         .map(|(kernel, surface)| {
@@ -1678,6 +1780,9 @@ fn plan_explicit_field_increment_lower_bound_transport(
         let Some((surface_lower, surface_base)) = surface_nonstrict_parts(lower_surface) else {
             continue;
         };
+        if surface_lower != goal_lower {
+            continue;
+        }
         for (upper_kernel, upper_surface) in &normalized_pairs {
             let Some((upper_base, _)) = signed_strict_parts(upper_kernel) else {
                 continue;
@@ -1696,6 +1801,9 @@ fn plan_explicit_field_increment_lower_bound_transport(
                     Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
                 ),
             };
+            if &intermediate_surface == surface_goal {
+                continue;
+            }
             return Some(vec![
                 ProofTactic::Have(ProofHave {
                     proposition: intermediate_surface.clone(),
@@ -1765,10 +1873,8 @@ fn plan_explicit_forall_instantiation(
             let Some(argument) = contract_expression_for_instantiation_value(&value) else {
                 continue;
             };
-            let instantiated =
-                substitute_int32_variable_in_proposition(body, *var, value.clone());
-            let Ok((_, conclusion)) =
-                discharge_instantiated_guards(instantiated, &other_kernels)
+            let instantiated = substitute_int32_variable_in_proposition(body, *var, value.clone());
+            let Ok((_, conclusion)) = discharge_instantiated_guards(instantiated, &other_kernels)
             else {
                 continue;
             };
@@ -1868,9 +1974,8 @@ fn plan_explicit_universal_conclusion_discharge(
             ClickProposition::Implies(_, conclusion) => conclusion.as_ref(),
             body => body,
         };
-        let substitutions =
-            std::iter::once((premise_binder.clone(), argument_expression.clone()))
-                .collect::<BTreeMap<_, _>>();
+        let substitutions = std::iter::once((premise_binder.clone(), argument_expression.clone()))
+            .collect::<BTreeMap<_, _>>();
         let source =
             substitute_click_proposition(premise_surface_conclusion, &substitutions).ok()?;
         let source = match premise_selector {
@@ -1904,6 +2009,9 @@ fn plan_explicit_forall_goal(
     goal: &Proposition,
     surface_goal: &ClickProposition,
     premise_pairs: &[(Proposition, ClickProposition)],
+    available: &[Proposition],
+    effect_facts: &[ExecutionPureFact],
+    post_state: &CState,
 ) -> Option<Vec<ProofTactic>> {
     let Proposition::ForAll {
         var: goal_var,
@@ -1974,14 +2082,29 @@ fn plan_explicit_forall_goal(
         ClickProposition::Implies(_, conclusion) => conclusion.as_ref(),
         body => body,
     };
-    let mut body_tactics =
-        plan_explicit_unchanged_load_transport(surface_conclusion, premise_pairs)?;
+    let introduced = antecedent.iter().cloned().collect::<Vec<_>>();
+    let mut body_tactics = plan_explicit_unchanged_load_transport(
+        goal_conclusion,
+        surface_conclusion,
+        premise_pairs,
+        available,
+        effect_facts,
+        post_state,
+        &introduced,
+    )?;
     // The introduced bounds are what place the binder's cell inside the
-    // preserved range, so the point-wise transport must name them.
+    // preserved range, so the point-wise transport must name them. A simple
+    // transport consumes atomic premises; spell conjunction elimination
+    // explicitly after introducing the guarded antecedent.
+    let mut extracted = Vec::new();
     if let Some(antecedent_surface) = &surface_antecedent {
         for tactic in &mut body_tactics {
             if let ProofTactic::TransportUsing { premises, .. } = tactic {
                 premises.push(antecedent_surface.clone());
+                let original = std::mem::take(premises);
+                for premise in original {
+                    flatten_transport_premise(&premise, &mut extracted, premises);
+                }
             }
         }
     }
@@ -1989,13 +2112,19 @@ fn plan_explicit_forall_goal(
     if antecedent.is_some() {
         tactics.push(ProofTactic::Intro);
     }
+    tactics.extend(extracted.into_iter().map(ProofTactic::Extract));
     tactics.append(&mut body_tactics);
     Some(tactics)
 }
 
 fn plan_explicit_unchanged_load_transport(
+    goal: &Proposition,
     surface_goal: &ClickProposition,
     premise_pairs: &[(Proposition, ClickProposition)],
+    available: &[Proposition],
+    effect_facts: &[ExecutionPureFact],
+    post_state: &CState,
+    introduced: &[Proposition],
 ) -> Option<Vec<ProofTactic>> {
     let ClickProposition::Comparison {
         operator: ComparisonOperator::Equal,
@@ -2008,14 +2137,90 @@ fn plan_explicit_unchanged_load_transport(
     if !contains_old_expression(right) {
         return None;
     }
-    // Separation evidence sharpens the transport when it was selected;
-    // otherwise the certified effect summaries that ride along with every
-    // explicit transport carry the frame argument on their own.
-    let premises = premise_pairs
-        .iter()
-        .find(|(kernel, _)| matches!(kernel, Proposition::CResourceSeparate { .. }))
-        .map(|(_, separation)| vec![separation.clone()])
-        .unwrap_or_default();
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, kernel_right), kernel_value) =
+        goal
+    else {
+        return None;
+    };
+    let source_kernel = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(kernel_right.clone(), kernel_right.clone()),
+        *kernel_value,
+    );
+    let mut selected = Vec::<(Proposition, ClickProposition)>::new();
+    let replays = |selected: &[(Proposition, ClickProposition)]| {
+        let explicit = selected
+            .iter()
+            .map(|(kernel, _)| kernel.clone())
+            .chain(introduced.iter().cloned())
+            .collect::<Vec<_>>();
+        let explicit_assumptions = assumptions_from_propositions(&explicit);
+        let resource_facts = post_state
+            .resources()
+            .observable_facts_assuming_valid(&explicit_assumptions);
+        let selected_assumptions = available
+            .iter()
+            .filter(|fact| is_implicit_fact_transport_context(fact))
+            .cloned()
+            .chain(resource_facts)
+            .fold(explicit_assumptions, |assumptions, fact| {
+                assumptions.assume_proposition(fact)
+            });
+        if selected_assumptions
+            .derive_atomic_proposition(&source_kernel)
+            .is_none()
+        {
+            return false;
+        }
+        let transition_facts = fact_transport_transition_facts(effect_facts, &source_kernel);
+        let transport_assumptions = transition_facts
+            .iter()
+            .fold(selected_assumptions, |assumptions, fact| {
+                assumptions.assume_proposition(fact.proposition().clone())
+            })
+            .assume_proposition(source_kernel.clone());
+        certified_fact_transport_reaches_through(
+            &source_kernel,
+            goal,
+            post_state.memory(),
+            &transport_assumptions,
+            &transition_facts,
+        )
+    };
+    if !replays(&selected) {
+        let rank = |proposition: &Proposition| match proposition {
+            Proposition::CResourceSeparate { .. }
+            | Proposition::CMemoryDisjoint { .. }
+            | Proposition::CMemoryLoadable { .. }
+            | Proposition::CMemoryCanStore { .. } => 0,
+            Proposition::ConditionIs(_, _) => 1,
+            _ => 2,
+        };
+        let mut candidates = premise_pairs.to_vec();
+        candidates.sort_by_key(|(kernel, _)| rank(kernel));
+        for candidate in candidates {
+            if selected.contains(&candidate) {
+                continue;
+            }
+            selected.push(candidate);
+            if replays(&selected) {
+                break;
+            }
+        }
+    }
+    if !replays(&selected) {
+        return None;
+    }
+    let mut index = 0;
+    while index < selected.len() {
+        let mut reduced = selected.clone();
+        reduced.remove(index);
+        if replays(&reduced) {
+            selected = reduced;
+        } else {
+            index += 1;
+        }
+    }
+    let premises = selected.into_iter().map(|(_, surface)| surface).collect();
     let source = ClickProposition::Comparison {
         left: right.clone(),
         operator: ComparisonOperator::Equal,
@@ -2072,14 +2277,19 @@ pub(super) fn lower_restricted_simp_plan(
         }
     };
 
-    if let Some((choose_left, child)) = exact_derivation.and_then(|proof| proof.disjunction_choice())
+    if let Some((choose_left, child)) =
+        exact_derivation.and_then(|proof| proof.disjunction_choice())
     {
         let Proposition::Or(left, right) = goal else {
             return Err(ClickError::new(
                 "`simp() using` selected a disjunction proof for a non-disjunction goal",
             ));
         };
-        let child_goal = if choose_left { left.as_ref() } else { right.as_ref() };
+        let child_goal = if choose_left {
+            left.as_ref()
+        } else {
+            right.as_ref()
+        };
         // `left`/`right` replay accepts the selected disjunct when it is the
         // same total boolean condition as an available fact up to polarity
         // (e.g. `x > 0` from `not (x <= 0)`); construction mirrors exactly
@@ -2140,7 +2350,7 @@ pub(super) fn lower_restricted_simp_plan(
     Ok(tactics)
 }
 
-fn plan_explicit_named_signed_rule(
+pub(super) fn plan_explicit_named_signed_rule(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
@@ -2171,8 +2381,55 @@ fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_predecessor_upper_bound(goal, premise_pairs, false))
         .or_else(|| plan_explicit_one_le_predecessor(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_predecessor_strictly_decreases(goal, premise_pairs))
+        .or_else(|| plan_explicit_le_and_neq_implies_lt(goal, premise_pairs))
         .or_else(|| plan_explicit_le_and_not_lt_implies_eq(goal, premise_pairs))
         .or_else(|| plan_explicit_ge_and_not_gt_implies_eq(goal, premise_pairs))
+}
+
+fn plan_explicit_le_and_neq_implies_lt(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let (left, right) = goal_exact_less_than_parts(goal)?;
+    for (le_kernel, le_surface) in premise_pairs {
+        let Some((le_left, le_right)) = signed_nonstrict_parts(le_kernel) else {
+            continue;
+        };
+        if le_left != left || le_right != right {
+            continue;
+        }
+        for (neq_kernel, neq_surface) in premise_pairs {
+            let matches_neq = match neq_kernel {
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(neq_left, neq_right),
+                    false,
+                ) => neq_left.as_ref() == left && neq_right.as_ref() == right,
+                Proposition::Not(body) => matches!(
+                    body.as_ref(),
+                    Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(neq_left, neq_right),
+                        true,
+                    ) if neq_left.as_ref() == left && neq_right.as_ref() == right
+                ),
+                _ => false,
+            };
+            if !matches_neq {
+                continue;
+            }
+            let (surface_left, surface_right) = surface_nonstrict_parts(le_surface)?;
+            return Some(vec![
+                ProofTactic::ApplyTheoremUsing {
+                    application: TheoremApplication {
+                        name: "int32_le_and_neq_implies_lt".to_string(),
+                        arguments: vec![surface_left, surface_right],
+                    },
+                    premises: vec![le_surface.clone(), neq_surface.clone()],
+                },
+                ProofTactic::Assumption,
+            ]);
+        }
+    }
+    None
 }
 
 fn plan_explicit_loadability_transport(
@@ -2531,10 +2788,7 @@ fn plan_explicit_strict_implies_nonstrict(
 ) -> Option<Vec<ProofTactic>> {
     let reversed = matches!(
         goal,
-        Proposition::ConditionIs(
-            ConditionTerm::Bitvector32SignedGreaterEqual(_, _),
-            true,
-        )
+        Proposition::ConditionIs(ConditionTerm::Bitvector32SignedGreaterEqual(_, _), true,)
     );
     let (goal_left, goal_right) = signed_nonstrict_parts(goal)?;
     for (kernel, surface) in premise_pairs {
@@ -2551,12 +2805,12 @@ fn plan_explicit_strict_implies_nonstrict(
             right: surface_right.clone(),
         };
         let mut tactics = vec![ProofTactic::ApplyTheoremUsing {
-                application: TheoremApplication {
-                    name: "int32_lt_implies_le".to_string(),
-                    arguments: vec![surface_left.clone(), surface_right.clone()],
-                },
-                premises: vec![surface.clone()],
-            }];
+            application: TheoremApplication {
+                name: "int32_lt_implies_le".to_string(),
+                arguments: vec![surface_left.clone(), surface_right.clone()],
+            },
+            premises: vec![surface.clone()],
+        }];
         if reversed {
             tactics.push(ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
@@ -2587,15 +2841,15 @@ fn plan_explicit_implies_refuted_antecedent(
     let mut current = goal;
     while let Proposition::Implies(antecedent, consequent) = current {
         tactics.push(ProofTactic::Intro);
-        let refutation = premise_pairs.iter().find(|(kernel, _)| {
-            match antecedent.as_ref() {
+        let refutation = premise_pairs
+            .iter()
+            .find(|(kernel, _)| match antecedent.as_ref() {
                 Proposition::ConditionIs(condition, expected) => {
                     kernel == &Proposition::ConditionIs(condition.clone(), !expected)
                 }
                 Proposition::Not(inner) => kernel == inner.as_ref(),
                 _ => false,
-            }
-        });
+            });
         if let Some((_, surface)) = refutation {
             tactics.push(ProofTactic::Contradiction(surface.clone()));
             return Some(tactics);
@@ -3059,9 +3313,9 @@ fn plan_explicit_constant_strict_upper_bound_weakening(
             continue;
         }
         let (surface_value, surface_premise_upper) = surface_nonstrict_parts(premise_surface)?;
-        let goal_upper_surface = ContractExpression::CFragment(CExpression::Value(
-            CValue::Int32(Bitvector32Term::Constant(*goal_constant)),
-        ));
+        let goal_upper_surface = ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+            Bitvector32Term::Constant(*goal_constant),
+        )));
         return Some(vec![
             ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
@@ -3108,9 +3362,9 @@ fn plan_explicit_increment_constant_upper_bound(
             continue;
         }
         let (surface_value, surface_premise_upper) = surface_nonstrict_parts(premise_surface)?;
-        let goal_upper_surface = ContractExpression::CFragment(CExpression::Value(
-            CValue::Int32(Bitvector32Term::Constant(*goal_constant)),
-        ));
+        let goal_upper_surface = ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+            Bitvector32Term::Constant(*goal_constant),
+        )));
         let strict_surface = ClickProposition::Comparison {
             left: surface_value.clone(),
             operator: ComparisonOperator::LessThan,
@@ -3167,15 +3421,14 @@ fn plan_explicit_constant_lower_bound_weakening(
         let Bitvector32Term::Constant(premise_constant) = premise_lower else {
             continue;
         };
-        if (*goal_constant as i32) > (*premise_constant as i32)
-            || premise_constant == goal_constant
+        if (*goal_constant as i32) > (*premise_constant as i32) || premise_constant == goal_constant
         {
             continue;
         }
         let (surface_premise_lower, surface_value) = surface_nonstrict_parts(premise_surface)?;
-        let goal_lower_surface = ContractExpression::CFragment(CExpression::Value(
-            CValue::Int32(Bitvector32Term::Constant(*goal_constant)),
-        ));
+        let goal_lower_surface = ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+            Bitvector32Term::Constant(*goal_constant),
+        )));
         let weakened_surface = ClickProposition::Comparison {
             left: surface_value.clone(),
             operator: ComparisonOperator::GreaterEqual,
@@ -3254,9 +3507,7 @@ fn plan_explicit_increment_below_max_is_defined(
         let Some((premise_value, upper)) = signed_strict_parts(kernel) else {
             continue;
         };
-        if premise_value != value.as_ref()
-            || upper != &Bitvector32Term::Constant(i32::MAX as u32)
-        {
+        if premise_value != value.as_ref() || upper != &Bitvector32Term::Constant(i32::MAX as u32) {
             continue;
         }
         let (surface_value, _) = surface_strict_parts(surface)?;
@@ -3310,7 +3561,6 @@ fn plan_explicit_positive_predecessor_is_nonnegative(
     None
 }
 
-
 /// From `0 <= value` and `value <= bound`, the predecessor keeps the bound:
 /// `value - 1 <= bound` through `int32_nonnegative_predecessor_upper_bound`.
 /// When the nonnegativity leg is not itself a selected premise and
@@ -3349,13 +3599,12 @@ fn plan_explicit_predecessor_upper_bound(
             true,
         );
         let mut tactics = Vec::new();
-        let nonnegative_surface = if let Some((_, surface)) = premise_pairs.iter().find(
-            |(kernel, _)| {
+        let nonnegative_surface = if let Some((_, surface)) =
+            premise_pairs.iter().find(|(kernel, _)| {
                 signed_nonstrict_parts(kernel).is_some_and(|(lower, bounded)| {
                     lower == &Bitvector32Term::Constant(0) && bounded == value.as_ref()
                 })
-            },
-        ) {
+            }) {
             surface.clone()
         } else {
             if !spell_missing_leg {
@@ -3370,9 +3619,9 @@ fn plan_explicit_predecessor_upper_bound(
                 premise_pairs,
                 &kernel_premises,
                 &|current| {
-                    kernel_premises.iter().any(|fact| {
-                        fact == current || condition_polarity_equivalent(fact, current)
-                    })
+                    kernel_premises
+                        .iter()
+                        .any(|fact| fact == current || condition_polarity_equivalent(fact, current))
                 },
                 &|_| None,
             ) else {
@@ -3407,30 +3656,29 @@ fn plan_explicit_one_le_predecessor(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let (value, final_theorem) =
-        if let Some((goal_lower, predecessor)) = goal_exact_less_equal_parts(goal) {
-            if goal_lower != &Bitvector32Term::Constant(0) {
-                return None;
-            }
-            let Bitvector32Term::Subtract(value, amount) = predecessor else {
-                return None;
-            };
-            if amount.as_ref() != &Bitvector32Term::Constant(1) {
-                return None;
-            }
-            (value.as_ref(), "int32_positive_predecessor_is_nonnegative")
-        } else {
-            let (predecessor, value) = goal_exact_less_than_parts(goal)?;
-            let Bitvector32Term::Subtract(predecessor_value, amount) = predecessor else {
-                return None;
-            };
-            if predecessor_value.as_ref() != value
-                || amount.as_ref() != &Bitvector32Term::Constant(1)
-            {
-                return None;
-            }
-            (value, "int32_positive_predecessor_strictly_decreases")
+    let (value, final_theorem) = if let Some((goal_lower, predecessor)) =
+        goal_exact_less_equal_parts(goal)
+    {
+        if goal_lower != &Bitvector32Term::Constant(0) {
+            return None;
+        }
+        let Bitvector32Term::Subtract(value, amount) = predecessor else {
+            return None;
         };
+        if amount.as_ref() != &Bitvector32Term::Constant(1) {
+            return None;
+        }
+        (value.as_ref(), "int32_positive_predecessor_is_nonnegative")
+    } else {
+        let (predecessor, value) = goal_exact_less_than_parts(goal)?;
+        let Bitvector32Term::Subtract(predecessor_value, amount) = predecessor else {
+            return None;
+        };
+        if predecessor_value.as_ref() != value || amount.as_ref() != &Bitvector32Term::Constant(1) {
+            return None;
+        }
+        (value, "int32_positive_predecessor_strictly_decreases")
+    };
     for (kernel, surface) in premise_pairs {
         let Some((premise_lower, premise_value)) = signed_nonstrict_parts(kernel) else {
             continue;
@@ -4993,12 +5241,8 @@ pub(super) fn certify_outcome_existential_simp(
         let mut instantiated_surface = if unfolds.is_empty() {
             surface_goal.clone()
         } else {
-            unfold_structural_invariant_proposition(
-                predicate_environment,
-                surface_goal,
-                &unfolds,
-            )
-            .map_err(ClickError::new)?
+            unfold_structural_invariant_proposition(predicate_environment, surface_goal, &unfolds)
+                .map_err(ClickError::new)?
         };
         for (index, tactic) in existence_tactics.iter().enumerate() {
             let ProofTactic::Witness(witness) = tactic else {
@@ -5084,9 +5328,7 @@ pub(super) fn certify_outcome_existential_simp(
                 Ok(certificate) => return Ok(certificate),
                 Err(message) => last_error = Some(message),
             },
-            Ok(_) => {
-                last_error = Some("explicit existential closer was not a script".to_string())
-            }
+            Ok(_) => last_error = Some("explicit existential closer was not a script".to_string()),
             Err(error) => last_error = Some(error.message().to_string()),
         }
     }

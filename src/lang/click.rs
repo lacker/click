@@ -37,21 +37,19 @@ use crate::kernel::{
     int32, prove_c_condition_fact_direct_transport, prove_c_condition_fact_transport,
     prove_c_function_contract_execution_paths_with_environment,
     prove_c_function_satisfies_specification_from_symbolic_path, prove_forall_int32_application,
-    prove_int32_ge_implies_reversed_le, prove_int32_ge_transitive,
-    prove_int32_increment_below_max_is_defined,
+    prove_int32_ge_and_not_gt_implies_eq, prove_int32_ge_implies_reversed_le,
+    prove_int32_ge_transitive, prove_int32_increment_below_max_is_defined,
     prove_int32_increment_greater_equal_lower_bound, prove_int32_increment_lower_bound,
     prove_int32_increment_preserves_order, prove_int32_increment_strict_greater_lower_bound,
     prove_int32_increment_strictly_increases, prove_int32_increment_upper_bound,
-    prove_int32_ge_and_not_gt_implies_eq, prove_int32_le_and_not_lt_implies_eq,
-    prove_int32_le_antisymmetric, prove_int32_le_implies_reversed_ge,
-    prove_int32_le_lt_transitive, prove_int32_le_transitive, prove_int32_lt_implies_le,
-    prove_int32_lt_le_transitive,
-    prove_int32_lt_transitive,
-    prove_int32_nonnegative_predecessor_upper_bound,
-    prove_int32_not_lt_implies_ge,
-    prove_int32_positive_is_nonnegative, prove_int32_positive_predecessor_is_nonnegative,
-    prove_int32_positive_predecessor_strictly_decreases, prove_int32_successor_le_implies_lt,
-    prove_int32_strictly_positive_is_nonnegative,
+    prove_int32_le_and_neq_implies_lt, prove_int32_le_and_not_lt_implies_eq,
+    prove_int32_le_antisymmetric, prove_int32_le_implies_reversed_ge, prove_int32_le_lt_transitive,
+    prove_int32_le_transitive, prove_int32_lt_implies_le, prove_int32_lt_le_transitive,
+    prove_int32_lt_transitive, prove_int32_nonnegative_predecessor_upper_bound,
+    prove_int32_not_lt_implies_ge, prove_int32_positive_is_nonnegative,
+    prove_int32_positive_predecessor_is_nonnegative,
+    prove_int32_positive_predecessor_strictly_decreases,
+    prove_int32_strictly_positive_is_nonnegative, prove_int32_successor_le_implies_lt,
     prove_symbolic_c_condition_evaluation,
     prove_symbolic_c_function_contract_verification_paths_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
@@ -2364,8 +2362,19 @@ impl VerifiedPureTheorem {
 
 impl ClickError {
     fn new(message: impl Into<String>) -> Self {
+        let message = message.into();
+        let message = match crate::instrumentation::exceeded_verification_limit_context() {
+            // Deliberate limit diagnostics already include the active context
+            // and often add useful target/premise detail. Preserve those;
+            // replace only an unrelated semantic error constructed from a
+            // conservative false/none after the limit fired.
+            Some(context) if !message.contains(&context) => {
+                format!("verification budget exhausted inside {context}")
+            }
+            _ => message,
+        };
         Self {
-            message: diagnostics::bound_error_message(message.into()),
+            message: diagnostics::bound_error_message(message),
             timing_tactic: current_timing_tactic(),
         }
     }

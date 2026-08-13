@@ -522,10 +522,9 @@ fn zip_surface_branches(existing: &mut [SimpleProofStep], incoming: &[SimpleProo
     if condition != incoming_condition {
         return false;
     }
-    for (existing_branch, incoming_branch) in [
-        (then_proof, incoming_then),
-        (else_proof, incoming_else),
-    ] {
+    for (existing_branch, incoming_branch) in
+        [(then_proof, incoming_then), (else_proof, incoming_else)]
+    {
         let steps = &mut existing_branch.steps;
         if !zip_surface_branches(steps, incoming_branch.steps()) {
             steps.extend(incoming_branch.steps().iter().cloned());
@@ -971,7 +970,6 @@ pub(super) enum PostExecutionTactic {
     FrameUsing {
         region: Option<CodeRegionRef>,
         premises: Vec<ClickProposition>,
-        facts: Vec<Proposition>,
     },
     Simp,
 }

@@ -123,13 +123,9 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
     let push_start = click_source.find("int32 push").unwrap();
     let simp_offset = push_start + click_source[push_start..].find("simp();").unwrap();
     let position = expansion::position_at_offset(click_source, simp_offset);
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &sources,
-        position.line,
-        position.column,
-    )
-    .expect("push postconditions should expand explicitly");
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("push postconditions should expand explicitly");
     assert!(
         expanded.contains("apply(int32_increment_preserves_order("),
         "{expanded}"
@@ -417,6 +413,93 @@ fn verifier_diagnostics_bound_fact_items_and_show_resource_deltas() {
     assert!(delta.contains("extra certified resources"), "{delta}");
     assert!(delta.contains("allocation"), "{delta}");
     assert!(!delta.contains("CFunctionOutcome"), "{delta}");
+}
+
+#[test]
+fn resource_delta_explains_identical_surface_spellings() {
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let first_snapshot = CMemory::new();
+    let second_snapshot = CMemory::new().with_block("hidden-snapshot-marker", 4);
+    let resource_with_snapshot = |memory: CMemory| {
+        CResourceFact::view_composite(
+            "tree".to_string(),
+            vec![CValue::Int32(Bitvector32Term::MemoryLoad(
+                memory.into(),
+                Box::new(pointer.clone()),
+            ))],
+        )
+    };
+    let desired = CFunctionOutcome::Return {
+        value: int32(0),
+        state: CState::new().with_resource_context(
+            ResourceContext::new().unchecked_with_fact(resource_with_snapshot(first_snapshot)),
+        ),
+    };
+    let certified = CFunctionOutcome::Return {
+        value: int32(0),
+        state: CState::new().with_resource_context(
+            ResourceContext::new().unchecked_with_fact(resource_with_snapshot(second_snapshot)),
+        ),
+    };
+
+    let delta = super::diagnostics::describe_function_outcome_delta(&desired, &certified, &[], &[]);
+    assert!(
+        delta.contains("identical surface spellings")
+            && delta.contains("hidden memory snapshots or internal identities"),
+        "{delta}"
+    );
+    assert!(!delta.contains("missing certified resources"), "{delta}");
+    assert!(!delta.contains("extra certified resources"), "{delta}");
+}
+
+#[test]
+fn expired_project_deadline_outweighs_semantic_mismatch_diagnostic() {
+    let error = crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
+        ClickError::new("execution proof changed more than the certified ghost regions")
+    });
+
+    assert!(
+        error.message().contains("outer wall-clock deadline"),
+        "{error:?}"
+    );
+    assert!(!error.message().contains("ghost regions"), "{error:?}");
+}
+
+#[test]
+fn exhausted_work_budget_outweighs_missing_path_goal_diagnostic() {
+    let limits = crate::instrumentation::TacticWorkLimits {
+        simple: 0,
+        smart: 1,
+        control: 1,
+    };
+    let tactic = crate::instrumentation::TacticEvent {
+        claim: "copy3.contract".to_string(),
+        tactic_index: 0,
+        tactic_name: "close_invariants".to_string(),
+        class: "simple".to_string(),
+        statement_index: 0,
+        source_index: 0,
+    };
+    let error = crate::instrumentation::with_tactic_work_limits(limits, || {
+        crate::instrumentation::emit(crate::instrumentation::VerificationEvent::TacticStarted(
+            tactic.clone(),
+        ));
+        assert!(crate::instrumentation::deadline_exceeded());
+        let error = ClickError::new("invariant 1 is missing path goal: ForAll { ... }");
+        crate::instrumentation::emit(crate::instrumentation::VerificationEvent::TacticFailed(
+            tactic,
+        ));
+        error
+    });
+
+    assert!(
+        error.message().contains("deterministic simple work budget"),
+        "{error:?}"
+    );
+    assert!(!error.message().contains("missing path goal"), "{error:?}");
 }
 
 #[test]

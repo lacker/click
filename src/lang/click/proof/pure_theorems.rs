@@ -407,6 +407,7 @@ fn verify_theorem_ensure(
             | "int32_ge_implies_reversed_le"
             | "int32_le_implies_reversed_ge"
             | "int32_le_and_not_lt_implies_eq"
+            | "int32_le_and_neq_implies_lt"
             | "int32_ge_and_not_gt_implies_eq"
             | "int32_le_antisymmetric"
             | "int32_positive_is_nonnegative"
@@ -546,7 +547,9 @@ fn verify_kernel_standard_theorem_axiom(
         "int32_successor_le_implies_lt" => (2, 2),
         "int32_nonnegative_predecessor_upper_bound" => (2, 2),
         "int32_le_antisymmetric" => (2, 2),
-        "int32_le_and_not_lt_implies_eq" | "int32_ge_and_not_gt_implies_eq" => (2, 2),
+        "int32_le_and_not_lt_implies_eq"
+        | "int32_le_and_neq_implies_lt"
+        | "int32_ge_and_not_gt_implies_eq" => (2, 2),
         "int32_ge_implies_reversed_le" => (2, 1),
         "int32_le_implies_reversed_ge" => (2, 1),
         "int32_lt_implies_le" | "int32_not_lt_implies_ge" => (2, 1),
@@ -617,20 +620,19 @@ fn verify_kernel_standard_theorem_axiom(
         "int32_le_and_not_lt_implies_eq" => {
             prove_int32_le_and_not_lt_implies_eq(value, int32_parameter(1)?)
         }
+        "int32_le_and_neq_implies_lt" => {
+            prove_int32_le_and_neq_implies_lt(value, int32_parameter(1)?)
+        }
         "int32_ge_and_not_gt_implies_eq" => {
             prove_int32_ge_and_not_gt_implies_eq(value, int32_parameter(1)?)
         }
         "int32_positive_is_nonnegative" => prove_int32_positive_is_nonnegative(value),
         "int32_lt_implies_le" => prove_int32_lt_implies_le(value, int32_parameter(1)?),
-        "int32_not_lt_implies_ge" => {
-            prove_int32_not_lt_implies_ge(value, int32_parameter(1)?)
-        }
+        "int32_not_lt_implies_ge" => prove_int32_not_lt_implies_ge(value, int32_parameter(1)?),
         "int32_strictly_positive_is_nonnegative" => {
             prove_int32_strictly_positive_is_nonnegative(value)
         }
-        "int32_increment_below_max_is_defined" => {
-            prove_int32_increment_below_max_is_defined(value)
-        }
+        "int32_increment_below_max_is_defined" => prove_int32_increment_below_max_is_defined(value),
         "int32_positive_predecessor_is_nonnegative" => {
             prove_int32_positive_predecessor_is_nonnegative(value)
         }
@@ -853,6 +855,32 @@ fn pure_theorem_surface_certificate(
             ))
         });
     }
+    // Some bounded arithmetic facts are certified by a named kernel theorem
+    // even when the general proposition-derivation API does not retain a
+    // derivation tree. The simple surface certificate can still be selected
+    // directly from the theorem's exact requirements.
+    let premise_pairs = context
+        .requires
+        .iter()
+        .enumerate()
+        .filter_map(|(index, kernel)| {
+            theorem
+                .requires()
+                .get(index)
+                .and_then(Requirement::proposition)
+                .cloned()
+                .map(|surface| (kernel.clone(), surface))
+        })
+        .collect::<Vec<_>>();
+    if premise_pairs.len() == context.requires.len()
+        && let Some(tactics) = plan_explicit_named_signed_rule(goal, &premise_pairs)
+    {
+        return SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "smart proof for `{claim_label}` produced an invalid named-rule certificate: {error:?}"
+            ))
+        });
+    }
 
     if let Some(tactics) = source_tactics
         && tactics.iter().any(|tactic| {
@@ -992,15 +1020,13 @@ fn pure_theorem_surface_certificate(
             &assumptions_from_propositions(&available),
         )
         .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
-        let plan = plan_simp_certificate(
-            &explicit_goal,
-            &assumptions_from_propositions(&available),
-        )
-        .ok_or_else(|| {
-            ClickError::new(format!(
-                "smart proof for `{claim_label}` has no explicit proof after unfolding"
-            ))
-        })?;
+        let plan =
+            plan_simp_certificate(&explicit_goal, &assumptions_from_propositions(&available))
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "smart proof for `{claim_label}` has no explicit proof after unfolding"
+                    ))
+                })?;
         let mut tactics = unfolded_predicates
             .into_iter()
             .map(ProofTactic::UnfoldPredicate)

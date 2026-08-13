@@ -181,9 +181,6 @@ int32 owned_string_set(
         unfold(terminated_at);
         assumption();
     }
-    have owner->data[owner->len] == 0 by {
-        assumption();
-    }
     have 0 <= owner->len by simp;
     have owner->len < owner->cap by simp;
     have separate(
@@ -530,7 +527,6 @@ int32 owned_string_push_preserves_first(
         owner->cap == at(statement(0).entry, owner->cap);
         owner->data == at(statement(0).entry, owner->data);
         owner->len == at(statement(0).entry, (owner->len + 1));
-        owner->data[owner->len] == 0;
         at(statement(0).entry, separate(memory(owner->len), memory(owner->cap)));
         at(statement(0).entry, separate(memory(owner->len), memory(owner->data)));
         at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
@@ -538,6 +534,9 @@ int32 owned_string_push_preserves_first(
         at(statement(0).entry, loadable(owner->data[0..owner->cap]));
         at(statement(1).entry, 0) <= at(statement(1).entry, owner->len);
         at(statement(0).entry, 0) <= at(statement(0).entry, owner->len);
+    }
+    have owner->data[owner->len] == 0 by {
+        assumption();
     }
     have 0 == 0 by {
         normalize();
@@ -824,7 +823,35 @@ int32 owned_string_pop_preserves_first(struct owned_string* owner) {
         loadable(old(owner->data));
         loadable(old(owner->len));
     }
-    step();
+    step() using {
+        at(statement(1).entry, owner->len) <
+            at(statement(1).entry, owner->cap);
+        at(statement(1).entry, 2) <=
+            at(statement(1).entry, owner->len);
+        at(statement(1).entry, loadable(old(owner->cap)));
+        at(statement(1).entry, loadable(old(owner->data)));
+        at(statement(1).entry, loadable(old(owner->len)));
+        at(statement(1).entry, c(result)) ==
+            at(statement(1).entry, owner->data[owner->len - 1]);
+        owner->cap == at(statement(0).entry, owner->cap);
+        owner->data == at(statement(0).entry, owner->data);
+        at(statement(0).entry,
+            separate(memory(owner[0..1]), memory(owner[1..2]))
+        );
+        at(statement(0).entry,
+            separate(memory(owner[0..1]), memory(owner[2..4]))
+        );
+        at(statement(0).entry,
+            separate(
+                memory(object(owner)),
+                memory(owner->data[0..owner->cap])
+            )
+        );
+        at(statement(0).entry,
+            separate(memory(owner[1..2]), memory(owner[2..4]))
+        );
+        at(statement(0).entry, 0) <= at(statement(0).entry, owner->len);
+    }
     have 0 == 0 by {
         normalize();
     }
@@ -836,8 +863,6 @@ int32 owned_string_pop_preserves_first(struct owned_string* owner) {
         loadable(owner->len);
         owner->cap == at(statement(0).entry, owner->cap);
         owner->data == at(statement(0).entry, owner->data);
-        owner->len == at(statement(0).entry, (owner->len - 1));
-        owner->data[owner->len] == 0;
         separate(memory(owner->len), memory(owner->cap));
         separate(memory(owner->len), memory(owner->data));
         separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
@@ -907,12 +932,23 @@ int32 owned_string_pipeline(
         loadable(old(object(owner)));
         loadable(old(data[0..capacity]));
     }
-    have owner->len == 1 by simp;
-    have 0 < owner->len by simp;
+    have owner->len == 1 by {
+        rewrite(owner->len == at(statement(3).entry, owner->len + 1));
+        rewrite(at(statement(3).entry, owner->len) == at(statement(3).entry, 0));
+        normalize();
+    }
+    have 0 < owner->len by {
+        rewrite(owner->len == 1);
+        normalize();
+    }
     have owner->data[at(statement(3).entry, owner->len)] == first by {
         assumption();
     }
-    have owner->data[0] == first by simp;
+    have owner->data[0] == first by {
+        rewrite(first == owner->data[at(statement(3).entry, owner->len)]);
+        rewrite(at(statement(3).entry, owner->len) == at(statement(3).entry, 0));
+        normalize();
+    }
     step() using {
         0 < owner->len;
         owner->len == 1;
@@ -920,8 +956,14 @@ int32 owned_string_pipeline(
         loadable(old(object(owner)));
         loadable(old(data[0..capacity]));
     }
-    have 1 <= owner->len by simp;
-    have observed == first by simp;
+    have 1 <= owner->len by {
+        rewrite(owner->len == 1);
+        normalize();
+    }
+    have observed == first by {
+        rewrite(first == owner->data[0]);
+        assumption();
+    }
     step() using {
         1 <= owner->len;
         owner->len == 1;

@@ -150,6 +150,13 @@ theorem int32_le_and_not_lt_implies_eq(left: int32, right: int32) {
     ensures left == right;
 }
 
+theorem int32_le_and_neq_implies_lt(left: int32, right: int32) {
+    requires left <= right;
+    requires left != right;
+
+    ensures left < right;
+}
+
 theorem int32_ge_and_not_gt_implies_eq(left: int32, right: int32) {
     requires left >= right;
     requires not (left > right);

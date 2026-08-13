@@ -800,25 +800,32 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                             .with_verified_loop_rules(verified.frontier_loop_rules.clone())
                     },
                 );
-                prove_c_function_contract_execution_paths_with_environment(
-                    certification_state,
-                    contract_function.clone(),
-                    certification_arguments,
-                    certification_facts,
-                    certification_function_environment,
-                    if has_frontier_loop_rules {
-                        CExecutionSemantics::APPLY_VERIFIED_RULES
-                    } else {
-                        match contract_execution_mode {
-                            CFunctionContractExecutionMode::VerifyLoops => {
-                                CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
-                            }
-                            CFunctionContractExecutionMode::ExecuteLoops => {
+                instrumentation::measure_operation(
+                    function_block.signature.name(),
+                    "contract certification",
+                    "contract symbolic execution",
+                    || {
+                        prove_c_function_contract_execution_paths_with_environment(
+                            certification_state,
+                            contract_function.clone(),
+                            certification_arguments,
+                            certification_facts,
+                            certification_function_environment,
+                            if has_frontier_loop_rules {
                                 CExecutionSemantics::APPLY_VERIFIED_RULES
-                            }
-                        }
+                            } else {
+                                match contract_execution_mode {
+                                    CFunctionContractExecutionMode::VerifyLoops => {
+                                        CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
+                                    }
+                                    CFunctionContractExecutionMode::ExecuteLoops => {
+                                        CExecutionSemantics::APPLY_VERIFIED_RULES
+                                    }
+                                }
+                            },
+                            contract_execution_mode,
+                        )
                     },
-                    contract_execution_mode,
                 )
             };
             if matches!(

@@ -5,8 +5,8 @@ use super::prelude::*;
 pub(in crate::kernel) mod contract_certification;
 pub use contract_certification::*;
 use contract_certification::{
-    c_function_contract_certification_assumptions, certification_proves_proposition,
-    contract_resource_condition_cases,
+    c_function_contract_certification_assumptions, certification_proves_context_free_forall,
+    certification_proves_proposition, contract_resource_condition_cases,
     prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode,
     resources_certify_loadability,
 };
@@ -43,7 +43,8 @@ pub fn c_condition_facts_match_for_transport(
     else {
         return false;
     };
-    source_value == target_value && assumptions.condition_matches(source_condition, target_condition)
+    source_value == target_value
+        && assumptions.condition_matches(source_condition, target_condition)
 }
 
 /// Certifies a stated condition target from one explicit condition source and
@@ -1694,12 +1695,19 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
 ) -> CFunctionContractExecution {
     let selection_assumptions =
         assumptions_with_propositions(&Assumptions::new(), &derived_entry_facts);
-    let Some(base_assumptions) = c_function_contract_certification_assumptions(
-        &state,
-        &function,
-        &arguments,
-        Assumptions::new(),
-        &selection_assumptions,
+    let Some(base_assumptions) = crate::instrumentation::measure_operation(
+        function.name(),
+        "contract certification",
+        "contract assumptions",
+        || {
+            c_function_contract_certification_assumptions(
+                &state,
+                &function,
+                &arguments,
+                Assumptions::new(),
+                &selection_assumptions,
+            )
+        },
     ) else {
         if crate::instrumentation::enabled() {
             crate::instrumentation::emit(crate::instrumentation::VerificationEvent::Diagnostic(
@@ -1716,9 +1724,12 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
             },
         };
     };
-    let Some(resource_condition_cases) =
-        contract_resource_condition_cases(&state, &function, &arguments, &base_assumptions)
-    else {
+    let Some(resource_condition_cases) = crate::instrumentation::measure_operation(
+        function.name(),
+        "contract certification",
+        "contract resource guard cases",
+        || contract_resource_condition_cases(&state, &function, &arguments, &base_assumptions),
+    ) else {
         if crate::instrumentation::enabled() {
             crate::instrumentation::emit(crate::instrumentation::VerificationEvent::Diagnostic(
                 format!(
@@ -1737,12 +1748,19 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
     let mut combined_paths = Vec::new();
     for case_facts in resource_condition_cases {
         let case_seed = assumptions_with_propositions(&Assumptions::new(), &case_facts);
-        let Some(mut assumptions) = c_function_contract_certification_assumptions(
-            &state,
-            &function,
-            &arguments,
-            case_seed,
-            &selection_assumptions,
+        let Some(mut assumptions) = crate::instrumentation::measure_operation(
+            function.name(),
+            "contract certification",
+            "contract case assumptions",
+            || {
+                c_function_contract_certification_assumptions(
+                    &state,
+                    &function,
+                    &arguments,
+                    case_seed,
+                    &selection_assumptions,
+                )
+            },
         ) else {
             if crate::instrumentation::enabled() {
                 crate::instrumentation::emit(
@@ -1772,11 +1790,18 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
             .iter()
             .any(CCompositeResourceDefinition::is_recursive);
         if !has_recursive_resources {
-            let Some(entry_resources) = expand_all_composite_resource_facts(
-                entry_state.resources(),
-                function.composite_resource_definitions(),
-                entry_state.memory(),
-                &assumptions,
+            let Some(entry_resources) = crate::instrumentation::measure_operation(
+                function.name(),
+                "contract certification",
+                "contract entry resource expansion",
+                || {
+                    expand_all_composite_resource_facts(
+                        entry_state.resources(),
+                        function.composite_resource_definitions(),
+                        entry_state.memory(),
+                        &assumptions,
+                    )
+                },
             ) else {
                 return CFunctionContractExecution {
                     execution: SymbolicCExecution {
@@ -1786,18 +1811,84 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
                 };
             };
             entry_state.resources = entry_resources.clone();
-            for fact in &derived_entry_facts {
-                if certification_proves_proposition(&assumptions, fact)
-                    || resources_certify_loadability(
-                        &entry_state,
-                        &entry_resources,
-                        fact,
-                        &assumptions,
-                    )
-                {
-                    assumptions = assumptions.assume_proposition(fact.clone());
-                }
-            }
+            assumptions = crate::instrumentation::measure_operation(
+                function.name(),
+                "contract certification",
+                "contract derived entry facts",
+                || {
+                    let mut derived_assumptions = assumptions;
+                    for fact in &derived_entry_facts {
+                        // Derived entry facts are predominantly loadability
+                        // witnesses. Check the exact entry resources first:
+                        // that is the narrow authority for those facts and
+                        // avoids asking the general proposition prover to
+                        // scan the growing contract context before the direct
+                        // resource check succeeds.
+                        let resource_certified = crate::instrumentation::measure_operation(
+                            function.name(),
+                            "contract certification",
+                            "derived fact resource check",
+                            || {
+                                resources_certify_loadability(
+                                    &entry_state,
+                                    &entry_resources,
+                                    fact,
+                                    &derived_assumptions,
+                                )
+                            },
+                        );
+                        let proposition_operation = match fact {
+                            Proposition::CMemoryLoadable { .. } => "derived proposition: loadable",
+                            Proposition::ConditionIs(_, _) => "derived proposition: condition",
+                            Proposition::CResourceSeparate { .. } => {
+                                "derived proposition: resource separate"
+                            }
+                            Proposition::CResourceContains { .. } => {
+                                "derived proposition: resource contains"
+                            }
+                            Proposition::ForAll { .. } => "derived proposition: forall",
+                            _ => "derived proposition: other",
+                        };
+                        let context_free_certified = !resource_certified
+                            && matches!(fact, Proposition::ForAll { .. })
+                            && crate::instrumentation::measure_operation(
+                                function.name(),
+                                "contract certification",
+                                "derived forall context-free check",
+                                || certification_proves_context_free_forall(fact),
+                            );
+                        let proposition_certified = !resource_certified
+                            && !context_free_certified
+                            && crate::instrumentation::measure_operation(
+                                function.name(),
+                                "contract certification",
+                                proposition_operation,
+                                || certification_proves_proposition(&derived_assumptions, fact),
+                            );
+                        if !resource_certified {
+                            crate::instrumentation::measure_operation(
+                                function.name(),
+                                "contract certification",
+                                if proposition_certified {
+                                    "derived proposition result: proved"
+                                } else {
+                                    "derived proposition result: unproved"
+                                },
+                                || (),
+                            );
+                        }
+                        if resource_certified || context_free_certified || proposition_certified {
+                            derived_assumptions = crate::instrumentation::measure_operation(
+                                function.name(),
+                                "contract certification",
+                                "derived fact insertion",
+                                || derived_assumptions.assume_proposition(fact.clone()),
+                            );
+                        }
+                    }
+                    derived_assumptions
+                },
+            );
         } else {
             // The caller state already contains the proof-directed
             // recursive projections certified above. Preserve that
@@ -1873,32 +1964,37 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
             }
             entry_state.resources = entry_resources;
         }
-        let execution = match mode {
-            CFunctionContractExecutionMode::VerifyLoops => {
-                prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
-                    state.clone(),
-                    function.clone(),
-                    arguments.clone(),
-                    assumptions,
-                    environment.clone(),
-                    execution_semantics,
-                    ExecutionBudget::default(),
-                    true,
-                )
-            }
-            CFunctionContractExecutionMode::ExecuteLoops => {
-                prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
-                    state.clone(),
-                    function.clone(),
-                    arguments.clone(),
-                    assumptions,
-                    environment.clone(),
-                    execution_semantics,
-                    ExecutionBudget::default(),
-                    true,
-                )
-            }
-        };
+        let execution = crate::instrumentation::measure_operation(
+            function.name(),
+            "contract certification",
+            "contract body symbolic execution",
+            || match mode {
+                CFunctionContractExecutionMode::VerifyLoops => {
+                    prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+                        state.clone(),
+                        function.clone(),
+                        arguments.clone(),
+                        assumptions,
+                        environment.clone(),
+                        execution_semantics,
+                        ExecutionBudget::default(),
+                        true,
+                    )
+                }
+                CFunctionContractExecutionMode::ExecuteLoops => {
+                    prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
+                        state.clone(),
+                        function.clone(),
+                        arguments.clone(),
+                        assumptions,
+                        environment.clone(),
+                        execution_semantics,
+                        ExecutionBudget::default(),
+                        true,
+                    )
+                }
+            },
+        );
         if crate::instrumentation::enabled()
             && execution.paths.is_empty()
             && execution.limit.is_none()
@@ -2228,10 +2324,8 @@ pub fn prove_int32_increment_greater_equal_lower_bound(
         ConditionTerm::signed_greater_equal(value.clone(), lower.clone()),
         true,
     );
-    let upper_premise = Proposition::ConditionIs(
-        ConditionTerm::signed_less_than(value.clone(), upper),
-        true,
-    );
+    let upper_premise =
+        Proposition::ConditionIs(ConditionTerm::signed_less_than(value.clone(), upper), true);
     let conclusion = Proposition::ConditionIs(
         ConditionTerm::signed_greater_equal(
             Bitvector32Term::add(value, Bitvector32Term::Constant(1)),
@@ -2258,10 +2352,8 @@ pub fn prove_int32_increment_strict_greater_lower_bound(
         ConditionTerm::signed_greater_equal(value.clone(), lower.clone()),
         true,
     );
-    let upper_premise = Proposition::ConditionIs(
-        ConditionTerm::signed_less_than(value.clone(), upper),
-        true,
-    );
+    let upper_premise =
+        Proposition::ConditionIs(ConditionTerm::signed_less_than(value.clone(), upper), true);
     let conclusion = Proposition::ConditionIs(
         ConditionTerm::signed_greater_than(
             Bitvector32Term::add(value, Bitvector32Term::Constant(1)),
@@ -2385,6 +2477,28 @@ pub fn prove_int32_le_and_not_lt_implies_eq(
     ))
 }
 
+/// A signed int32 value no greater than another and unequal to it is strictly
+/// smaller. The explicit inequality premise keeps this deterministic rule on
+/// the simple-certificate surface instead of relying on arithmetic search.
+pub fn prove_int32_le_and_neq_implies_lt(left: Bitvector32Term, right: Bitvector32Term) -> Theorem {
+    let le_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+        true,
+    );
+    let neq_premise = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left.clone()), Box::new(right.clone())),
+        false,
+    );
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_than(left, right), true);
+    Theorem::new(Proposition::Implies(
+        Box::new(le_premise),
+        Box::new(Proposition::Implies(
+            Box::new(neq_premise),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
 /// A signed int32 value at least another is equal to it when it is not
 /// strictly greater.
 pub fn prove_int32_ge_and_not_gt_implies_eq(
@@ -2434,10 +2548,7 @@ pub fn prove_int32_lt_implies_le(left: Bitvector32Term, right: Bitvector32Term) 
         ConditionTerm::signed_less_than(left.clone(), right.clone()),
         true,
     );
-    let conclusion = Proposition::ConditionIs(
-        ConditionTerm::signed_less_equal(left, right),
-        true,
-    );
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_equal(left, right), true);
     Theorem::new(Proposition::Implies(
         Box::new(premise),
         Box::new(conclusion),
@@ -2450,10 +2561,8 @@ pub fn prove_int32_not_lt_implies_ge(left: Bitvector32Term, right: Bitvector32Te
         ConditionTerm::signed_less_than(left.clone(), right.clone()),
         true,
     )));
-    let conclusion = Proposition::ConditionIs(
-        ConditionTerm::signed_greater_equal(left, right),
-        true,
-    );
+    let conclusion =
+        Proposition::ConditionIs(ConditionTerm::signed_greater_equal(left, right), true);
     Theorem::new(Proposition::Implies(
         Box::new(premise),
         Box::new(conclusion),
@@ -2479,10 +2588,7 @@ pub fn prove_int32_strictly_positive_is_nonnegative(value: Bitvector32Term) -> T
 /// Incrementing a signed int32 value below `INT_MAX` is defined.
 pub fn prove_int32_increment_below_max_is_defined(value: Bitvector32Term) -> Theorem {
     let premise = Proposition::ConditionIs(
-        ConditionTerm::signed_less_than(
-            value.clone(),
-            Bitvector32Term::Constant(i32::MAX as u32),
-        ),
+        ConditionTerm::signed_less_than(value.clone(), Bitvector32Term::Constant(i32::MAX as u32)),
         true,
     );
     let conclusion = Proposition::ConditionIs(
@@ -2602,10 +2708,8 @@ pub fn prove_int32_lt_le_transitive(
         ConditionTerm::signed_less_than(first.clone(), middle.clone()),
         true,
     );
-    let second_premise = Proposition::ConditionIs(
-        ConditionTerm::signed_less_equal(middle, last.clone()),
-        true,
-    );
+    let second_premise =
+        Proposition::ConditionIs(ConditionTerm::signed_less_equal(middle, last.clone()), true);
     let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_than(first, last), true);
     Theorem::new(Proposition::Implies(
         Box::new(first_premise),
@@ -2626,14 +2730,9 @@ pub fn prove_int32_lt_transitive(
         ConditionTerm::signed_less_than(first.clone(), middle.clone()),
         true,
     );
-    let second_premise = Proposition::ConditionIs(
-        ConditionTerm::signed_less_than(middle, last.clone()),
-        true,
-    );
-    let conclusion = Proposition::ConditionIs(
-        ConditionTerm::signed_less_than(first, last),
-        true,
-    );
+    let second_premise =
+        Proposition::ConditionIs(ConditionTerm::signed_less_than(middle, last.clone()), true);
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_than(first, last), true);
     Theorem::new(Proposition::Implies(
         Box::new(first_premise),
         Box::new(Proposition::Implies(
@@ -2653,14 +2752,9 @@ pub fn prove_int32_le_transitive(
         ConditionTerm::signed_less_equal(first.clone(), middle.clone()),
         true,
     );
-    let second_premise = Proposition::ConditionIs(
-        ConditionTerm::signed_less_equal(middle, last.clone()),
-        true,
-    );
-    let conclusion = Proposition::ConditionIs(
-        ConditionTerm::signed_less_equal(first, last),
-        true,
-    );
+    let second_premise =
+        Proposition::ConditionIs(ConditionTerm::signed_less_equal(middle, last.clone()), true);
+    let conclusion = Proposition::ConditionIs(ConditionTerm::signed_less_equal(first, last), true);
     Theorem::new(Proposition::Implies(
         Box::new(first_premise),
         Box::new(Proposition::Implies(
@@ -2684,10 +2778,8 @@ pub fn prove_int32_ge_transitive(
         ConditionTerm::signed_greater_equal(middle, first.clone()),
         true,
     );
-    let conclusion = Proposition::ConditionIs(
-        ConditionTerm::signed_greater_equal(last, first),
-        true,
-    );
+    let conclusion =
+        Proposition::ConditionIs(ConditionTerm::signed_greater_equal(last, first), true);
     Theorem::new(Proposition::Implies(
         Box::new(first_premise),
         Box::new(Proposition::Implies(
@@ -2706,10 +2798,8 @@ pub fn prove_int32_ge_implies_reversed_le(
         ConditionTerm::signed_greater_equal(greater.clone(), lower.clone()),
         true,
     );
-    let conclusion = Proposition::ConditionIs(
-        ConditionTerm::signed_less_equal(lower, greater),
-        true,
-    );
+    let conclusion =
+        Proposition::ConditionIs(ConditionTerm::signed_less_equal(lower, greater), true);
     Theorem::new(Proposition::Implies(
         Box::new(premise),
         Box::new(conclusion),
@@ -2725,10 +2815,8 @@ pub fn prove_int32_le_implies_reversed_ge(
         ConditionTerm::signed_less_equal(lower.clone(), greater.clone()),
         true,
     );
-    let conclusion = Proposition::ConditionIs(
-        ConditionTerm::signed_greater_equal(greater, lower),
-        true,
-    );
+    let conclusion =
+        Proposition::ConditionIs(ConditionTerm::signed_greater_equal(greater, lower), true);
     Theorem::new(Proposition::Implies(
         Box::new(premise),
         Box::new(conclusion),

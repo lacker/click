@@ -7,8 +7,7 @@ pointer-offset identity, the branching disjunction lowering, and the
 `le`-then-`lt` transitive `have` sites all construct and replay explicit
 simple certificates), so this deadline is now the only reason the project
 remains quarantined in `tests/examples.rs`. Under the default limit the
-truncation currently reports as a ghost-region mismatch
-(`issues/deadline-truncation-masquerades-as-ghost-region-mismatch.md`).
+truncation reports the active outer deadline.
 
 An earlier `click profile examples/owned-string` run at about 27 seconds
 reported:
@@ -35,6 +34,36 @@ erroring out early), which accounts for the growth from 27 to 35 seconds:
 more claims complete, none regressed. The performance problem itself is
 unchanged and does not come from any one tactic crossing its budget.
 
+## 2026-08-12 narrow attribution update
+
+The profiler now reports nested operation aggregates instead of leaving the
+dominant work in broad control/core buckets. On a representative complete
+30.054s run, the major overlapping totals were:
+
+```text
+contract symbolic execution             16.669s / 10 calls
+contract derived entry facts             13.432s / 10 calls
+derived forall proposition checks         13.365s / 417 calls
+resource representation checks             3.916s / 24 calls
+whole-contract certificate replay          2.301s / 8 calls
+```
+
+The contract body executor itself accounted for only 3.116s. Thus the main
+certification cost was not C execution; it was repeatedly proving the same
+closed, verified quantified theorem facts while constructing each function's
+contract entry context. A success-only kernel cache now retains a closed
+`forall` only after proving it from no function-specific assumptions (or from
+previously retained closed facts). On loaded follow-ups, expensive `forall`
+checks fell from 280 to 50--60 and contract symbolic execution fell from the
+16--22s range to 12--19s. The result is material but still well above the
+under-five-second acceptance target, so the issue and quarantine remain.
+
+The next isolated targets are the remaining context-dependent quantified
+facts and the owned-string pipeline resource containment check (roughly
+2.3--5.2s depending on host load). Whole-contract replay is about 2--5s in
+aggregate and is a secondary, measured contributor rather than the dominant
+one.
+
 ## Regression
 
 Preserve the full owned-string project as the integration workload, and add
@@ -60,4 +89,3 @@ leaving most of it as exclusive control-container time.
   container crosses its budget.
 - No speedup comes from weakening claims, changing the C, raising budgets,
   caching an uncertified result, or retaining ambient `derive` reconstruction.
-

@@ -201,7 +201,18 @@ int32 vector_grow(struct vector* owner) {
     } else {
         step();
         step();
-        step();
+        step() using {
+            0 <= owner->len;
+            owner->len <= new_capacity;
+            owner->len <= old_capacity;
+            1 <= new_capacity;
+            1 <= old_capacity;
+            loadable(old_data[0..old_capacity]);
+            separate(
+                memory(new_data[0..new_capacity]),
+                memory(old_data[0..old_capacity])
+            );
+        }
         have copied == owner->len by {
             assumption();
         }
@@ -292,7 +303,47 @@ int32 vector_push(struct vector* owner, int32 value) {
     execute();
     fold(vector_storage(owner));
     frame();
-    simp();
+    have result == old(owner->len) + 1 by {
+        normalize();
+    }
+    have owner->len == old(owner->len) + 1 by {
+        normalize();
+    }
+    have owner->data[old(owner->len)] == value by {
+        normalize();
+    }
+    have owner->cap == old(owner->cap) by {
+        normalize();
+    }
+    have owner->data == old(owner->data) by {
+        normalize();
+    }
+    have forall (k: int32) {
+        0 <= k and k < old(owner->len) implies
+            owner->data[k] == old(owner->data[k])
+    } by {
+        intro();
+        intro();
+        extract(0 <= k);
+        extract(k < old(owner->len));
+        transport(
+            old(owner->data[k]) == old(owner->data[k]),
+            owner->data[k] == old(owner->data[k])
+        ) using {
+            at(statement(5).entry, owner->len) <=
+                at(statement(5).entry, owner->cap);
+            0 <= k;
+            k < old(owner->len);
+        }
+        assumption();
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }
 
 int32 allocated_vector_push(struct vector* owner, int32 value) {
@@ -430,10 +481,20 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
                 loadable(owner->data);
             }
             unfold(vector_storage(owner));
-            have 0 <= owner->len by simp;
-            have owner->len <= owner->cap by simp;
-            have 1 <= owner->cap by simp;
-            have owner->cap <= 536870911 by simp;
+            have 0 <= owner->len by {
+                simp();
+            }
+            have owner->len <= owner->cap by {
+                simp();
+            }
+            have 1 <= owner->cap by {
+                rewrite(owner->cap == at(statement(6).exit, owner->cap));
+                assumption();
+            }
+            have owner->cap <= 536870911 by {
+                rewrite(owner->cap == at(statement(6).exit, owner->cap));
+                assumption();
+            }
             fold(allocated_vector(owner));
             step() using {}
             simp();
@@ -460,8 +521,14 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
         unfold(vector_storage(owner));
         have 0 <= owner->len by simp;
         have owner->len <= owner->cap by simp;
-        have 1 <= owner->cap by simp;
-        have owner->cap <= 536870911 by simp;
+        have 1 <= owner->cap by {
+            rewrite(owner->cap == at(statement(0).entry, owner->cap));
+            assumption();
+        }
+        have owner->cap <= 536870911 by {
+            rewrite(owner->cap == at(statement(0).entry, owner->cap));
+            assumption();
+        }
         fold(allocated_vector(owner));
         step() using {}
         have 0 == 0 by {

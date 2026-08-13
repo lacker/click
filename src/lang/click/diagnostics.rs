@@ -434,17 +434,25 @@ pub(super) fn describe_function_outcome_delta(
     if desired_state.memory() != certified_state.memory() {
         differences.push("memory snapshots differ".to_string());
     }
-    if !missing.is_empty() {
+    let missing_description =
+        (!missing.is_empty()).then(|| describe_resource_facts(&missing, parameters, arguments));
+    let extra_description =
+        (!extra.is_empty()).then(|| describe_resource_facts(&extra, parameters, arguments));
+    if missing_description.is_some() && missing_description == extra_description {
+        differences.push(format!(
+            "resource facts have identical surface spellings but differ in hidden memory snapshots or internal identities: {}",
+            missing_description.as_deref().expect("checked as present")
+        ));
+    } else if let Some(missing_description) = &missing_description {
         differences.push(format!(
             "missing certified resources: {}",
-            describe_resource_facts(&missing, parameters, arguments)
+            missing_description
         ));
     }
-    if !extra.is_empty() {
-        differences.push(format!(
-            "extra certified resources: {}",
-            describe_resource_facts(&extra, parameters, arguments)
-        ));
+    if let Some(extra_description) = extra_description
+        && missing_description.as_deref() != Some(extra_description.as_str())
+    {
+        differences.push(format!("extra certified resources: {}", extra_description));
     }
     if differences.is_empty() {
         "return states differ outside their visible value, memory, and exact resource facts"

@@ -1,8 +1,10 @@
 # Binary-tree verification has excessive aggregate verifier-core cost
 
-The unchanged `examples/binary-tree` project verifies successfully but takes
-roughly 11 seconds of CPU time in a warm debug CLI run. This is too slow for
-the intended interactive workflow even though no individual tactic is slow.
+The unchanged `examples/binary-tree` project originally took roughly 25
+seconds of warm debug CPU on the whole-claim-gate baseline. The duplicate
+certification work that put it near the project deadline is now fixed, but its
+remaining 9--10 second runtime is still above the intended few-second
+interactive target.
 
 ```sh
 target/debug/click verify examples/binary-tree
@@ -57,8 +59,7 @@ The project nonetheless stays quarantined for its original aggregate cost.
 On the merged whole-claim-gate base the full project measures about 25
 seconds of warm debug CPU, riding the default 30-second project deadline: a
 moderately loaded machine pushes the wall time over the limit and the run
-fails (currently with the misleading diff tracked in
-[deadline-truncation-masquerades-as-ghost-region-mismatch.md](deadline-truncation-masquerades-as-ghost-region-mismatch.md)).
+fails with an explicit outer-deadline diagnostic.
 `click verify --time-limit 3m examples/binary-tree` verifies cleanly, with
 budgets enforced, on the same tree. Un-quarantine when the aggregate cost
 fits the default deadline with real margin; that requires the ordered-proof
@@ -83,3 +84,22 @@ aggregate project is slow.
 - No C source, claim, or example structure is weakened or reshaped.
 - Any optimization has a focused deterministic-work or cache-behavior
   regression where practical.
+
+## Update (2026-08-12): default-deadline blocker resolved
+
+Narrow operation spans identified two 5.8s executions of the same exact
+resource-representation certificate in `tree_rotate_left`, one during the
+proof replay and one during the whole-claim gate. Exact-input successful
+certificate caching removes the duplicate without caching failures or limited
+executions. The remaining query was reduced by entering the existing
+assumptions-ID scope, allowing its repeated memory-resolution questions to use
+the established bounded memo. Exact independent symbolic executions are now
+shared across proof replay and gate replay under the same success-only rule.
+
+Warm debug verification is about 9.3s and repeated complete profiles are
+9–10s, down from roughly 25s and with substantial margin under the 30s
+project deadline. The project is therefore no longer quarantined. Keep this
+issue open for the original “few seconds” interactive target: the current
+profile still attributes about 2s to `tree_rotate_left` resource
+representation and about 1.1s to `tree_sum_root_and_children` independent
+certification.

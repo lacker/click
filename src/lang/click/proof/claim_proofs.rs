@@ -418,22 +418,29 @@ fn certify_grouped_claims_result(
         }
         return Ok(());
     }
-    let certificate = verified
-        .first()
-        .ok_or_else(|| {
-            ClickError::new(format!(
-                "`{proof_description}` proved no grouped claims for `{}.contract`",
-                function_block.signature().name()
-            ))
-        })?
-        .expanded_proof_certificate()
-        .map_err(|error| {
-            ClickError::new(format!(
-                "`{proof_description}` succeeded internally for `{}.contract` without a whole-contract surface certificate: {}",
-                function_block.signature().name(),
-                error.message()
-            ))
-        })?;
+    let certificate = crate::instrumentation::measure_operation(
+        function_block.signature().name(),
+        &format!("{}.contract", function_block.signature().name()),
+        "whole-contract certificate construction",
+        || {
+            verified
+                .first()
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{proof_description}` proved no grouped claims for `{}.contract`",
+                        function_block.signature().name()
+                    ))
+                })?
+                .expanded_proof_certificate()
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`{proof_description}` succeeded internally for `{}.contract` without a whole-contract surface certificate: {}",
+                        function_block.signature().name(),
+                        error.message()
+                    ))
+                })
+        },
+    )?;
     let certificate_tactics = certificate.to_proof_tactics();
     if certificate_tactics.is_empty() {
         return Err(ClickError::new(format!(
@@ -441,19 +448,26 @@ fn certify_grouped_claims_result(
             function_block.signature().name()
         )));
     }
-    let replayed = prove_claims_by_grouped_tactics(
-        expansion_capture.as_deref_mut(),
-        source_path,
-        function_block,
-        parsed_function,
-        claims,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        &certificate_tactics,
-        ProofTacticSource::GeneratedBy { source_index: 0 },
+    let replayed = crate::instrumentation::measure_operation(
+        function_block.signature().name(),
+        &format!("{}.contract", function_block.signature().name()),
+        "whole-contract certificate replay",
+        || {
+            prove_claims_by_grouped_tactics(
+                expansion_capture.as_deref_mut(),
+                source_path,
+                function_block,
+                parsed_function,
+                claims,
+                function_environment,
+                predicate_environment,
+                click_function_environment,
+                resource_environment,
+                theorem_environment,
+                &certificate_tactics,
+                ProofTacticSource::GeneratedBy { source_index: 0 },
+            )
+        },
     )
     .map_err(|error| {
         ClickError::new(format!(
@@ -467,7 +481,10 @@ fn certify_grouped_claims_result(
     // concrete paths, so the check is claim coverage: every verified claim
     // must be proved again by the certificate replay.
     for theorem in verified.iter() {
-        if !replayed.iter().any(|replayed| replayed.claim == theorem.claim) {
+        if !replayed
+            .iter()
+            .any(|replayed| replayed.claim == theorem.claim)
+        {
             return Err(ClickError::new(format!(
                 "`{proof_description}` surface certificate replay did not prove every grouped claim of `{}.contract` again",
                 function_block.signature().name()
@@ -877,6 +894,70 @@ mod exit_claim {
 
 use exit_claim::{ClaimClosure, ClosedClaim, ExitClaimContext, ExitSimpClosure};
 
+#[derive(Clone)]
+struct CachedIndependentExecution {
+    pre_state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    assumptions: Assumptions,
+    environment: CExecutionEnvironment,
+    concrete_loop_execution: bool,
+    execution: SymbolicCExecution,
+}
+
+thread_local! {
+    static INDEPENDENT_EXECUTION_CACHE: std::cell::RefCell<Vec<CachedIndependentExecution>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cached_independent_execution(
+    pre_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+    environment: &CExecutionEnvironment,
+    concrete_loop_execution: bool,
+    compute: impl FnOnce() -> SymbolicCExecution,
+) -> SymbolicCExecution {
+    if let Some(execution) = INDEPENDENT_EXECUTION_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .iter()
+            .rev()
+            .find(|entry| {
+                entry.pre_state == *pre_state
+                    && entry.function == *function
+                    && entry.arguments == arguments
+                    && entry.assumptions == *assumptions
+                    && entry.environment == *environment
+                    && entry.concrete_loop_execution == concrete_loop_execution
+            })
+            .map(|entry| entry.execution.clone())
+    }) {
+        return execution;
+    }
+    let execution = compute();
+    if execution.limit().is_none() && !execution.paths().is_empty() {
+        INDEPENDENT_EXECUTION_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.len() >= 32 {
+                cache.remove(0);
+            }
+            cache.push(CachedIndependentExecution {
+                pre_state: pre_state.clone(),
+                function: function.clone(),
+                arguments: arguments.to_vec(),
+                assumptions: assumptions.clone(),
+                environment: environment.clone(),
+                concrete_loop_execution,
+                execution: execution.clone(),
+            });
+        });
+    }
+    execution
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn finish_ordered_proof_replay(
     mut expansion_capture: Option<&mut ExpansionCapture>,
@@ -972,46 +1053,65 @@ pub(super) fn finish_ordered_proof_replay(
                 "kernel certification setup for `{proof_label}` failed: {message}"
             ))
         })?;
-        let certified_execution = if replay.frontier_loop_rules.is_empty()
-            && let Some((_, _, _, execution)) = certification_cache.iter().find(
-                |(facts, cached_state, concrete_loop_execution, _)| {
-                    facts == &certification_facts
-                        && cached_state == pre_state
-                        && *concrete_loop_execution == replay.concrete_loop_execution
-                },
-            ) {
-            execution.clone()
-        } else {
-            let execution_start_assumptions = assumptions_from_propositions(&certification_facts);
-            let execution = if replay.concrete_loop_execution {
-                prove_symbolic_c_function_execution_paths_with_environment(
+        let certified_execution = crate::instrumentation::measure_operation(
+            function_block.signature().name(),
+            &proof_label,
+            "independent kernel certification",
+            || {
+                if replay.frontier_loop_rules.is_empty()
+                    && let Some((_, _, _, execution)) = certification_cache.iter().find(
+                        |(facts, cached_state, concrete_loop_execution, _)| {
+                            facts == &certification_facts
+                                && cached_state == pre_state
+                                && *concrete_loop_execution == replay.concrete_loop_execution
+                        },
+                    )
+                {
+                    execution.clone()
+                } else {
+                    let execution_start_assumptions =
+                        assumptions_from_propositions(&certification_facts);
+                    let execution = cached_independent_execution(
+                        pre_state,
+                        function,
+                        arguments,
+                        &execution_start_assumptions,
+                        function_environment,
+                        replay.concrete_loop_execution,
+                        || {
+                            if replay.concrete_loop_execution {
+                                prove_symbolic_c_function_execution_paths_with_environment(
+                                    pre_state.clone(),
+                                    function.clone(),
+                                    arguments.to_vec(),
+                                    execution_start_assumptions.clone(),
+                                    function_environment.clone(),
+                                    CExecutionSemantics::APPLY_VERIFIED_RULES,
+                                )
+                            } else {
+                                prove_symbolic_c_function_contract_verification_paths_with_environment(
                     pre_state.clone(),
                     function.clone(),
                     arguments.to_vec(),
-                    execution_start_assumptions,
+                    execution_start_assumptions.clone(),
                     function_environment.clone(),
                     CExecutionSemantics::APPLY_VERIFIED_RULES,
                 )
-            } else {
-                prove_symbolic_c_function_contract_verification_paths_with_environment(
-                    pre_state.clone(),
-                    function.clone(),
-                    arguments.to_vec(),
-                    execution_start_assumptions,
-                    function_environment.clone(),
-                    CExecutionSemantics::APPLY_VERIFIED_RULES,
-                )
-            };
-            if replay.frontier_loop_rules.is_empty() {
-                certification_cache.push((
-                    certification_facts.clone(),
-                    pre_state.clone(),
-                    replay.concrete_loop_execution,
-                    execution.clone(),
-                ));
-            }
-            execution
-        };
+                            }
+                        },
+                    );
+                    if replay.frontier_loop_rules.is_empty() {
+                        certification_cache.push((
+                            certification_facts.clone(),
+                            pre_state.clone(),
+                            replay.concrete_loop_execution,
+                            execution.clone(),
+                        ));
+                    }
+                    execution
+                }
+            },
+        );
         if let Some(limit) = certified_execution.limit() {
             if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
                 return Err(ClickError::new(format!(
@@ -1205,7 +1305,12 @@ pub(super) fn finish_ordered_proof_replay(
                     return false;
                 };
                 let mut available = pure_facts.clone();
-                available.extend(replayed.facts().iter().map(|fact| fact.proposition().clone()));
+                available.extend(
+                    replayed
+                        .facts()
+                        .iter()
+                        .map(|fact| fact.proposition().clone()),
+                );
                 for case in &replay.case_assumptions {
                     let fact = if let Some(fact) = &case.fact {
                         fact.clone()
@@ -1244,23 +1349,35 @@ pub(super) fn finish_ordered_proof_replay(
                 }
                 false
             };
-        let certified_path_for_replay = if replay.execution_abstraction {
-            (!certified_outcomes.is_empty()).then(|| vec![Some(0); execution.paths().len()])
-        } else {
-            execution
-                .paths()
-                .iter()
-                .map(|replayed| {
-                    match (0..certified_outcomes.len())
-                        .find(|certified_index| outcomes_match(replayed, *certified_index))
-                    {
-                        Some(certified_index) => Some(Some(certified_index)),
-                        None => path_excluded_by_proof_branch(replayed).then_some(None),
-                    }
-                })
-                .collect::<Option<Vec<_>>>()
-        };
+        let certified_path_for_replay = crate::instrumentation::measure_operation(
+            function_block.signature().name(),
+            &proof_label,
+            "certified outcome pairing",
+            || {
+                if replay.execution_abstraction {
+                    (!certified_outcomes.is_empty()).then(|| vec![Some(0); execution.paths().len()])
+                } else {
+                    execution
+                        .paths()
+                        .iter()
+                        .map(|replayed| {
+                            match (0..certified_outcomes.len())
+                                .find(|certified_index| outcomes_match(replayed, *certified_index))
+                            {
+                                Some(certified_index) => Some(Some(certified_index)),
+                                None => path_excluded_by_proof_branch(replayed).then_some(None),
+                            }
+                        })
+                        .collect::<Option<Vec<_>>>()
+                }
+            },
+        );
         let Some(certified_path_for_replay) = certified_path_for_replay else {
+            // Outcome equality is a conservative kernel query: once the
+            // ambient limit fires it returns `false`, which used to turn a
+            // valid replay into a ghost-region or memory mismatch. Give the
+            // limit priority over the semantic pairing diagnostic.
+            check_verification_deadline()?;
             return Err(ClickError::new(format!(
                 "execution replay for `{proof_label}` contains a path not reproduced by kernel certification\n  replay: {replay_outcomes:?}\n  certified: {certified_outcomes:?}"
             )));
@@ -2549,13 +2666,71 @@ pub(super) fn finish_ordered_proof_replay(
                             },
                         );
                     }
-                    PostExecutionTactic::FrameUsing {
-                        region,
-                        premises,
-                        facts,
-                    } => {
+                    PostExecutionTactic::FrameUsing { region, premises } => {
+                        let CFunctionOutcome::Return {
+                            value: result,
+                            state: post_state,
+                        } = &outcome
+                        else {
+                            return Err(ClickError::new(format!(
+                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `frame using` requires a return outcome"
+                            )));
+                        };
+                        // Ordered finalization initially visits every exit
+                        // tactic before any of them changes the certified
+                        // outcome context. Re-lower explicit frame premises
+                        // here, at their actual deferred position, so a fact
+                        // established by a preceding `have` keeps that
+                        // current-outcome meaning instead of the spelling's
+                        // obsolete pre-`have` lowering.
+                        let mut facts = Vec::with_capacity(premises.len());
+                        for premise in premises {
+                            let fact = current_outcome_surface_propositions
+                                .available_kernel(premise, &path_requirements)
+                                .or_else(|| {
+                                    outcome_surface_propositions
+                                        .available_kernel(premise, &path_requirements)
+                                })
+                                .cloned()
+                                .map(Ok)
+                                .unwrap_or_else(|| {
+                                    lower_outcome_proposition_with_program_points(
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        post_state,
+                                        result,
+                                        &path_requirements,
+                                        premise,
+                                        predicate_environment,
+                                        click_function_environment,
+                                        &replay.program_point_states,
+                                    )
+                                    .or_else(|_| {
+                                        lower_outcome_proposition_with_memory_resolution(
+                                            parsed_function.parameters(),
+                                            arguments,
+                                            pre_state,
+                                            post_state,
+                                            result,
+                                            &path_requirements,
+                                            premise,
+                                            predicate_environment,
+                                            click_function_environment,
+                                            &replay.program_point_states,
+                                        )
+                                    })
+                                })
+                                .map_err(|message| {
+                                    ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: could not lower `frame using` premise `{}`: {message}",
+                                        describe_click_proposition(premise)
+                                    ))
+                                })?;
+                            facts.push(fact);
+                        }
                         let indexed_requirements = ExactReplayFactIndex::new(&path_requirements);
-                        for fact in facts {
+                        for (premise_index, fact) in facts.iter().enumerate() {
                             if !indexed_requirements.contains(fact)
                                 && !exact_fact_is_available(fact, &path_requirements)
                                 && materialization_equivalent_available_fact(
@@ -2565,12 +2740,19 @@ pub(super) fn finish_ordered_proof_replay(
                                 .is_none()
                             {
                                 return Err(ClickError::new(format!(
-                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: `frame using` requires an exact premise that has not been established: {}",
+                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: `frame using` requires an exact premise that has not been established: {}{}",
                                     describe_pure_fact(
                                         fact,
                                         parsed_function.parameters(),
                                         arguments,
-                                    )
+                                    ),
+                                    premises
+                                        .get(premise_index)
+                                        .map(|surface| format!(
+                                            "\n  surface premise: {}",
+                                            describe_click_proposition(surface)
+                                        ))
+                                        .unwrap_or_default(),
                                 )));
                             }
                         }
@@ -2585,7 +2767,7 @@ pub(super) fn finish_ordered_proof_replay(
                                 &claim_label,
                                 path_index,
                                 &path.execution_facts(),
-                                facts,
+                                &facts,
                                 claim,
                                 parsed_function.parameters(),
                                 arguments,
@@ -3011,12 +3193,16 @@ pub(super) fn finish_ordered_proof_replay(
                     parsed_function.parameters(),
                     arguments,
                 );
-                let certified_path =
-                        certify_c_function_execution_path_resource_representation(
+                let certified_path = crate::instrumentation::measure_operation(
+                    function_block.signature().name(),
+                    &proof_label,
+                    "resource representation check",
+                    || certify_c_function_execution_path_resource_representation(
                             certified_path,
                             outcome.clone(),
                             &path.execution_facts(),
-                        )
+                        ),
+                    )
                         .ok_or_else(|| {
                             ClickError::new(format!(
                                 "execution proof for `{proof_label}` path {path_index} changed more than the certified ghost resource representation\n  {outcome_delta}"
@@ -3030,10 +3216,15 @@ pub(super) fn finish_ordered_proof_replay(
                 specification_requirements,
                 specification_outcome,
             );
-            let theorem = prove_c_function_satisfies_specification_from_symbolic_path(
+            let theorem = crate::instrumentation::measure_operation(
+                function_block.signature().name(),
+                &proof_label,
+                "specification certification",
+                || prove_c_function_satisfies_specification_from_symbolic_path(
                 function.clone(),
                 specification.clone(),
                 &certified_path,
+            ),
             )
             .ok_or_else(|| {
                 let certified_outcome =
@@ -3212,10 +3403,9 @@ pub(super) fn finish_ordered_proof_replay(
                             branch_path,
                             path_tactics,
                         ),
-                        None => append_surface_tactics_at_every_leaf(
-                            &mut capture_tactics,
-                            path_tactics,
-                        ),
+                        None => {
+                            append_surface_tactics_at_every_leaf(&mut capture_tactics, path_tactics)
+                        }
                     };
                     if let Err(message) = appended {
                         capture.block(message);

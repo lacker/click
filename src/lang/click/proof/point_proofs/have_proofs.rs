@@ -874,9 +874,11 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `transport` source: {message}"
                     ))
                 })?;
-                let source = if matches!(normalize_proposition(&ordinary_source), SimpProposition::True)
-                    && (proposition_contains_at_expression(surface_source)
-                        || proposition_contains_old_expression(surface_source))
+                let source = if matches!(
+                    normalize_proposition(&ordinary_source),
+                    SimpProposition::True
+                ) && (proposition_contains_at_expression(surface_source)
+                    || proposition_contains_old_expression(surface_source))
                     && let Some(result) = result
                 {
                     lower_outcome_proposition_symbolically_with_program_points(
@@ -900,7 +902,10 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 // the explicit frame transport. This is the same checked
                 // source fact, not an additional ambient premise.
                 if source != ordinary_source
-                    && matches!(normalize_proposition(&ordinary_source), SimpProposition::True)
+                    && matches!(
+                        normalize_proposition(&ordinary_source),
+                        SimpProposition::True
+                    )
                 {
                     if !available.contains(&source) {
                         available.push(source.clone());
@@ -971,11 +976,28 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         &transport_assumptions,
                         &transition_facts,
                     ) {
+                        let internal = std::env::var_os(FULL_DIAGNOSTICS_ENV).is_some().then(|| {
+                            format!(
+                                "\n  kernel source: {}\n  kernel target: {}\n  explicit premises: {}\n  implicit frame facts: {}\n  transition facts: {}\n  current memory: {}",
+                                bounded_debug(&source),
+                                bounded_debug(&target),
+                                bounded_debug(&explicit_premises),
+                                bounded_debug(
+                                    &available
+                                        .iter()
+                                        .filter(|fact| is_implicit_fact_transport_context(fact))
+                                        .collect::<Vec<_>>()
+                                ),
+                                bounded_debug(&transition_facts),
+                                bounded_debug(state.memory()),
+                            )
+                        });
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: no certified transport connects `{}` to `{}` using {} explicit premise(s)",
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: no certified transport connects `{}` to `{}` using {} explicit premise(s){}",
                             describe_click_proposition(surface_source),
                             describe_click_proposition(surface_target),
                             surface_premises.len(),
+                            internal.as_deref().unwrap_or(""),
                         )));
                     }
                 }
@@ -1037,8 +1059,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `instantiate` quantified fact: {message}"
                         ))
                     })?;
-                let quantified_fact = if exact_fact_is_available(&lowered_quantified, &available)
-                {
+                let quantified_fact = if exact_fact_is_available(&lowered_quantified, &available) {
                     lowered_quantified
                 } else if let Some(matched) =
                     quantified_replay_equivalent_available_fact(&lowered_quantified, &available)
@@ -1085,11 +1106,8 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` supports only int32 universals"
                     )));
                 }
-                let instantiated = substitute_int32_variable_in_proposition(
-                    body,
-                    *var,
-                    argument_term.clone(),
-                );
+                let instantiated =
+                    substitute_int32_variable_in_proposition(body, *var, argument_term.clone());
                 let (guards, conclusion) =
                     discharge_instantiated_guards(instantiated, &explicit_premises).map_err(
                         |message| {
@@ -1108,9 +1126,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 let Proposition::Implies(theorem_quantified, mut theorem_body) =
                     theorem.proposition().clone()
                 else {
-                    return Err(ClickError::new(
-                        "invalid universal instantiation theorem",
-                    ));
+                    return Err(ClickError::new("invalid universal instantiation theorem"));
                 };
                 if theorem_quantified.as_ref() != &quantified_fact {
                     return Err(ClickError::new(
@@ -1901,10 +1917,9 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
             // even when every case produced the same steps: replay still
             // needs the case split to cross the branch statement. Contexts
             // without choices and identical records collapse to one record.
-            let merged = if builders
-                .iter()
-                .all(|builder| builder.path_choices.is_empty() && builder.steps == builders[0].steps)
-            {
+            let merged = if builders.iter().all(|builder| {
+                builder.path_choices.is_empty() && builder.steps == builders[0].steps
+            }) {
                 builders
                     .first()
                     .and_then(|builder| builder.blocker.clone())

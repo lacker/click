@@ -460,10 +460,7 @@ pub(super) fn discharge_instantiated_guards(
     for premise in premises {
         atomic_conjuncts(premise, &mut premise_conjuncts);
     }
-    let premise_conjuncts = premise_conjuncts
-        .into_iter()
-        .cloned()
-        .collect::<Vec<_>>();
+    let premise_conjuncts = premise_conjuncts.into_iter().cloned().collect::<Vec<_>>();
     let discharges = |conjunct: &Proposition| {
         matches!(normalize_proposition(conjunct), SimpProposition::True)
             || premise_conjuncts.iter().any(|premise| {
@@ -755,8 +752,22 @@ fn pure_goal_simple_proof_gateway<T>(
     planner: impl FnOnce() -> Result<SimpleProof, ClickError>,
     replay: impl FnOnce(&SimpleProof) -> Result<T, ClickError>,
 ) -> Result<(SimpleProof, T), ClickError> {
-    let certificate = planner()?;
-    let replayed = replay(&certificate).map_err(|error| {
+    let function = claim_label
+        .split_once('.')
+        .map_or(claim_label, |(function, _)| function);
+    let certificate = crate::instrumentation::measure_operation(
+        function,
+        claim_label,
+        "surface certificate construction",
+        planner,
+    )?;
+    let replayed = crate::instrumentation::measure_operation(
+        function,
+        claim_label,
+        "surface certificate replay",
+        || replay(&certificate),
+    )
+    .map_err(|error| {
         ClickError::new(format!(
             "pure goal `{claim_label}` certificate failed ordinary replay:\n{}\n{}",
             format_simple_proof(&certificate),
@@ -2261,27 +2272,36 @@ fn certify_claim_result(
         }
         return Ok(());
     }
-    let certificate = verified
-        .first()
-        .ok_or_else(|| {
+    let certificate = crate::instrumentation::measure_operation(
+        function_block.signature().name(),
+        claim_label,
+        "whole-claim certificate construction",
+        || {
+            verified.first().ok_or_else(|| {
             ClickError::new(format!(
                 "`{proof_description}` proved no paths for `{claim_label}`"
             ))
-        })?
-        .expanded_proof_certificate()
-        .map_err(|error| {
-            ClickError::new(format!(
-                "`{proof_description}` succeeded internally for `{claim_label}` without a whole-claim surface certificate: {}",
-                error.message()
-            ))
-        })?;
+            })?
+            .expanded_proof_certificate()
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "`{proof_description}` succeeded internally for `{claim_label}` without a whole-claim surface certificate: {}",
+                    error.message()
+                ))
+            })
+        },
+    )?;
     let certificate_tactics = certificate.to_proof_tactics();
     if certificate_tactics.is_empty() {
         return Err(ClickError::new(format!(
             "`{proof_description}` stitched an empty whole-claim surface certificate for `{claim_label}`"
         )));
     }
-    let replayed = prove_claim_by_tactics(
+    let replayed = crate::instrumentation::measure_operation(
+        function_block.signature().name(),
+        claim_label,
+        "whole-claim certificate replay",
+        || prove_claim_by_tactics(
         expansion_capture.as_deref_mut(),
         source_path,
         function_block,
@@ -2295,6 +2315,7 @@ fn certify_claim_result(
         theorem_environment,
         &certificate_tactics,
         ProofTacticSource::GeneratedBy { source_index: 0 },
+    ),
     )
     .map_err(|error| {
         ClickError::new(format!(
@@ -2307,7 +2328,10 @@ fn certify_claim_result(
     // concrete paths, so the check is claim coverage: every verified claim
     // must be proved again by the certificate replay.
     for theorem in verified.iter() {
-        if !replayed.iter().any(|replayed| replayed.claim == theorem.claim) {
+        if !replayed
+            .iter()
+            .any(|replayed| replayed.claim == theorem.claim)
+        {
             return Err(ClickError::new(format!(
                 "`{proof_description}` surface certificate replay did not prove `{claim_label}` again"
             )));
