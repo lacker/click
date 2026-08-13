@@ -2,6 +2,12 @@
 
 Click uses ordinary Rust tests plus markdown integration tests.
 
+The [verification efficiency contract](verification-efficiency.md) is part of
+correctness testing. In particular, an all-simple project must scale with the
+selected source and certificate rather than with repeatedly copied or scanned
+ambient state. Wall-clock profiling locates current pain; deterministic
+multi-size regressions protect the scaling law.
+
 Use [Triaging Proof Failures](proof-failure-triage.md) to classify a failed
 proof before deciding whether it belongs in a regression test, an issue, or
 ordinary proof development. This page describes how to test and contain the
@@ -106,6 +112,21 @@ known cost fails deterministically on any machine. Recalibration must
 measure both the examples and the mdtests.
 Changing a work budget requires corpus measurements and a documented reason;
 it is not a way to make one difficult proof pass.
+
+### Scaling regressions
+
+An optimization that changes a hot-path representation or algorithm should
+include a generated deterministic-work regression at four or more input sizes.
+Test independent dimensions rather than one realistic example: functions,
+straight-line statements, facts, surface spellings, resources, theorems, and
+claims. Exclude fixed parsing/startup work where practical and assert the
+growth ratio, not an elapsed-time threshold.
+
+The intended bound for simple verification is output-sensitive `N log N` or
+better. A benchmark that merely stays below the production deadline can still
+hide quadratic growth and is not sufficient. Conversely, explicitly emitted
+paths, quantified instances, premises, and definition members count as input
+or output and may be charged accordingly.
 
 Rust library tests enforce deterministic tactic-work budgets but do not
 inherit the production time limits. Tests specifically about real-time

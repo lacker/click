@@ -82,6 +82,8 @@ High-value entry points:
   distinguish proof-authoring work from Click language and tooling defects.
 - [docs/advanced/testing-click.md](docs/advanced/testing-click.md): test
   commands and mdtest shape.
+- [docs/advanced/verification-efficiency.md](docs/advanced/verification-efficiency.md):
+  the codebase-scale complexity contract for simple verification.
 - [docs/feature-playbook.md](docs/feature-playbook.md): how to extend Click.
 - [docs/click-language.md](docs/click-language.md): complete `.click` syntax
   reference.

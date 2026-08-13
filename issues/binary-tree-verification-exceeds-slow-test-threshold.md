@@ -103,3 +103,9 @@ issue open for the original “few seconds” interactive target: the current
 profile still attributes about 2s to `tree_rotate_left` resource
 representation and about 1.1s to `tree_sum_root_and_children` independent
 certification.
+
+The remaining representation work belongs to
+`indexed-resource-algebra-avoids-pairwise-context-work.md` and
+`stable-content-identities-for-verifier-caches.md`; retain binary-tree as a
+real-project latency check while the synthetic scaling regressions isolate the
+asymptotic behavior.

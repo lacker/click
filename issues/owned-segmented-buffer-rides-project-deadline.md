@@ -31,6 +31,10 @@ reduced target. Any deduplication must preserve the independent kernel
 boundary; the profile rules out quantified-entry setup and resource
 representation as the dominant cause.
 
+The project-wide design work is tracked in
+`contract-certification-repeats-function-execution.md`; keep this issue as its
+integration acceptance case.
+
 ## Acceptance criteria
 
 - Warm ordinary verification completes with comfortable margin against the

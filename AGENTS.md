@@ -124,3 +124,24 @@ optimization profile. Never expand a tactic from an incomplete run.
 See `issues/README.md` for issue policy and
 `docs/advanced/proof-failure-triage.md` for failure classification, and
 `docs/advanced/testing-click.md` for the performance and expansion workflow.
+
+## Scalable verification is a correctness requirement
+
+A project written entirely with explicit simple tactics must verify in work
+approximately linear, up to logarithmic indexing factors, in the selected C
+source, Click source, and certificate. A simple tactic may do work
+proportional to its explicit input, the affected C operation, and the proof
+state or certificate delta it produces. It must not scan or clone unrelated
+project-wide or path-wide state.
+
+Do not introduce complete-environment clones per function, complete-state or
+history clones per tactic, linear exact-premise searches, eager pairwise
+derived facts, or caches keyed by deep structural comparison on a verifier hot
+path. Smart-tactic expansion removes search; it is not a remedy for a slow
+simple checker.
+
+Performance-sensitive representation changes require deterministic scaling
+regressions over multiple input sizes. A fixed corpus timing or a faster warm
+run is supporting evidence, not proof of acceptable asymptotic behavior. The
+canonical complexity contract, output-sensitive exceptions, and review rules
+are in `docs/advanced/verification-efficiency.md`.

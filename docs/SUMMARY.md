@@ -29,6 +29,7 @@
 
 - [Triaging Proof Failures](advanced/proof-failure-triage.md)
 - [Testing Click](advanced/testing-click.md)
+- [Verification Efficiency](advanced/verification-efficiency.md)
 - [Performance Tools](advanced/performance-tools.md)
 - [Memory Derivation DAG](advanced/memory-dag.md)
 - [Contributing To Click](advanced/contributing.md)

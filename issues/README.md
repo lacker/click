@@ -99,3 +99,22 @@ roadmap issues at present.
 Keep one file per independent open problem. Put durable implementation design
 in `docs/`, and delete an issue when its fix, regression coverage, and
 documentation land.
+
+## Verification performance burndown
+
+The governing invariant is [Verification Efficiency](../docs/advanced/verification-efficiency.md).
+Work these independent issues in dependency-aware order:
+
+1. [Add deterministic scaling gates for simple verification](verification-scaling-benchmark-gate.md).
+2. [Share project environments and slice function dependencies](persistent-project-environments-and-dependency-slicing.md).
+3. [Make proof states and program-point snapshots persistent](persistent-proof-state-and-program-point-snapshots.md).
+4. [Index proof facts and surface spellings](indexed-proof-fact-and-surface-spelling-stores.md).
+5. [Replace pairwise resource-context work with indexed algebra](indexed-resource-algebra-avoids-pairwise-context-work.md).
+6. [Remove context-wide proof minimization and contradiction scans](proof-derivation-avoids-context-wide-scans.md).
+7. [Give verifier caches stable shallow identities](stable-content-identities-for-verifier-caches.md).
+8. [Share function execution across proof and contract certification boundaries](contract-certification-repeats-function-execution.md).
+
+The first issue establishes the measurement gate. Items 2--7 can then land as
+separate green chunks with an asymptotic regression each. Item 8 must preserve
+the independent kernel boundary and should follow the identity/state work
+rather than adding another deep-key cache.

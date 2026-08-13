@@ -1,0 +1,145 @@
+# Verification Efficiency
+
+Click is intended to verify existing programs at codebase scale. Fast examples
+are not enough: deterministic verification of an explicitly certificated
+project must remain approximately linear in the amount of C and Click that is
+actually relevant to the selected proof units.
+
+This is a correctness requirement for the proof-tool boundary. A simple proof
+that becomes unusably slow as unrelated functions, facts, snapshots, or
+resources are added is a verifier defect, even if it eventually succeeds.
+
+## Complexity contract
+
+Let `N` be the size of the selected C source, Click source, imported
+definitions, and explicit certificate. Let `q` be the size of the input named
+by one tactic, and let `d` be the amount of new proof state or certificate text
+that the tactic must produce.
+
+A simple tactic should take
+
+```text
+O((q + d) polylog N)
+```
+
+amortized work. In particular, it must not scan, compare, hash, or clone proof
+state unrelated to the rule and evidence named by the tactic. A project made
+entirely of simple tactics should verify in
+
+```text
+O((N + D) polylog N)
+```
+
+work, where `D` is unavoidable semantic output such as explicitly enumerated
+execution paths or unfolded resource members. For ordinary straight-line,
+modular code, `D` should itself be linear in the source and certificate.
+
+`O(log N)` is shorthand for indexed access, not permission to ignore input or
+output size. Reading ten explicit premises costs at least ten operations;
+unfolding a resource with ten members costs at least ten operations. The
+violation is touching the other thousand facts, functions, snapshots, or
+resources that the tactic did not name.
+
+## Simple means locally checkable
+
+A simple tactic checks one named proof rule from explicit evidence. Expansion
+removes smart search by producing such a certificate. It cannot repair a
+simple checker that performs global search, rebuilds its whole context, or
+copies the complete project state at every step.
+
+Simple checking may perform bounded work over:
+
+- the tactic and its explicit premises;
+- the affected C expression or statement;
+- the resource or predicate body explicitly being opened or closed;
+- the proof-state delta produced by that operation; and
+- indexed lookups into immutable ambient environments.
+
+It may not, by default:
+
+- clone a complete function environment, symbolic state, fact set, or history;
+- linearly search all ambient facts for an exact named premise;
+- enumerate all theorem facts for every function;
+- materialize all pairwise separation facts in a resource context;
+- rerun a theory prover once per unrelated premise merely to minimize a
+  certificate; or
+- use a bounded linear cache with deep structural comparison as the durable
+  identity mechanism.
+
+## Output-sensitive exceptions
+
+Some verification work is inherently larger than one lookup. Its cost must be
+charged to visible semantic output rather than hidden ambient state:
+
+- A source branch can create two paths. Repeated branching may create many
+  paths, but verification should share common prefixes and cost no more than
+  the explicit path certificate it checks.
+- A finite quantified proof may enumerate its declared finite range. The range
+  and its bound must be explicit and enforced.
+- Unfolding or folding may visit every member of the named definition, but not
+  every definition in the project.
+- A resource operation may inspect every resource explicitly consumed or
+  produced. Separation and validity facts that follow from an indexed
+  authority relation should remain implicit rather than be eagerly expanded
+  into a quadratic set.
+- Independent kernel certification may add a small constant multiple of the
+  selected function's work. It must not multiply that work by the number of
+  claims, unrelated functions, or globally declared theorems.
+
+## Representation requirements
+
+The complexity contract implies several design constraints:
+
+- Large immutable environments and proof states need persistent structural
+  sharing. A clone used to create one modified view should be constant or
+  logarithmic in the shared structure.
+- Propositions, terms, memories, functions, and environments used as cache
+  keys need stable interned identities or cached content fingerprints. Cache
+  lookup must not traverse the object whose computation it is intended to
+  avoid.
+- Fact stores need exact indexes plus theory-specific secondary indexes. For
+  example, condition, quantified, memory/loadability, and resource facts must
+  be discoverable without scanning all proposition kinds.
+- Derived relations such as contradiction, order reachability, resource
+  coverage, and separation should be maintained incrementally or queried from
+  indexed base facts.
+- Each function should receive the transitive dependencies it references, not
+  a copied global environment or every theorem in the project.
+
+These constraints are semantic-neutral. They must preserve independent kernel
+checking and must never turn an unproved, failed, or deadline-limited result
+into a cached success.
+
+## Regression policy
+
+Wall-clock examples find user-visible pain, but they do not enforce a scaling
+law. Performance-sensitive changes need deterministic scaling regressions that
+generate at least four sizes, normally `N`, `2N`, `4N`, and `8N`, and measure
+verifier work rather than host time.
+
+The scaling suite should cover independent axes:
+
+- number of unrelated functions and verified rules;
+- straight-line statements and program-point snapshots in one function;
+- ambient pure and condition facts;
+- surface-to-kernel proposition spellings;
+- resource facts and resource-definition members;
+- global and imported theorem declarations; and
+- number of claims sharing one function execution.
+
+For a linear or `N log N` path, doubling the input should remain close to a
+factor of two after fixed startup work is excluded. A regression must fail on
+the old representation and pass on the new one. Absolute corpus timings are
+useful corroboration, not a substitute for the scaling assertion.
+
+Any new hot-path collection, cache, or clone should answer these review
+questions:
+
+1. What is its size in terms of source or certificate input?
+2. Is lookup indexed by the exact semantic key?
+3. Does mutation share unchanged structure?
+4. Can one operation enumerate unrelated entries?
+5. What scaling regression protects the claimed bound?
+
+See [Testing Click](testing-click.md) for commands, budgets, and profiling.
+The open implementation work is ordered in [`issues/README.md`](../../issues/README.md).

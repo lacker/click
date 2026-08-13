@@ -64,6 +64,12 @@ facts and the owned-string pipeline resource containment check (roughly
 aggregate and is a secondary, measured contributor rather than the dominant
 one.
 
+The scaling fixes for these paths are tracked in
+`indexed-proof-fact-and-surface-spelling-stores.md`,
+`proof-derivation-avoids-context-wide-scans.md`, and
+`indexed-resource-algebra-avoids-pairwise-context-work.md`. Keep this full
+project as the interactive-latency integration case.
+
 ## Regression
 
 Preserve the full owned-string project as the integration workload, and add
