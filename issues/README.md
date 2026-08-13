@@ -110,8 +110,9 @@ Work these independent issues in dependency-aware order:
 3. [Replace pairwise resource-context work with indexed algebra](indexed-resource-algebra-avoids-pairwise-context-work.md).
 4. [Remove context-wide proof minimization and contradiction scans](proof-derivation-avoids-context-wide-scans.md).
 5. [Give verifier caches stable shallow identities](stable-content-identities-for-verifier-caches.md).
+6. [Share checked replay authority between smart tactics and the expansion gate](smart-proof-search-and-expansion-gate-share-checked-replay.md).
 
-The first issue establishes the measurement gate. Items 2--5 can then land as
+The first issue establishes the measurement gate. Items 2--6 can then land as
 separate green chunks with an asymptotic regression each. Checked execution
 reuse across proof and contract certification is complete and documented in
 the governing efficiency guide. Use
