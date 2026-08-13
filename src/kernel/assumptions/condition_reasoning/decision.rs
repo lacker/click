@@ -91,6 +91,21 @@ impl Assumptions {
                 {
                     return Some(true);
                 }
+                // Pointer conditions are already in their canonical structural
+                // form: `simplify_condition_under_assumptions` only clones
+                // them. Avoid cloning and then deeply comparing symbolic
+                // pointer terms (which may embed whole memory snapshots)
+                // before routing to the dedicated pointer decision rules.
+                if matches!(
+                    condition,
+                    ConditionTerm::PointerOffsetEqual(_, _) | ConditionTerm::PointerEqual(_, _)
+                ) {
+                    return self
+                        .condition_facts
+                        .get(condition)
+                        .copied()
+                        .or_else(|| self.decide_from_order_facts(condition));
+                }
                 let simplified = self.simplify_condition_under_assumptions(condition);
                 if simplified != *condition {
                     return match simplified {

@@ -20,11 +20,19 @@ pub(crate) fn c_resources_directly_match(
     let values_match = |left: &CValue, right: &CValue| match (left, right) {
         (CValue::Void, CValue::Void) => true,
         (CValue::Int32(left), CValue::Int32(right))
-        | (CValue::UInt8(left), CValue::UInt8(right)) => {
-            bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
-        }
+        | (CValue::UInt8(left), CValue::UInt8(right)) => crate::instrumentation::measure_operation(
+            "kernel",
+            "resource context equality",
+            "resource direct match: bitvector value",
+            || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions),
+        ),
         (CValue::Pointer(left), CValue::Pointer(right)) => {
-            pointers_match_for_resource_replay(left, right, assumptions)
+            crate::instrumentation::measure_operation(
+                "kernel",
+                "resource context equality",
+                "resource direct match: pointer value",
+                || pointers_match_for_resource_replay(left, right, assumptions),
+            )
         }
         _ => false,
     };
@@ -139,23 +147,60 @@ fn pointer_offsets_match_for_resource_replay(
     right: &PointerOffsetTerm,
     assumptions: &Assumptions,
 ) -> bool {
-    if pointer_offsets_match_from_memory_derivations(left, right, assumptions) {
+    if crate::instrumentation::measure_operation(
+        "kernel",
+        "resource context equality",
+        "resource pointer offset: derivation edges",
+        || pointer_offsets_match_from_memory_derivations(left, right, assumptions),
+    ) {
         return true;
     }
     let transported_matches = |offset: &PointerOffsetTerm, target: &PointerOffsetTerm| {
         let mut memories = Vec::new();
         collect_pointer_offset_memories(target, &mut memories);
         memories.into_iter().any(|memory| {
-            transport_framed_atomic_pointer_offset(offset, &memory, Some((assumptions, false)))
-                .is_some_and(|transported| {
-                    c_pointer_offsets_proven_equal_for_effect(&transported, target, assumptions)
-                })
+            let transported = crate::instrumentation::measure_operation(
+                "kernel",
+                "resource context equality",
+                "resource pointer offset transport: rewrite",
+                || {
+                    transport_framed_atomic_pointer_offset(
+                        offset,
+                        &memory,
+                        Some((assumptions, false)),
+                    )
+                },
+            );
+            transported.is_some_and(|transported| {
+                crate::instrumentation::measure_operation(
+                    "kernel",
+                    "resource context equality",
+                    "resource pointer offset transport: compare",
+                    || {
+                        pointer_offsets_proven_equal_for_memory_resolution(
+                            &transported,
+                            target,
+                            assumptions,
+                        )
+                    },
+                )
+            })
         })
     };
-    if transported_matches(left, right) || transported_matches(right, left) {
+    if crate::instrumentation::measure_operation(
+        "kernel",
+        "resource context equality",
+        "resource pointer offset: framed transport",
+        || transported_matches(left, right) || transported_matches(right, left),
+    ) {
         return true;
     }
-    c_pointer_offsets_proven_equal_for_effect(left, right, assumptions)
+    crate::instrumentation::measure_operation(
+        "kernel",
+        "resource context equality",
+        "resource pointer offset: effect equality",
+        || c_pointer_offsets_proven_equal_for_effect(left, right, assumptions),
+    )
 }
 
 fn pointers_match_for_resource_replay(
@@ -163,10 +208,20 @@ fn pointers_match_for_resource_replay(
     right: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
-    left == right
-        || (left.block == right.block
-            && pointer_offsets_match_for_resource_replay(&left.offset, &right.offset, assumptions))
-        || pointers_proven_equal_for_memory_resolution(left, right, assumptions)
+    if left == right {
+        return true;
+    }
+    if left.block == right.block
+        && pointer_offsets_match_for_resource_replay(&left.offset, &right.offset, assumptions)
+    {
+        return true;
+    }
+    crate::instrumentation::measure_operation(
+        "kernel",
+        "resource context equality",
+        "resource pointer: general equality",
+        || pointers_proven_equal_for_memory_resolution(left, right, assumptions),
+    )
 }
 
 /// Assumption-free canonical form of a whole memory: every cell key and
@@ -2145,6 +2200,7 @@ pub(crate) fn c_pointer_offsets_proven_equal_for_effect(
         return false;
     }
     left == right
+        || pointer_offsets_proven_equal_for_memory_resolution(&left, &right, assumptions)
         || assumptions.proves(&Proposition::ConditionIs(
             ConditionTerm::PointerOffsetEqual(Box::new(left), Box::new(right)),
             true,

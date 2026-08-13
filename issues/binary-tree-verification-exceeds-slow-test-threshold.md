@@ -130,3 +130,23 @@ kernel certification despite having a fully simple proof.
 Keep the issue open for the few-second target. The next fixes belong in stable
 snapshot/resource identities and indexed proof derivation; expanding more
 source cannot address either measured cost.
+
+## Update (2026-08-13): resource replay uses its bounded equality relation
+
+Nested operation attribution split the remaining `tree_rotate_left` resource
+comparison into candidate lookup, framed pointer-load transport, and the
+post-transport equality check. Candidate lookup was negligible. One rejected
+transport candidate spent about 300ms in the general proposition prover even
+though resource replay is specified to use exact facts and the bounded memory
+resolution relation; a later candidate was the actual match.
+
+The replay path now checks transported pointer offsets directly with the
+bounded memory-resolution relation and reserves the general effect equality
+fallback for the final unmatched pair. This preserves the fallback semantics
+without running context-wide proposition reasoning for every speculative
+transport candidate. The direct resource comparison fell from roughly 630ms
+to 240ms, `tree_rotate_left` fell from roughly 1.55s to 1.04s, and a complete
+warm debug profile fell from roughly 5.75s to 5.24s. The remaining framed
+transport work is about 160ms of snapshot rewriting, while
+`tree_sum_root_and_children` still spends about 1.2s in independent kernel
+certification.
