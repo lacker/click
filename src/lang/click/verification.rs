@@ -958,7 +958,11 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                     "contract certification",
                     "contract symbolic execution",
                     || {
-                        prove_c_function_contract_execution_paths_with_environment(
+                        let checked_artifacts = function_verified
+                            .iter()
+                            .map(|verified| verified.checked_execution.clone())
+                            .collect::<Vec<_>>();
+                        prove_c_function_contract_execution_paths_with_checked_artifacts(
                             certification_state,
                             contract_function.clone(),
                             certification_arguments,
@@ -977,6 +981,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                                 }
                             },
                             contract_execution_mode,
+                            &checked_artifacts,
                         )
                     },
                 )

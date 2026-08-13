@@ -1634,6 +1634,23 @@ pub struct CFunctionContractExecution {
     pub(super) execution: SymbolicCExecution,
 }
 
+/// A kernel-created record of one exact whole-function execution judgment.
+///
+/// Callers may retain and present this artifact, but cannot manufacture or
+/// alter its execution metadata. Contract certification revalidates the
+/// boundary assumptions before reusing its checked frontier.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CCheckedFunctionExecution {
+    pub(super) state: CState,
+    pub(super) function: CFunction,
+    pub(super) arguments: Vec<CExpression>,
+    pub(super) assumptions: Assumptions,
+    pub(super) environment: CExecutionEnvironment,
+    pub(super) execution_semantics: CExecutionSemantics,
+    pub(super) mode: CFunctionContractExecutionMode,
+    pub(super) execution: SymbolicCExecution,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CFunctionContractExecutionMode {
     VerifyLoops,
@@ -1647,6 +1664,16 @@ impl CFunctionContractExecution {
 
     pub fn limit(&self) -> Option<&ExecutionLimit> {
         self.execution.limit.as_ref()
+    }
+}
+
+impl CCheckedFunctionExecution {
+    pub fn paths(&self) -> &[SymbolicCExecutionPath] {
+        self.execution.paths()
+    }
+
+    pub fn limit(&self) -> Option<ExecutionLimit> {
+        self.execution.limit()
     }
 }
 

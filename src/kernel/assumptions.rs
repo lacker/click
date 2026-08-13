@@ -772,6 +772,15 @@ impl Proposition {
 }
 
 impl Assumptions {
+    pub(in crate::kernel) fn has_same_reasoning_policy(&self, other: &Self) -> bool {
+        self.defer_non_exact_loadability_obligations
+            == other.defer_non_exact_loadability_obligations
+            && self.defer_non_exact_condition_reasoning == other.defer_non_exact_condition_reasoning
+            && self.prefer_symbolic_external_loads == other.prefer_symbolic_external_loads
+            && self.force_symbolic_external_loads == other.force_symbolic_external_loads
+            && self.allow_symbolic_contract_loads == other.allow_symbolic_contract_loads
+    }
+
     fn fingerprint<T: std::hash::Hash>(tag: u64, value: &T) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         std::hash::Hasher::write_u64(&mut hasher, tag);

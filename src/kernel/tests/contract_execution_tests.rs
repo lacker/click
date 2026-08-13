@@ -1241,6 +1241,100 @@ fn verified_function_rule_requires_every_contract_claim_certificate() {
 }
 
 #[test]
+fn contract_certification_reuses_a_matching_kernel_checked_execution() {
+    let function = c_function(
+        CType::Int32,
+        "checked_once",
+        Vec::new(),
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::Value(int32(0)),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::Value(int32(0)),
+        }],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    );
+    let state = CState::new();
+    let environment = CExecutionEnvironment::new();
+    let semantics = CExecutionSemantics::EXECUTE_BODIES;
+    let mode = CFunctionContractExecutionMode::VerifyLoops;
+    let _ = crate::kernel::api::take_checked_function_body_execution_count();
+    let checked = prove_checked_c_function_execution_with_environment(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Assumptions::new(),
+        environment.clone(),
+        semantics,
+        mode,
+    );
+    assert_eq!(
+        crate::kernel::api::take_checked_function_body_execution_count(),
+        1
+    );
+
+    let execution = prove_c_function_contract_execution_paths_with_checked_artifacts(
+        state,
+        function.clone(),
+        Vec::new(),
+        Vec::new(),
+        environment,
+        semantics,
+        mode,
+        &[checked],
+    );
+
+    assert_eq!(
+        crate::kernel::api::take_checked_function_body_execution_count(),
+        0,
+        "matching checked authority should avoid a second function-body execution"
+    );
+    assert!(c_verified_function_contract_claims(&function, &execution).is_some());
+
+    let extra_assumption = Assumptions::new().assume_condition(
+        ConditionTerm::equal(
+            Bitvector32Term::Variable(Variable(919_000)),
+            Bitvector32Term::Constant(0),
+        ),
+        true,
+    );
+    let unchecked_boundary = prove_checked_c_function_execution_with_environment(
+        CState::new(),
+        function.clone(),
+        Vec::new(),
+        extra_assumption,
+        CExecutionEnvironment::new(),
+        semantics,
+        mode,
+    );
+    assert_eq!(
+        crate::kernel::api::take_checked_function_body_execution_count(),
+        1
+    );
+    let fallback = prove_c_function_contract_execution_paths_with_checked_artifacts(
+        CState::new(),
+        function.clone(),
+        Vec::new(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        semantics,
+        mode,
+        &[unchecked_boundary],
+    );
+    assert_eq!(
+        crate::kernel::api::take_checked_function_body_execution_count(),
+        1,
+        "an artifact with an unproved entry assumption must not be reused"
+    );
+    assert!(c_verified_function_contract_claims(&function, &fallback).is_some());
+}
+
+#[test]
 fn contract_claim_rejects_same_source_function_with_a_different_contract() {
     let body = c_return(c_int32_literal(0));
     let uncontracted = c_function(CType::Int32, "contract_identity", Vec::new(), body.clone());

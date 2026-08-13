@@ -112,9 +112,8 @@ Work these independent issues in dependency-aware order:
 5. [Replace pairwise resource-context work with indexed algebra](indexed-resource-algebra-avoids-pairwise-context-work.md).
 6. [Remove context-wide proof minimization and contradiction scans](proof-derivation-avoids-context-wide-scans.md).
 7. [Give verifier caches stable shallow identities](stable-content-identities-for-verifier-caches.md).
-8. [Share function execution across proof and contract certification boundaries](contract-certification-repeats-function-execution.md).
 
 The first issue establishes the measurement gate. Items 2--7 can then land as
-separate green chunks with an asymptotic regression each. Item 8 must preserve
-the independent kernel boundary and should follow the identity/state work
-rather than adding another deep-key cache.
+separate green chunks with an asymptotic regression each. Checked execution
+reuse across proof and contract certification is complete and documented in
+the governing efficiency guide.

@@ -902,7 +902,7 @@ struct CachedIndependentExecution {
     assumptions: Assumptions,
     environment: CExecutionEnvironment,
     concrete_loop_execution: bool,
-    execution: SymbolicCExecution,
+    execution: CCheckedFunctionExecution,
 }
 
 thread_local! {
@@ -918,8 +918,8 @@ fn cached_independent_execution(
     assumptions: &Assumptions,
     environment: &CExecutionEnvironment,
     concrete_loop_execution: bool,
-    compute: impl FnOnce() -> SymbolicCExecution,
-) -> SymbolicCExecution {
+    compute: impl FnOnce() -> CCheckedFunctionExecution,
+) -> CCheckedFunctionExecution {
     if let Some(execution) = INDEPENDENT_EXECUTION_CACHE.with(|cache| {
         cache
             .borrow()
@@ -975,7 +975,7 @@ pub(super) fn finish_ordered_proof_replay(
     function: &CFunction,
     arguments: &[CExpression],
     certificate_tactics: &[ProofTactic],
-    certification_cache: &mut Vec<(Vec<Proposition>, CState, bool, SymbolicCExecution)>,
+    certification_cache: &mut Vec<(Vec<Proposition>, CState, bool, CCheckedFunctionExecution)>,
     claim_surface_builders: &mut Vec<(VerifiedClaim, SimpleProofBuilder)>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let ProofReplayContext {
@@ -1079,25 +1079,25 @@ pub(super) fn finish_ordered_proof_replay(
                         function_environment,
                         replay.concrete_loop_execution,
                         || {
-                            if replay.concrete_loop_execution {
-                                prove_symbolic_c_function_execution_paths_with_environment(
-                                    pre_state.clone(),
-                                    function.clone(),
-                                    arguments.to_vec(),
-                                    execution_start_assumptions.clone(),
-                                    function_environment.clone(),
-                                    CExecutionSemantics::APPLY_VERIFIED_RULES,
-                                )
-                            } else {
-                                prove_symbolic_c_function_contract_verification_paths_with_environment(
-                    pre_state.clone(),
-                    function.clone(),
-                    arguments.to_vec(),
-                    execution_start_assumptions.clone(),
-                    function_environment.clone(),
-                    CExecutionSemantics::APPLY_VERIFIED_RULES,
-                )
-                            }
+                            prove_checked_c_function_execution_with_environment(
+                                pre_state.clone(),
+                                function.clone(),
+                                arguments.to_vec(),
+                                execution_start_assumptions.clone(),
+                                function_environment.clone(),
+                                if replay.concrete_loop_execution
+                                    || !replay.frontier_loop_rules.is_empty()
+                                {
+                                    CExecutionSemantics::APPLY_VERIFIED_RULES
+                                } else {
+                                    CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
+                                },
+                                if replay.concrete_loop_execution {
+                                    CFunctionContractExecutionMode::ExecuteLoops
+                                } else {
+                                    CFunctionContractExecutionMode::VerifyLoops
+                                },
+                            )
                         },
                     );
                     if replay.frontier_loop_rules.is_empty() {
@@ -3256,6 +3256,7 @@ pub(super) fn finish_ordered_proof_replay(
                     concrete_loop_execution: replay.concrete_loop_execution,
                     frontier_loop_clauses: replay.frontier_loop_clauses.clone(),
                     frontier_loop_rules: replay.frontier_loop_rules.clone(),
+                    checked_execution: certified_execution.clone(),
                 });
             }
             // Expansion prints what verification holds: the tactics come out

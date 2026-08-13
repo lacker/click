@@ -110,6 +110,28 @@ These constraints are semantic-neutral. They must preserve independent kernel
 checking and must never turn an unproved, failed, or deadline-limited result
 into a cached success.
 
+## Checked execution reuse
+
+Proof replay and opaque-contract certification may share function-body work
+only through `CCheckedFunctionExecution`, a kernel-created artifact. The
+artifact seals the exact entry state, annotated function, arguments,
+environment, execution semantics, loop judgment, assumptions, and complete
+checked frontier. Its fields are private to the kernel; a proof planner can
+retain and present the artifact but cannot manufacture its authority.
+
+At the opaque-contract boundary, the kernel reconstructs contract assumptions
+and resource-guard cases independently. It reuses an artifact only when all
+sealed structural inputs and reasoning-policy flags match and every sealed
+premise is proved by that reconstructed contract context. A limited or empty
+frontier is never reusable. Any mismatch performs fresh symbolic execution.
+Thus reuse removes duplicate C-body interpretation without trusting smart
+search state or weakening independent contract checking.
+
+Grouped claims retain the same artifact, so adding claims does not multiply
+whole-function execution. Tests count checked body executions directly and
+also require an artifact containing an unproved extra assumption to be
+rejected.
+
 ## Regression policy
 
 Wall-clock examples find user-visible pain, but they do not enforce a scaling

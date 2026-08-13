@@ -171,6 +171,7 @@ fn grouped_auto_uses_one_deterministic_execution_proof() {
                 ensures p[0] == value;
             } by auto;
         "#;
+    let _ = crate::kernel::take_checked_function_body_execution_count();
     let verified = verify_c0_sources(click_source, &[("set.c", c_source)])
         .expect("grouped auto proof should verify");
     let expected_tactics = [
@@ -187,6 +188,11 @@ fn grouped_auto_uses_one_deterministic_execution_proof() {
         verified
             .iter()
             .all(|theorem| theorem.proof_tactics() == Some(expected_tactics.as_slice()))
+    );
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        1,
+        "claim certification and final contract certification should share one checked body execution"
     );
 }
 

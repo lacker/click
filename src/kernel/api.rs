@@ -2,6 +2,24 @@ use super::functions::apply_verified_contract_resource_transition;
 pub(super) use super::memory_provenance::*;
 use super::prelude::*;
 
+#[cfg(test)]
+thread_local! {
+    static CHECKED_FUNCTION_BODY_EXECUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn record_checked_function_body_execution() {
+    CHECKED_FUNCTION_BODY_EXECUTIONS.with(|count| count.set(count.get() + 1));
+}
+
+#[cfg(not(test))]
+fn record_checked_function_body_execution() {}
+
+#[cfg(test)]
+pub(crate) fn take_checked_function_body_execution_count() -> usize {
+    CHECKED_FUNCTION_BODY_EXECUTIONS.with(|count| count.replace(0))
+}
+
 pub(in crate::kernel) mod contract_certification;
 pub use contract_certification::*;
 use contract_certification::{
@@ -1678,6 +1696,57 @@ pub fn prove_symbolic_c_function_contract_verification_paths_with_environment(
     )
 }
 
+/// Executes one whole-function judgment and seals its exact authority inputs
+/// together with the resulting frontier for later contract certification.
+#[allow(clippy::too_many_arguments)]
+pub fn prove_checked_c_function_execution_with_environment(
+    state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    assumptions: Assumptions,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    mode: CFunctionContractExecutionMode,
+) -> CCheckedFunctionExecution {
+    record_checked_function_body_execution();
+    let execution = match mode {
+        CFunctionContractExecutionMode::VerifyLoops => {
+            prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+                state.clone(),
+                function.clone(),
+                arguments.clone(),
+                assumptions.clone(),
+                environment.clone(),
+                execution_semantics,
+                ExecutionBudget::default(),
+                true,
+            )
+        }
+        CFunctionContractExecutionMode::ExecuteLoops => {
+            prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
+                state.clone(),
+                function.clone(),
+                arguments.clone(),
+                assumptions.clone(),
+                environment.clone(),
+                execution_semantics,
+                ExecutionBudget::default(),
+                true,
+            )
+        }
+    };
+    CCheckedFunctionExecution {
+        state,
+        function,
+        arguments,
+        assumptions,
+        environment,
+        execution_semantics,
+        mode,
+        execution,
+    }
+}
+
 /// Produces the only execution frontier accepted for opaque contract
 /// certification.
 ///
@@ -1692,6 +1761,31 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     mode: CFunctionContractExecutionMode,
+) -> CFunctionContractExecution {
+    prove_c_function_contract_execution_paths_with_checked_artifacts(
+        state,
+        function,
+        arguments,
+        derived_entry_facts,
+        environment,
+        execution_semantics,
+        mode,
+        &[],
+    )
+}
+
+/// Certifies an opaque contract while reusing a kernel-checked whole-function
+/// frontier when its sealed authority is implied by the exact contract entry.
+#[allow(clippy::too_many_arguments)]
+pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
+    state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    derived_entry_facts: Vec<Proposition>,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    mode: CFunctionContractExecutionMode,
+    checked_artifacts: &[CCheckedFunctionExecution],
 ) -> CFunctionContractExecution {
     let selection_assumptions =
         assumptions_with_propositions(&Assumptions::new(), &derived_entry_facts);
@@ -1964,34 +2058,56 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
             }
             entry_state.resources = entry_resources;
         }
+        let reusable = checked_artifacts.iter().find(|checked| {
+            checked.state == state
+                && checked.function == function
+                && checked.arguments == arguments
+                && checked.environment == environment
+                && checked.execution_semantics == execution_semantics
+                && checked.mode == mode
+                && checked.assumptions.has_same_reasoning_policy(&assumptions)
+                && checked.execution.limit().is_none()
+                && !checked.execution.paths().is_empty()
+                && checked
+                    .assumptions
+                    .pure_facts()
+                    .into_iter()
+                    .all(|premise| assumptions.proves(&premise))
+        });
         let execution = crate::instrumentation::measure_operation(
             function.name(),
             "contract certification",
             "contract body symbolic execution",
-            || match mode {
-                CFunctionContractExecutionMode::VerifyLoops => {
-                    prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
-                        state.clone(),
-                        function.clone(),
-                        arguments.clone(),
-                        assumptions,
-                        environment.clone(),
-                        execution_semantics,
-                        ExecutionBudget::default(),
-                        true,
-                    )
-                }
-                CFunctionContractExecutionMode::ExecuteLoops => {
-                    prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
-                        state.clone(),
-                        function.clone(),
-                        arguments.clone(),
-                        assumptions,
-                        environment.clone(),
-                        execution_semantics,
-                        ExecutionBudget::default(),
-                        true,
-                    )
+            || match reusable {
+                Some(checked) => checked.execution.clone(),
+                None => {
+                    record_checked_function_body_execution();
+                    match mode {
+                        CFunctionContractExecutionMode::VerifyLoops => {
+                            prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+                                state.clone(),
+                                function.clone(),
+                                arguments.clone(),
+                                assumptions,
+                                environment.clone(),
+                                execution_semantics,
+                                ExecutionBudget::default(),
+                                true,
+                            )
+                        }
+                        CFunctionContractExecutionMode::ExecuteLoops => {
+                            prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
+                                state.clone(),
+                                function.clone(),
+                                arguments.clone(),
+                                assumptions,
+                                environment.clone(),
+                                execution_semantics,
+                                ExecutionBudget::default(),
+                                true,
+                            )
+                        }
+                    }
                 }
             },
         );
