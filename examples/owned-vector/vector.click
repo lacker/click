@@ -178,11 +178,76 @@ int32 vector_grow(struct vector* owner) {
                 loadable(old(owner->data[0..owner->cap]));
             }
         }
-        execute();
-        have forall (k: int32) {
-            0 <= k and k < old(owner->len) implies
-                owner->data[k] == old(owner->data[k])
-        } by simp;
+        step() using {
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+            at(statement(8).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+            at(statement(8).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+            at(statement(8).entry, loadable(old(owner[0..1])));
+            at(statement(8).entry, loadable(old((owner + 1)[0..1])));
+            at(statement(8).entry, loadable(old((owner + 2)[0..2])));
+            at(statement(8).entry, loadable(old(owner->data[0..old_capacity])));
+            at(statement(8).entry, loadable(old(owner->data[0..owner->len])));
+            at(statement(9).entry, owner->cap) <= at(statement(9).entry, 536870910);
+            at(statement(9).entry, 0) <= at(statement(9).entry, owner->len);
+            at(statement(9).entry, owner->len) <= at(statement(9).entry, owner->cap);
+            at(statement(9).entry, 1) <= at(statement(9).entry, owner->cap);
+            at(statement(9).entry, owner->cap) <= at(statement(9).entry, 536870911);
+            at(statement(9).entry, owner->cap) < at(statement(9).entry, 2147483647);
+            at(statement(9).entry, (owner->cap + 1)) <= at(statement(9).entry, 536870911);
+            at(statement(8).entry, owner->cap) <= at(statement(8).entry, 536870910);
+            separate(memory(owner[0..1]), memory(owner->data[0..old_capacity]));
+            separate(memory(owner[1..2]), memory(owner->data[0..old_capacity]));
+            separate(memory(owner[2..4]), memory(owner->data[0..old_capacity]));
+            at(statement(8).entry, 0) <= at(statement(8).entry, owner->len);
+            owner->len <= old_capacity;
+            at(statement(8).entry, 1) <= at(statement(8).entry, owner->cap);
+            at(statement(8).entry, owner->cap) <= at(statement(8).entry, 536870911);
+            at(statement(8).entry, owner->cap) < at(statement(8).entry, 2147483647);
+            new_capacity <= 536870911;
+            1 <= new_capacity;
+            owner->len <= new_capacity;
+            loadable(owner->data[0..owner->cap]);
+            new_data == 0;
+        }
+        step() using {
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+            at(statement(8).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+            at(statement(8).entry, loadable(old(owner[0..1])));
+            at(statement(8).entry, loadable(old((owner + 1)[0..1])));
+            at(statement(8).entry, loadable(old((owner + 2)[0..2])));
+            at(statement(8).entry, loadable(old(owner->data[0..old_capacity])));
+            at(statement(8).entry, loadable(old(owner->data[0..owner->len])));
+            at(statement(9).entry, owner->cap) <= at(statement(9).entry, 536870910);
+            at(statement(9).entry, 0) <= at(statement(9).entry, owner->len);
+            at(statement(9).entry, owner->len) <= at(statement(9).entry, owner->cap);
+            at(statement(9).entry, 1) <= at(statement(9).entry, owner->cap);
+            at(statement(9).entry, owner->cap) <= at(statement(9).entry, 536870911);
+            at(statement(9).entry, owner->cap) < at(statement(9).entry, 2147483647);
+            at(statement(9).entry, (owner->cap + 1)) <= at(statement(9).entry, 536870911);
+            at(statement(8).entry, owner->cap) <= at(statement(8).entry, 536870910);
+            at(statement(8).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+            at(statement(8).entry, 0) <= at(statement(8).entry, owner->len);
+            owner->len <= old_capacity;
+            at(statement(8).entry, 1) <= at(statement(8).entry, owner->cap);
+            at(statement(8).entry, owner->cap) <= at(statement(8).entry, 536870911);
+            at(statement(8).entry, owner->cap) < at(statement(8).entry, 2147483647);
+            new_capacity <= 536870911;
+            1 <= new_capacity;
+            owner->len <= new_capacity;
+        }
+        have forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) } by {
+            intro();
+            intro();
+            extract(0 <= k);
+            extract(k < old(owner->len));
+            transport(old(owner->data[k]) == old(owner->data[k]), owner->data[k] == old(owner->data[k])) using {
+                0 <= k;
+                k < old(owner->len);
+            }
+            assumption();
+        }
         fold(allocated_vector(owner));
         frame();
         have result == 0 by simp;
@@ -216,10 +281,165 @@ int32 vector_grow(struct vector* owner) {
         have copied == owner->len by {
             assumption();
         }
-        step();
-        step();
+        step() using {
+            at(statement(12).entry, loadable(old_data[0..old_capacity]));
+            at(statement(9).entry, new_data) != at(statement(9).entry, 0);
+            at(statement(13).entry, copied) == at(statement(13).entry, owner->len);
+            at(statement(13).entry, 0) <= at(statement(13).entry, owner->len);
+            owner->len <= (owner->cap + 1);
+            at(statement(13).entry, owner->len) <= at(statement(13).entry, owner->cap);
+            1 <= (owner->cap + 1);
+            at(statement(13).entry, 1) <= at(statement(13).entry, owner->cap);
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+            at(statement(8).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+            at(statement(8).entry, loadable(old(owner[0..1])));
+            at(statement(8).entry, loadable(old((owner + 1)[0..1])));
+            at(statement(8).entry, loadable(old((owner + 2)[0..2])));
+            at(statement(8).entry, loadable(old(owner->data[0..old_capacity])));
+            at(statement(8).entry, loadable(old(owner->data[0..owner->len])));
+            at(statement(11).entry, owner->cap) <= at(statement(11).entry, 536870910);
+            at(statement(12).entry, 0) <= at(statement(12).entry, owner->len);
+            at(statement(12).entry, owner->len) <= at(statement(12).entry, old_capacity);
+            at(statement(12).entry, 1) <= at(statement(12).entry, old_capacity);
+            at(statement(11).entry, owner->cap) <= at(statement(11).entry, 536870911);
+            at(statement(11).entry, owner->cap) < at(statement(11).entry, 2147483647);
+            at(statement(11).entry, (owner->cap + 1)) <= at(statement(11).entry, 536870911);
+            at(statement(12).entry, 1) <= at(statement(12).entry, new_capacity);
+            at(statement(12).entry, owner->len) <= at(statement(12).entry, new_capacity);
+            at(statement(9).entry, loadable(old_data[0..old_capacity]));
+            at(statement(8).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+            at(statement(13).entry, owner->cap) <= at(statement(13).entry, 536870910);
+            at(statement(13).entry, owner->cap) <= at(statement(13).entry, 536870911);
+            at(statement(13).entry, owner->cap) < at(statement(13).entry, 2147483647);
+            at(statement(13).entry, (owner->cap + 1)) <= at(statement(13).entry, 536870911);
+            copied == owner->len;
+        }
+        step() using {
+            at(statement(12).entry, loadable(old_data[0..old_capacity]));
+            at(statement(9).entry, new_data) != at(statement(9).entry, 0);
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+            at(statement(8).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+            at(statement(8).entry, loadable(old(owner[0..1])));
+            at(statement(8).entry, loadable(old((owner + 1)[0..1])));
+            at(statement(8).entry, loadable(old((owner + 2)[0..2])));
+            at(statement(8).entry, loadable(old(owner->data[0..old_capacity])));
+            at(statement(8).entry, loadable(old(owner->data[0..owner->len])));
+            at(statement(9).entry, loadable(old_data[0..old_capacity]));
+            at(statement(14).entry, copied) == at(statement(14).entry, owner->len);
+            at(statement(14).entry, 0) <= at(statement(14).entry, owner->len);
+            at(statement(14).entry, owner->len) <= at(statement(14).entry, (owner->cap + 1));
+            at(statement(14).entry, owner->len) <= at(statement(14).entry, owner->cap);
+            at(statement(14).entry, 1) <= at(statement(14).entry, (owner->cap + 1));
+            at(statement(14).entry, 1) <= at(statement(14).entry, owner->cap);
+            at(statement(14).entry, owner->cap) <= at(statement(14).entry, 536870910);
+            at(statement(14).entry, owner->cap) <= at(statement(14).entry, 536870911);
+            at(statement(14).entry, owner->cap) < at(statement(14).entry, 2147483647);
+            at(statement(14).entry, (owner->cap + 1)) <= at(statement(14).entry, 536870911);
+            at(statement(13).entry, owner->cap) <= at(statement(13).entry, 536870910);
+            at(statement(13).entry, 0) <= at(statement(13).entry, owner->len);
+            at(statement(13).entry, owner->len) <= at(statement(13).entry, old_capacity);
+            at(statement(13).entry, 1) <= at(statement(13).entry, old_capacity);
+            at(statement(13).entry, owner->cap) <= at(statement(13).entry, 536870911);
+            at(statement(13).entry, owner->cap) < at(statement(13).entry, 2147483647);
+            at(statement(13).entry, (owner->cap + 1)) <= at(statement(13).entry, 536870911);
+            at(statement(13).entry, 1) <= at(statement(13).entry, new_capacity);
+            at(statement(13).entry, owner->len) <= at(statement(13).entry, new_capacity);
+            at(statement(8).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+            at(statement(13).entry, copied) == at(statement(13).entry, owner->len);
+        }
         step() using {}
-        step();
+        step() using {
+            at(statement(9).entry, new_data) != at(statement(9).entry, 0);
+            at(statement(8).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+            at(statement(12).entry, loadable(old_data[0..old_capacity]));
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+            at(statement(8).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+            at(statement(8).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+            at(statement(8).entry, loadable(old(owner[0..1])));
+            at(statement(8).entry, loadable(old((owner + 1)[0..1])));
+            at(statement(8).entry, loadable(old((owner + 2)[0..2])));
+            at(statement(8).entry, loadable(old(owner->data[0..old_capacity])));
+            at(statement(8).entry, loadable(old(owner->data[0..owner->len])));
+            at(statement(9).entry, loadable(old_data[0..old_capacity]));
+            at(statement(14).entry, 1) <= at(statement(14).entry, new_capacity);
+            at(statement(14).entry, 1) <= at(statement(14).entry, old_capacity);
+            at(statement(14).entry, owner->cap) <= at(statement(14).entry, 536870910);
+            at(statement(14).entry, owner->cap) <= at(statement(14).entry, 536870911);
+            at(statement(14).entry, owner->cap) < at(statement(14).entry, 2147483647);
+            at(statement(14).entry, (owner->cap + 1)) <= at(statement(14).entry, 536870911);
+            at(statement(16).entry, copied) == at(statement(16).entry, owner->len);
+            at(statement(16).entry, 0) <= at(statement(16).entry, owner->len);
+            at(statement(16).entry, owner->len) <= at(statement(16).entry, new_capacity);
+            at(statement(16).entry, owner->len) <= at(statement(16).entry, old_capacity);
+            at(statement(14).entry, owner->len) <= at(statement(14).entry, (owner->cap + 1));
+            at(statement(14).entry, owner->len) <= at(statement(14).entry, owner->cap);
+            at(statement(14).entry, 1) <= at(statement(14).entry, (owner->cap + 1));
+            at(statement(14).entry, 1) <= at(statement(14).entry, owner->cap);
+            at(statement(13).entry, owner->len) <= at(statement(13).entry, (owner->cap + 1));
+            at(statement(13).entry, owner->len) <= at(statement(13).entry, owner->cap);
+            at(statement(13).entry, 1) <= at(statement(13).entry, (owner->cap + 1));
+            at(statement(13).entry, 1) <= at(statement(13).entry, owner->cap);
+            at(statement(14).entry, 0) <= at(statement(14).entry, owner->len);
+            at(statement(14).entry, owner->len) <= at(statement(14).entry, old_capacity);
+            at(statement(14).entry, owner->len) <= at(statement(14).entry, new_capacity);
+            at(statement(9).entry, owner->cap) <= at(statement(9).entry, 536870910);
+            at(statement(9).entry, owner->len) <= at(statement(9).entry, owner->cap);
+            at(statement(9).entry, 1) <= at(statement(9).entry, owner->cap);
+            at(statement(9).entry, owner->cap) <= at(statement(9).entry, 536870911);
+            at(statement(9).entry, owner->cap) < at(statement(9).entry, 2147483647);
+            at(statement(9).entry, (owner->cap + 1)) <= at(statement(9).entry, 536870911);
+            at(statement(8).entry, owner->cap) <= at(statement(8).entry, 536870910);
+            at(statement(8).entry, owner->len) <= at(statement(8).entry, owner->cap);
+            at(statement(8).entry, 1) <= at(statement(8).entry, owner->cap);
+            at(statement(8).entry, owner->cap) <= at(statement(8).entry, 536870911);
+            at(statement(8).entry, owner->cap) < at(statement(8).entry, 2147483647);
+            at(statement(8).entry, (owner->cap + 1)) <= at(statement(8).entry, 536870911);
+            at(statement(7).entry, owner->cap) <= at(statement(7).entry, 536870910);
+            at(statement(7).entry, owner->len) <= at(statement(7).entry, owner->cap);
+            at(statement(7).entry, 1) <= at(statement(7).entry, owner->cap);
+            at(statement(7).entry, owner->cap) <= at(statement(7).entry, 536870911);
+            at(statement(7).entry, owner->cap) < at(statement(7).entry, 2147483647);
+            at(statement(7).entry, (owner->cap + 1)) <= at(statement(7).entry, 536870911);
+            at(statement(6).entry, owner->cap) <= at(statement(6).entry, 536870910);
+            at(statement(6).entry, owner->len) <= at(statement(6).entry, owner->cap);
+            at(statement(6).entry, 1) <= at(statement(6).entry, owner->cap);
+            at(statement(6).entry, owner->cap) <= at(statement(6).entry, 536870911);
+            at(statement(6).entry, owner->cap) < at(statement(6).entry, 2147483647);
+            at(statement(6).entry, (owner->cap + 1)) <= at(statement(6).entry, 536870911);
+            at(statement(5).entry, owner->cap) <= at(statement(5).entry, 536870910);
+            at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->cap);
+            at(statement(5).entry, 1) <= at(statement(5).entry, owner->cap);
+            at(statement(5).entry, owner->cap) <= at(statement(5).entry, 536870911);
+            at(statement(5).entry, owner->cap) < at(statement(5).entry, 2147483647);
+            at(statement(5).entry, (owner->cap + 1)) <= at(statement(5).entry, 536870911);
+            at(statement(4).entry, owner->cap) <= at(statement(4).entry, 536870910);
+            at(statement(4).entry, owner->len) <= at(statement(4).entry, owner->cap);
+            at(statement(4).entry, 1) <= at(statement(4).entry, owner->cap);
+            at(statement(4).entry, owner->cap) <= at(statement(4).entry, 536870911);
+            at(statement(4).entry, owner->cap) < at(statement(4).entry, 2147483647);
+            at(statement(4).entry, (owner->cap + 1)) <= at(statement(4).entry, 536870911);
+            at(statement(3).entry, owner->cap) <= at(statement(3).entry, 536870910);
+            at(statement(3).entry, owner->len) <= at(statement(3).entry, owner->cap);
+            at(statement(3).entry, 1) <= at(statement(3).entry, owner->cap);
+            at(statement(3).entry, owner->cap) <= at(statement(3).entry, 536870911);
+            at(statement(3).entry, owner->cap) < at(statement(3).entry, 2147483647);
+            at(statement(3).entry, (owner->cap + 1)) <= at(statement(3).entry, 536870911);
+            at(statement(2).entry, owner->cap) <= at(statement(2).entry, 536870910);
+            at(statement(2).entry, owner->len) <= at(statement(2).entry, owner->cap);
+            at(statement(2).entry, 1) <= at(statement(2).entry, owner->cap);
+            at(statement(2).entry, owner->cap) <= at(statement(2).entry, 536870911);
+            at(statement(2).entry, owner->cap) < at(statement(2).entry, 2147483647);
+            at(statement(2).entry, (owner->cap + 1)) <= at(statement(2).entry, 536870911);
+            at(statement(1).entry, owner->cap) <= at(statement(1).entry, 536870910);
+            at(statement(1).entry, owner->len) <= at(statement(1).entry, owner->cap);
+            at(statement(1).entry, 1) <= at(statement(1).entry, owner->cap);
+            at(statement(1).entry, owner->cap) <= at(statement(1).entry, 536870911);
+            at(statement(1).entry, owner->cap) < at(statement(1).entry, 2147483647);
+            at(statement(1).entry, (owner->cap + 1)) <= at(statement(1).entry, 536870911);
+            at(statement(14).entry, copied) == at(statement(14).entry, owner->len);
+        }
         have 0 <= owner->len by {
             assumption();
         }
@@ -375,7 +595,44 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
         step();
         step();
         if c(grown) == 0 {
-            step();
+            step() using {
+                at(statement(0).entry, separate(memory(owner->len), memory(owner->cap)));
+                at(statement(0).entry, separate(memory(owner->len), memory(owner->data)));
+                at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+                at(statement(0).entry, separate(memory(owner->cap), memory(owner->data)));
+                at(statement(0).entry, separate(memory(owner->len), allocation(owner->data, (owner->cap * 4))));
+                at(statement(0).entry, separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4))));
+                at(statement(0).entry, separate(memory(owner->data), allocation(owner->data, (owner->cap * 4))));
+                at(statement(0).entry, separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap])));
+                at(statement(0).entry, loadable(owner->len));
+                at(statement(0).entry, loadable(owner->cap));
+                at(statement(0).entry, loadable(owner->data));
+                at(statement(0).entry, loadable(owner->data[0..owner->cap]));
+                at(statement(0).entry, loadable(owner->data[0..owner->len]));
+                at(statement(3).entry, owner->cap) <= at(statement(3).entry, 536870910);
+                grown == 0 or grown == 1;
+                owner->len == owner->len;
+                at(statement(4).entry, 0) <= at(statement(4).entry, owner->len);
+                at(statement(4).entry, owner->len) <= at(statement(4).entry, owner->cap);
+                at(statement(4).entry, owner->len) == at(statement(4).entry, owner->cap);
+                at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
+                at(statement(3).entry, owner->len) <= at(statement(3).entry, owner->cap);
+                at(statement(2).entry, 1) <= at(statement(2).entry, owner->cap);
+                at(statement(2).entry, owner->cap) <= at(statement(2).entry, 536870911);
+                at(statement(3).entry, owner->len) == at(statement(3).entry, owner->cap);
+                at(statement(2).entry, separate(memory(owner->len), memory(owner->data[0..owner->cap])));
+                at(statement(2).entry, separate(memory(owner->cap), memory(owner->data[0..owner->cap])));
+                at(statement(2).entry, separate(memory(owner->data), memory(owner->data[0..owner->cap])));
+                at(statement(2).entry, contains(allocated_vector(owner), memory(owner->len)));
+                at(statement(2).entry, contains(allocated_vector(owner), memory(owner->cap)));
+                at(statement(2).entry, contains(allocated_vector(owner), memory(owner->data)));
+                at(statement(2).entry, contains(allocated_vector(owner), allocation(owner->data, (owner->cap * 4))));
+                at(statement(2).entry, contains(allocated_vector(owner), memory(owner->data[0..owner->cap])));
+                at(statement(4).entry, owner->cap) <= at(statement(4).entry, 536870910);
+                at(statement(4).entry, 1) <= at(statement(4).entry, owner->cap);
+                at(statement(4).entry, owner->cap) <= at(statement(4).entry, 536870911);
+                grown == 0;
+            }
             execute();
             have not (old(owner->len) < old(owner->cap)) by {
                 simp() using {
@@ -386,10 +643,16 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             have result == 0 by simp;
             have result == 0 or result == 1 by simp;
             have result == 0 implies owner->len == old(owner->len) by simp;
-            have result == 0 implies owner->cap == old(owner->cap) by simp;
-            have result == 0 implies owner->data == old(owner->data) by simp;
+            have result == 0 implies owner->cap == old(owner->cap) by {
+                normalize();
+            }
+            have result == 0 implies owner->data == old(owner->data) by {
+                normalize();
+            }
             have result == 1 implies owner->len == old(owner->len) + 1 by simp;
-            have result == 1 implies owner->data[old(owner->len)] == value by simp;
+            have result == 1 implies owner->data[old(owner->len)] == value by {
+                normalize();
+            }
             have forall (k: int32) {
                 0 <= k and k < old(owner->len) implies
                     owner->data[k] == old(owner->data[k])
@@ -438,12 +701,53 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             assumption();
             assumption();
         } else {
-            step();
+            step() using {
+                at(statement(0).entry, separate(memory(owner->len), memory(owner->cap)));
+                at(statement(0).entry, separate(memory(owner->len), memory(owner->data)));
+                at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+                at(statement(0).entry, separate(memory(owner->cap), memory(owner->data)));
+                at(statement(0).entry, separate(memory(owner->len), allocation(owner->data, (owner->cap * 4))));
+                at(statement(0).entry, separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4))));
+                at(statement(0).entry, separate(memory(owner->data), allocation(owner->data, (owner->cap * 4))));
+                at(statement(0).entry, separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap])));
+                at(statement(0).entry, loadable(owner->len));
+                at(statement(0).entry, loadable(owner->cap));
+                at(statement(0).entry, loadable(owner->data));
+                at(statement(0).entry, loadable(owner->data[0..owner->cap]));
+                at(statement(0).entry, loadable(owner->data[0..owner->len]));
+                at(statement(3).entry, owner->cap) <= at(statement(3).entry, 536870910);
+                grown == 0 or grown == 1;
+                owner->len == owner->len;
+                at(statement(4).entry, 0) <= at(statement(4).entry, owner->len);
+                at(statement(4).entry, owner->len) <= at(statement(4).entry, owner->cap);
+                at(statement(4).entry, owner->len) == at(statement(4).entry, owner->cap);
+                at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
+                at(statement(3).entry, owner->len) <= at(statement(3).entry, owner->cap);
+                at(statement(2).entry, 1) <= at(statement(2).entry, owner->cap);
+                at(statement(2).entry, owner->cap) <= at(statement(2).entry, 536870911);
+                at(statement(3).entry, owner->len) == at(statement(3).entry, owner->cap);
+                at(statement(2).entry, separate(memory(owner->len), memory(owner->data[0..owner->cap])));
+                at(statement(2).entry, separate(memory(owner->cap), memory(owner->data[0..owner->cap])));
+                at(statement(2).entry, separate(memory(owner->data), memory(owner->data[0..owner->cap])));
+                at(statement(2).entry, contains(allocated_vector(owner), memory(owner->len)));
+                at(statement(2).entry, contains(allocated_vector(owner), memory(owner->cap)));
+                at(statement(2).entry, contains(allocated_vector(owner), memory(owner->data)));
+                at(statement(2).entry, contains(allocated_vector(owner), allocation(owner->data, (owner->cap * 4))));
+                at(statement(2).entry, contains(allocated_vector(owner), memory(owner->data[0..owner->cap])));
+                at(statement(4).entry, owner->cap) <= at(statement(4).entry, 536870910);
+                at(statement(4).entry, 1) <= at(statement(4).entry, owner->cap);
+                at(statement(4).entry, owner->cap) <= at(statement(4).entry, 536870911);
+                c(grown) != 0;
+            }
             step();
             unfold(allocated_vector(owner));
             have c(grown) == 1 by simp;
             have owner->len == old(owner->len) by simp;
-            have owner->cap == old(owner->cap) + 1 by simp;
+            have owner->cap == (old(owner->cap) + 1) by {
+                rewrite(at(statement(4).entry, 1) == at(statement(4).entry, grown));
+                rewrite(at(statement(4).entry, grown) == at(statement(4).entry, 0));
+                normalize();
+            }
             have at(function.entry, owner->cap) <= 536870911 by {
                 assumption();
             }

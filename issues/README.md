@@ -106,14 +106,16 @@ The governing invariant is [Verification Efficiency](../docs/advanced/verificati
 Work these independent issues in dependency-aware order:
 
 1. [Add deterministic scaling gates for simple verification](verification-scaling-benchmark-gate.md).
-2. [Share project environments and slice function dependencies](persistent-project-environments-and-dependency-slicing.md).
-3. [Make proof states and program-point snapshots persistent](persistent-proof-state-and-program-point-snapshots.md).
-4. [Index proof facts and surface spellings](indexed-proof-fact-and-surface-spelling-stores.md).
-5. [Replace pairwise resource-context work with indexed algebra](indexed-resource-algebra-avoids-pairwise-context-work.md).
-6. [Remove context-wide proof minimization and contradiction scans](proof-derivation-avoids-context-wide-scans.md).
-7. [Give verifier caches stable shallow identities](stable-content-identities-for-verifier-caches.md).
+2. [Index proof facts and surface spellings](indexed-proof-fact-and-surface-spelling-stores.md).
+3. [Replace pairwise resource-context work with indexed algebra](indexed-resource-algebra-avoids-pairwise-context-work.md).
+4. [Remove context-wide proof minimization and contradiction scans](proof-derivation-avoids-context-wide-scans.md).
+5. [Give verifier caches stable shallow identities](stable-content-identities-for-verifier-caches.md).
 
-The first issue establishes the measurement gate. Items 2--7 can then land as
+The first issue establishes the measurement gate. Items 2--5 can then land as
 separate green chunks with an asymptotic regression each. Checked execution
 reuse across proof and contract certification is complete and documented in
-the governing efficiency guide.
+the governing efficiency guide. Use
+[owned-string](owned-string-exceeds-interactive-verification-budget.md) and
+[owned-vector](owned-vector-exceeds-interactive-verification-budget.md) as the
+full-project integration workloads; their wall times corroborate the scaling
+gates but do not replace them.
