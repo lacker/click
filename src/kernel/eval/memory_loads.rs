@@ -215,7 +215,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }
 
     let mut memory = memory.clone();
-    memory.cells.retain(|stored_pointer, _| {
+    std::sync::Arc::make_mut(&mut memory.cells).retain(|stored_pointer, _| {
         !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
     });
 

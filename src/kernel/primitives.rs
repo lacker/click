@@ -533,11 +533,12 @@ pub struct CFunctionSpecification {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CExecutionEnvironment {
-    pub(super) functions: BTreeMap<String, CFunction>,
-    pub(super) verified_function_rules: BTreeMap<String, CVerifiedFunctionRule>,
+    pub(super) functions: std::sync::Arc<BTreeMap<String, CFunction>>,
+    pub(super) verified_function_rules:
+        std::sync::Arc<BTreeMap<String, CVerifiedFunctionRule>>,
     pub(super) verified_function_termination_rules:
-        BTreeMap<String, CVerifiedFunctionTerminationRule>,
-    pub(super) verified_loop_rules: Vec<CVerifiedLoopRule>,
+        std::sync::Arc<BTreeMap<String, CVerifiedFunctionTerminationRule>>,
+    pub(super) verified_loop_rules: std::sync::Arc<Vec<CVerifiedLoopRule>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -771,7 +772,7 @@ pub enum CFunctionOutcome {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CLocalEnvironment {
-    pub(super) bindings: BTreeMap<String, CLocalBinding>,
+    pub(super) bindings: std::sync::Arc<BTreeMap<String, CLocalBinding>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -783,9 +784,9 @@ pub(super) enum CLocalBinding {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CMemory {
-    pub(super) blocks: BTreeMap<PointerBlock, CBlock>,
-    pub(super) cells: BTreeMap<Pointer, CValue>,
-    pub(super) heap: Box<CHeapMemory>,
+    pub(super) blocks: std::sync::Arc<BTreeMap<PointerBlock, CBlock>>,
+    pub(super) cells: std::sync::Arc<BTreeMap<Pointer, CValue>>,
+    pub(super) heap: std::sync::Arc<CHeapMemory>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1164,7 +1165,7 @@ pub struct CState {
     pub(super) locals: CLocalEnvironment,
     pub(super) memory: CMemory,
     pub(super) resources: ResourceContext,
-    pub(super) counted_populations: Vec<CCountedPopulation>,
+    pub(super) counted_populations: std::sync::Arc<Vec<CCountedPopulation>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1179,7 +1180,7 @@ pub struct CCountedPopulation {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ResourceContext {
-    pub(super) facts: Vec<CResourceFact>,
+    pub(super) facts: std::sync::Arc<Vec<CResourceFact>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

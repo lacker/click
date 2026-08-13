@@ -339,7 +339,7 @@ pub fn abstract_c_state_for_join(
     let mut abstract_objects = Vec::new();
     let mut preserved_blocks = BTreeSet::new();
 
-    for (name, binding) in &state.locals.bindings {
+    for (name, binding) in state.locals.bindings.iter() {
         let CLocalBinding::Object { value, c_type } = binding else {
             continue;
         };

@@ -1115,7 +1115,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
     from: Variable,
     to: &Bitvector32Term,
 ) -> CState {
-    let bindings = state
+    let bindings = std::sync::Arc::new(state
         .locals
         .bindings
         .iter()
@@ -1138,12 +1138,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
             };
             (name.clone(), binding)
         })
-        .collect();
+        .collect());
     CState {
         locals: CLocalEnvironment { bindings },
         memory: substitute_bitvector_variable_in_memory(&state.memory, from, to),
         resources: substitute_bitvector_variable_in_resource_context(&state.resources, from, to),
-        counted_populations: state
+        counted_populations: std::sync::Arc::new(state
             .counted_populations
             .iter()
             .map(|population| CCountedPopulation {
@@ -1163,7 +1163,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
                 },
                 family_observation_marker: population.family_observation_marker,
             })
-            .collect(),
+            .collect()),
     }
 }
 
@@ -1173,11 +1173,11 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_context(
     to: &Bitvector32Term,
 ) -> ResourceContext {
     ResourceContext {
-        facts: resources
+        facts: std::sync::Arc::new(resources
             .facts()
             .iter()
             .map(|resource| substitute_bitvector_variable_in_resource(resource, from, to))
-            .collect(),
+            .collect()),
     }
 }
 
@@ -1603,7 +1603,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
     from: Variable,
     to: &Bitvector32Term,
 ) -> CMemory {
-    let cells = memory
+    let cells = std::sync::Arc::new(memory
         .cells
         .iter()
         .map(|(pointer, value)| {
@@ -1612,9 +1612,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
                 substitute_bitvector_variable_in_c_value(value, from, to),
             )
         })
-        .collect();
+        .collect());
     CMemory {
-        blocks: memory
+        blocks: std::sync::Arc::new(memory
             .blocks
             .iter()
             .map(|(block, contents)| {
@@ -1627,9 +1627,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
                     )),
                 )
             })
-            .collect(),
+            .collect()),
         cells,
-        heap: Box::new(CHeapMemory {
+        heap: std::sync::Arc::new(CHeapMemory {
             live_allocations: memory
                 .heap
                 .live_allocations

@@ -44,12 +44,12 @@ impl CLocalEnvironment {
     }
 
     pub fn set_typed(&mut self, name: impl Into<String>, value: CValue, c_type: CType) {
-        self.bindings
+        std::sync::Arc::make_mut(&mut self.bindings)
             .insert(name.into(), CLocalBinding::Object { value, c_type });
     }
 
     pub(in crate::kernel) fn set_uninitialized(&mut self, name: impl Into<String>, c_type: CType) {
-        self.bindings
+        std::sync::Arc::make_mut(&mut self.bindings)
             .insert(name.into(), CLocalBinding::UninitializedObject { c_type });
     }
 
@@ -67,7 +67,7 @@ impl CLocalEnvironment {
         element_type: CType,
         length: u32,
     ) {
-        self.bindings.insert(
+        std::sync::Arc::make_mut(&mut self.bindings).insert(
             name.into(),
             CLocalBinding::ArrayObject {
                 element_type,
@@ -200,11 +200,11 @@ impl CMemory {
         // constructor, so the refusal lives here.
         if memory_dag_disabled() || block.starts_with("havoc:") || block.starts_with("call-havoc:")
         {
-            self.blocks.insert(block, CBlock::new(size));
+            std::sync::Arc::make_mut(&mut self.blocks).insert(block, CBlock::new(size));
             return self;
         }
         let base = intern_c_memory_ref(&self);
-        self.blocks.insert(block.clone(), CBlock::new(size));
+        std::sync::Arc::make_mut(&mut self.blocks).insert(block.clone(), CBlock::new(size));
         record_c_memory_derivation(&self, CMemoryDerivation::BlockDeclared { base, block });
         self
     }
@@ -216,7 +216,9 @@ impl CMemory {
         if self.heap.retired_allocations.contains_key(pointer) {
             return Err(CInvalidFree::DoubleFree);
         }
-        let Some(bytes) = self.heap.live_allocations.remove(pointer) else {
+        let Some(bytes) = std::sync::Arc::make_mut(&mut self.heap)
+            .live_allocations
+            .remove(pointer) else {
             return Err(
                 if self
                     .heap
@@ -232,13 +234,13 @@ impl CMemory {
         };
         let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
         if pointer.block != PointerBlock::ExternalArgument {
-            self.blocks.remove(&pointer.block);
+            std::sync::Arc::make_mut(&mut self.blocks).remove(&pointer.block);
         }
-        self.heap
+        std::sync::Arc::make_mut(&mut self.heap)
             .retired_allocations
             .insert(pointer.clone(), bytes.clone());
-        self.heap.uninitialized_allocations.remove(pointer);
-        self.cells
+        std::sync::Arc::make_mut(&mut self.heap).uninitialized_allocations.remove(pointer);
+        std::sync::Arc::make_mut(&mut self.cells)
             .retain(|cell, _| !heap_allocation_may_contain_pointer(pointer, cell));
         if let Some(base) = base {
             record_c_memory_derivation(
@@ -298,7 +300,7 @@ impl CMemory {
             Some(existing) if existing != &bytes => None,
             Some(_) => Some(self),
             None => {
-                self.heap.live_allocations.insert(base, bytes);
+                std::sync::Arc::make_mut(&mut self.heap).live_allocations.insert(base, bytes);
                 Some(self)
             }
         }
@@ -310,7 +312,7 @@ impl CMemory {
         bytes: Bitvector32Term,
     ) -> Self {
         let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
-        self.heap
+        std::sync::Arc::make_mut(&mut self.heap)
             .pending_allocations
             .insert(base.clone(), bytes.clone());
         if let Some(prior) = prior {
@@ -350,7 +352,9 @@ impl CMemory {
         succeeds: bool,
     ) -> Option<(Self, Bitvector32Term, Pointer)> {
         let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
-        let bytes = self.heap.pending_allocations.remove(base)?;
+        let bytes = std::sync::Arc::make_mut(&mut self.heap)
+            .pending_allocations
+            .remove(base)?;
         let resolved_base = if succeeds {
             let PointerBlock::Symbolic(Variable(identity)) = base.block else {
                 return None;
@@ -363,14 +367,14 @@ impl CMemory {
             Pointer::null()
         };
         if succeeds {
-            self.blocks.insert(
+            std::sync::Arc::make_mut(&mut self.blocks).insert(
                 resolved_base.block.clone(),
                 CBlock::with_symbolic_size(bytes.clone()),
             );
-            self.heap
+            std::sync::Arc::make_mut(&mut self.heap)
                 .live_allocations
                 .insert(resolved_base.clone(), bytes.clone());
-            self.heap
+            std::sync::Arc::make_mut(&mut self.heap)
                 .uninitialized_allocations
                 .insert(resolved_base.clone());
             if let Some(prior) = prior {
@@ -400,9 +404,9 @@ impl CMemory {
         // marker block additionally defeats symbolic cross-loop load
         // equality for the remaining symbolic memory.
         let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
-        self.cells
+        std::sync::Arc::make_mut(&mut self.cells)
             .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
-        self.blocks
+        std::sync::Arc::make_mut(&mut self.blocks)
             .insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
         if let Some(base) = base {
             record_c_memory_derivation(&self, CMemoryDerivation::LoopHavoc { base, variable });
@@ -417,11 +421,11 @@ impl CMemory {
         assumptions: &Assumptions,
     ) -> Self {
         let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
-        self.cells.retain(|pointer, _| {
+        std::sync::Arc::make_mut(&mut self.cells).retain(|pointer, _| {
             pointer.block.starts_with("local:")
                 || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
         });
-        self.blocks
+        std::sync::Arc::make_mut(&mut self.blocks)
             .insert(format!("call-havoc:{}", variable.0).into(), CBlock::new(0));
         if let Some(base) = base {
             record_c_memory_derivation(
@@ -438,11 +442,11 @@ impl CMemory {
 
     pub fn store(mut self, pointer: Pointer, value: CValue) -> Self {
         if memory_dag_disabled() {
-            self.cells.insert(pointer, value);
+            std::sync::Arc::make_mut(&mut self.cells).insert(pointer, value);
             return self;
         }
         let base = intern_c_memory_ref(&self);
-        self.cells.insert(pointer.clone(), value.clone());
+        std::sync::Arc::make_mut(&mut self.cells).insert(pointer.clone(), value.clone());
         record_c_memory_derivation(
             &self,
             CMemoryDerivation::Store {
@@ -476,7 +480,7 @@ impl CMemory {
 
     pub(in crate::kernel) fn without_cell(&self, pointer: &Pointer) -> Self {
         let mut memory = self.clone();
-        memory.cells.remove(pointer);
+        std::sync::Arc::make_mut(&mut memory.cells).remove(pointer);
         memory
     }
 
@@ -491,7 +495,7 @@ impl CMemory {
         };
         let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(self));
         let mut memory = self.clone();
-        memory.cells.retain(|cell_pointer, _| {
+        std::sync::Arc::make_mut(&mut memory.cells).retain(|cell_pointer, _| {
             let normalized_cell_pointer = Pointer {
                 block: cell_pointer.block.clone(),
                 offset: normalize_exact_memory_loads_in_pointer_offset(
@@ -596,6 +600,15 @@ impl CState {
         Self::default()
     }
 
+    #[cfg(test)]
+    pub(crate) fn shares_nonlocal_storage_with(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.memory.blocks, &other.memory.blocks)
+            && std::sync::Arc::ptr_eq(&self.memory.cells, &other.memory.cells)
+            && std::sync::Arc::ptr_eq(&self.memory.heap, &other.memory.heap)
+            && std::sync::Arc::ptr_eq(&self.resources.facts, &other.resources.facts)
+            && std::sync::Arc::ptr_eq(&self.counted_populations, &other.counted_populations)
+    }
+
     pub fn with_local(mut self, name: impl Into<String>, value: CValue) -> Self {
         self.locals.set(name, value);
         self
@@ -639,14 +652,14 @@ impl CState {
         count: Bitvector32Term,
     ) -> Self {
         let name = name.into();
-        if let Some(population) = self.counted_populations.iter_mut().find(|population| {
+        if let Some(population) = std::sync::Arc::make_mut(&mut self.counted_populations).iter_mut().find(|population| {
             !population.family_observation_marker
                 && population.name == name
                 && population.arguments == arguments
         }) {
             population.count = count;
         } else {
-            self.counted_populations.push(CCountedPopulation {
+            std::sync::Arc::make_mut(&mut self.counted_populations).push(CCountedPopulation {
                 name,
                 arguments,
                 count,
@@ -728,7 +741,7 @@ impl CState {
     }
 
     pub fn without_counted_population(mut self, name: &str, arguments: &[CValue]) -> Self {
-        self.counted_populations.retain(|population| {
+        std::sync::Arc::make_mut(&mut self.counted_populations).retain(|population| {
             population.family_observation_marker
                 || population.name != name
                 || population.arguments != arguments
@@ -745,7 +758,7 @@ impl CState {
     pub fn with_observed_population_family(mut self, name: impl Into<String>) -> Self {
         let name = name.into();
         if !self.observes_population_family(&name) {
-            self.counted_populations.push(CCountedPopulation {
+            std::sync::Arc::make_mut(&mut self.counted_populations).push(CCountedPopulation {
                 name,
                 arguments: Vec::new(),
                 count: Bitvector32Term::Constant(0),

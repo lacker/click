@@ -611,7 +611,7 @@ pub(in crate::kernel) fn collect_c_state_bitvector_variables(
     }
     collect_memory_bitvector_variables(&state.memory, variables);
     collect_resource_context_bitvector_variables(&state.resources, variables);
-    for population in &state.counted_populations {
+    for population in state.counted_populations.iter() {
         for argument in &population.arguments {
             collect_c_value_bitvector_variables(argument, variables);
         }
@@ -738,7 +738,7 @@ pub(in crate::kernel) fn collect_execution_environment_variables(
     for rule in environment.verified_function_rules.values() {
         collect_c_function_bitvector_variables(&rule.function, variables);
     }
-    for rule in &environment.verified_loop_rules {
+    for rule in environment.verified_loop_rules.iter() {
         collect_c_state_bitvector_variables(&rule.symbolic_entry_state, variables);
         collect_c_statement_bitvector_variables(&rule.loop_statement, variables);
         collect_assumption_variables(&rule.required_assumptions, variables);
@@ -907,7 +907,7 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
             variables.insert(*variable);
         }
     }
-    for (pointer, value) in &memory.cells {
+    for (pointer, value) in memory.cells.iter() {
         collect_pointer_bitvector_variables(pointer, variables);
         collect_c_value_bitvector_variables(value, variables);
     }

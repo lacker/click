@@ -1175,11 +1175,9 @@ pub(in crate::kernel) fn c_effect_memories_definitionally_equal(
 ) -> bool {
     let without_locals = |memory: &CMemory| {
         let mut external = memory.clone();
-        external
-            .blocks
+        std::sync::Arc::make_mut(&mut external.blocks)
             .retain(|block, _| !block.starts_with("local:"));
-        external
-            .cells
+        std::sync::Arc::make_mut(&mut external.cells)
             .retain(|pointer, _| !pointer.block.starts_with("local:"));
         external
     };
@@ -1219,25 +1217,22 @@ pub(in crate::kernel) fn c_effect_memory_advances_over_internal_heap_state(
         return false;
     }
     let mut stripped = after.clone();
-    stripped
-        .blocks
+    std::sync::Arc::make_mut(&mut stripped.blocks)
         .retain(|block, _| !fresh_blocks.contains(block));
-    stripped
-        .cells
+    std::sync::Arc::make_mut(&mut stripped.cells)
         .retain(|pointer, _| !fresh_blocks.contains(&pointer.block));
-    stripped.heap.live_allocations.retain(|pointer, _| {
+    std::sync::Arc::make_mut(&mut stripped.heap)
+        .live_allocations
+        .retain(|pointer, _| {
         !fresh_blocks.contains(&pointer.block) && !added_allocation_claims.contains(pointer)
-    });
-    stripped
-        .heap
+        });
+    std::sync::Arc::make_mut(&mut stripped.heap)
         .retired_allocations
         .retain(|pointer, _| !fresh_blocks.contains(&pointer.block));
-    stripped
-        .heap
+    std::sync::Arc::make_mut(&mut stripped.heap)
         .pending_allocations
         .retain(|pointer, _| !fresh_blocks.contains(&pointer.block));
-    stripped
-        .heap
+    std::sync::Arc::make_mut(&mut stripped.heap)
         .uninitialized_allocations
         .retain(|pointer| !fresh_blocks.contains(&pointer.block));
     c_effect_memories_definitionally_equal(before, &stripped, assumptions)

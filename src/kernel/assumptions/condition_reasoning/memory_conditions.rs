@@ -171,7 +171,7 @@ impl Assumptions {
         }
 
         let mut unresolved_alias = false;
-        for (cell_pointer, value) in &memory.cells {
+        for (cell_pointer, value) in memory.cells.iter() {
             if pointers_proven_distinct_for_memory_resolution(cell_pointer, pointer, self) {
                 continue;
             }

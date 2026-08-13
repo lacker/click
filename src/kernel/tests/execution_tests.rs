@@ -1,6 +1,13 @@
 use super::*;
 
 #[test]
+fn scalar_local_updates_share_memory_and_resource_state() {
+    let before = CState::new();
+    let after = before.clone().with_local("x", int32(1));
+    assert!(before.shares_nonlocal_storage_with(&after));
+}
+
+#[test]
 fn join_state_forgets_changed_scalars_and_memory() {
     let stable_x = int32(Bitvector32Term::Variable(Variable(7)));
     let pointer = Pointer {
@@ -783,11 +790,17 @@ fn loop_semantics_explicitly_select_verification_or_verified_rules() {
 
     let mut ignored_rule = loop_rule.clone();
     ignored_rule.paths.clear();
+    let base_environment = CExecutionEnvironment::new();
+    let cloned_environment = base_environment.clone();
+    assert!(base_environment.shares_all_storage_with(&cloned_environment));
+    let loop_environment =
+        cloned_environment.with_verified_loop_rules([ignored_rule]);
+    assert!(base_environment.shares_project_storage_with(&loop_environment));
     let verified_directly = prove_symbolic_c_statement_verification_paths_with_environment(
         state.clone(),
         statement.clone(),
         assumptions.clone(),
-        CExecutionEnvironment::new().with_verified_loop_rules([ignored_rule]),
+        loop_environment,
         CExecutionSemantics::EXECUTE_BODIES,
     );
     assert!(!verified_directly.paths().is_empty());

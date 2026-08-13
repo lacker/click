@@ -378,7 +378,8 @@ impl CExecutionEnvironment {
     }
 
     pub fn with_function(mut self, function: CFunction) -> Self {
-        self.functions.insert(function.name().to_string(), function);
+        std::sync::Arc::make_mut(&mut self.functions)
+            .insert(function.name().to_string(), function);
         self
     }
 
@@ -387,7 +388,7 @@ impl CExecutionEnvironment {
     }
 
     pub fn with_verified_function_rule(mut self, rule: CVerifiedFunctionRule) -> Self {
-        self.verified_function_rules
+        std::sync::Arc::make_mut(&mut self.verified_function_rules)
             .insert(rule.function.name().to_string(), rule);
         self
     }
@@ -397,7 +398,7 @@ impl CExecutionEnvironment {
         rules: impl IntoIterator<Item = CVerifiedFunctionTerminationRule>,
     ) -> Self {
         for rule in rules {
-            self.verified_function_termination_rules
+            std::sync::Arc::make_mut(&mut self.verified_function_termination_rules)
                 .insert(rule.function.name().to_string(), rule);
         }
         self
@@ -408,7 +409,7 @@ impl CExecutionEnvironment {
     }
 
     pub fn without_verified_function_rule(mut self, name: &str) -> Self {
-        self.verified_function_rules.remove(name);
+        std::sync::Arc::make_mut(&mut self.verified_function_rules).remove(name);
         self
     }
 
@@ -427,8 +428,27 @@ impl CExecutionEnvironment {
         mut self,
         rules: impl IntoIterator<Item = CVerifiedLoopRule>,
     ) -> Self {
-        self.verified_loop_rules.extend(rules);
+        std::sync::Arc::make_mut(&mut self.verified_loop_rules).extend(rules);
         self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_project_storage_with(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.functions, &other.functions)
+            && std::sync::Arc::ptr_eq(
+                &self.verified_function_rules,
+                &other.verified_function_rules,
+            )
+            && std::sync::Arc::ptr_eq(
+                &self.verified_function_termination_rules,
+                &other.verified_function_termination_rules,
+            )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_all_storage_with(&self, other: &Self) -> bool {
+        self.shares_project_storage_with(other)
+            && std::sync::Arc::ptr_eq(&self.verified_loop_rules, &other.verified_loop_rules)
     }
 
     pub(in crate::kernel) fn applicable_verified_loop_rule(

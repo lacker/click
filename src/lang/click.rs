@@ -411,7 +411,10 @@ pub enum ClickProposition {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SurfacePropositionMap {
     by_kernel: BTreeMap<Proposition, Vec<ClickProposition>>,
-    by_surface: Vec<(ClickProposition, Vec<Proposition>)>,
+    // The debug spelling is a deterministic structural bucket key. Exact
+    // equality inside the bucket preserves soundness even if two future
+    // syntax variants ever acquire the same debug rendering.
+    by_surface: BTreeMap<String, Vec<(ClickProposition, Vec<Proposition>)>>,
 }
 
 impl SurfacePropositionMap {
@@ -424,16 +427,16 @@ impl SurfacePropositionMap {
         if !spellings.contains(surface) {
             spellings.push(surface.clone());
         }
-        let lowerings = if let Some((_, lowerings)) = self
-            .by_surface
+        let surface_key = format!("{surface:?}");
+        let bucket = self.by_surface.entry(surface_key).or_default();
+        let lowerings = if let Some((_, lowerings)) = bucket
             .iter_mut()
             .find(|(recorded, _)| recorded == surface)
         {
             lowerings
         } else {
-            self.by_surface.push((surface.clone(), Vec::new()));
-            &mut self
-                .by_surface
+            bucket.push((surface.clone(), Vec::new()));
+            &mut bucket
                 .last_mut()
                 .expect("surface lowering was just inserted")
                 .1
@@ -509,8 +512,10 @@ impl SurfacePropositionMap {
         surface: &ClickProposition,
         available: &[Proposition],
     ) -> Option<&Proposition> {
+        let surface_key = format!("{surface:?}");
         let mut matches = self
             .by_surface
+            .get(&surface_key)?
             .iter()
             .find_map(|(recorded, lowerings)| (recorded == surface).then_some(lowerings))?
             .iter()
@@ -520,8 +525,10 @@ impl SurfacePropositionMap {
     }
 
     pub fn unique_kernel(&self, surface: &ClickProposition) -> Option<&Proposition> {
+        let surface_key = format!("{surface:?}");
         let mut lowerings = self
             .by_surface
+            .get(&surface_key)?
             .iter()
             .find_map(|(recorded, lowerings)| (recorded == surface).then_some(lowerings))?
             .iter();
@@ -530,8 +537,11 @@ impl SurfacePropositionMap {
     }
 
     pub fn has_distinct_lowering(&self, surface: &ClickProposition, kernel: &Proposition) -> bool {
+        let surface_key = format!("{surface:?}");
         self.by_surface
-            .iter()
+            .get(&surface_key)
+            .into_iter()
+            .flatten()
             .find_map(|(recorded, lowerings)| (recorded == surface).then_some(lowerings))
             .is_some_and(|lowerings| lowerings.iter().any(|lowered| lowered != kernel))
     }
@@ -641,7 +651,237 @@ struct ClickArrayRef {
 }
 
 type ClickArrayRefs = BTreeMap<String, ClickArrayRef>;
-type ProgramPointStates = BTreeMap<ProgramPointRef, CState>;
+#[derive(Clone, Default)]
+struct ProgramPointStates {
+    root: Option<std::sync::Arc<ProgramPointStateNode>>,
+}
+
+#[derive(Clone)]
+struct ProgramPointStateNode {
+    point: ProgramPointRef,
+    state: Option<CState>,
+    left: Option<std::sync::Arc<ProgramPointStateNode>>,
+    right: Option<std::sync::Arc<ProgramPointStateNode>>,
+    height: u8,
+}
+
+impl ProgramPointStates {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn get(&self, point: &ProgramPointRef) -> Option<&CState> {
+        let mut node = self.root.as_deref();
+        while let Some(current) = node {
+            match point.cmp(&current.point) {
+                std::cmp::Ordering::Less => node = current.left.as_deref(),
+                std::cmp::Ordering::Greater => node = current.right.as_deref(),
+                std::cmp::Ordering::Equal => return current.state.as_ref(),
+            }
+        }
+        None
+    }
+
+    fn contains_key(&self, point: &ProgramPointRef) -> bool {
+        self.get(point).is_some()
+    }
+
+    fn insert(&mut self, point: ProgramPointRef, state: CState) -> Option<CState> {
+        let prior = self.get(&point).cloned();
+        self.root = Some(program_point_insert(self.root.as_ref(), point, Some(state)));
+        prior
+    }
+
+    fn remove(&mut self, point: &ProgramPointRef) -> Option<CState> {
+        let prior = self.get(point).cloned();
+        if prior.is_some() {
+            self.root = Some(program_point_insert(
+                self.root.as_ref(),
+                point.clone(),
+                None,
+            ));
+        }
+        prior
+    }
+
+    fn iter(&self) -> std::vec::IntoIter<(&ProgramPointRef, &CState)> {
+        let mut entries = Vec::new();
+        program_point_entries(self.root.as_deref(), &mut entries);
+        entries.into_iter()
+    }
+
+    fn keys(&self) -> impl DoubleEndedIterator<Item = &ProgramPointRef> {
+        self.iter().map(|(point, _)| point)
+    }
+
+    fn retain(&mut self, mut keep: impl FnMut(&ProgramPointRef, &mut CState) -> bool) {
+        let mut retained = Self::new();
+        for (point, state) in self.iter() {
+            let mut state = state.clone();
+            if keep(point, &mut state) {
+                retained.insert(point.clone(), state);
+            }
+        }
+        *self = retained;
+    }
+}
+
+impl std::fmt::Debug for ProgramPointStates {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_map().entries(self.iter()).finish()
+    }
+}
+
+impl PartialEq for ProgramPointStates {
+    fn eq(&self, other: &Self) -> bool {
+        self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for ProgramPointStates {}
+
+fn program_point_height(node: Option<&std::sync::Arc<ProgramPointStateNode>>) -> u8 {
+    node.map_or(0, |node| node.height)
+}
+
+fn program_point_node(
+    point: ProgramPointRef,
+    state: Option<CState>,
+    left: Option<std::sync::Arc<ProgramPointStateNode>>,
+    right: Option<std::sync::Arc<ProgramPointStateNode>>,
+) -> std::sync::Arc<ProgramPointStateNode> {
+    let height = 1 + program_point_height(left.as_ref()).max(program_point_height(right.as_ref()));
+    std::sync::Arc::new(ProgramPointStateNode {
+        point,
+        state,
+        left,
+        right,
+        height,
+    })
+}
+
+fn program_point_balance(
+    point: ProgramPointRef,
+    state: Option<CState>,
+    mut left: Option<std::sync::Arc<ProgramPointStateNode>>,
+    mut right: Option<std::sync::Arc<ProgramPointStateNode>>,
+) -> std::sync::Arc<ProgramPointStateNode> {
+    let balance = i16::from(program_point_height(left.as_ref()))
+        - i16::from(program_point_height(right.as_ref()));
+    if balance > 1 {
+        let left_root = left.as_ref().expect("left-heavy AVL node has a left child");
+        if program_point_height(left_root.left.as_ref())
+            < program_point_height(left_root.right.as_ref())
+        {
+            let pivot = left_root
+                .right
+                .as_ref()
+                .expect("left-right AVL rotation has a pivot");
+            left = Some(program_point_node(
+                pivot.point.clone(),
+                pivot.state.clone(),
+                Some(program_point_node(
+                    left_root.point.clone(),
+                    left_root.state.clone(),
+                    left_root.left.clone(),
+                    pivot.left.clone(),
+                )),
+                pivot.right.clone(),
+            ));
+        }
+        let pivot = left.as_ref().expect("left AVL rotation has a pivot");
+        return program_point_node(
+            pivot.point.clone(),
+            pivot.state.clone(),
+            pivot.left.clone(),
+            Some(program_point_node(
+                point,
+                state,
+                pivot.right.clone(),
+                right,
+            )),
+        );
+    }
+    if balance < -1 {
+        let right_root = right.as_ref().expect("right-heavy AVL node has a right child");
+        if program_point_height(right_root.right.as_ref())
+            < program_point_height(right_root.left.as_ref())
+        {
+            let pivot = right_root
+                .left
+                .as_ref()
+                .expect("right-left AVL rotation has a pivot");
+            right = Some(program_point_node(
+                pivot.point.clone(),
+                pivot.state.clone(),
+                pivot.left.clone(),
+                Some(program_point_node(
+                    right_root.point.clone(),
+                    right_root.state.clone(),
+                    pivot.right.clone(),
+                    right_root.right.clone(),
+                )),
+            ));
+        }
+        let pivot = right.as_ref().expect("right AVL rotation has a pivot");
+        return program_point_node(
+            pivot.point.clone(),
+            pivot.state.clone(),
+            Some(program_point_node(
+                point,
+                state,
+                left,
+                pivot.left.clone(),
+            )),
+            pivot.right.clone(),
+        );
+    }
+    program_point_node(point, state, left, right)
+}
+
+fn program_point_insert(
+    root: Option<&std::sync::Arc<ProgramPointStateNode>>,
+    point: ProgramPointRef,
+    state: Option<CState>,
+) -> std::sync::Arc<ProgramPointStateNode> {
+    let Some(root) = root else {
+        return program_point_node(point, state, None, None);
+    };
+    match point.cmp(&root.point) {
+        std::cmp::Ordering::Less => program_point_balance(
+            root.point.clone(),
+            root.state.clone(),
+            Some(program_point_insert(root.left.as_ref(), point, state)),
+            root.right.clone(),
+        ),
+        std::cmp::Ordering::Greater => program_point_balance(
+            root.point.clone(),
+            root.state.clone(),
+            root.left.clone(),
+            Some(program_point_insert(root.right.as_ref(), point, state)),
+        ),
+        std::cmp::Ordering::Equal => program_point_node(
+            point,
+            state,
+            root.left.clone(),
+            root.right.clone(),
+        ),
+    }
+}
+
+fn program_point_entries<'a>(
+    node: Option<&'a ProgramPointStateNode>,
+    entries: &mut Vec<(&'a ProgramPointRef, &'a CState)>,
+) {
+    let Some(node) = node else {
+        return;
+    };
+    program_point_entries(node.left.as_deref(), entries);
+    if let Some(state) = &node.state {
+        entries.push((&node.point, state));
+    }
+    program_point_entries(node.right.as_deref(), entries);
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SpecArrayRef {

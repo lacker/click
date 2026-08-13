@@ -193,7 +193,7 @@ pub(crate) fn canonical_c_memory_deep(memory: &CMemory) -> CMemory {
 fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
     let mut canonical = memory.clone();
     let cells = std::mem::take(&mut canonical.cells);
-    for (pointer, value) in cells {
+    for (pointer, value) in cells.iter() {
         let key = canonicalize_pointer_loads(&pointer, 0);
         let value = match value {
             CValue::Void => CValue::Void,
@@ -201,7 +201,7 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
             CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(&term)),
             CValue::Pointer(pointer) => CValue::Pointer(canonicalize_pointer_loads(&pointer, 0)),
         };
-        canonical.cells.insert(key, value);
+        std::sync::Arc::make_mut(&mut canonical.cells).insert(key, value);
     }
     canonical
 }

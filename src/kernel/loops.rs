@@ -1094,11 +1094,15 @@ pub(super) fn prepare_loop_top_state(
     // head and are checked independently at every back edge.
     let mut framed_memory = top_state.memory().clone();
     if !summaries.is_empty() {
-        framed_memory
-            .blocks
-            .extend(entry_state.memory().blocks.clone());
+        std::sync::Arc::make_mut(&mut framed_memory.blocks).extend(
+            entry_state
+                .memory()
+                .blocks
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
     }
-    for (pointer, value) in &entry_state.memory().cells {
+    for (pointer, value) in entry_state.memory().cells.iter() {
         if pointer.block.starts_with("local:") {
             continue;
         }
@@ -1109,7 +1113,8 @@ pub(super) fn prepare_loop_top_state(
             assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
         });
         if is_stable {
-            framed_memory.cells.insert(pointer.clone(), value.clone());
+            std::sync::Arc::make_mut(&mut framed_memory.cells)
+                .insert(pointer.clone(), value.clone());
         }
     }
 

@@ -557,7 +557,7 @@ pub(crate) fn resolve_pending_heap_allocations(
             .resolve_pending_heap_allocation(&base, !is_null)
             .expect("collected pending allocation should still exist");
         state.memory = memory;
-        for binding in state.locals.bindings.values_mut() {
+        for binding in std::sync::Arc::make_mut(&mut state.locals.bindings).values_mut() {
             if let CLocalBinding::Object {
                 value: CValue::Pointer(pointer),
                 ..

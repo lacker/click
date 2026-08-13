@@ -250,6 +250,11 @@ thread_local! {
     static ACTIVE_TACTICS: RefCell<Vec<ActiveTactic>> = const { RefCell::new(Vec::new()) };
     static ACTIVE_PHASES: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
     static PENDING_LIMIT: RefCell<Option<PendingLimit>> = const { RefCell::new(None) };
+    /// Cooperative verifier checkpoints consumed by nested deterministic-work
+    /// measurements. Unlike tactic work, this includes certification and
+    /// driver phases, so scaling tests can measure a complete native verifier
+    /// transaction without using wall time.
+    static WORK_COUNTERS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
 }
 
 struct DeadlineGuard;
@@ -360,6 +365,11 @@ fn with_default_tactic_time_limit<R>(operation: impl FnOnce() -> R) -> R {
 }
 
 fn consume_tactic_work(units: usize) -> bool {
+    WORK_COUNTERS.with(|counters| {
+        for counter in counters.borrow_mut().iter_mut() {
+            *counter = counter.saturating_add(units);
+        }
+    });
     let exhausted = ACTIVE_TACTICS.with(|active| {
         let mut active = active.borrow_mut();
         let current = active.last_mut()?;
@@ -408,6 +418,52 @@ fn consume_tactic_work(units: usize) -> bool {
         });
     }
     false
+}
+
+/// Runs one native verifier operation and returns the cooperative work it
+/// consumed, including work outside tactic scopes. Measurements nest: an
+/// inner counter also contributes to every enclosing counter.
+///
+/// This is intended for deterministic scaling regressions. It deliberately
+/// does not pretend that uninstrumented allocation or copying is free; hot
+/// representations must call the ordinary cooperative checkpoint in their
+/// traversals so both production budgets and scaling tests see that work.
+struct WorkCounterGuard {
+    active: bool,
+}
+
+impl WorkCounterGuard {
+    fn enter() -> Self {
+        WORK_COUNTERS.with(|counters| counters.borrow_mut().push(0));
+        Self { active: true }
+    }
+
+    fn finish(mut self) -> usize {
+        self.active = false;
+        WORK_COUNTERS.with(|counters| {
+            counters
+                .borrow_mut()
+                .pop()
+                .expect("deterministic work counter should remain installed")
+        })
+    }
+}
+
+impl Drop for WorkCounterGuard {
+    fn drop(&mut self) {
+        if self.active {
+            WORK_COUNTERS.with(|counters| {
+                counters.borrow_mut().pop();
+            });
+        }
+    }
+}
+
+pub fn measure_deterministic_work<R>(operation: impl FnOnce() -> R) -> (R, usize) {
+    let counter = WorkCounterGuard::enter();
+    let result = operation();
+    let work = counter.finish();
+    (result, work)
 }
 
 pub fn deadline_exceeded() -> bool {
@@ -1115,5 +1171,21 @@ mod tests {
                     if active == &phase
             )));
         }
+    }
+
+    #[test]
+    fn deterministic_work_measurements_include_nested_and_driver_checkpoints() {
+        let (((), inner), outer) = measure_deterministic_work(|| {
+            assert!(!deadline_exceeded());
+            let measured = measure_deterministic_work(|| {
+                assert!(!deadline_exceeded());
+                assert!(!deadline_exceeded());
+            });
+            assert!(!deadline_exceeded());
+            measured
+        });
+
+        assert_eq!(inner, 2);
+        assert_eq!(outer, 4);
     }
 }

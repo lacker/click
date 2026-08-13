@@ -11,7 +11,7 @@ impl ResourceContext {
     /// Prefer `try_compose_with_fact` when proposition assumptions are
     /// available.
     pub fn unchecked_with_fact(mut self, fact: CResourceFact) -> Self {
-        self.facts.push(fact);
+        std::sync::Arc::make_mut(&mut self.facts).push(fact);
         self
     }
 
@@ -21,7 +21,7 @@ impl ResourceContext {
     /// Prefer `try_compose_with_facts` when proposition assumptions are
     /// available.
     pub fn unchecked_with_facts(mut self, facts: impl IntoIterator<Item = CResourceFact>) -> Self {
-        self.facts.extend(facts);
+        std::sync::Arc::make_mut(&mut self.facts).extend(facts);
         self
     }
 
@@ -62,7 +62,7 @@ impl ResourceContext {
         assumptions: &Assumptions,
     ) -> Result<Self, ResourceContextValidityError> {
         let first_new = self.facts.len();
-        self.facts.extend(facts);
+        std::sync::Arc::make_mut(&mut self.facts).extend(facts);
         for right_index in first_new..self.facts.len() {
             let right = &self.facts[right_index];
             for left in &self.facts[..right_index] {
@@ -227,7 +227,7 @@ impl ResourceContext {
         byte_width: u32,
         assumptions: &Assumptions,
     ) -> bool {
-        for resource in &self.facts {
+        for resource in self.facts.iter() {
             let Some(range) = resource_fact_read_core_range(resource) else {
                 continue;
             };
@@ -246,7 +246,7 @@ impl ResourceContext {
         byte_width: u32,
         assumptions: &Assumptions,
     ) -> Option<&CMemoryRange> {
-        for resource in &self.facts {
+        for resource in self.facts.iter() {
             let CResourceFact::Own(CResource::Memory(range), _) = resource else {
                 continue;
             };
@@ -279,7 +279,7 @@ impl ResourceContext {
 
     pub(crate) fn without_exact_representation(mut self, fact: &CResourceFact) -> Option<Self> {
         let index = self.facts.iter().position(|available| available == fact)?;
-        self.facts.remove(index);
+        std::sync::Arc::make_mut(&mut self.facts).remove(index);
         Some(self)
     }
 
@@ -315,8 +315,8 @@ impl ResourceContext {
                 continue;
             };
             if let ResourceFactConsumption::Replace(residual) = consumption {
-                self.facts.remove(index);
-                self.facts.extend(residual);
+                std::sync::Arc::make_mut(&mut self.facts).remove(index);
+                std::sync::Arc::make_mut(&mut self.facts).extend(residual);
             }
             return true;
         }
@@ -332,8 +332,8 @@ impl ResourceContext {
                 if let Some(merged) =
                     normalize_resource_fact_pair(&self.facts[i], &self.facts[j], assumptions)
                 {
-                    self.facts[i] = merged;
-                    self.facts.remove(j);
+                    std::sync::Arc::make_mut(&mut self.facts)[i] = merged;
+                    std::sync::Arc::make_mut(&mut self.facts).remove(j);
                     changed = true;
                     break;
                 }

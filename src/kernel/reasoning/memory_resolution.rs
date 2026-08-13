@@ -1002,10 +1002,10 @@ fn canonical_memory_for_pointer_load_with_depth(
             .then(|| first.clone())
     });
     let mut canonical = common_materialization_source.unwrap_or_else(|| memory.clone());
-    canonical.blocks.retain(|block, _| {
+    std::sync::Arc::make_mut(&mut canonical.blocks).retain(|block, _| {
         block == &pointer.block || block.starts_with("havoc:") || block.starts_with("call-havoc:")
     });
-    canonical.cells.retain(|cell_pointer, value| {
+    std::sync::Arc::make_mut(&mut canonical.cells).retain(|cell_pointer, value| {
         cell_pointer.block == pointer.block
             && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
     });

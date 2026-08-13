@@ -1,5 +1,134 @@
 use super::*;
 
+fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String>) {
+    for tactic in tactics {
+        match tactic {
+            ProofTactic::ApplyTheorem(application)
+            | ProofTactic::ApplyTheoremUsing { application, .. } => {
+                names.insert(application.name.clone());
+            }
+            ProofTactic::Have(proof_have) => {
+                if let Proof::Script(tactics) = &proof_have.proof {
+                    collect_applied_theorems(tactics, names);
+                }
+            }
+            ProofTactic::Open(proof_open) => {
+                collect_applied_theorems(&proof_open.tactics, names);
+            }
+            ProofTactic::If(proof_if) => {
+                collect_applied_theorems(&proof_if.then_tactics, names);
+                collect_applied_theorems(&proof_if.else_tactics, names);
+            }
+            ProofTactic::Cases(proof_cases) => {
+                collect_applied_theorems(&proof_cases.left_tactics, names);
+                collect_applied_theorems(&proof_cases.right_tactics, names);
+            }
+            ProofTactic::Branch(proof_branch) => {
+                collect_applied_theorems(&proof_branch.then_tactics, names);
+                collect_applied_theorems(&proof_branch.else_tactics, names);
+            }
+            ProofTactic::Loop(clause) => {
+                for item in &clause.items {
+                    if let Proof::Script(tactics) = &item.proof {
+                        collect_applied_theorems(tactics, names);
+                    }
+                }
+                for proof in [clause.initialize_proof.as_ref(), clause.preserve_proof.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Proof::Script(tactics) = proof {
+                        collect_applied_theorems(tactics, names);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_applied_theorems_from_proof(proof: &Proof, names: &mut BTreeSet<String>) {
+    if let Proof::Script(tactics) = proof {
+        collect_applied_theorems(tactics, names);
+    }
+}
+
+fn collect_function_theorem_dependencies(
+    function: &FunctionBlock,
+    names: &mut BTreeSet<String>,
+) {
+    if let Some(proof) = function.grouped_proof() {
+        collect_applied_theorems_from_proof(proof, names);
+    }
+    for clause in function.ensures() {
+        collect_applied_theorems_from_proof(&clause.proof, names);
+    }
+    for clause in function.effects() {
+        collect_applied_theorems_from_proof(&clause.proof, names);
+    }
+    for clause in function.structural_clauses() {
+        for item in &clause.items {
+            collect_applied_theorems_from_proof(&item.proof, names);
+        }
+        for proof in [clause.initialize_proof.as_ref(), clause.preserve_proof.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            collect_applied_theorems_from_proof(proof, names);
+        }
+    }
+}
+
+fn selected_theorem_definitions(
+    file: &ClickFile,
+    definitions: &[TheoremDefinition],
+    standard_library_count: usize,
+    selected_functions: Option<&BTreeSet<String>>,
+    verification_target: Option<&VerificationTarget>,
+) -> Vec<TheoremDefinition> {
+    let Some(selected_functions) = selected_functions else {
+        return definitions.to_vec();
+    };
+    let mut required = BTreeSet::new();
+    for function in file.function_blocks() {
+        if selected_functions.contains(function.signature().name()) {
+            collect_function_theorem_dependencies(function, &mut required);
+        }
+    }
+    if let Some(VerificationTarget::Theorem(name)) = verification_target {
+        required.insert(name.clone());
+    }
+
+    let definitions_by_name = definitions
+        .iter()
+        .map(|definition| (definition.name(), definition))
+        .collect::<BTreeMap<_, _>>();
+    let mut frontier = required.iter().cloned().collect::<Vec<_>>();
+    while let Some(name) = frontier.pop() {
+        let Some(definition) = definitions_by_name.get(name.as_str()) else {
+            continue;
+        };
+        let mut dependencies = BTreeSet::new();
+        for ensure in definition.ensures() {
+            collect_applied_theorems_from_proof(&ensure.proof, &mut dependencies);
+        }
+        for dependency in dependencies {
+            if required.insert(dependency.clone()) {
+                frontier.push(dependency);
+            }
+        }
+    }
+    definitions
+        .iter()
+        .enumerate()
+        .filter(|(index, definition)| {
+            *index < standard_library_count || required.contains(definition.name())
+        })
+        .map(|(_, definition)| definition)
+        .cloned()
+        .collect()
+}
+
 pub fn parse(source: &str) -> Result<ClickFile, ClickError> {
     parser::parse(source)
 }
@@ -482,6 +611,16 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
         let click_function_definitions = combined_click_function_definitions(&file)?;
         let resource_definitions = combined_resource_definitions(&file)?;
         let theorem_definitions = combined_theorem_definitions(&file)?;
+        let standard_library_theorem_count = theorem_definitions
+            .len()
+            .saturating_sub(file.theorem_definitions().len());
+        let theorem_definitions = selected_theorem_definitions(
+            &file,
+            &theorem_definitions,
+            standard_library_theorem_count,
+            selected_functions.as_ref(),
+            verification_target.as_ref(),
+        );
         let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
         let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
         let resource_environment = ResourceEnvironment::new(&resource_definitions);
@@ -525,35 +664,36 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
         // Verified pure theorems over scalar parameters become closed
         // universally-quantified facts, so kernel contract certification can
         // discharge obligations the surface proof established by `apply`.
-        let theorem_certification_facts = verified_theorems
-            .iter()
-            .filter(|theorem| {
+        let mut theorem_certification_facts = BTreeMap::<String, Vec<Proposition>>::new();
+        for theorem in verified_theorems.iter().filter(|theorem| {
                 theorem
                     .theorem_definition
                     .parameters()
                     .iter()
                     .all(|parameter| matches!(parameter.c_type(), C0Type::Int32))
-            })
-            .map(|theorem| {
-                let implication = theorem.requires.iter().rev().fold(
-                    theorem.conclusion.clone(),
-                    |body, requirement| {
-                        Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
-                    },
-                );
-                theorem
-                    .theorem_definition
-                    .parameters()
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .fold(implication, |body, (index, _)| Proposition::ForAll {
-                        var: crate::kernel::Variable(index as u64),
-                        sort: crate::kernel::Sort::CInt32,
-                        body: Box::new(body),
-                    })
-            })
-            .collect::<Vec<_>>();
+            }) {
+            let implication = theorem.requires.iter().rev().fold(
+                theorem.conclusion.clone(),
+                |body, requirement| {
+                    Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
+                },
+            );
+            let fact = theorem
+                .theorem_definition
+                .parameters()
+                .iter()
+                .enumerate()
+                .rev()
+                .fold(implication, |body, (index, _)| Proposition::ForAll {
+                    var: crate::kernel::Variable(index as u64),
+                    sort: crate::kernel::Sort::CInt32,
+                    body: Box::new(body),
+                });
+            theorem_certification_facts
+                .entry(theorem.theorem_definition.name().to_string())
+                .or_default()
+                .push(fact);
+        }
         let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
         check_verification_deadline()?;
         (
@@ -749,7 +889,17 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                 &click_function_environment,
                 &format!("{}.contract certification", function_block.signature.name()),
             )?;
-        certification_facts.extend(theorem_certification_facts.iter().cloned());
+        let mut certification_theorems = BTreeSet::new();
+        for verified in &function_verified {
+            if let Some(tactics) = &verified.proof_tactics {
+                collect_applied_theorems(tactics, &mut certification_theorems);
+            }
+        }
+        for theorem_name in certification_theorems {
+            if let Some(facts) = theorem_certification_facts.get(&theorem_name) {
+                certification_facts.extend(facts.iter().cloned());
+            }
+        }
         // A sized array parameter spelling (`int32 p[2]`) declares its span
         // loadable as part of the calling convention; certification may rely
         // on it to discharge requirement side-obligations.

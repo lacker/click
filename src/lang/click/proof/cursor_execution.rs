@@ -431,9 +431,14 @@ pub(super) fn execute_branch_step_from_execution_point(
         )));
     };
 
-    let points_before = construction
-        .is_some()
-        .then(|| replay.program_point_states.clone());
+    let construction_point_overrides = construction.is_some().then(|| {
+        construction_point_overrides(
+            &replay.program_point_states,
+            function_block,
+            &[CodeRegion::Statement(statement_index)],
+            ProgramPointKind::Entry,
+        )
+    });
     record_statement_program_point_state(
         replay,
         function_block,
@@ -441,16 +446,7 @@ pub(super) fn execute_branch_step_from_execution_point(
         ProgramPointKind::Entry,
         current_state.clone(),
     );
-    let construction_point_overrides = points_before
-        .map(|before| {
-            replay
-                .program_point_states
-                .iter()
-                .filter(|(point, state)| before.get(*point) != Some(*state))
-                .map(|(point, _)| (point.clone(), before.get(point).cloned()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let construction_point_overrides = construction_point_overrides.unwrap_or_default();
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
     let condition_transitions = certified_condition_transitions(
@@ -680,9 +676,17 @@ fn execute_concrete_loop_head_step(
         unreachable!("concrete loop stepping requires a while statement");
     };
 
-    let points_before = construction
-        .is_some()
-        .then(|| replay.program_point_states.clone());
+    let construction_point_overrides = construction.is_some().then(|| {
+        construction_point_overrides(
+            &replay.program_point_states,
+            function_block,
+            &[
+                CodeRegion::Statement(statement_index),
+                CodeRegion::Loop(loop_index),
+            ],
+            ProgramPointKind::Entry,
+        )
+    });
     record_statement_program_point_state(
         replay,
         function_block,
@@ -697,16 +701,7 @@ fn execute_concrete_loop_head_step(
         ProgramPointKind::Entry,
         current_state.clone(),
     );
-    let construction_point_overrides = points_before
-        .map(|before| {
-            replay
-                .program_point_states
-                .iter()
-                .filter(|(point, state)| before.get(*point) != Some(*state))
-                .map(|(point, _)| (point.clone(), before.get(point).cloned()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let construction_point_overrides = construction_point_overrides.unwrap_or_default();
 
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
@@ -893,6 +888,44 @@ pub(super) fn record_loop_program_point_state(
 /// Swaps the listed program points to their pre-recording values (or removes
 /// points the recording introduced) so a surface step can be spelled against
 /// the view its own replay will have; returns what must be put back.
+fn construction_point_overrides(
+    program_point_states: &ProgramPointStates,
+    function_block: &FunctionBlock,
+    regions: &[CodeRegion],
+    kind: ProgramPointKind,
+) -> Vec<(ProgramPointRef, Option<CState>)> {
+    let mut points = BTreeSet::new();
+    for region in regions {
+        let point_region = match region {
+            CodeRegion::Function => CodeRegionRef::Function,
+            CodeRegion::Loop(index) => CodeRegionRef::Loop(*index),
+            CodeRegion::Statement(index) => CodeRegionRef::Statement(*index),
+        };
+        points.insert(ProgramPointRef {
+            region: point_region,
+            kind,
+        });
+        for label in function_block
+            .structural_clauses()
+            .iter()
+            .filter(|clause| clause.region() == region)
+            .filter_map(StructuralClause::label)
+        {
+            points.insert(ProgramPointRef {
+                region: CodeRegionRef::Label(label.to_string()),
+                kind,
+            });
+        }
+    }
+    points
+        .into_iter()
+        .map(|point| {
+            let prior = program_point_states.get(&point).cloned();
+            (point, prior)
+        })
+        .collect()
+}
+
 fn apply_construction_point_view(
     replay: &mut TacticReplayState,
     overrides: &[(ProgramPointRef, Option<CState>)],
@@ -1218,9 +1251,18 @@ pub(super) fn execute_step_from_execution_point(
     // must see the program points exactly as they were before these entry
     // recordings: points the recording adds or overwrites here are presented
     // at their prior value (or absence) while the step is spelled.
-    let points_before = construction
-        .is_some()
-        .then(|| replay.program_point_states.clone());
+    let mut construction_regions = vec![CodeRegion::Statement(statement_index)];
+    if let Some(loop_index) = loop_index {
+        construction_regions.push(CodeRegion::Loop(loop_index));
+    }
+    let construction_point_overrides = construction.is_some().then(|| {
+        construction_point_overrides(
+            &replay.program_point_states,
+            function_block,
+            &construction_regions,
+            ProgramPointKind::Entry,
+        )
+    });
     record_statement_program_point_state(
         replay,
         function_block,
@@ -1237,16 +1279,7 @@ pub(super) fn execute_step_from_execution_point(
             current_state.clone(),
         );
     }
-    let construction_point_overrides = points_before
-        .map(|before| {
-            replay
-                .program_point_states
-                .iter()
-                .filter(|(point, state)| before.get(*point) != Some(*state))
-                .map(|(point, _)| (point.clone(), before.get(point).cloned()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let construction_point_overrides = construction_point_overrides.unwrap_or_default();
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
     let transitions = certified_statement_transitions(
