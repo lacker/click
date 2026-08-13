@@ -75,3 +75,14 @@ owned-string integration profile shows that candidate selection is no longer
 the only cost: several same-block symbolic candidates still require expensive
 range-membership proofs. Indexing those ranges by stable base/interval
 identity remains open.
+
+Loadability propositions now have a separate incremental ordered index keyed
+by the base pointer block. Direct loadability, structural subrange,
+adjacent-range, and memory-resolution queries use only the relevant bucket
+rather than filtering every proposition. Each bucket is a `BTreeSet`, so it
+preserves exactly the candidate order of the former filtered global set; a
+vector-backed prototype changed smart-search order and made
+`owned-split-buffer` unstable, and was rejected. A regression holds one useful
+subrange fact fixed while adding 128 loadability facts for unrelated blocks
+and requires exactly one candidate. Derivation candidate selection remains
+global until it can consume this index without changing its provenance search.

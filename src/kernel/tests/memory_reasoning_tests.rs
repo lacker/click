@@ -451,6 +451,40 @@ fn memory_separation_candidates_ignore_unrelated_propositions() {
 }
 
 #[test]
+fn memory_loadable_candidates_ignore_unrelated_pointer_blocks() {
+    let memory = CMemory::new();
+    let target = Pointer {
+        block: "indexed-loadable-target".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let mut assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: target.clone(),
+        bytes: Bitvector32Term::Constant(8),
+    });
+    for index in 0..128 {
+        assumptions = assumptions.assume_proposition(Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: Pointer {
+                block: format!("indexed-loadable-unrelated-{index}").into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            bytes: Bitvector32Term::Constant(4),
+        });
+    }
+
+    assert_eq!(
+        assumptions.memory_loadable_candidate_count(&target.block),
+        1
+    );
+    assert!(assumptions.proves(&Proposition::CMemoryLoadable {
+        memory,
+        base: target,
+        bytes: Bitvector32Term::Constant(4),
+    }));
+}
+
+#[test]
 fn equivalent_memory_load_order_facts_can_be_inconsistent() {
     let old_memory = CMemory::new();
     let stack_memory = CMemory::new()

@@ -862,12 +862,14 @@ impl Assumptions {
 
     pub(super) fn clear_proposition_facts(&mut self) {
         self.prop_facts = std::sync::Arc::new(BTreeSet::new());
+        self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.recompute_content_fingerprint();
     }
 
     pub(super) fn retain_proposition_facts(&mut self, keep: impl FnMut(&Proposition) -> bool) {
         std::sync::Arc::make_mut(&mut self.prop_facts).retain(keep);
+        self.rebuild_memory_loadable_facts();
         self.rebuild_memory_separation_facts();
         self.recompute_content_fingerprint();
     }
@@ -893,6 +895,47 @@ impl Assumptions {
             } => Some((left.clone(), right.clone())),
             _ => None,
         }
+    }
+
+    fn adjust_memory_loadable_fact(&mut self, proposition: &Proposition, insert: bool) {
+        let Proposition::CMemoryLoadable { base, .. } = proposition else {
+            return;
+        };
+        let index = std::sync::Arc::make_mut(&mut self.memory_loadable_facts);
+        if insert {
+            index
+                .entry(base.block.clone())
+                .or_default()
+                .insert(proposition.clone());
+            return;
+        }
+        let remove_key = if let Some(facts) = index.get_mut(&base.block) {
+            facts.remove(proposition);
+            facts.is_empty()
+        } else {
+            false
+        };
+        if remove_key {
+            index.remove(&base.block);
+        }
+    }
+
+    fn rebuild_memory_loadable_facts(&mut self) {
+        self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
+        let facts = self.prop_facts.iter().cloned().collect::<Vec<_>>();
+        for proposition in facts {
+            self.adjust_memory_loadable_fact(&proposition, true);
+        }
+    }
+
+    pub(super) fn memory_loadable_candidates(
+        &self,
+        block: &PointerBlock,
+    ) -> impl Iterator<Item = &Proposition> {
+        self.memory_loadable_facts
+            .get(block)
+            .into_iter()
+            .flat_map(|facts| facts.iter())
     }
 
     fn memory_separation_key(
@@ -956,6 +999,7 @@ impl Assumptions {
 
     pub(super) fn insert_proposition_fact(&mut self, proposition: Proposition) {
         if std::sync::Arc::make_mut(&mut self.prop_facts).insert(proposition.clone()) {
+            self.adjust_memory_loadable_fact(&proposition, true);
             self.adjust_memory_separation_fact(&proposition, true);
             self.content_fingerprint ^= Self::fingerprint(2, &proposition);
         }
@@ -963,6 +1007,7 @@ impl Assumptions {
 
     pub(super) fn remove_proposition_fact(&mut self, proposition: &Proposition) {
         if std::sync::Arc::make_mut(&mut self.prop_facts).remove(proposition) {
+            self.adjust_memory_loadable_fact(proposition, false);
             self.adjust_memory_separation_fact(proposition, false);
             self.content_fingerprint ^= Self::fingerprint(2, proposition);
         }
@@ -994,6 +1039,7 @@ impl Assumptions {
     pub(crate) fn shares_fact_storage_with(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.condition_facts, &other.condition_facts)
             && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
+            && std::sync::Arc::ptr_eq(&self.memory_loadable_facts, &other.memory_loadable_facts)
             && std::sync::Arc::ptr_eq(
                 &self.memory_separation_facts,
                 &other.memory_separation_facts,
@@ -1007,6 +1053,11 @@ impl Assumptions {
         right: &PointerBlock,
     ) -> usize {
         self.memory_separation_candidates(left, right).len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn memory_loadable_candidate_count(&self, block: &PointerBlock) -> usize {
+        self.memory_loadable_candidates(block).count()
     }
 
     #[cfg(test)]

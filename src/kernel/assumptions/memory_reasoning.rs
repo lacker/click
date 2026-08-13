@@ -61,24 +61,27 @@ impl Assumptions {
         {
             return true;
         }
-        if self.prop_facts.iter().any(|proposition| {
-            let Proposition::CMemoryLoadable {
-                memory: range_memory,
-                base: range_base,
-                bytes: range_bytes,
-            } = proposition
-            else {
-                return false;
-            };
+        if self
+            .memory_loadable_candidates(&base.block)
+            .any(|proposition| {
+                let Proposition::CMemoryLoadable {
+                    memory: range_memory,
+                    base: range_base,
+                    bytes: range_bytes,
+                } = proposition
+                else {
+                    return false;
+                };
 
-            memory_range_still_available(range_memory, memory, range_base)
-                && self.proves_loadable_region_from_structural_range(
-                    range_base,
-                    range_bytes,
-                    base,
-                    bytes,
-                )
-        }) {
+                memory_range_still_available(range_memory, memory, range_base)
+                    && self.proves_loadable_region_from_structural_range(
+                        range_base,
+                        range_bytes,
+                        base,
+                        bytes,
+                    )
+            })
+        {
             return true;
         }
 
@@ -100,8 +103,7 @@ impl Assumptions {
         }
 
         let mut ranges = self
-            .prop_facts
-            .iter()
+            .memory_loadable_candidates(&base.block)
             .filter_map(|proposition| {
                 let Proposition::CMemoryLoadable {
                     memory: range_memory,
@@ -162,8 +164,7 @@ impl Assumptions {
                 )
         };
         let mut regions = self
-            .prop_facts
-            .iter()
+            .memory_loadable_candidates(&base.block)
             .filter_map(|fact| {
                 let Proposition::CMemoryLoadable {
                     memory: fact_memory,
@@ -280,38 +281,39 @@ impl Assumptions {
         {
             return true;
         }
-        self.prop_facts.iter().any(|proposition| {
-            let Proposition::CMemoryLoadable {
-                memory: range_memory,
-                base: range_base,
-                bytes: range_bytes,
-            } = proposition
-            else {
-                return false;
-            };
-            if !memory_range_still_available(range_memory, memory, range_base) {
-                return false;
-            }
-            if range_base == base && range_bytes == bytes {
-                return true;
-            }
-            let Some(byte_width) = bytes.as_const() else {
-                return false;
-            };
-            if byte_width != 4 {
-                return false;
-            }
-            let Some(element_count) = int32_element_count_from_bytes(range_bytes) else {
-                return false;
-            };
-            pointer_in_range_for_memory_resolution(
-                base,
-                range_base,
-                &Bitvector32Term::Constant(0),
-                &element_count,
-                self,
-            )
-        })
+        self.memory_loadable_candidates(&base.block)
+            .any(|proposition| {
+                let Proposition::CMemoryLoadable {
+                    memory: range_memory,
+                    base: range_base,
+                    bytes: range_bytes,
+                } = proposition
+                else {
+                    return false;
+                };
+                if !memory_range_still_available(range_memory, memory, range_base) {
+                    return false;
+                }
+                if range_base == base && range_bytes == bytes {
+                    return true;
+                }
+                let Some(byte_width) = bytes.as_const() else {
+                    return false;
+                };
+                if byte_width != 4 {
+                    return false;
+                }
+                let Some(element_count) = int32_element_count_from_bytes(range_bytes) else {
+                    return false;
+                };
+                pointer_in_range_for_memory_resolution(
+                    base,
+                    range_base,
+                    &Bitvector32Term::Constant(0),
+                    &element_count,
+                    self,
+                )
+            })
     }
 
     fn proves_loadable_region_from_structural_range(
