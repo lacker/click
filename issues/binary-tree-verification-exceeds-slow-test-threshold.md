@@ -109,3 +109,24 @@ The remaining representation work belongs to
 `stable-content-identities-for-verifier-caches.md`; retain binary-tree as a
 real-project latency check while the synthetic scaling regressions isolate the
 asymptotic behavior.
+
+## Update (2026-08-13): planning and replay removed; resource identity remains
+
+All verified smart hotspots in the recursive walk, rotation, leaf pipeline,
+and small constructors now have explicit simple certificates. The major
+grouped functions are fully simple, eliminating their second whole-contract
+replay. A complete warm profile is about 5.8 seconds, with no smart operation
+above 1ms and only about 180ms of whole-contract replay remaining (down from
+roughly 1.4s immediately before the final expansions).
+
+The residual long tail is now unambiguous. `tree_rotate_left` spends about
+640ms proving that two three-fact recursive resource contexts denote the same
+resources across memory snapshots. Candidate lookup is not the problem: the
+matching composite fact is among only three same-shape candidates. Nearly all
+of the time is in framed pointer-load transport for the recursive resource
+argument. `tree_sum_root_and_children` also spends about 1.2s in independent
+kernel certification despite having a fully simple proof.
+
+Keep the issue open for the few-second target. The next fixes belong in stable
+snapshot/resource identities and indexed proof derivation; expanding more
+source cannot address either measured cost.
