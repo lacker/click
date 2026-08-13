@@ -539,6 +539,14 @@ impl SurfacePropositionMap {
         surface: &ClickProposition,
         available: &[Proposition],
     ) -> Option<&Proposition> {
+        self.available_kernel_matching(surface, |kernel| available.contains(kernel))
+    }
+
+    pub(crate) fn available_kernel_matching(
+        &self,
+        surface: &ClickProposition,
+        mut is_available: impl FnMut(&Proposition) -> bool,
+    ) -> Option<&Proposition> {
         let surface_key = format!("{surface:?}");
         let mut matches = self
             .by_surface
@@ -547,7 +555,10 @@ impl SurfacePropositionMap {
             .find_map(|(recorded, lowerings)| (recorded == surface).then_some(lowerings))?
             .ordered
             .iter()
-            .filter(|kernel| available.contains(kernel));
+            .filter(|kernel| {
+                crate::instrumentation::record_deterministic_work(1);
+                is_available(kernel)
+            });
         let kernel = matches.next()?;
         matches.next().is_none().then_some(kernel)
     }

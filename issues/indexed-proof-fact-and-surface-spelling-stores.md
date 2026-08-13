@@ -93,4 +93,17 @@ to pass the existing snapshot and range proof. A second four-size regression
 holds one fixed loadability query while adding same-block ranges at unrelated
 pointer shapes and requires constant candidate work. This bounds the common
 field/range lookup; genuinely aliased spellings and range arithmetic can still
-enter the broader proof path.
+enter the broader proof path. Both pointer-shape indexes are lazy shared views:
+building an `Assumptions` context does not clone every deep fact into an index
+that the proof may never query, and relevant mutation invalidates the view.
+
+Deferred `frame using` finalization now builds one exact replay-fact index and
+uses it for every recorded surface premise. It no longer asks
+`available_kernel` to scan the complete available vector once per premise.
+The ambiguity rule is unchanged: exactly one recorded lowering must be
+present, and materialization-equivalent matching remains a separate later
+check. A four-size unit regression fixes one surface lookup while growing the
+indexed available set and requires constant query work. In the owned-vector
+integration profile this removed the simple-tail report from its 25-premise
+`allocated_vector_push` frame (roughly 0.55--0.61s down to 0.47s under the
+current load).

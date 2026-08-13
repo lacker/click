@@ -1571,11 +1571,11 @@ pub struct Assumptions {
     /// `condition_facts`; it narrows snapshot-aware load-spelling checks
     /// without deciding them.
     pub(super) memory_load_condition_facts:
-        std::sync::Arc<BTreeMap<(PointerBlock, u64), BTreeSet<ConditionTerm>>>,
+        std::sync::Arc<std::sync::OnceLock<BTreeMap<(PointerBlock, u64), BTreeSet<ConditionTerm>>>>,
     pub(super) prop_facts: std::sync::Arc<BTreeSet<Proposition>>,
     pub(super) memory_loadable_facts: std::sync::Arc<BTreeMap<PointerBlock, BTreeSet<Proposition>>>,
     pub(super) memory_loadable_shape_facts:
-        std::sync::Arc<BTreeMap<(PointerBlock, u64), BTreeSet<Proposition>>>,
+        std::sync::Arc<std::sync::OnceLock<BTreeMap<(PointerBlock, u64), BTreeSet<Proposition>>>>,
     pub(super) memory_separation_facts: std::sync::Arc<
         BTreeMap<(PointerBlock, PointerBlock), Vec<(Proposition, CMemoryRange, CMemoryRange)>>,
     >,

@@ -2785,13 +2785,19 @@ pub(super) fn finish_ordered_proof_replay(
                                 // established by a preceding `have` keeps that
                                 // current-outcome meaning instead of the spelling's
                                 // obsolete pre-`have` lowering.
+                                let indexed_requirements =
+                                    ExactReplayFactIndex::new(&path_requirements);
                                 let mut facts = Vec::with_capacity(premises.len());
                                 for premise in premises {
                                     let fact = current_outcome_surface_propositions
-                                .available_kernel(premise, &path_requirements)
+                                .available_kernel_matching(premise, |kernel| {
+                                    indexed_requirements.contains_exact(kernel)
+                                })
                                 .or_else(|| {
                                     outcome_surface_propositions
-                                        .available_kernel(premise, &path_requirements)
+                                        .available_kernel_matching(premise, |kernel| {
+                                            indexed_requirements.contains_exact(kernel)
+                                        })
                                 })
                                 .cloned()
                                 .map(Ok)
@@ -2831,8 +2837,6 @@ pub(super) fn finish_ordered_proof_replay(
                                 })?;
                                     facts.push(fact);
                                 }
-                                let indexed_requirements =
-                                    ExactReplayFactIndex::new(&path_requirements);
                                 for (premise_index, fact) in facts.iter().enumerate() {
                                     if !indexed_requirements.contains(fact)
                                         && !exact_fact_is_available(fact, &path_requirements)

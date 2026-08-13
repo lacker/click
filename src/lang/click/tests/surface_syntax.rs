@@ -732,6 +732,37 @@ fn recorded_surface_fact_resolves_only_one_available_kernel_fact() {
 }
 
 #[test]
+fn indexed_surface_resolution_ignores_unrelated_available_facts() {
+    let surface = ClickProposition::Comparison {
+        left: current_var("x"),
+        operator: ComparisonOperator::Equal,
+        right: current_int(1),
+    };
+    let target = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    let mut spellings = SurfacePropositionMap::default();
+    spellings.record_lowering(&surface, &target).unwrap();
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let mut available = std::collections::BTreeSet::from([target.clone()]);
+            available.extend((0..size).map(|index| {
+                Proposition::ConditionIs(ConditionTerm::Variable(Variable(95_000 + index)), true)
+            }));
+            let (resolved, work) = crate::instrumentation::measure_deterministic_work(|| {
+                spellings.available_kernel_matching(&surface, |kernel| available.contains(kernel))
+            });
+            assert_eq!(resolved, Some(&target));
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        samples.windows(2).all(|pair| pair[1].1 <= pair[0].1 + 1),
+        "fixed indexed surface lookup should ignore unrelated facts: {samples:?}"
+    );
+}
+
+#[test]
 fn rejects_byte_counting_loadable_syntax() {
     let source = r#"
             verifying "fill.c";

@@ -1077,33 +1077,24 @@ impl Assumptions {
         }
     }
 
-    fn adjust_memory_load_condition_fact(&mut self, condition: &ConditionTerm, insert: bool) {
-        let mut keys = BTreeSet::new();
-        collect_condition_memory_load_keys(condition, &mut keys);
-        let index = std::sync::Arc::make_mut(&mut self.memory_load_condition_facts);
-        for key in keys {
-            if insert {
-                index.entry(key).or_default().insert(condition.clone());
-                continue;
-            }
-            let remove_key = if let Some(conditions) = index.get_mut(&key) {
-                conditions.remove(condition);
-                conditions.is_empty()
-            } else {
-                false
-            };
-            if remove_key {
-                index.remove(&key);
-            }
-        }
+    pub(super) fn rebuild_memory_load_condition_facts(&mut self) {
+        self.memory_load_condition_facts = std::sync::Arc::new(std::sync::OnceLock::new());
     }
 
-    pub(super) fn rebuild_memory_load_condition_facts(&mut self) {
-        self.memory_load_condition_facts = std::sync::Arc::new(BTreeMap::new());
-        let conditions = self.condition_facts.keys().cloned().collect::<Vec<_>>();
-        for condition in conditions {
-            self.adjust_memory_load_condition_fact(&condition, true);
-        }
+    fn memory_load_condition_index(
+        &self,
+    ) -> &BTreeMap<(PointerBlock, u64), BTreeSet<ConditionTerm>> {
+        self.memory_load_condition_facts.get_or_init(|| {
+            let mut index: BTreeMap<(PointerBlock, u64), BTreeSet<ConditionTerm>> = BTreeMap::new();
+            for condition in self.condition_facts.keys() {
+                let mut keys = BTreeSet::new();
+                collect_condition_memory_load_keys(condition, &mut keys);
+                for key in keys {
+                    index.entry(key).or_default().insert(condition.clone());
+                }
+            }
+            index
+        })
     }
 
     pub(crate) fn exact_memory_load_condition_candidates(
@@ -1114,7 +1105,7 @@ impl Assumptions {
             pointer.block.clone(),
             memory_blind_pointer_fingerprint(pointer),
         );
-        self.memory_load_condition_facts
+        self.memory_load_condition_index()
             .get(&exact_key)
             .into_iter()
             .flat_map(|conditions| conditions.iter())
@@ -1134,7 +1125,7 @@ impl Assumptions {
             pointer.block.clone(),
             memory_blind_pointer_fingerprint(pointer),
         );
-        self.memory_load_condition_facts
+        self.memory_load_condition_index()
             .range((
                 std::ops::Bound::Included((pointer.block.clone(), 0)),
                 std::ops::Bound::Included((pointer.block.clone(), u64::MAX)),
@@ -1152,7 +1143,7 @@ impl Assumptions {
     pub(super) fn clear_proposition_facts(&mut self) {
         self.prop_facts = std::sync::Arc::new(BTreeSet::new());
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
-        self.memory_loadable_shape_facts = std::sync::Arc::new(BTreeMap::new());
+        self.memory_loadable_shape_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.memory_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.recompute_content_fingerprint();
     }
@@ -1209,29 +1200,12 @@ impl Assumptions {
             }
         }
 
-        let shape_key = (base.block.clone(), memory_blind_pointer_fingerprint(base));
-        let shape_index = std::sync::Arc::make_mut(&mut self.memory_loadable_shape_facts);
-        if insert {
-            shape_index
-                .entry(shape_key)
-                .or_default()
-                .insert(proposition.clone());
-            return;
-        }
-        let remove_key = if let Some(facts) = shape_index.get_mut(&shape_key) {
-            facts.remove(proposition);
-            facts.is_empty()
-        } else {
-            false
-        };
-        if remove_key {
-            shape_index.remove(&shape_key);
-        }
+        self.memory_loadable_shape_facts = std::sync::Arc::new(std::sync::OnceLock::new());
     }
 
     fn rebuild_memory_loadable_facts(&mut self) {
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
-        self.memory_loadable_shape_facts = std::sync::Arc::new(BTreeMap::new());
+        self.memory_loadable_shape_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         let facts = self.prop_facts.iter().cloned().collect::<Vec<_>>();
         for proposition in facts {
             self.adjust_memory_loadable_fact(&proposition, true);
@@ -1254,13 +1228,26 @@ impl Assumptions {
         base: &Pointer,
     ) -> impl Iterator<Item = &Proposition> {
         let exact_key = (base.block.clone(), memory_blind_pointer_fingerprint(base));
-        let exact = self
-            .memory_loadable_shape_facts
+        let shape_index = self.memory_loadable_shape_facts.get_or_init(|| {
+            let mut index: BTreeMap<(PointerBlock, u64), BTreeSet<Proposition>> = BTreeMap::new();
+            for facts in self.memory_loadable_facts.values() {
+                for fact in facts {
+                    let Proposition::CMemoryLoadable { base, .. } = fact else {
+                        continue;
+                    };
+                    index
+                        .entry((base.block.clone(), memory_blind_pointer_fingerprint(base)))
+                        .or_default()
+                        .insert(fact.clone());
+                }
+            }
+            index
+        });
+        let exact = shape_index
             .get(&exact_key)
             .into_iter()
             .flat_map(|facts| facts.iter());
-        let fallback = self
-            .memory_loadable_shape_facts
+        let fallback = shape_index
             .range((
                 std::ops::Bound::Included((base.block.clone(), 0)),
                 std::ops::Bound::Included((base.block.clone(), u64::MAX)),
@@ -1535,11 +1522,10 @@ impl Assumptions {
         }
         let old =
             std::sync::Arc::make_mut(&mut self.condition_facts).insert(condition.clone(), value);
+        self.rebuild_memory_load_condition_facts();
         if let Some(old) = old {
             self.adjust_signed_order_bound(&condition, old, false);
             self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), old));
-        } else {
-            self.adjust_memory_load_condition_fact(&condition, true);
         }
         self.adjust_signed_order_bound(&condition, value, true);
         self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));

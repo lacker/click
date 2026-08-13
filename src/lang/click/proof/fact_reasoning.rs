@@ -507,10 +507,14 @@ impl ExactReplayFactIndex {
     }
 
     pub(super) fn contains(&self, required: &Proposition) -> bool {
-        self.exact.contains(required)
+        self.contains_exact(required)
             || self
                 .materialized
                 .contains(&normalize_direct_atomic_memory_loads(required))
+    }
+
+    pub(super) fn contains_exact(&self, required: &Proposition) -> bool {
+        self.exact.contains(required)
     }
 }
 
