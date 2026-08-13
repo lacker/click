@@ -70,6 +70,23 @@ worktree. Restore or replace them with a green checkpoint before committing,
 and do not merge or push them to the primary branch. These rules apply in both
 day and overnight mode.
 
+Run long-running Git operations that move `HEAD`, such as `git bisect`, in a
+throwaway worktree rather than the one holding the change. Bisecting in place
+leaves the task worktree on an unrelated commit and turns a routine stash pop
+into a conflict against the wrong base.
+
+## Judge green from `scripts/check.sh`
+
+`scripts/check.sh` is the gate, and CI runs exactly that script so the two
+cannot drift. Decide pass or fail from its exit status.
+
+Never decide from piped `cargo test` output. A shell pipeline reports its last
+command's status, so `cargo test | tail` exits 0 while the suite is failing;
+this is how a broken mdtest survived 54 commits undetected. Piping is fine for
+reading output, but the verdict comes from an unpiped run. The default `cargo
+test --lib` is also not the gate: it passes while both proof-fixture gates
+fail.
+
 ## Existing C is the verification boundary
 
 Click exists to prove properties of existing C programs. Adoption in a large
