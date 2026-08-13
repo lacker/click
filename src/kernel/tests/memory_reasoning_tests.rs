@@ -485,6 +485,50 @@ fn memory_loadable_candidates_ignore_unrelated_pointer_blocks() {
 }
 
 #[test]
+fn memory_loadable_query_ignores_same_block_unrelated_pointer_shapes() {
+    let memory = CMemory::new();
+    let target = Pointer {
+        block: "indexed-loadable-shapes".into(),
+        offset: PointerOffsetTerm::Constant(10_000),
+    };
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let mut assumptions =
+                Assumptions::new().assume_proposition(Proposition::CMemoryLoadable {
+                    memory: memory.clone(),
+                    base: target.clone(),
+                    bytes: Bitvector32Term::Constant(8),
+                });
+            for index in 0..size {
+                assumptions = assumptions.assume_proposition(Proposition::CMemoryLoadable {
+                    memory: memory.clone(),
+                    base: Pointer {
+                        block: target.block.clone(),
+                        offset: PointerOffsetTerm::Constant(index as i64),
+                    },
+                    bytes: Bitvector32Term::Constant(4),
+                });
+            }
+            let (proved, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions.proves(&Proposition::CMemoryLoadable {
+                    memory: memory.clone(),
+                    base: target.clone(),
+                    bytes: Bitvector32Term::Constant(4),
+                })
+            });
+            assert!(proved);
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        samples.windows(2).all(|pair| pair[1].1 <= pair[0].1 + 1),
+        "fixed loadability query should not inspect unrelated pointer shapes: {samples:?}"
+    );
+}
+
+#[test]
 fn equivalent_memory_load_order_facts_can_be_inconsistent() {
     let old_memory = CMemory::new();
     let stack_memory = CMemory::new()

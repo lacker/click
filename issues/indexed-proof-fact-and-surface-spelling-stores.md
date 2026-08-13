@@ -85,3 +85,12 @@ fact/index storage instead of triggering `Arc::make_mut` copies of the complete
 context. New condition insertion is still copy-on-write and therefore linear
 in the accumulated context; a genuinely persistent fact store remains
 necessary to meet the acceptance criterion for that case.
+
+Loadability facts now carry the same pointer-shape index in addition to their
+allocation-block index. The loadability prover tries the exact structural
+shape bucket before same-block alias fallbacks, and every candidate still has
+to pass the existing snapshot and range proof. A second four-size regression
+holds one fixed loadability query while adding same-block ranges at unrelated
+pointer shapes and requires constant candidate work. This bounds the common
+field/range lookup; genuinely aliased spellings and range arithmetic can still
+enter the broader proof path.

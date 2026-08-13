@@ -62,8 +62,9 @@ impl Assumptions {
             return true;
         }
         if self
-            .memory_loadable_candidates(&base.block)
+            .memory_loadable_candidates_for_base(base)
             .any(|proposition| {
+                crate::instrumentation::record_deterministic_work(1);
                 let Proposition::CMemoryLoadable {
                     memory: range_memory,
                     base: range_base,
@@ -103,7 +104,7 @@ impl Assumptions {
         }
 
         let mut ranges = self
-            .memory_loadable_candidates(&base.block)
+            .memory_loadable_candidates_for_base(base)
             .filter_map(|proposition| {
                 let Proposition::CMemoryLoadable {
                     memory: range_memory,
@@ -164,7 +165,7 @@ impl Assumptions {
                 )
         };
         let mut regions = self
-            .memory_loadable_candidates(&base.block)
+            .memory_loadable_candidates_for_base(base)
             .filter_map(|fact| {
                 let Proposition::CMemoryLoadable {
                     memory: fact_memory,
@@ -281,7 +282,7 @@ impl Assumptions {
         {
             return true;
         }
-        self.memory_loadable_candidates(&base.block)
+        self.memory_loadable_candidates_for_base(base)
             .any(|proposition| {
                 let Proposition::CMemoryLoadable {
                     memory: range_memory,

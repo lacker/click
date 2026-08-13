@@ -1152,6 +1152,7 @@ impl Assumptions {
     pub(super) fn clear_proposition_facts(&mut self) {
         self.prop_facts = std::sync::Arc::new(BTreeSet::new());
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
+        self.memory_loadable_shape_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.recompute_content_fingerprint();
     }
@@ -1190,33 +1191,54 @@ impl Assumptions {
         let Proposition::CMemoryLoadable { base, .. } = proposition else {
             return;
         };
-        let index = std::sync::Arc::make_mut(&mut self.memory_loadable_facts);
+        let block_index = std::sync::Arc::make_mut(&mut self.memory_loadable_facts);
         if insert {
-            index
+            block_index
                 .entry(base.block.clone())
+                .or_default()
+                .insert(proposition.clone());
+        } else {
+            let remove_key = if let Some(facts) = block_index.get_mut(&base.block) {
+                facts.remove(proposition);
+                facts.is_empty()
+            } else {
+                false
+            };
+            if remove_key {
+                block_index.remove(&base.block);
+            }
+        }
+
+        let shape_key = (base.block.clone(), memory_blind_pointer_fingerprint(base));
+        let shape_index = std::sync::Arc::make_mut(&mut self.memory_loadable_shape_facts);
+        if insert {
+            shape_index
+                .entry(shape_key)
                 .or_default()
                 .insert(proposition.clone());
             return;
         }
-        let remove_key = if let Some(facts) = index.get_mut(&base.block) {
+        let remove_key = if let Some(facts) = shape_index.get_mut(&shape_key) {
             facts.remove(proposition);
             facts.is_empty()
         } else {
             false
         };
         if remove_key {
-            index.remove(&base.block);
+            shape_index.remove(&shape_key);
         }
     }
 
     fn rebuild_memory_loadable_facts(&mut self) {
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
+        self.memory_loadable_shape_facts = std::sync::Arc::new(BTreeMap::new());
         let facts = self.prop_facts.iter().cloned().collect::<Vec<_>>();
         for proposition in facts {
             self.adjust_memory_loadable_fact(&proposition, true);
         }
     }
 
+    #[cfg(test)]
     pub(super) fn memory_loadable_candidates(
         &self,
         block: &PointerBlock,
@@ -1225,6 +1247,27 @@ impl Assumptions {
             .get(block)
             .into_iter()
             .flat_map(|facts| facts.iter())
+    }
+
+    pub(super) fn memory_loadable_candidates_for_base(
+        &self,
+        base: &Pointer,
+    ) -> impl Iterator<Item = &Proposition> {
+        let exact_key = (base.block.clone(), memory_blind_pointer_fingerprint(base));
+        let exact = self
+            .memory_loadable_shape_facts
+            .get(&exact_key)
+            .into_iter()
+            .flat_map(|facts| facts.iter());
+        let fallback = self
+            .memory_loadable_shape_facts
+            .range((
+                std::ops::Bound::Included((base.block.clone(), 0)),
+                std::ops::Bound::Included((base.block.clone(), u64::MAX)),
+            ))
+            .filter(move |(key, _)| **key != exact_key)
+            .flat_map(|(_, facts)| facts.iter());
+        exact.chain(fallback)
     }
 
     fn memory_separation_key(
@@ -1333,6 +1376,10 @@ impl Assumptions {
             )
             && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
             && std::sync::Arc::ptr_eq(&self.memory_loadable_facts, &other.memory_loadable_facts)
+            && std::sync::Arc::ptr_eq(
+                &self.memory_loadable_shape_facts,
+                &other.memory_loadable_shape_facts,
+            )
             && std::sync::Arc::ptr_eq(
                 &self.memory_separation_facts,
                 &other.memory_separation_facts,
