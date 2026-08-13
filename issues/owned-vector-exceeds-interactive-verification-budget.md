@@ -110,6 +110,13 @@ volume: about 1.83s simple replay, 0.65s control, 0.58s certification, and
 core throughput rather than expanding proof source or weakening the resource
 semantics.
 
+The memory-resolution memo now covers top-level pointer distinctness as well
+as equality. A warm follow-up no longer reports the former 8,429-call
+explicit-range aggregate, and independent certification of the branch-heavy
+`vector_replace_if` fell by roughly 60ms. The full project remains around
+5.7--6.0s under current host variance, so this is a bounded repeated-query fix
+rather than closure of the aggregate target.
+
 ## Regression
 
 Keep the complete project as a wall-clock integration workload. Every engine

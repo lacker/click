@@ -525,13 +525,21 @@ fn execute_verified_function_rule(
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     let function = &rule.function;
     budget.consume_function_call()?;
-    let mut existing_variables = BTreeSet::new();
-    collect_c_state_bitvector_variables(caller_state, &mut existing_variables);
-    collect_c_function_bitvector_variables(function, &mut existing_variables);
-    for argument in arguments {
-        collect_c_expression_bitvector_variables(argument, &mut existing_variables);
-    }
-    collect_assumption_variables(assumptions, &mut existing_variables);
+    let existing_variables = crate::instrumentation::measure_operation(
+        function.name(),
+        "verified function rule application",
+        "verified call variable collection",
+        || {
+            let mut existing_variables = BTreeSet::new();
+            collect_c_state_bitvector_variables(caller_state, &mut existing_variables);
+            collect_c_function_bitvector_variables(function, &mut existing_variables);
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, &mut existing_variables);
+            }
+            collect_assumption_variables(assumptions, &mut existing_variables);
+            existing_variables
+        },
+    );
     let mut variables = VerificationVariableGenerator::fresh_for(
         budget.next_verification_variable,
         existing_variables,
@@ -568,13 +576,20 @@ fn execute_verified_function_rule(
             &arguments_path.facts,
             &arguments_path.obligations,
         );
-        let transfer = match prepare_function_resource_transfer(
-            caller_state,
-            &entry_state,
-            function,
-            &path_assumptions,
-            budget,
-            false,
+        let transfer = match crate::instrumentation::measure_operation(
+            function.name(),
+            "verified function rule application",
+            "verified call resource transfer preparation",
+            || {
+                prepare_function_resource_transfer(
+                    caller_state,
+                    &entry_state,
+                    function,
+                    &path_assumptions,
+                    budget,
+                    false,
+                )
+            },
         )? {
             Ok(transfer) => transfer,
             Err(error) => {

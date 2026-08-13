@@ -73,3 +73,12 @@ scoped to the memory-DAG derivation generation and are excluded after deadline
 or search truncation. Callers without an explicit assumptions scope keep the
 unmemoized behavior rather than paying a deep fact-set hash to construct a
 cache key.
+
+Top-level memory-resolution distinctness now shares the same typed,
+assumptions-identity memo used by pointer and term equality. Pointer pairs are
+canonicalized because distinctness is symmetric; positive results remain
+valid, while negative results retain the derivation-generation and truncation
+discipline. A deterministic regression requires a repeated distinctness query
+to consume no additional verifier work. This removes thousands of repeated
+explicit-range subqueries in the owned integration profiles, but callers still
+need an enclosing shallow assumptions scope to use the memo.

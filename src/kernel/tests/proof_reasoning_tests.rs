@@ -2713,16 +2713,21 @@ fn repeated_resolution_queries_do_not_repay_their_search() {
         block: "memo-regression".into(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(93_104)), 4),
     };
-    let assumptions = Assumptions::new().assume_condition(
-        ConditionTerm::signed_less_than(
-            Bitvector32Term::Variable(Variable(93_103)),
-            Bitvector32Term::Variable(Variable(93_104)),
-        ),
-        true,
-    );
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_than(
+                Bitvector32Term::Variable(Variable(93_103)),
+                Bitvector32Term::Variable(Variable(93_104)),
+            ),
+            true,
+        )
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(memory_range(left.clone(), 0, 1)),
+            right: CResource::Memory(memory_range(right.clone(), 0, 1)),
+        });
     let _scope = assumptions.enter_id_scope();
 
-    let work_for = |index: usize| {
+    let work_for = |index: usize, query: fn(&Pointer, &Pointer, &Assumptions) -> bool| {
         let tactic = crate::instrumentation::TacticEvent {
             claim: "memo.regression".to_string(),
             tactic_index: index,
@@ -2735,7 +2740,7 @@ fn repeated_resolution_queries_do_not_repay_their_search() {
             crate::instrumentation::emit(crate::instrumentation::VerificationEvent::TacticStarted(
                 tactic.clone(),
             ));
-            let result = pointers_proven_equal_for_memory_resolution(&left, &right, &assumptions);
+            let result = query(&left, &right, &assumptions);
             crate::instrumentation::emit(
                 crate::instrumentation::VerificationEvent::TacticFinished {
                     tactic: tactic.clone(),
@@ -2757,8 +2762,8 @@ fn repeated_resolution_queries_do_not_repay_their_search() {
         (result, work)
     };
 
-    let (first_result, first_work) = work_for(0);
-    let (second_result, second_work) = work_for(1);
+    let (first_result, first_work) = work_for(0, pointers_proven_equal_for_memory_resolution);
+    let (second_result, second_work) = work_for(1, pointers_proven_equal_for_memory_resolution);
 
     assert_eq!(
         first_result, second_result,
@@ -2771,5 +2776,17 @@ fn repeated_resolution_queries_do_not_repay_their_search() {
     assert_eq!(
         second_work, 0,
         "a repeated top-level query should answer from the memo without new work"
+    );
+
+    let (first_result, first_work) = work_for(2, pointers_proven_distinct_for_memory_resolution);
+    let (second_result, second_work) = work_for(3, pointers_proven_distinct_for_memory_resolution);
+    assert!(first_result && second_result);
+    assert!(
+        first_work > 0,
+        "the first distinctness query should consume deterministic work"
+    );
+    assert_eq!(
+        second_work, 0,
+        "repeated top-level distinctness should share the resolution memo"
     );
 }

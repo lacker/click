@@ -31,6 +31,7 @@ thread_local! {
 /// with the same discipline as `decide`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum ResolutionQueryKey {
+    PointerDistinct(u64, bool, Pointer, Pointer),
     PointerEqual(u64, bool, Pointer, Pointer),
     PointerOffsetEqual(u64, bool, PointerOffsetTerm, PointerOffsetTerm),
     BitvectorEqual(u64, bool, Bitvector32Term, Bitvector32Term),
@@ -325,8 +326,18 @@ pub(in crate::kernel) fn pointers_proven_distinct_for_memory_resolution(
     right: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
-    with_memory_resolution_fuel(|| {
-        pointers_proven_distinct_for_memory_resolution_with_depth(left, right, assumptions, 0)
+    let key = resolution_query_memo_id(assumptions).map(|(id, bridging)| {
+        let (left, right) = if left <= right {
+            (left.clone(), right.clone())
+        } else {
+            (right.clone(), left.clone())
+        };
+        ResolutionQueryKey::PointerDistinct(id, bridging, left, right)
+    });
+    memoized_resolution_query(key, || {
+        with_memory_resolution_fuel(|| {
+            pointers_proven_distinct_for_memory_resolution_with_depth(left, right, assumptions, 0)
+        })
     })
 }
 
