@@ -73,3 +73,14 @@ Independent kernel certification totaled 3.297s and whole-contract replay
 `allocated_vector_push` unfold at 1.982s and frames at 724ms/571ms. These are
 diagnostic-only until the whole-claim replay failure above is fixed; they must
 not be used to justify expansion or unquarantining.
+
+## Update (2026-08-12): explicit quantified assumption no longer lowers against the whole context
+
+The source proof's quantified `have ... by { assumption(); }` previously spent
+about nine seconds lowering its goal against every ambient fact and could cross
+the deterministic control budget. Assumption goal lowering now tries the
+context-free spelling first and, when the logical wrapper needs context, only
+passes facts with the same outer logical shape. On the unchanged sidecar the
+largest completed `have` is now 12ms. Ordinary source verification is green;
+the whole-claim call/store replay failure above remains the blocker, so this is
+still not a complete optimization profile and the project remains quarantined.

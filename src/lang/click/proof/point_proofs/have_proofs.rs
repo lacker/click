@@ -1344,29 +1344,24 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     prepared_derivation_lowering_facts = Some(lowering_facts);
                 }
                 if goal.is_none() {
-                    let lowered = if let Some(prelowered_goal) = prelowered_goal {
-                        prelowered_goal.clone()
-                    } else {
-                        let lowering_facts = prepared_derivation_lowering_facts
-                            .as_deref()
-                            .or(direct_goal_lowering_facts.as_deref())
-                            .unwrap_or(&available);
-                        lower_point_proposition_with_values(
-                            proposition,
-                            lowering_facts,
-                            values.clone(),
-                            &array_refs,
-                            pre_state,
-                            state,
-                            result,
-                            program_point_states,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                        .or_else(|_| {
-                            lower_point_proposition_with_memory_resolution(
+                    let quantified_assumption = matches!(
+                        (tactic, proposition),
+                        (ProofTactic::Assumption, ClickProposition::ForAll { .. })
+                    );
+                    let assumption_shape_facts = quantified_assumption
+                        .then(|| {
+                            available
+                                .iter()
+                                .filter(|fact| matches!(fact, Proposition::ForAll { .. }))
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let directly_lowered_assumption = quantified_assumption
+                        .then(|| {
+                            lower_point_proposition_with_values(
                                 proposition,
-                                lowering_facts,
+                                &[],
                                 values.clone(),
                                 &array_refs,
                                 pre_state,
@@ -1376,13 +1371,87 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                 predicate_environment,
                                 click_function_environment,
                             )
+                            .or_else(|_| {
+                                lower_point_proposition_with_values(
+                                    proposition,
+                                    &assumption_shape_facts,
+                                    values.clone(),
+                                    &array_refs,
+                                    pre_state,
+                                    state,
+                                    result,
+                                    program_point_states,
+                                    predicate_environment,
+                                    click_function_environment,
+                                )
+                            })
+                            .ok()
+                            .filter(|lowered| {
+                                exact_fact_is_available(lowered, &available)
+                                    || quantified_replay_equivalent_available_fact(
+                                        lowered, &available,
+                                    )
+                                    .is_some()
+                            })
                         })
-                        .map_err(|message| {
-                            ClickError::new(format!(
-                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
-                            ))
-                        })?
-                    };
+                        .flatten();
+                    let recorded_assumption = quantified_assumption
+                        .then(|| {
+                            surface_propositions.and_then(|propositions| {
+                                propositions.available_kernel(proposition, &available)
+                            })
+                        })
+                        .flatten();
+                    let lowered = crate::instrumentation::measure_operation(
+                        claim_label,
+                        proof_name,
+                        "have goal lowering",
+                        || {
+                            if let Some(prelowered_goal) =
+                                prelowered_goal
+                                    .or(recorded_assumption)
+                                    .or(directly_lowered_assumption.as_ref())
+                            {
+                                Ok(prelowered_goal.clone())
+                            } else {
+                                let lowering_facts = prepared_derivation_lowering_facts
+                                    .as_deref()
+                                    .or(direct_goal_lowering_facts.as_deref())
+                                    .unwrap_or(&available);
+                                lower_point_proposition_with_values(
+                                    proposition,
+                                    lowering_facts,
+                                    values.clone(),
+                                    &array_refs,
+                                    pre_state,
+                                    state,
+                                    result,
+                                    program_point_states,
+                                    predicate_environment,
+                                    click_function_environment,
+                                )
+                                .or_else(|_| {
+                                    lower_point_proposition_with_memory_resolution(
+                                        proposition,
+                                        lowering_facts,
+                                        values.clone(),
+                                        &array_refs,
+                                        pre_state,
+                                        state,
+                                        result,
+                                        program_point_states,
+                                        predicate_environment,
+                                        click_function_environment,
+                                    )
+                                })
+                            }
+                        },
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
+                        ))
+                    })?;
                     fact = Some(lowered.clone());
                     goal = Some(lowered);
                 }
