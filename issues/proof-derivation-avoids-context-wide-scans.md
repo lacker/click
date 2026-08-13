@@ -36,3 +36,18 @@ order cases whose cost is proportional to the returned path.
 - Quantified matching uses a conclusion/trigger index rather than all facts.
 - Returned derivations retain only actual dependencies.
 - Fixed derivations pass the fact-count scaling gate.
+
+## 2026-08-13 progress
+
+Contradiction checking now builds canonical indexes for exact
+equality/disequality pairs and directed order edges while it performs its
+single condition-fact pass. Exact opposite equalities, strict self-edges,
+reverse order edges, and equality-versus-strict-order conflicts return from
+those indexes instead of entering the nested theory scans. A four-size
+deterministic regression holds one exact contradiction fixed while growing
+unrelated conditions.
+
+The deeper fallback remains for terms that are equal only through derived
+theory facts. Closing this issue still requires provenance-producing order and
+loadability decisions, indexed quantified matching, and removal of that
+non-structural all-pairs fallback rather than weakening its conclusions.

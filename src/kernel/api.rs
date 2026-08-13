@@ -779,14 +779,21 @@ pub fn proposition_and(left: Proposition, right: Proposition) -> Proposition {
 }
 
 pub fn proposition_and_all(mut propositions: Vec<Proposition>) -> Proposition {
-    let Some(first) = propositions.pop() else {
+    if propositions.is_empty() {
         return Proposition::ConditionIs(ConditionTerm::Constant(true), true);
-    };
-
-    propositions
-        .into_iter()
-        .rev()
-        .fold(first, |right, left| proposition_and(left, right))
+    }
+    while propositions.len() > 1 {
+        let mut next = Vec::with_capacity(propositions.len().div_ceil(2));
+        let mut pairs = propositions.into_iter();
+        while let Some(left) = pairs.next() {
+            next.push(match pairs.next() {
+                Some(right) => proposition_and(left, right),
+                None => left,
+            });
+        }
+        propositions = next;
+    }
+    propositions.pop().expect("nonempty conjunction level")
 }
 
 /// Expands C expression definedness into the exact pure proposition under

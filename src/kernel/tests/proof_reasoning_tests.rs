@@ -1,6 +1,68 @@
 use super::*;
 
 #[test]
+fn conjunction_builder_has_logarithmic_depth() {
+    fn conjunction_depth(proposition: &Proposition) -> usize {
+        match proposition {
+            Proposition::And(left, right) => {
+                1 + conjunction_depth(left).max(conjunction_depth(right))
+            }
+            _ => 0,
+        }
+    }
+
+    let propositions = (0..1_024)
+        .map(|index| {
+            Proposition::ConditionIs(ConditionTerm::Variable(Variable(300_000 + index)), true)
+        })
+        .collect();
+    let conjunction = proposition_and_all(propositions);
+
+    assert_eq!(conjunction_depth(&conjunction), 10);
+}
+
+#[test]
+fn exact_contradiction_lookup_scales_near_linearly() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let mut assumptions = Assumptions::new();
+            for index in 0..size {
+                assumptions = assumptions.assume_condition(
+                    ConditionTerm::equal(
+                        Bitvector32Term::Variable(Variable(100_000 + index as u64)),
+                        Bitvector32Term::Constant(index as u32),
+                    ),
+                    true,
+                );
+            }
+            let contradiction_left = Bitvector32Term::Variable(Variable(200_000));
+            let contradiction_right = Bitvector32Term::Constant(7);
+            assumptions = assumptions
+                .assume_condition(
+                    ConditionTerm::equal(contradiction_left.clone(), contradiction_right.clone()),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_less_than(contradiction_left, contradiction_right),
+                    true,
+                );
+            let (inconsistent, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions.is_inconsistent()
+            });
+            assert!(inconsistent);
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "exact contradiction lookup is superlinear: {samples:?}"
+        );
+    }
+}
+
+#[test]
 fn closed_forall_cache_accepts_only_kernel_proved_facts() {
     let variable = Variable(91_000);
     let reflexive = Proposition::ForAll {

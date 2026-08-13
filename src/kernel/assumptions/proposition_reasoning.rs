@@ -2066,8 +2066,12 @@ impl Assumptions {
         let mut order_facts = Vec::new();
         let mut equal_facts = Vec::new();
         let mut disequal_facts = Vec::new();
+        let mut exact_equal_pairs = BTreeSet::new();
+        let mut exact_disequal_pairs = BTreeSet::new();
+        let mut exact_order_pairs = BTreeMap::<(Bitvector32Term, Bitvector32Term), bool>::new();
         let mut condition_polarities = BTreeMap::new();
         for (condition, value) in self.condition_facts.iter() {
+            crate::instrumentation::record_deterministic_work(1);
             let key = canonical_contradiction_condition(condition);
             if condition_polarities
                 .insert(key, *value)
@@ -2079,22 +2083,62 @@ impl Assumptions {
                 (ConditionTerm::Constant(actual), expected) if actual != expected => return true,
                 (ConditionTerm::Bitvector32Equal(left, right), true) => {
                     equal_facts.push((left.as_ref().clone(), right.as_ref().clone()));
+                    let pair = if left <= right {
+                        (left.as_ref().clone(), right.as_ref().clone())
+                    } else {
+                        (right.as_ref().clone(), left.as_ref().clone())
+                    };
+                    exact_equal_pairs.insert(pair);
                 }
                 (ConditionTerm::Bitvector32Equal(left, right), false) => {
                     disequal_facts.push((left.as_ref().clone(), right.as_ref().clone()));
+                    let pair = if left <= right {
+                        (left.as_ref().clone(), right.as_ref().clone())
+                    } else {
+                        (right.as_ref().clone(), left.as_ref().clone())
+                    };
+                    exact_disequal_pairs.insert(pair);
                 }
                 _ => {
                     if let Some(order_fact) = condition_as_order_fact(condition, *value) {
+                        let pair = (order_fact.0.clone(), order_fact.1.clone());
+                        exact_order_pairs
+                            .entry(pair)
+                            .and_modify(|strict| *strict |= order_fact.2)
+                            .or_insert(order_fact.2);
                         order_facts.push(order_fact);
                     }
                 }
             }
         }
 
+        if exact_equal_pairs
+            .iter()
+            .any(|pair| exact_disequal_pairs.contains(pair))
+        {
+            return true;
+        }
+        if exact_order_pairs.iter().any(|((left, right), strict)| {
+            (left == right && *strict)
+                || exact_order_pairs
+                    .get(&(right.clone(), left.clone()))
+                    .is_some_and(|reverse_strict| *strict || *reverse_strict)
+                || (*strict
+                    && exact_equal_pairs.contains(&if left <= right {
+                        (left.clone(), right.clone())
+                    } else {
+                        (right.clone(), left.clone())
+                    }))
+        }) {
+            return true;
+        }
+
         for (equal_left, equal_right) in &equal_facts {
+            crate::instrumentation::record_deterministic_work(1);
             if disequal_facts
                 .iter()
                 .any(|(disequal_left, disequal_right)| {
+                    crate::instrumentation::record_deterministic_work(1);
                     (equal_left == disequal_left && equal_right == disequal_right)
                         || (equal_left == disequal_right && equal_right == disequal_left)
                 })
@@ -2108,10 +2152,12 @@ impl Assumptions {
                 || self.bitvector_terms_equal_from_facts(left, right)
         };
         for (left, right, strict) in &order_facts {
+            crate::instrumentation::record_deterministic_work(1);
             if *strict && terms_equal(left, right) {
                 return true;
             }
             if equal_facts.iter().any(|(equal_left, equal_right)| {
+                crate::instrumentation::record_deterministic_work(1);
                 (terms_equal(left, equal_left) && terms_equal(right, equal_right))
                     || (terms_equal(left, equal_right) && terms_equal(right, equal_left))
             }) && *strict
@@ -2121,6 +2167,7 @@ impl Assumptions {
             if order_facts
                 .iter()
                 .any(|(other_left, other_right, other_strict)| {
+                    crate::instrumentation::record_deterministic_work(1);
                     terms_equal(left, other_right)
                         && terms_equal(right, other_left)
                         && (*strict || *other_strict)

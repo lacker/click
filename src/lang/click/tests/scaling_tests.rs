@@ -124,7 +124,7 @@ fn resource_member_project(member_count: usize) -> (String, String) {
         click_source.push_str(&format!("    contains member_{index}({index});\n"));
     }
     click_source.push_str(
-        "}\n\nverifying \"preserve_bundle.c\";\n\nint32 preserve_bundle(int32 p[]) {\n    owns bundle(p);\n    immutable by {\n        step();\n        frame();\n    }\n}\n",
+        "}\n\nverifying \"preserve_bundle.c\";\n\nint32 preserve_bundle(int32 p[]) {\n    views bundle(p);\n    immutable by {\n        step() using {}\n        frame() using {}\n    }\n}\n",
     );
     (c_source, click_source)
 }

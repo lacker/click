@@ -61,3 +61,13 @@ curves currently report total deterministic work and their scaling axis, but
 do not yet break a failed curve down by operation span. Dedicated `step()
 using`, transport, and same-kernel/many-surface-spellings curves remain tracked
 by `indexed-proof-fact-and-surface-spelling-stores.md`.
+
+The composite-member curve exposed a separate representation hazard before it
+could measure useful work: expanded function requirements form a deep theorem,
+and each verified claim cloned that immutable proposition recursively. Theorem
+values now share their proposition through `Arc`, making claim-level theorem
+clones constant-time and stack-safe without changing the logical shape that
+certificate replay consumes. Independently, the general conjunction builder
+is balanced; a 1,024-leaf structural regression fixes its expected depth at
+10. The default composite-member curve now reaches 64 members using only
+explicit `step() using {}` and `frame() using {}` tactics.

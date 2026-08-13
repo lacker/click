@@ -1496,7 +1496,7 @@ pub enum Proposition {
 /// An abstract proven proposition produced by kernel axioms.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Theorem {
-    pub(super) proposition: Proposition,
+    pub(super) proposition: std::sync::Arc<Proposition>,
 }
 
 /// A proof tree produced by contextual proposition reasoning.

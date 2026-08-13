@@ -2,11 +2,13 @@ use super::*;
 
 impl Theorem {
     pub(in crate::kernel) fn new(proposition: Proposition) -> Self {
-        Self { proposition }
+        Self {
+            proposition: std::sync::Arc::new(proposition),
+        }
     }
 
     pub fn proposition(&self) -> &Proposition {
-        &self.proposition
+        self.proposition.as_ref()
     }
 }
 
