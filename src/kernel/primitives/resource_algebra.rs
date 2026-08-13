@@ -197,6 +197,38 @@ impl ResourceContext {
             .is_some_and(|(left, right)| left != right)
     }
 
+    /// Refutes one offset-alias guard from this composition without expanding
+    /// all memory pairs. Each block bucket is searched twice for the two
+    /// containing owned members; the caller supplies the bounded shallow
+    /// membership relation used by contradiction checking.
+    pub(in crate::kernel) fn refutes_offset_alias(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+        contains: impl Fn(&Pointer, &CMemoryRange) -> bool,
+    ) -> bool {
+        self.index().memory_by_block.iter().any(|(block, positions)| {
+            let containing = |offset: &PointerOffsetTerm| {
+                positions.iter().copied().find(|position| {
+                    self.facts[*position]
+                        .memory_own_range()
+                        .is_some_and(|range| {
+                            contains(
+                                &Pointer {
+                                    block: block.clone(),
+                                    offset: offset.clone(),
+                                },
+                                range,
+                            )
+                        })
+                })
+            };
+            containing(left)
+                .zip(containing(right))
+                .is_some_and(|(left, right)| left != right)
+        })
+    }
+
     fn direct_match_candidate_positions(&self, fact: &CResourceFact) -> Option<&Vec<usize>> {
         match fact.resource() {
             CResource::Memory(range) => self.index().memory_by_block.get(&range.base().block),

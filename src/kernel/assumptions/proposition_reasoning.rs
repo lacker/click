@@ -2495,12 +2495,21 @@ impl Assumptions {
             })
             .filter(|(left, right)| left.base().block == right.base().block)
             .collect::<Vec<_>>();
-        if separated.is_empty() {
+        if separated.is_empty() && self.resource_compositions.is_empty() {
             return false;
         }
         ALIAS_GUARD_REFUTATION_ACTIVE.with(|active| active.set(true));
         let refuted = guards.iter().any(|(left, right)| {
-            separated.iter().any(|(first, second)| {
+            self.resource_compositions.iter().any(|resources| {
+                resources.refutes_offset_alias(left, right, |pointer, range| {
+                    self.pointer_in_range_by_shallow_fact_graph(
+                        pointer,
+                        range.base(),
+                        range.start(),
+                        range.end(),
+                    )
+                })
+            }) || separated.iter().any(|(first, second)| {
                 let holds = |range: &CMemoryRange, offset: &PointerOffsetTerm| {
                     let pointer = Pointer {
                         block: range.base().block.clone(),
@@ -2520,7 +2529,7 @@ impl Assumptions {
                 };
                 holds(first, left) && holds(second, right)
                     || holds(first, right) && holds(second, left)
-            })
+                })
         });
         ALIAS_GUARD_REFUTATION_ACTIVE.with(|active| active.set(false));
         refuted
