@@ -227,7 +227,12 @@ pub(super) fn execute_c_function_verification_paths(
     }
 
     let mut paths = Vec::new();
-    for arguments_path in evaluate_c_arguments_paths(state, arguments, assumptions, budget)? {
+    for arguments_path in crate::instrumentation::measure_operation(
+        function.name(),
+        "independent kernel execution",
+        "verification argument evaluation",
+        || evaluate_c_arguments_paths(state, arguments, assumptions, budget),
+    )? {
         if let Some(outcome) = arguments_path.outcome {
             paths.push(CFunctionPath {
                 outcome,
@@ -281,21 +286,36 @@ pub(super) fn execute_c_function_verification_paths(
         } else {
             (callee_state, None)
         };
-        for body_path in execute_c_statement_verification_paths(
-            &callee_state,
-            function.body(),
-            &body_assumptions,
-            environment,
-            execution_semantics,
-            budget,
-            variables,
-        )? {
-            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
-                &arguments_path.facts,
-                &arguments_path.obligations,
-                &body_path.facts,
-                &body_path.obligations,
-                assumptions,
+        let body_paths = crate::instrumentation::measure_operation(
+            function.name(),
+            "independent kernel execution",
+            "verification body execution",
+            || {
+                execute_c_statement_verification_paths(
+                    &callee_state,
+                    function.body(),
+                    &body_assumptions,
+                    environment,
+                    execution_semantics,
+                    budget,
+                    variables,
+                )
+            },
+        )?;
+        for body_path in body_paths {
+            let Some((facts, obligations)) = crate::instrumentation::measure_operation(
+                function.name(),
+                "independent kernel execution",
+                "verification fact merge",
+                || {
+                    merge_execution_pure_facts_and_obligations(
+                        &arguments_path.facts,
+                        &arguments_path.obligations,
+                        &body_path.facts,
+                        &body_path.obligations,
+                        assumptions,
+                    )
+                },
             ) else {
                 continue;
             };

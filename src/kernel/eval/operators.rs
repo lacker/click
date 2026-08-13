@@ -184,7 +184,12 @@ pub(in crate::kernel) fn apply_c_int32_add(
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
     let overflow = ConditionTerm::signed_add_overflows(left.clone(), right.clone());
-    match decide_with_facts(assumptions, &facts, &overflow) {
+    match crate::instrumentation::measure_operation(
+        "kernel",
+        "independent kernel execution",
+        "int32 add overflow decision",
+        || decide_with_facts(assumptions, &facts, &overflow),
+    ) {
         Some(true) => vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
             facts,

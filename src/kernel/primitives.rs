@@ -1562,6 +1562,10 @@ pub(super) enum PropositionDerivationRule {
 #[derive(Clone, Debug, Default)]
 pub struct Assumptions {
     pub(super) condition_facts: std::sync::Arc<BTreeMap<ConditionTerm, bool>>,
+    /// Exact signed-order bounds keyed by either endpoint. Counts preserve
+    /// synonymous condition spellings when one source fact is replaced.
+    pub(super) signed_order_bounds:
+        std::sync::Arc<BTreeMap<Bitvector32Term, BTreeMap<(Bitvector32Term, bool, bool), usize>>>,
     pub(super) prop_facts: std::sync::Arc<BTreeSet<Proposition>>,
     pub(super) content_fingerprint: u64,
     pub(super) defer_non_exact_loadability_obligations: bool,

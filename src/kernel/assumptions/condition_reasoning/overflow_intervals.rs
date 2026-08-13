@@ -1,6 +1,41 @@
 use super::*;
 
+#[cfg(test)]
+thread_local! {
+    static SIGNED_INTERVAL_FALLBACK_FACT_VISITS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[derive(Clone)]
+struct SignedOrderBound {
+    other: Bitvector32Term,
+    strict: bool,
+    upper: bool,
+}
+
 impl Assumptions {
+    #[cfg(test)]
+    fn reset_signed_interval_fallback_fact_visits() {
+        SIGNED_INTERVAL_FALLBACK_FACT_VISITS.with(|visits| visits.set(0));
+    }
+
+    #[cfg(test)]
+    fn signed_interval_fallback_fact_visits() -> usize {
+        SIGNED_INTERVAL_FALLBACK_FACT_VISITS.with(Cell::get)
+    }
+
+    fn exact_signed_order_bounds(&self, term: &Bitvector32Term) -> Option<Vec<SignedOrderBound>> {
+        self.signed_order_bounds.get(term).map(|bounds| {
+            bounds
+                .keys()
+                .map(|(other, strict, upper)| SignedOrderBound {
+                    other: other.clone(),
+                    strict: *strict,
+                    upper: *upper,
+                })
+                .collect()
+        })
+    }
+
     pub(in crate::kernel) fn decide_from_overflow_facts(
         &self,
         condition: &ConditionTerm,
@@ -241,6 +276,31 @@ impl Assumptions {
     /// `x + 0`. Additions are ranged only when their own signed evaluation is
     /// known not to overflow; this makes nested-addition bounds safe to reuse.
     fn signed_interval(&self, term: &Bitvector32Term, depth: usize) -> Option<(i64, i64)> {
+        // A successfully reconstructed interval is independent of the depth
+        // allowance that happened to find it. Key by fact-set content and
+        // term so a nested arithmetic expression reuses its operands' ranges
+        // instead of rescanning every order fact at each tree level.
+        let key = ambient_assumptions_memo_id(self).map(|id| (id, term.clone()));
+        if let Some(hit) = key
+            .as_ref()
+            .and_then(|key| SIGNED_INTERVAL_MEMO.with(|memo| memo.borrow().get(key).copied()))
+        {
+            return Some(hit);
+        }
+        let result = self.signed_interval_uncached(term, depth);
+        if let (Some(key), Some(interval)) = (key, result) {
+            SIGNED_INTERVAL_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= SIGNED_INTERVAL_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert(key, interval);
+            });
+        }
+        result
+    }
+
+    fn signed_interval_uncached(&self, term: &Bitvector32Term, depth: usize) -> Option<(i64, i64)> {
         if depth == 0 {
             note_search_truncation();
             return None;
@@ -262,7 +322,38 @@ impl Assumptions {
 
         let mut lower = i64::from(i32::MIN);
         let mut upper = i64::from(i32::MAX);
+        if let Some(bounds) = self.exact_signed_order_bounds(term) {
+            for bound in bounds {
+                let Some(value) = signed_bitvector_constant(&bound.other) else {
+                    continue;
+                };
+                if bound.upper {
+                    let Some(value) = (if bound.strict {
+                        value.checked_sub(1)
+                    } else {
+                        Some(value)
+                    }) else {
+                        continue;
+                    };
+                    upper = upper.min(value);
+                } else {
+                    let Some(value) = (if bound.strict {
+                        value.checked_add(1)
+                    } else {
+                        Some(value)
+                    }) else {
+                        continue;
+                    };
+                    lower = lower.max(value);
+                }
+            }
+            if lower != i64::from(i32::MIN) && upper != i64::from(i32::MAX) {
+                return (lower <= upper).then_some((lower, upper));
+            }
+        }
         for (condition, value) in self.condition_facts.iter() {
+            #[cfg(test)]
+            SIGNED_INTERVAL_FALLBACK_FACT_VISITS.with(|visits| visits.set(visits.get() + 1));
             let Some((fact_left, fact_right, strict)) = condition_as_order_fact(condition, *value)
             else {
                 continue;
@@ -315,5 +406,51 @@ impl Assumptions {
             || self.bitvector_terms_snapshot_equivalent(target, endpoint)
             || resolved_matches(target, endpoint)
             || resolved_matches(endpoint, target)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_signed_bounds_avoid_context_scan() {
+        let x = Bitvector32Term::Variable(Variable(91_001));
+        let y = Bitvector32Term::Variable(Variable(91_002));
+        let mut assumptions = Assumptions::new();
+        for index in 0..128 {
+            let unrelated = Bitvector32Term::Variable(Variable(92_000 + index));
+            assumptions = assumptions.assume_condition(
+                ConditionTerm::signed_less_equal(
+                    unrelated,
+                    Bitvector32Term::Constant(1_000),
+                ),
+                true,
+            );
+        }
+        for term in [x.clone(), y.clone()] {
+            assumptions = assumptions
+                .assume_condition(
+                    ConditionTerm::signed_greater_equal(
+                        term.clone(),
+                        Bitvector32Term::Constant(0),
+                    ),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_less_equal(
+                        term,
+                        Bitvector32Term::Constant(1_000),
+                    ),
+                    true,
+                );
+        }
+
+        Assumptions::reset_signed_interval_fallback_fact_visits();
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_add_overflows(x, y)),
+            Some(false)
+        );
+        assert_eq!(Assumptions::signed_interval_fallback_fact_visits(), 0);
     }
 }

@@ -51,3 +51,11 @@ The deeper fallback remains for terms that are equal only through derived
 theory facts. Closing this issue still requires provenance-producing order and
 loadability decisions, indexed quantified matching, and removal of that
 non-structural all-pairs fallback rather than weakening its conclusions.
+
+Signed interval reconstruction now maintains an exact endpoint-to-bound index
+incrementally with `Assumptions`. A fixed overflow decision with 128 unrelated
+order facts is guarded to use no context-scan fallback. Successful interval
+results are also memoized by fact-set content and term, so nested additions
+reuse their operands' ranges. Snapshot-equivalent and resolved-load bounds
+still use the broader fallback when exact endpoint bounds are insufficient;
+indexing those derived order edges remains part of the open provenance work.

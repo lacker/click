@@ -328,13 +328,35 @@ pub(super) fn execute_c_statement_verification_paths(
             // after crossing that boundary so neither can reuse an identity.
             budget.next_verification_variable =
                 budget.next_verification_variable.max(variables.next);
-            let paths = execute_c_statement_paths(
-                state,
-                statement,
-                assumptions,
-                environment,
-                execution_semantics,
-                budget,
+            let operation = match statement {
+                CStatement::Skip => "verification statement: skip",
+                CStatement::Declare { .. } => "verification statement: declare",
+                CStatement::Assign { .. } => "verification statement: assign",
+                CStatement::CallAssign { .. } => "verification statement: call assign",
+                CStatement::Call { .. } => "verification statement: call",
+                CStatement::HeapAllocate { .. } => "verification statement: heap allocate",
+                CStatement::HeapFree { .. } => "verification statement: heap free",
+                CStatement::Assert { .. } => "verification statement: assert",
+                CStatement::Return(_) => "verification statement: return",
+                CStatement::Store { .. } => "verification statement: store",
+                CStatement::TypedStore { .. } => "verification statement: typed store",
+                CStatement::While { .. } => "verification statement: while",
+                CStatement::Seq(_, _) | CStatement::If { .. } => unreachable!(),
+            };
+            let paths = crate::instrumentation::measure_operation(
+                "kernel",
+                "independent kernel execution",
+                operation,
+                || {
+                    execute_c_statement_paths(
+                        state,
+                        statement,
+                        assumptions,
+                        environment,
+                        execution_semantics,
+                        budget,
+                    )
+                },
             );
             variables.next = variables.next.max(budget.next_verification_variable);
             paths?

@@ -150,3 +150,14 @@ warm debug profile fell from roughly 5.75s to 5.24s. The remaining framed
 transport work is about 160ms of snapshot rewriting, while
 `tree_sum_root_and_children` still spends about 1.2s in independent kernel
 certification.
+
+## Update (2026-08-13): signed ranges use indexed endpoints
+
+The next certification profile localized that 1.2s to signed-overflow
+decisions while independently executing the function's two additions. Signed
+interval reconstruction rescanned every order fact separately for each leaf
+of the nested sum. Incremental exact-endpoint bound indexing plus successful
+interval memoization reduced each overflow decision to below 1ms and the
+independent certification span to roughly 470ms. A warm whole-project run is
+now about 4.2s; the remaining body-execution cost is primarily repeated field
+load/memory reasoning rather than arithmetic or tactic planning.

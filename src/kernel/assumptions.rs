@@ -459,6 +459,9 @@ thread_local! {
     static CONSTANT_NORMALIZATION_MEMO: RefCell<
         std::collections::HashMap<(u64, Bitvector32Term), Option<i64>>,
     > = RefCell::new(std::collections::HashMap::new());
+    static SIGNED_INTERVAL_MEMO: RefCell<
+        std::collections::HashMap<(u64, Bitvector32Term), (i64, i64)>,
+    > = RefCell::new(std::collections::HashMap::new());
     static ATOMIC_DERIVATION_MEMO: RefCell<
         std::collections::HashMap<(u64, bool), std::collections::HashMap<Proposition, bool>>,
     > = RefCell::new(std::collections::HashMap::new());
@@ -470,6 +473,7 @@ thread_local! {
 const ASSUMPTIONS_MEMO_ID_LIMIT: usize = 20_000;
 const DECIDE_MEMO_LIMIT: usize = 500_000;
 const CONSTANT_NORMALIZATION_SEARCH_LIMIT: usize = 32;
+const SIGNED_INTERVAL_MEMO_LIMIT: usize = 100_000;
 
 /// Content-derived memo identity: equal fact sets share an id, and any
 /// in-place mutation changes the contents and therefore the id, so a decision
@@ -814,6 +818,48 @@ impl Assumptions {
         self.content_fingerprint = fingerprint;
     }
 
+    fn adjust_signed_order_bound(&mut self, condition: &ConditionTerm, value: bool, insert: bool) {
+        let Some((left, right, strict)) = condition_as_order_fact(condition, value) else {
+            return;
+        };
+        for (endpoint, bound) in [
+            (left.clone(), (right.clone(), strict, true)),
+            (right, (left, strict, false)),
+        ] {
+            let index = std::sync::Arc::make_mut(&mut self.signed_order_bounds);
+            if insert {
+                *index.entry(endpoint).or_default().entry(bound).or_default() += 1;
+                continue;
+            }
+            let remove_endpoint = if let Some(bounds) = index.get_mut(&endpoint) {
+                if let Some(count) = bounds.get_mut(&bound) {
+                    *count -= 1;
+                    if *count == 0 {
+                        bounds.remove(&bound);
+                    }
+                }
+                bounds.is_empty()
+            } else {
+                false
+            };
+            if remove_endpoint {
+                index.remove(&endpoint);
+            }
+        }
+    }
+
+    pub(super) fn rebuild_signed_order_bounds(&mut self) {
+        self.signed_order_bounds = std::sync::Arc::new(BTreeMap::new());
+        let facts = self
+            .condition_facts
+            .iter()
+            .map(|(condition, value)| (condition.clone(), *value))
+            .collect::<Vec<_>>();
+        for (condition, value) in facts {
+            self.adjust_signed_order_bound(&condition, value, true);
+        }
+    }
+
     pub(super) fn clear_proposition_facts(&mut self) {
         self.prop_facts = std::sync::Arc::new(BTreeSet::new());
         self.recompute_content_fingerprint();
@@ -992,8 +1038,10 @@ impl Assumptions {
         let old =
             std::sync::Arc::make_mut(&mut self.condition_facts).insert(condition.clone(), value);
         if let Some(old) = old {
+            self.adjust_signed_order_bound(&condition, old, false);
             self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), old));
         }
+        self.adjust_signed_order_bound(&condition, value, true);
         self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));
         self
     }
@@ -1039,6 +1087,7 @@ impl Assumptions {
             collect_condition_bitvector_variables(condition, &mut variables);
             !variables.contains(&variable)
         });
+        assumptions.rebuild_signed_order_bounds();
         assumptions.retain_proposition_facts(|proposition| {
             !proposition_has_free_bitvector_variable(proposition, variable)
         });

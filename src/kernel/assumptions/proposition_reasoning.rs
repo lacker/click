@@ -340,6 +340,7 @@ impl Assumptions {
                 }
             }
             candidate.condition_facts = std::sync::Arc::new(selected);
+            candidate.rebuild_signed_order_bounds();
             candidate.recompute_content_fingerprint();
             let (proved, premises_id) =
                 candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);

@@ -1049,26 +1049,41 @@ pub(super) fn prove_symbolic_c_function_verification_paths_with_environment_and_
     mut budget: ExecutionBudget,
     prepare_contract_resources: bool,
 ) -> SymbolicCExecution {
-    let mut existing = BTreeSet::new();
-    collect_c_state_bitvector_variables(&state, &mut existing);
-    collect_c_function_bitvector_variables(&function, &mut existing);
-    for argument in &arguments {
-        collect_c_expression_bitvector_variables(argument, &mut existing);
-    }
-    collect_assumption_variables(&assumptions, &mut existing);
-    collect_execution_environment_variables(&environment, &mut existing);
+    let existing = crate::instrumentation::measure_operation(
+        function.name(),
+        "independent kernel execution",
+        "verification variable collection",
+        || {
+            let mut existing = BTreeSet::new();
+            collect_c_state_bitvector_variables(&state, &mut existing);
+            collect_c_function_bitvector_variables(&function, &mut existing);
+            for argument in &arguments {
+                collect_c_expression_bitvector_variables(argument, &mut existing);
+            }
+            collect_assumption_variables(&assumptions, &mut existing);
+            collect_execution_environment_variables(&environment, &mut existing);
+            existing
+        },
+    );
     let mut variables =
         VerificationVariableGenerator::fresh_for(budget.next_verification_variable, existing);
-    let paths = match execute_c_function_verification_paths(
-        &state,
-        &function,
-        &arguments,
-        &assumptions,
-        &environment,
-        execution_semantics,
-        &mut budget,
-        &mut variables,
-        prepare_contract_resources,
+    let paths = match crate::instrumentation::measure_operation(
+        function.name(),
+        "independent kernel execution",
+        "verification path execution",
+        || {
+            execute_c_function_verification_paths(
+                &state,
+                &function,
+                &arguments,
+                &assumptions,
+                &environment,
+                execution_semantics,
+                &mut budget,
+                &mut variables,
+                prepare_contract_resources,
+            )
+        },
     ) {
         Ok(paths) => paths,
         Err(limit) => {
@@ -1078,32 +1093,39 @@ pub(super) fn prove_symbolic_c_function_verification_paths_with_environment_and_
             };
         }
     };
-    let paths = paths
-        .into_iter()
-        .map(|path| {
-            let effect_facts = memory_effect_execution_facts(&path.facts);
-            let facts = public_execution_pure_facts(&path.facts);
-            let proposition = Proposition::CFunctionVerifies {
-                state: state.clone(),
-                function: function.clone(),
-                arguments: arguments.clone(),
-                outcome: path.outcome,
-            };
-            let theorem = Theorem::new(wrap_proof_facts(
-                proposition,
-                &assumptions,
-                &facts,
-                &path.obligations,
-            ));
-            SymbolicCExecutionPath {
-                assumptions: assumptions.clone(),
-                facts,
-                effect_facts,
-                obligations: path.obligations,
-                theorem,
-            }
-        })
-        .collect();
+    let paths = crate::instrumentation::measure_operation(
+        function.name(),
+        "independent kernel execution",
+        "checked path theorem assembly",
+        || {
+            paths
+                .into_iter()
+                .map(|path| {
+                    let effect_facts = memory_effect_execution_facts(&path.facts);
+                    let facts = public_execution_pure_facts(&path.facts);
+                    let proposition = Proposition::CFunctionVerifies {
+                        state: state.clone(),
+                        function: function.clone(),
+                        arguments: arguments.clone(),
+                        outcome: path.outcome,
+                    };
+                    let theorem = Theorem::new(wrap_proof_facts(
+                        proposition,
+                        &assumptions,
+                        &facts,
+                        &path.obligations,
+                    ));
+                    SymbolicCExecutionPath {
+                        assumptions: assumptions.clone(),
+                        facts,
+                        effect_facts,
+                        obligations: path.obligations,
+                        theorem,
+                    }
+                })
+                .collect()
+        },
+    );
 
     SymbolicCExecution { paths, limit: None }
 }
