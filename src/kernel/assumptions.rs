@@ -3,6 +3,7 @@ use super::prelude::*;
 #[cfg(test)]
 thread_local! {
     static CONDITION_IMPLICATION_ANTECEDENT_CHECKS: Cell<usize> = const { Cell::new(0) };
+    static MEMORY_SEPARATION_CANDIDATE_CHECKS: Cell<usize> = const { Cell::new(0) };
 }
 use std::cell::{Cell, RefCell};
 
@@ -1340,6 +1341,16 @@ impl Assumptions {
     #[cfg(test)]
     pub(super) fn condition_implication_antecedent_checks() -> usize {
         CONDITION_IMPLICATION_ANTECEDENT_CHECKS.with(Cell::get)
+    }
+
+    #[cfg(test)]
+    pub(super) fn reset_memory_separation_candidate_checks() {
+        MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(0));
+    }
+
+    #[cfg(test)]
+    pub(super) fn memory_separation_candidate_checks() -> usize {
+        MEMORY_SEPARATION_CANDIDATE_CHECKS.with(Cell::get)
     }
 
     /// Keep repeated decisions over this borrowed fact set under one memo

@@ -93,6 +93,23 @@ exact lookup are no longer the material cost. Exact-only core deduplication is
 not valid—it leaves stale views across frees—so this remaining tail needs a
 faster certified snapshot-equivalence path.
 
+That snapshot-equivalence path exposed a narrower indexing bug. Its one
+relevant store edge invoked 9,803 recursive explicit-range distinctness checks
+because the memory-resolution helper scanned the complete proposition set in
+both its shallow and snapshot-aware phases, bypassing the maintained memory
+separation index. Routing both phases through the index reduced the frame from
+roughly 396ms to 55ms and the warm project profile from about 6.6s to 5.8s.
+The profiler no longer reports the recursive explicit-range aggregate. A
+deterministic regression verifies that unrelated propositions cause no extra
+separation-candidate checks.
+
+The project is now below every individual tail guard but remains above the
+five-second target. Its current profile classifies the residual as healthy
+volume: about 1.83s simple replay, 0.65s control, 0.58s certification, and
+2.61s verifier core. Continue the burndown at aggregate proof-finishing and
+core throughput rather than expanding proof source or weakening the resource
+semantics.
+
 ## Regression
 
 Keep the complete project as a wall-clock integration workload. Every engine

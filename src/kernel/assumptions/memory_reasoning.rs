@@ -553,35 +553,9 @@ impl Assumptions {
         left: &Pointer,
         right: &Pointer,
     ) -> bool {
-        self.prop_facts.iter().any(|proposition| match proposition {
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => {
-                self.pointer_in_range_by_shallow_fact_graph(left, left_base, left_start, left_end)
-                    && self.pointer_in_range_by_shallow_fact_graph(
-                        right,
-                        right_base,
-                        right_start,
-                        right_end,
-                    )
-                    || self.pointer_in_range_by_shallow_fact_graph(
-                        right, left_base, left_start, left_end,
-                    ) && self.pointer_in_range_by_shallow_fact_graph(
-                        left,
-                        right_base,
-                        right_start,
-                        right_end,
-                    )
-            }
-            Proposition::CResourceSeparate {
-                left: CResource::Memory(left_range),
-                right: CResource::Memory(right_range),
-            } => {
+        self.memory_separation_candidates(&left.block, &right.block)
+            .iter()
+            .any(|(_, left_range, right_range)| {
                 self.pointer_in_range_by_shallow_fact_graph(
                     left,
                     left_range.base(),
@@ -603,9 +577,7 @@ impl Assumptions {
                     right_range.start(),
                     right_range.end(),
                 )
-            }
-            _ => false,
-        })
+            })
     }
 
     pub(in crate::kernel) fn pointer_in_range_by_shallow_fact_graph(
@@ -668,30 +640,14 @@ impl Assumptions {
         // being accessed. Resolve those structurally before asking the
         // snapshot-aware containment prover, which may itself inspect memory
         // loads and is deliberately the more expensive second phase.
-        if self.prop_facts.iter().any(|proposition| match proposition {
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => {
-                pointer_in_range_shallow(left, left_base, left_start, left_end)
-                    && pointer_in_range_shallow(right, right_base, right_start, right_end)
-                    || pointer_in_range_shallow(right, left_base, left_start, left_end)
-                        && pointer_in_range_shallow(left, right_base, right_start, right_end)
-            }
-            Proposition::CResourceSeparate {
-                left: CResource::Memory(left_range),
-                right: CResource::Memory(right_range),
-            } => {
-                pointer_in_memory_range_shallow(left, left_range)
-                    && pointer_in_memory_range_shallow(right, right_range)
-                    || pointer_in_memory_range_shallow(right, left_range)
-                        && pointer_in_memory_range_shallow(left, right_range)
-            }
-            _ => false,
+        let candidates = self.memory_separation_candidates(&left.block, &right.block);
+        if candidates.iter().any(|(_, left_range, right_range)| {
+            #[cfg(test)]
+            MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
+            pointer_in_memory_range_shallow(left, left_range)
+                && pointer_in_memory_range_shallow(right, right_range)
+                || pointer_in_memory_range_shallow(right, left_range)
+                    && pointer_in_memory_range_shallow(left, right_range)
         }) {
             return true;
         }
@@ -703,47 +659,17 @@ impl Assumptions {
         if depth > crate::kernel::reasoning::MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT {
             return false;
         }
-        self.prop_facts.iter().any(|proposition| match proposition {
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => {
-                pointer_in_range_for_memory_resolution_with_depth(
-                    left, left_base, left_start, left_end, self, depth,
-                ) && pointer_in_range_for_memory_resolution_with_depth(
-                    right,
-                    right_base,
-                    right_start,
-                    right_end,
-                    self,
-                    depth,
-                ) || pointer_in_range_for_memory_resolution_with_depth(
-                    left,
-                    right_base,
-                    right_start,
-                    right_end,
-                    self,
-                    depth,
-                ) && pointer_in_range_for_memory_resolution_with_depth(
-                    right, left_base, left_start, left_end, self, depth,
-                )
-            }
-            Proposition::CResourceSeparate {
-                left: CResource::Memory(left_range),
-                right: CResource::Memory(right_range),
-            } => {
-                pointer_in_memory_range_for_memory_resolution_with_depth(
-                    left, left_range, self, depth,
-                ) && pointer_in_memory_range_for_memory_resolution_with_depth(
+        candidates.iter().any(|(_, left_range, right_range)| {
+            #[cfg(test)]
+            MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
+            pointer_in_memory_range_for_memory_resolution_with_depth(left, left_range, self, depth)
+                && pointer_in_memory_range_for_memory_resolution_with_depth(
                     right,
                     right_range,
                     self,
                     depth,
-                ) || pointer_in_memory_range_for_memory_resolution_with_depth(
+                )
+                || pointer_in_memory_range_for_memory_resolution_with_depth(
                     right, left_range, self, depth,
                 ) && pointer_in_memory_range_for_memory_resolution_with_depth(
                     left,
@@ -751,8 +677,6 @@ impl Assumptions {
                     self,
                     depth,
                 )
-            }
-            _ => false,
         })
     }
 

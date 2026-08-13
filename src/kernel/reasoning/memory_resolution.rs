@@ -343,26 +343,48 @@ fn pointers_proven_distinct_for_memory_resolution_with_depth(
         return false;
     }
     left.blocks_proven_distinct(right)
-        || pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
-            left,
-            right,
-            assumptions,
-            depth + 1,
+        || crate::instrumentation::measure_operation(
+            "kernel",
+            "general pointer distinctness",
+            "general distinctness: offset cancellation",
+            || {
+                pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
+                    left,
+                    right,
+                    assumptions,
+                    depth + 1,
+                )
+            },
         )
-        || left.block == right.block
-            && pointer_offsets_equal_for_memory_resolution(
-                &left.offset,
-                &right.offset,
-                assumptions,
-                depth + 1,
-            ) == Some(false)
+        || crate::instrumentation::measure_operation(
+            "kernel",
+            "general pointer distinctness",
+            "general distinctness: offset disequality",
+            || {
+                left.block == right.block
+                    && pointer_offsets_equal_for_memory_resolution(
+                        &left.offset,
+                        &right.offset,
+                        assumptions,
+                        depth + 1,
+                    ) == Some(false)
+            },
+        )
         || assumptions
             .exact_condition_value(&ConditionTerm::pointer_equal(left.clone(), right.clone()))
             == Some(false)
-        || assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
-            left,
-            right,
-            depth + 1,
+        || crate::instrumentation::measure_operation(
+            "kernel",
+            "general pointer distinctness",
+            "general distinctness: explicit range",
+            || {
+                assumptions
+                    .pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
+                        left,
+                        right,
+                        depth + 1,
+                    )
+            },
         )
 }
 

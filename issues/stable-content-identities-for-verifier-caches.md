@@ -65,3 +65,11 @@ because the arena does not retain those alternate components and allocator
 reuse would make such a key unsound. This removes one deep-key cost from
 memory-DAG and memo lookups, but the broader cache-key issue remains open for
 states, assumptions, environments, and resource projections.
+
+The snapshot-bridging `c_memory_load_is_unchanged` boundary now memoizes
+complete answers under shallow memory identities, pointer, and an enclosing
+assumptions identity. Proven successes remain valid; negative answers are
+scoped to the memory-DAG derivation generation and are excluded after deadline
+or search truncation. Callers without an explicit assumptions scope keep the
+unmemoized behavior rather than paying a deep fact-set hash to construct a
+cache key.

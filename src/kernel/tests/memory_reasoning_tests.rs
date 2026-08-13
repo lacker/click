@@ -448,6 +448,12 @@ fn memory_separation_candidates_ignore_unrelated_propositions() {
         1
     );
     assert!(assumptions.pointers_proven_disjoint_by_range(&left, &right));
+
+    Assumptions::reset_memory_separation_candidate_checks();
+    assert!(
+        assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution(&left, &right)
+    );
+    assert_eq!(Assumptions::memory_separation_candidate_checks(), 1);
 }
 
 #[test]

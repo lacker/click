@@ -305,6 +305,85 @@ pub(crate) fn c_memory_load_is_unchanged(
     if crate::instrumentation::deadline_exceeded() {
         return false;
     }
+    let memo_key = crate::kernel::assumptions::ambient_assumptions_memo_id(assumptions).map(
+        |assumptions_id| {
+            let before = intern_c_memory_ref(before).arena_id();
+            let after = intern_c_memory_ref(after).arena_id();
+            UnchangedLoadMemoKey {
+                assumptions_id,
+                memories: if before <= after {
+                    (before, after)
+                } else {
+                    (after, before)
+                },
+                pointer: pointer.clone(),
+            }
+        },
+    );
+    if let Some(key) = &memo_key
+        && UNCHANGED_LOAD_POSITIVE_MEMO.with(|memo| memo.borrow().contains(key))
+    {
+        return true;
+    }
+    let derivation_generation = c_memory_derivation_generation();
+    if let Some(key) = &memo_key
+        && UNCHANGED_LOAD_NEGATIVE_MEMO.with(|memo| {
+            memo.borrow()
+                .contains(&(derivation_generation, key.clone()))
+        })
+    {
+        return false;
+    }
+    let truncations_before = crate::kernel::assumptions::search_truncations();
+    let result = c_memory_load_is_unchanged_unmemoized(before, after, pointer, assumptions);
+    if let Some(key) = memo_key {
+        if result {
+            UNCHANGED_LOAD_POSITIVE_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= UNCHANGED_LOAD_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert(key);
+            });
+        } else if !crate::instrumentation::deadline_exceeded()
+            && crate::kernel::assumptions::search_truncations() == truncations_before
+        {
+            UNCHANGED_LOAD_NEGATIVE_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= UNCHANGED_LOAD_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert((derivation_generation, key));
+            });
+        }
+    }
+    result
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct UnchangedLoadMemoKey {
+    assumptions_id: u64,
+    memories: ((u32, u32), (u32, u32)),
+    pointer: Pointer,
+}
+
+thread_local! {
+    static UNCHANGED_LOAD_POSITIVE_MEMO: std::cell::RefCell<
+        std::collections::HashSet<UnchangedLoadMemoKey>,
+    > = std::cell::RefCell::new(std::collections::HashSet::new());
+    static UNCHANGED_LOAD_NEGATIVE_MEMO: std::cell::RefCell<
+        std::collections::HashSet<(u64, UnchangedLoadMemoKey)>,
+    > = std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+const UNCHANGED_LOAD_MEMO_LIMIT: usize = 200_000;
+
+fn c_memory_load_is_unchanged_unmemoized(
+    before: &CMemory,
+    after: &CMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
     if memories_match_for_pointer_load(before, after, pointer) {
         return true;
     }
@@ -520,47 +599,87 @@ fn memory_derivations_reach(
         let Some(derivation) = current.derivation() else {
             return false;
         };
-        let crossable = match derivation.as_ref() {
-            CMemoryDerivation::Store { pointer: write, .. } => {
-                write.blocks_proven_distinct(pointer)
-                    || pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
-                    || pointers_proven_distinct_for_memory_resolution(write, pointer, assumptions)
-            }
-            // Declaring a block or forgetting cached cells writes nothing,
-            // so every load is untouched — but only the extended-bridging
-            // scope may exploit that: elsewhere these edges must look like
-            // the pre-arc absence of an edge.
+        let edge_name = match derivation.as_ref() {
+            CMemoryDerivation::Store { .. } => "memory derivation edge: store",
             CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocationPending { .. }
-            | CMemoryDerivation::CellsForgotten { .. } => extended_dag_bridging_active(),
-            CMemoryDerivation::HeapAllocated { block, .. } => {
-                pointer.block != *block && extended_dag_bridging_active()
-            }
-            CMemoryDerivation::HeapFreed {
-                allocation_base,
-                bytes,
-                ..
-            } => {
-                extended_dag_bridging_active()
-                    && (allocation_base.blocks_proven_distinct(pointer)
-                        || pointers_proven_distinct_for_memory_resolution(
-                            allocation_base,
-                            pointer,
-                            assumptions,
-                        )
-                        || heap_allocation_proven_separate_from_pointer(
-                            allocation_base,
-                            bytes,
-                            pointer,
-                            assumptions,
-                        ))
-            }
-            CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
-                assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
-            }
-            // Loop havoc may write anything the body can reach.
-            CMemoryDerivation::LoopHavoc { .. } => false,
+            | CMemoryDerivation::CellsForgotten { .. } => "memory derivation edge: bookkeeping",
+            CMemoryDerivation::HeapAllocated { .. } => "memory derivation edge: allocation",
+            CMemoryDerivation::HeapFreed { .. } => "memory derivation edge: free",
+            CMemoryDerivation::CallHavoc { .. } => "memory derivation edge: call havoc",
+            CMemoryDerivation::LoopHavoc { .. } => "memory derivation edge: loop havoc",
         };
+        let crossable = crate::instrumentation::measure_operation(
+            "kernel",
+            "memory derivation walk",
+            edge_name,
+            || match derivation.as_ref() {
+                CMemoryDerivation::Store { pointer: write, .. } => {
+                    crate::instrumentation::measure_operation(
+                        "kernel",
+                        "memory derivation store edge",
+                        "store edge: distinct blocks",
+                        || write.blocks_proven_distinct(pointer),
+                    ) || crate::instrumentation::measure_operation(
+                        "kernel",
+                        "memory derivation store edge",
+                        "store edge: common-base offsets",
+                        || {
+                            pointer_offsets_with_common_base_proven_distinct(
+                                write,
+                                pointer,
+                                assumptions,
+                            )
+                        },
+                    ) || crate::instrumentation::measure_operation(
+                        "kernel",
+                        "memory derivation store edge",
+                        "store edge: general pointer distinctness",
+                        || {
+                            pointers_proven_distinct_for_memory_resolution(
+                                write,
+                                pointer,
+                                assumptions,
+                            )
+                        },
+                    )
+                }
+                // Declaring a block or forgetting cached cells writes nothing,
+                // so every load is untouched — but only the extended-bridging
+                // scope may exploit that: elsewhere these edges must look like
+                // the pre-arc absence of an edge.
+                CMemoryDerivation::BlockDeclared { .. }
+                | CMemoryDerivation::HeapAllocationPending { .. }
+                | CMemoryDerivation::CellsForgotten { .. } => extended_dag_bridging_active(),
+                CMemoryDerivation::HeapAllocated { block, .. } => {
+                    pointer.block != *block && extended_dag_bridging_active()
+                }
+                CMemoryDerivation::HeapFreed {
+                    allocation_base,
+                    bytes,
+                    ..
+                } => {
+                    extended_dag_bridging_active()
+                        && (allocation_base.blocks_proven_distinct(pointer)
+                            || pointers_proven_distinct_for_memory_resolution(
+                                allocation_base,
+                                pointer,
+                                assumptions,
+                            )
+                            || heap_allocation_proven_separate_from_pointer(
+                                allocation_base,
+                                bytes,
+                                pointer,
+                                assumptions,
+                            ))
+                }
+                CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
+                    assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+                }
+                // Loop havoc may write anything the body can reach.
+                CMemoryDerivation::LoopHavoc { .. } => false,
+            },
+        );
         if !crossable {
             return false;
         }
