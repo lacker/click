@@ -166,8 +166,27 @@ and extend the pin first: a memory-load case and a fold case would fix the
 other theory rules the fallback exists for, and no index or removal should land
 without them.
 
-Under the issue policy in `README.md`, the premise-rerun criterion therefore
-needs a failing deterministic curve before it justifies provenance machinery. The candidate set
+## 2026-08-13 measurement: quantified matching is not a demonstrated violation
+
+`collect_quantified_order_facts_for_condition` does scan every proposition
+fact and attempt instantiation on each, as the criterion says. Instrumenting it
+over the integration workloads gives owned-vector 33 entries scanning 201 facts
+in total with 5 instantiations, owned-string 18 entries over 21 facts, and
+binary-tree 4 entries over 2 facts.
+
+About six facts per entry is not the ambient-context scan the criterion is
+written against. A conclusion or trigger index would be indexing a set that is
+already small; the `Implies` arm of `proposition_proves_condition` already
+applies the conclusion-first rule where it demonstrably mattered.
+
+Under the issue policy in `README.md`, this criterion and the premise-rerun
+criterion both need a failing deterministic curve before they justify
+provenance machinery. Three of the issue's five criteria have now been measured
+rather than assumed: contradiction all-pairs was real and is closed, while
+premise rerun and quantified matching are not currently violated. Whoever
+resumes should confirm the loadability criterion the same way — it already has
+`memory_loadable_candidates_for_base` — and then either produce curves for what
+remains or narrow this issue to its demonstrated core. The candidate set
 is bounded by the `ConditionIs` facts in one available slice and is guarded by
 `check_condition_search_budget`. Anyone resuming should either exhibit a curve
 where that candidate set grows with project size, or narrow the criterion to
