@@ -1943,7 +1943,10 @@ fn memory_range_shallowly_contained_in_parts(
     )
 }
 
-fn memory_range_shallowly_contained(range: &CMemoryRange, parent: &CMemoryRange) -> bool {
+pub(in crate::kernel) fn memory_range_shallowly_contained(
+    range: &CMemoryRange,
+    parent: &CMemoryRange,
+) -> bool {
     let Some(base_index) = range.base().element_index_from_base(parent.base()) else {
         return false;
     };

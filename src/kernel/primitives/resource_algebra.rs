@@ -136,6 +136,42 @@ impl ResourceContext {
         })
     }
 
+    /// Non-recursive projection for memory-resolution fast paths. It uses
+    /// only block indexing and structural containment, so it cannot re-enter
+    /// snapshot or alias reasoning.
+    pub(in crate::kernel) fn proves_owned_memory_ranges_separate_shallow(
+        &self,
+        left: &CMemoryRange,
+        right: &CMemoryRange,
+    ) -> bool {
+        if left.base().block != right.base().block {
+            return false;
+        }
+        let Some(positions) = self.index().memory_by_block.get(&left.base().block) else {
+            return false;
+        };
+        let left_position = positions.iter().copied().find(|position| {
+            self.facts[*position]
+                .memory_own_range()
+                .is_some_and(|available| {
+                    crate::kernel::assumptions::memory_range_shallowly_contained(left, available)
+                })
+        });
+        let Some(left_position) = left_position else {
+            return false;
+        };
+        positions.iter().copied().any(|position| {
+            position != left_position
+                && self.facts[position]
+                    .memory_own_range()
+                    .is_some_and(|available| {
+                        crate::kernel::assumptions::memory_range_shallowly_contained(
+                            right, available,
+                        )
+                    })
+        })
+    }
+
     fn direct_match_candidate_positions(&self, fact: &CResourceFact) -> Option<&Vec<usize>> {
         match fact.resource() {
             CResource::Memory(range) => self.index().memory_by_block.get(&range.base().block),

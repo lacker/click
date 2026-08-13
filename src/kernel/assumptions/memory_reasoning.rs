@@ -713,6 +713,11 @@ impl Assumptions {
         right: &CMemoryRange,
         depth: usize,
     ) -> bool {
+        if self.resource_compositions.iter().any(|resources| {
+            resources.proves_owned_memory_ranges_separate_shallow(left, right)
+        }) {
+            return true;
+        }
         // Prefer certificates where one queried range is structurally inside
         // one side. This gives the other side a single, directed equivalence
         // check instead of exploring both orientations of every separation
