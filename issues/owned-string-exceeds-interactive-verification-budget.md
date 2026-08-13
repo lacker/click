@@ -122,3 +122,32 @@ sealed authority fields match. Reuse correctly refuses to treat those
 contexts as identical. Close that surface/kernel resource-fact authority gap
 without accepting unchecked ambient predicates; then reassess the remaining
 claim and representation checks against the five-second target.
+
+## 2026-08-13 update: certification reuse fixed; margin remains narrow
+
+Composite resource lowering now preserves both a named predicate fact and its
+fully unfolded primitive definition. The former gives checked proof execution
+and final certification a stable logical identity; the latter remains the
+kernel's independent reasoning authority. A focused regression requires a
+grouped resource-predicate proof to perform exactly one checked C-body
+execution.
+
+That closes the mismatch above. Expanding the remaining verified smart
+hotspots also leaves no smart site above 10ms. A current complete profile is
+about 4.86 seconds:
+
+```text
+simple            1.0s
+smart            <0.1s
+control           0.6s
+certification     2.1s
+verifier core     1.3s
+```
+
+This crosses the nominal five-second target, but not yet comfortably enough
+to close the issue: ordinary host variance can erase a 140ms margin. The
+remaining cost is an engine problem rather than a proof-planning problem.
+The largest aggregates are contract effect/proposition certification,
+resource representation, derived entry facts, and point-fact transport. The
+indexed fact/resource/derivation issues linked above are the next appropriate
+fixes; further source expansion is not.

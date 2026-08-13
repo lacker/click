@@ -99,21 +99,37 @@ pub(in crate::lang::click) fn lower_composite_resource_facts(
         .keys()
         .cloned()
         .collect::<Vec<_>>();
-    body.facts()
-        .iter()
-        .map(|fact| {
-            let fact = unfold_click_predicates_in_proposition_with_active(
-                predicate_environment,
-                &all_predicates,
-                fact,
-                &mut BTreeSet::new(),
-            )
-            .map_err(ClickError::new)?;
+    let mut facts = Vec::new();
+    for fact in body.facts() {
+        let unfolded = unfold_click_predicates_in_proposition_with_active(
+            predicate_environment,
+            &all_predicates,
+            fact,
+            &mut BTreeSet::new(),
+        )
+        .map_err(ClickError::new)?;
+        // Preserve the named fact as the resource's stable logical identity,
+        // and retain its fully unfolded kernel definition as the primitive
+        // reasoning authority. Checked proof execution and final contract
+        // certification can then agree on the former without asking the
+        // kernel to trust an ambient opaque predicate.
+        if &unfolded != fact {
+            facts.push(
+                lowerer
+                    .click_proposition_to_spec_proposition(fact, &SpecElaborationContext::default())
+                    .map_err(ClickError::new)?,
+            );
+        }
+        facts.push(
             lowerer
-                .click_proposition_to_spec_proposition(&fact, &SpecElaborationContext::default())
-                .map_err(ClickError::new)
-        })
-        .collect()
+                .click_proposition_to_spec_proposition(
+                    &unfolded,
+                    &SpecElaborationContext::default(),
+                )
+                .map_err(ClickError::new)?,
+        );
+    }
+    Ok(facts)
 }
 
 pub(in crate::lang::click) fn annotated_function(

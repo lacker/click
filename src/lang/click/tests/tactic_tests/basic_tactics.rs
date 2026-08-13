@@ -197,6 +197,48 @@ fn grouped_auto_uses_one_deterministic_execution_proof() {
 }
 
 #[test]
+fn grouped_resource_predicate_proof_reuses_checked_body_execution() {
+    let c_source = r#"
+            int32 return_zero(int32 p[]) {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            predicate zero_at(p: int32[]) {
+                p[0] == 0
+            }
+
+            resource zero_cell(p: int32*) {
+                owns p[0..1];
+                fact zero_at(p);
+            }
+
+            verifying "return_zero.c";
+
+            int32 return_zero(int32 p[]) {
+                owns zero_cell(p);
+                immutable;
+                ensures result == 0;
+            } by {
+                execute();
+                frame();
+                simp();
+            }
+        "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    let verified = verify_c0_sources(click_source, &[("return_zero.c", c_source)])
+        .expect("resource predicate proof should verify");
+
+    assert_eq!(verified.len(), 3);
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        1,
+        "named resource facts and their unfolded authority should permit final certificate reuse"
+    );
+}
+
+#[test]
 fn parses_proof_tactic_script() {
     let source = FILL3_CLICK.replace("by auto;", "by { execute(); frame(loop(0)); simp(); }");
     let file = parse(&source).expect("explicit proof script should parse");
