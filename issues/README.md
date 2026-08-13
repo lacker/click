@@ -116,7 +116,9 @@ The first issue establishes the measurement gate. Items 2--6 can then land as
 separate green chunks with an asymptotic regression each. Checked execution
 reuse across proof and contract certification is complete and documented in
 the governing efficiency guide. Use
-[owned-string](owned-string-exceeds-interactive-verification-budget.md) and
-[owned-vector](owned-vector-exceeds-interactive-verification-budget.md) as the
+`examples/owned-string`, `examples/binary-tree`, and
+[owned-vector](owned-vector-exceeds-interactive-verification-budget.md) are the
 full-project integration workloads; their wall times corroborate the scaling
-gates but do not replace them.
+gates but do not replace them. Owned-string and binary-tree now verify in about
+four seconds on the development baseline and have no open project-level
+performance issue.
