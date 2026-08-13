@@ -210,6 +210,51 @@ fn disjoint_concrete_range_validity_scales_near_linearly() {
 }
 
 #[test]
+fn observable_structural_separation_does_not_materialize_owned_pairs() {
+    for same_base in [false, true] {
+        let samples = [16, 32, 64, 128]
+            .into_iter()
+            .map(|size| {
+                let context = ResourceContext::new().unchecked_with_facts((0..size).map(|index| {
+                    CResourceFact::own_memory(memory_range(
+                        Pointer {
+                            block: if same_base {
+                                "shared_block".into()
+                            } else {
+                                format!("block_{index}").into()
+                            },
+                            offset: PointerOffsetTerm::Constant(0),
+                        },
+                        if same_base { (index * 2) as u32 } else { 0 },
+                        if same_base { (index * 2 + 1) as u32 } else { 1 },
+                    ))
+                }));
+                let (facts, work) = crate::instrumentation::measure_deterministic_work(|| {
+                    context
+                        .observable_facts(&Assumptions::new())
+                        .expect("structurally disjoint memory ranges should compose")
+                });
+                assert!(
+                    facts.is_empty(),
+                    "size-{size} projection materialized pairs"
+                );
+                assert!(Assumptions::new().proves(&Proposition::CResourceSeparate {
+                    left: context.facts()[0].resource().clone(),
+                    right: context.facts()[size - 1].resource().clone(),
+                }));
+                (size, work)
+            })
+            .collect::<Vec<_>>();
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1].1 <= pair[0].1.saturating_mul(3),
+                "observable resource projection is superlinear: {samples:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn inserting_a_disjoint_concrete_range_uses_interval_neighbors() {
     for size in [16, 32, 64, 128] {
         let base = Pointer {
@@ -470,13 +515,11 @@ fn resource_context_observes_write_separation() {
         .observable_facts(&Assumptions::new())
         .expect("adjacent writes should be a valid resource context");
 
-    assert_eq!(
-        facts,
-        vec![Proposition::CResourceSeparate {
-            left: CResource::Memory(left),
-            right: CResource::Memory(right),
-        }]
-    );
+    assert!(facts.is_empty());
+    assert!(Assumptions::new().proves(&Proposition::CResourceSeparate {
+        left: CResource::Memory(left),
+        right: CResource::Memory(right),
+    }));
 }
 
 #[test]

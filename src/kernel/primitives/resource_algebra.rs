@@ -914,6 +914,9 @@ fn same_family_separate_facts(facts: &[&CResourceFact]) -> Vec<Proposition> {
     let mut propositions = Vec::new();
     for i in 0..owned.len() {
         for right in &owned[i + 1..] {
+            if resources_structurally_separate(owned[i], right) {
+                continue;
+            }
             propositions.push(Proposition::CResourceSeparate {
                 left: owned[i].clone(),
                 right: (*right).clone(),
@@ -921,6 +924,83 @@ fn same_family_separate_facts(facts: &[&CResourceFact]) -> Vec<Proposition> {
         }
     }
     propositions
+}
+
+fn memory_separate_facts(facts: &[&CResourceFact]) -> Vec<Proposition> {
+    let mut by_block = BTreeMap::<PointerBlock, Vec<&CResource>>::new();
+    for resource in facts.iter().filter_map(|fact| fact.owned_resource()) {
+        let CResource::Memory(range) = resource else {
+            continue;
+        };
+        crate::instrumentation::record_deterministic_work(1);
+        by_block
+            .entry(range.base().block.clone())
+            .or_default()
+            .push(resource);
+    }
+    let mut propositions = Vec::new();
+    for owned in by_block.values() {
+        let one_concrete_base = owned
+            .first()
+            .and_then(|resource| match resource {
+                CResource::Memory(range) => Some(range.base()),
+                _ => None,
+            })
+            .is_some_and(|base| {
+                owned.iter().all(|resource| match resource {
+                    CResource::Memory(range) => {
+                        range.base() == base
+                            && range.start().as_const().is_some()
+                            && range.end().as_const().is_some()
+                    }
+                    _ => false,
+                })
+            });
+        if one_concrete_base {
+            // Validity already established that these ordered intervals do
+            // not overlap, and the kernel proves their concrete separation
+            // without a premise. No pair traversal or output is needed.
+            continue;
+        }
+        for i in 0..owned.len() {
+            for right in &owned[i + 1..] {
+                crate::instrumentation::record_deterministic_work(1);
+                if resources_structurally_separate(owned[i], right) {
+                    continue;
+                }
+                propositions.push(Proposition::CResourceSeparate {
+                    left: owned[i].clone(),
+                    right: (*right).clone(),
+                });
+            }
+        }
+    }
+    propositions
+}
+
+/// Separation cases whose proof depends only on the resource constructors,
+/// not on ambient facts or the composition that happened to contain them.
+pub(in crate::kernel) fn resources_structurally_separate(
+    left: &CResource,
+    right: &CResource,
+) -> bool {
+    match (left, right) {
+        (CResource::Memory(left), CResource::Memory(right)) => {
+            left.base().blocks_proven_distinct(right.base())
+                || left.base() == right.base()
+                    && matches!(
+                        (
+                            signed_bitvector_constant(left.start()),
+                            signed_bitvector_constant(left.end()),
+                            signed_bitvector_constant(right.start()),
+                            signed_bitvector_constant(right.end()),
+                        ),
+                        (Some(left_start), Some(left_end), Some(right_start), Some(right_end))
+                            if left_end <= right_start || right_end <= left_start
+                    )
+        }
+        _ => false,
+    }
 }
 
 impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
@@ -981,7 +1061,7 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
         facts: &[&CResourceFact],
         _assumptions: &Assumptions,
     ) -> Vec<Proposition> {
-        same_family_separate_facts(facts)
+        memory_separate_facts(facts)
     }
 }
 

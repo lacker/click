@@ -65,12 +65,23 @@ it does not compare the new range with every existing range. Index
 construction remains linear in the persistent context size and is included in
 the deterministic regression.
 
+Observable memory separation now omits facts that the kernel can prove from
+the range constructors alone. Owned ranges are grouped by pointer block; a
+bucket sharing one concrete base is recognized in one pass, and distinct
+blocks are never cross-paired. Thus contexts of disjoint concrete intervals or
+distinct allocation blocks project no quadratic separation set. A four-size
+deterministic regression covers both shapes and checks that an arbitrary
+first/last separation remains provable without a materialized premise.
+
 The issue remains open for persistent incremental index updates, lazy
 separation projection, and fixed permission-query gates over mixed symbolic
 resources. In particular,
-`observable_facts` still materializes pairwise separation propositions; that
-must be replaced only together with indexed on-demand derivation so existing
-certificates retain the same authority.
+`observable_facts` still materializes proof-dependent pairs within symbolic
+same-block memory buckets and pairs involving abstract token/composite
+ownership. Those cases must be replaced only together with indexed on-demand
+derivation so existing certificates retain the same authority; a rejected
+opaque-composition prototype preserved direct separation queries but hid
+evidence used by condition contradiction and snapshot-framing replay.
 
 `Assumptions` now also maintains an incremental memory-separation index keyed
 by the two base blocks. Pointer-disjointness replay selects only relevant
