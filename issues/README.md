@@ -100,6 +100,12 @@ Keep one file per independent open problem. Put durable implementation design
 in `docs/`, and delete an issue when its fix, regression coverage, and
 documentation land.
 
+## Certificate vocabulary
+
+- [Post-execution `simp` proves a resource fact with no simple certificate](post-execution-simp-lacks-simple-certificate.md):
+  a quarantined mdtest whose restricted simplification succeeds and then cannot
+  be lowered. Regressed in `39e8af4c`.
+
 ## Parser robustness
 
 - [Bound deeply parenthesized contract parsing](deep-parenthesized-contract-expression-overflows-parser-stack.md):
