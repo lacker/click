@@ -2856,6 +2856,34 @@ fn consistent_order_context_scales_near_linearly() {
     }
 }
 
+/// Pins the non-structural fallback in context inconsistency. Equality classes
+/// decide structural endpoints, but `x + y` and `y + x` are related only by
+/// additive theory equality, which is not an equality-graph edge, so this
+/// contradiction is reachable only through the retained pairwise comparison.
+#[test]
+fn derived_order_contradiction_uses_theory_equal_endpoints() {
+    let x = Bitvector32Term::Variable(Variable(97_001));
+    let y = Bitvector32Term::Variable(Variable(97_002));
+    let middle = Bitvector32Term::Variable(Variable(97_003));
+    let left_sum = Bitvector32Term::add(x.clone(), y.clone());
+    let right_sum = Bitvector32Term::add(y, x);
+    assert_ne!(
+        left_sum, right_sum,
+        "the endpoints must not be exactly equal, or the class check would decide them"
+    );
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_than(left_sum, middle.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_than(middle, right_sum), true);
+
+    assert!(
+        assumptions.is_inconsistent(),
+        "`x + y < middle` and `middle < y + x` contradict through additive equality"
+    );
+}
+
 #[test]
 fn repeated_context_inconsistency_queries_do_not_rescan_facts() {
     let x = Bitvector32Term::Variable(Variable(93_201));

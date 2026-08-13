@@ -136,8 +136,38 @@ derivation already returned, not through this scan.
 `transitive_order_derivation_scales_near_linearly_with_unrelated_conditions`
 guards that path and passes as written.
 
-Under the issue policy in `README.md`, this criterion therefore needs a failing
-deterministic curve before it justifies provenance machinery. The candidate set
+## 2026-08-13 measurement: the non-structural fallback is cheap and untested
+
+Instrumenting the pairwise comparison that context inconsistency retains for
+theory-relatable endpoints gives, per project: owned-vector 75 entries with at
+most 89 theory-capable order facts and about 25,700 pair comparisons;
+owned-string 246; binary-tree none. That is the residual the entry above
+predicted, so the count is real.
+
+Its cost is not. Disabling the comparison entirely — an unsound oracle that
+bounds what any index could save, since a real index still has to be built and
+queried — moves owned-vector from about 7.35s to about 6.6s on a debug build,
+roughly ten percent, and the project still verifies. The profiler continues to
+classify the run as healthy volume with no operation crossing a bound.
+
+More important, the complete suite passes with that comparison removed. The
+fallback therefore had no regression coverage at all: nothing demonstrated a
+contradiction that only it can find, so both indexing it and removing it were
+unguarded changes.
+
+`derived_order_contradiction_uses_theory_equal_endpoints` now pins it. `x + y`
+and `y + x` are related only by additive theory equality, never by an
+equality-graph edge, so `x + y < middle` and `middle < y + x` contradict only
+through this path. The test fails when the comparison is disabled and passes
+with it, so it constrains the fallback rather than merely covering it.
+
+Anyone resuming should treat the ten percent bound as the budget for this work
+and extend the pin first: a memory-load case and a fold case would fix the
+other theory rules the fallback exists for, and no index or removal should land
+without them.
+
+Under the issue policy in `README.md`, the premise-rerun criterion therefore
+needs a failing deterministic curve before it justifies provenance machinery. The candidate set
 is bounded by the `ConditionIs` facts in one available slice and is guarded by
 `check_condition_search_budget`. Anyone resuming should either exhibit a curve
 where that candidate set grows with project size, or narrow the criterion to
