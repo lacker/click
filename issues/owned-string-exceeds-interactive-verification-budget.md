@@ -151,3 +151,18 @@ The largest aggregates are contract effect/proposition certification,
 resource representation, derived entry facts, and point-fact transport. The
 indexed fact/resource/derivation issues linked above are the next appropriate
 fixes; further source expansion is not.
+
+## 2026-08-13 update: separation transport attribution
+
+The signed-range index brought a current warm profile to about 4.75s, with no
+smart hotspot and signed-overflow checks below 1ms. The remaining 300ms
+`owned_string_push` separation transport is now split precisely: candidate
+lookup is indexed, while roughly 250ms is spent proving that changed symbolic
+cells lie in the selected separated ranges. Snapshot collection itself now
+retains interned memory handles rather than cloning complete snapshots.
+
+This is same-block symbolic range reasoning, not proof planning. The next
+resource-index step must give range membership stable base/interval identities
+so a selected separation candidate does not invoke general condition reasoning
+for every endpoint. Keep this issue open until the under-five-second result
+has comfortable margin under repeated runs.

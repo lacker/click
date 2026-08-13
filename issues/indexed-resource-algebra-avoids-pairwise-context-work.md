@@ -65,3 +65,13 @@ resources. In particular,
 `observable_facts` still materializes pairwise separation propositions; that
 must be replaced only together with indexed on-demand derivation so existing
 certificates retain the same authority.
+
+`Assumptions` now also maintains an incremental memory-separation index keyed
+by the two base blocks. Pointer-disjointness replay selects only relevant
+`CMemoryDisjoint` and memory `CResourceSeparate` candidates instead of scanning
+every proposition. A regression holds one separation fixed while adding 128
+unrelated propositions and checks that the candidate set remains one. The
+owned-string integration profile shows that candidate selection is no longer
+the only cost: several same-block symbolic candidates still require expensive
+range-membership proofs. Indexing those ranges by stable base/interval
+identity remains open.

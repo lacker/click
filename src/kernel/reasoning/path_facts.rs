@@ -775,9 +775,7 @@ pub(in crate::kernel) fn decide_with_facts(
                     } else {
                         assumptions.clone()
                     },
-                    |assumptions, fact| {
-                        assumptions.assume_proposition(fact.proposition().clone())
-                    },
+                    |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
                 )
                 .decide(condition)
         })

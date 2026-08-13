@@ -468,58 +468,68 @@ impl Assumptions {
         left: &Pointer,
         right: &Pointer,
     ) -> bool {
-        self.prop_facts.iter().any(|proposition| match proposition {
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => {
-                self.pointer_in_range(left, left_base, left_start, left_end)
-                    && self.pointer_in_range(right, right_base, right_start, right_end)
-                    || self.pointer_in_range(right, left_base, left_start, left_end)
-                        && self.pointer_in_range(left, right_base, right_start, right_end)
-            }
-            Proposition::CResourceSeparate {
-                left: CResource::Memory(left_range),
-                right: CResource::Memory(right_range),
-            } => {
-                self.pointer_in_range(
-                    left,
-                    left_range.base(),
-                    left_range.start(),
-                    left_range.end(),
-                ) && self.pointer_in_range(
-                    right,
-                    right_range.base(),
-                    right_range.start(),
-                    right_range.end(),
-                ) || self.pointer_in_range(
-                    right,
-                    left_range.base(),
-                    left_range.start(),
-                    left_range.end(),
-                ) && self.pointer_in_range(
-                    left,
-                    right_range.base(),
-                    right_range.start(),
-                    right_range.end(),
+        let direct = crate::instrumentation::measure_operation(
+            "kernel",
+            "resource context equality",
+            "range disjointness: indexed facts",
+            || {
+                self.memory_separation_candidates(&left.block, &right.block)
+                    .iter()
+                    .find_map(|(proposition, left_range, right_range)| {
+                        crate::instrumentation::measure_operation(
+                            "kernel",
+                            "resource context equality",
+                            "range disjointness: indexed candidate",
+                            || {
+                                self.pointer_in_range(
+                                    left,
+                                    left_range.base(),
+                                    left_range.start(),
+                                    left_range.end(),
+                                ) && self.pointer_in_range(
+                                    right,
+                                    right_range.base(),
+                                    right_range.start(),
+                                    right_range.end(),
+                                ) || self.pointer_in_range(
+                                    right,
+                                    left_range.base(),
+                                    left_range.start(),
+                                    left_range.end(),
+                                ) && self.pointer_in_range(
+                                    left,
+                                    right_range.base(),
+                                    right_range.start(),
+                                    right_range.end(),
+                                )
+                            },
+                        )
+                        .then_some(proposition)
+                    })
+            },
+        );
+        if let Some(proposition) = direct {
+            record_implicit_reasoning_provenance(self, proposition);
+            return true;
+        }
+        crate::instrumentation::measure_operation(
+            "kernel",
+            "resource context equality",
+            "range disjointness: derived separation",
+            || {
+                self.proves_resource_separate(
+                    &CResource::Memory(CMemoryRange::new(
+                        left.clone(),
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Constant(1),
+                    )),
+                    &CResource::Memory(CMemoryRange::new(
+                        right.clone(),
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Constant(1),
+                    )),
                 )
-            }
-            _ => false,
-        }) || self.proves_resource_separate(
-            &CResource::Memory(CMemoryRange::new(
-                left.clone(),
-                Bitvector32Term::Constant(0),
-                Bitvector32Term::Constant(1),
-            )),
-            &CResource::Memory(CMemoryRange::new(
-                right.clone(),
-                Bitvector32Term::Constant(0),
-                Bitvector32Term::Constant(1),
-            )),
+            },
         )
     }
 
@@ -924,14 +934,18 @@ impl Assumptions {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
+        let proves = |condition: ConditionTerm| {
+            self.exact_condition_value(&condition)
+                .or_else(|| self.decide(&condition))
+                == Some(true)
+        };
         let range_base = base.offset_by_int32_elements(start.clone());
         if let Some(index) = self.pointer_element_index_from_base(pointer, &range_base) {
             let range_length = Bitvector32Term::subtract(end.clone(), start.clone());
-            if self.decide(&ConditionTerm::signed_less_equal(
+            if proves(ConditionTerm::signed_less_equal(
                 Bitvector32Term::Constant(0),
                 index.clone(),
-            )) == Some(true)
-                && self.decide(&ConditionTerm::signed_less_than(index, range_length)) == Some(true)
+            )) && proves(ConditionTerm::signed_less_than(index, range_length))
             {
                 return true;
             }
@@ -940,11 +954,10 @@ impl Assumptions {
         let Some(index) = self.pointer_element_index_from_base(pointer, base) else {
             return false;
         };
-        self.decide(&ConditionTerm::signed_less_equal(
+        proves(ConditionTerm::signed_less_equal(
             start.clone(),
             index.clone(),
-        )) == Some(true)
-            && self.decide(&ConditionTerm::signed_less_than(index, end.clone())) == Some(true)
+        )) && proves(ConditionTerm::signed_less_than(index, end.clone()))
     }
 
     pub(in crate::kernel) fn proves_memory_disjoint(

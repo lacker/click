@@ -862,22 +862,108 @@ impl Assumptions {
 
     pub(super) fn clear_proposition_facts(&mut self) {
         self.prop_facts = std::sync::Arc::new(BTreeSet::new());
+        self.memory_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.recompute_content_fingerprint();
     }
 
     pub(super) fn retain_proposition_facts(&mut self, keep: impl FnMut(&Proposition) -> bool) {
         std::sync::Arc::make_mut(&mut self.prop_facts).retain(keep);
+        self.rebuild_memory_separation_facts();
         self.recompute_content_fingerprint();
+    }
+
+    fn proposition_memory_separation(
+        proposition: &Proposition,
+    ) -> Option<(CMemoryRange, CMemoryRange)> {
+        match proposition {
+            Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } => Some((
+                CMemoryRange::new(left_base.clone(), left_start.clone(), left_end.clone()),
+                CMemoryRange::new(right_base.clone(), right_start.clone(), right_end.clone()),
+            )),
+            Proposition::CResourceSeparate {
+                left: CResource::Memory(left),
+                right: CResource::Memory(right),
+            } => Some((left.clone(), right.clone())),
+            _ => None,
+        }
+    }
+
+    fn memory_separation_key(
+        left: &PointerBlock,
+        right: &PointerBlock,
+    ) -> (PointerBlock, PointerBlock) {
+        if left <= right {
+            (left.clone(), right.clone())
+        } else {
+            (right.clone(), left.clone())
+        }
+    }
+
+    fn adjust_memory_separation_fact(&mut self, proposition: &Proposition, insert: bool) {
+        let Some(pair) = Self::proposition_memory_separation(proposition) else {
+            return;
+        };
+        let key = Self::memory_separation_key(&pair.0.base().block, &pair.1.base().block);
+        let index = std::sync::Arc::make_mut(&mut self.memory_separation_facts);
+        if insert {
+            index
+                .entry(key)
+                .or_default()
+                .push((proposition.clone(), pair.0, pair.1));
+            return;
+        }
+        let remove_key = if let Some(pairs) = index.get_mut(&key) {
+            if let Some(position) = pairs
+                .iter()
+                .position(|candidate| candidate.0 == *proposition)
+            {
+                pairs.remove(position);
+            }
+            pairs.is_empty()
+        } else {
+            false
+        };
+        if remove_key {
+            index.remove(&key);
+        }
+    }
+
+    fn rebuild_memory_separation_facts(&mut self) {
+        self.memory_separation_facts = std::sync::Arc::new(BTreeMap::new());
+        let facts = self.prop_facts.iter().cloned().collect::<Vec<_>>();
+        for proposition in facts {
+            self.adjust_memory_separation_fact(&proposition, true);
+        }
+    }
+
+    pub(super) fn memory_separation_candidates(
+        &self,
+        left: &PointerBlock,
+        right: &PointerBlock,
+    ) -> &[(Proposition, CMemoryRange, CMemoryRange)] {
+        self.memory_separation_facts
+            .get(&Self::memory_separation_key(left, right))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     pub(super) fn insert_proposition_fact(&mut self, proposition: Proposition) {
         if std::sync::Arc::make_mut(&mut self.prop_facts).insert(proposition.clone()) {
+            self.adjust_memory_separation_fact(&proposition, true);
             self.content_fingerprint ^= Self::fingerprint(2, &proposition);
         }
     }
 
     pub(super) fn remove_proposition_fact(&mut self, proposition: &Proposition) {
         if std::sync::Arc::make_mut(&mut self.prop_facts).remove(proposition) {
+            self.adjust_memory_separation_fact(proposition, false);
             self.content_fingerprint ^= Self::fingerprint(2, proposition);
         }
     }
@@ -908,6 +994,19 @@ impl Assumptions {
     pub(crate) fn shares_fact_storage_with(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.condition_facts, &other.condition_facts)
             && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
+            && std::sync::Arc::ptr_eq(
+                &self.memory_separation_facts,
+                &other.memory_separation_facts,
+            )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn memory_separation_candidate_count(
+        &self,
+        left: &PointerBlock,
+        right: &PointerBlock,
+    ) -> usize {
+        self.memory_separation_candidates(left, right).len()
     }
 
     #[cfg(test)]

@@ -799,10 +799,32 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches(
                 right: target_right,
             },
         ) => {
-            return (c_resources_directly_match(source_left, target_left, assumptions)
-                && c_resources_directly_match(source_right, target_right, assumptions))
-                || (c_resources_directly_match(source_left, target_right, assumptions)
-                    && c_resources_directly_match(source_right, target_left, assumptions));
+            return crate::instrumentation::measure_operation(
+                "kernel",
+                "fact transport",
+                "resource separation transport: direct orientation",
+                || {
+                    crate::instrumentation::measure_operation(
+                        "kernel",
+                        "fact transport",
+                        "resource separation transport: direct left",
+                        || c_resources_directly_match(source_left, target_left, assumptions),
+                    ) && crate::instrumentation::measure_operation(
+                        "kernel",
+                        "fact transport",
+                        "resource separation transport: direct right",
+                        || c_resources_directly_match(source_right, target_right, assumptions),
+                    )
+                },
+            ) || crate::instrumentation::measure_operation(
+                "kernel",
+                "fact transport",
+                "resource separation transport: swapped orientation",
+                || {
+                    c_resources_directly_match(source_left, target_right, assumptions)
+                        && c_resources_directly_match(source_right, target_left, assumptions)
+                },
+            );
         }
         (
             Proposition::CResourceContains {

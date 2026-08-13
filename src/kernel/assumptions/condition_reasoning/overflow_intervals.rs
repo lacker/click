@@ -421,27 +421,18 @@ mod tests {
         for index in 0..128 {
             let unrelated = Bitvector32Term::Variable(Variable(92_000 + index));
             assumptions = assumptions.assume_condition(
-                ConditionTerm::signed_less_equal(
-                    unrelated,
-                    Bitvector32Term::Constant(1_000),
-                ),
+                ConditionTerm::signed_less_equal(unrelated, Bitvector32Term::Constant(1_000)),
                 true,
             );
         }
         for term in [x.clone(), y.clone()] {
             assumptions = assumptions
                 .assume_condition(
-                    ConditionTerm::signed_greater_equal(
-                        term.clone(),
-                        Bitvector32Term::Constant(0),
-                    ),
+                    ConditionTerm::signed_greater_equal(term.clone(), Bitvector32Term::Constant(0)),
                     true,
                 )
                 .assume_condition(
-                    ConditionTerm::signed_less_equal(
-                        term,
-                        Bitvector32Term::Constant(1_000),
-                    ),
+                    ConditionTerm::signed_less_equal(term, Bitvector32Term::Constant(1_000)),
                     true,
                 );
         }

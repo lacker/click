@@ -1567,6 +1567,9 @@ pub struct Assumptions {
     pub(super) signed_order_bounds:
         std::sync::Arc<BTreeMap<Bitvector32Term, BTreeMap<(Bitvector32Term, bool, bool), usize>>>,
     pub(super) prop_facts: std::sync::Arc<BTreeSet<Proposition>>,
+    pub(super) memory_separation_facts: std::sync::Arc<
+        BTreeMap<(PointerBlock, PointerBlock), Vec<(Proposition, CMemoryRange, CMemoryRange)>>,
+    >,
     pub(super) content_fingerprint: u64,
     pub(super) defer_non_exact_loadability_obligations: bool,
     pub(super) defer_non_exact_condition_reasoning: bool,

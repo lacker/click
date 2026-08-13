@@ -39,9 +39,28 @@ pub(crate) fn c_resources_directly_match(
     match (left, right) {
         (CResource::Memory(left), CResource::Memory(right)) => {
             left == right
-                || (bitvectors_match_for_resource_replay(left.start(), right.start(), assumptions)
-                    && bitvectors_match_for_resource_replay(left.end(), right.end(), assumptions)
-                    && pointers_match_for_resource_replay(left.base(), right.base(), assumptions))
+                || (crate::instrumentation::measure_operation(
+                    "kernel",
+                    "resource context equality",
+                    "resource memory match: start",
+                    || {
+                        bitvectors_match_for_resource_replay(
+                            left.start(),
+                            right.start(),
+                            assumptions,
+                        )
+                    },
+                ) && crate::instrumentation::measure_operation(
+                    "kernel",
+                    "resource context equality",
+                    "resource memory match: end",
+                    || bitvectors_match_for_resource_replay(left.end(), right.end(), assumptions),
+                ) && crate::instrumentation::measure_operation(
+                    "kernel",
+                    "resource context equality",
+                    "resource memory match: base",
+                    || pointers_match_for_resource_replay(left.base(), right.base(), assumptions),
+                ))
         }
         (
             CResource::Composite {
@@ -92,14 +111,26 @@ fn bitvectors_match_for_resource_replay(
         let mut memories = Vec::new();
         collect_bitvector_memories(target, &mut memories);
         memories.into_iter().any(|memory| {
-            transport_framed_atomic_bitvector(term, &memory, Some((assumptions, false)))
-                .is_some_and(|transported| {
-                    bitvector_terms_proven_equal_for_memory_resolution(
-                        &transported,
-                        target,
-                        assumptions,
-                    )
-                })
+            let transported = crate::instrumentation::measure_operation(
+                "kernel",
+                "resource context equality",
+                "resource bitvector transport: rewrite",
+                || transport_framed_atomic_bitvector(term, &memory, Some((assumptions, false))),
+            );
+            transported.is_some_and(|transported| {
+                crate::instrumentation::measure_operation(
+                    "kernel",
+                    "resource context equality",
+                    "resource bitvector transport: compare",
+                    || {
+                        bitvector_terms_proven_equal_for_memory_resolution(
+                            &transported,
+                            target,
+                            assumptions,
+                        )
+                    },
+                )
+            })
         })
     };
     if transported_matches(left, right) || transported_matches(right, left) {
@@ -288,7 +319,19 @@ pub(crate) fn c_memory_load_is_unchanged(
     // set unless the named history cannot answer.
     let small_snapshot_pair = before.cells.len() <= 8 && after.cells.len() <= 8;
     if small_snapshot_pair
-        && memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions)
+        && crate::instrumentation::measure_operation(
+            "kernel",
+            "resource context equality",
+            "framed load: small snapshot comparison",
+            || {
+                memories_match_for_pointer_load_under_assumptions(
+                    before,
+                    after,
+                    pointer,
+                    assumptions,
+                )
+            },
+        )
     {
         return true;
     }
@@ -300,9 +343,16 @@ pub(crate) fn c_memory_load_is_unchanged(
     // forgotten caches, and allocations of a distinct block are sound DAG
     // bridges here; enabling them keeps replay on the bounded derivation walk
     // instead of falling into whole-snapshot alias search.
-    if with_extended_dag_bridging(|| {
-        load_unchanged_along_memory_derivations(before, after, pointer, assumptions)
-    }) {
+    if crate::instrumentation::measure_operation(
+        "kernel",
+        "resource context equality",
+        "framed load: memory derivation walk",
+        || {
+            with_extended_dag_bridging(|| {
+                load_unchanged_along_memory_derivations(before, after, pointer, assumptions)
+            })
+        },
+    ) {
         return true;
     }
     if crate::instrumentation::deadline_exceeded() {
@@ -1745,6 +1795,9 @@ pub(crate) fn c_condition_fact_memories(fact: &Proposition) -> Vec<CMemory> {
     let mut memories = Vec::new();
     collect_condition_memories(condition, &mut memories);
     memories
+        .into_iter()
+        .map(|memory| memory.as_ref().clone())
+        .collect()
 }
 
 pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
@@ -1821,7 +1874,7 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
     }
 }
 
-fn collect_condition_memories(condition: &ConditionTerm, memories: &mut Vec<CMemory>) {
+fn collect_condition_memories(condition: &ConditionTerm, memories: &mut Vec<SharedCMemory>) {
     let mut collect_binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         collect_bitvector_memories(left, memories);
         collect_bitvector_memories(right, memories);
@@ -1849,7 +1902,7 @@ fn collect_condition_memories(condition: &ConditionTerm, memories: &mut Vec<CMem
     }
 }
 
-fn collect_pointer_offset_memories(offset: &PointerOffsetTerm, memories: &mut Vec<CMemory>) {
+fn collect_pointer_offset_memories(offset: &PointerOffsetTerm, memories: &mut Vec<SharedCMemory>) {
     match offset {
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
         PointerOffsetTerm::Add(left, right) => {
@@ -1860,12 +1913,12 @@ fn collect_pointer_offset_memories(offset: &PointerOffsetTerm, memories: &mut Ve
     }
 }
 
-fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<CMemory>) {
+fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<SharedCMemory>) {
     match term {
         Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
         Bitvector32Term::MemoryLoad(memory, _) => {
             if !memories.contains(memory) {
-                memories.push(memory.as_ref().clone());
+                memories.push(memory.clone());
             }
         }
         Bitvector32Term::Add(left, right)

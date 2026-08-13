@@ -420,6 +420,37 @@ fn direct_composite_resource_match_replays_pointer_load_across_block_declaration
 }
 
 #[test]
+fn memory_separation_candidates_ignore_unrelated_propositions() {
+    let left = Pointer {
+        block: "indexed-left".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let right = Pointer {
+        block: "indexed-right".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let mut assumptions = Assumptions::new().assume_proposition(Proposition::CResourceSeparate {
+        left: CResource::Memory(memory_range(left.clone(), 0, 1)),
+        right: CResource::Memory(memory_range(right.clone(), 0, 1)),
+    });
+    for index in 0..128 {
+        assumptions = assumptions.assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::Variable(Variable(93_000 + index)),
+                Bitvector32Term::Constant(index as u32),
+            ),
+            true,
+        ));
+    }
+
+    assert_eq!(
+        assumptions.memory_separation_candidate_count(&left.block, &right.block),
+        1
+    );
+    assert!(assumptions.pointers_proven_disjoint_by_range(&left, &right));
+}
+
+#[test]
 fn equivalent_memory_load_order_facts_can_be_inconsistent() {
     let old_memory = CMemory::new();
     let stack_memory = CMemory::new()
