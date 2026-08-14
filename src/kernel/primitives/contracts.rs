@@ -454,7 +454,7 @@ impl CExecutionEnvironment {
         &self,
         state: &CState,
         statement: &CStatement,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Option<&CVerifiedLoopRule> {
         self.verified_loop_rules.iter().find(|rule| {
             let statement_matches = rule.loop_statement == *statement;

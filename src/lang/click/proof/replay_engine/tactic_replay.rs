@@ -1119,7 +1119,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     } else if recorded_is_constant_truth {
                         match lower_at_current() {
                             Ok(current)
-                                if !Assumptions::new().proves(&current)
+                                if !PureFactContext::new().proves(&current)
                                     && (exact_fact_is_available_across_effects(
                                         &current,
                                         &all_pure_facts,
@@ -1185,7 +1185,7 @@ fn replay_linear_tactics_without_frontier_loops(
                             // can lower to a context-free truth on this path
                             // (a shared post-branch step's premise after a
                             // constant assignment); it demands no evidence.
-                            || Assumptions::new().proves(&premise);
+                            || PureFactContext::new().proves(&premise);
                     if !premise_is_available {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise: {}",

@@ -40,7 +40,7 @@ pub fn uint8(bits: impl Into<Bitvector32Term>) -> CValue {
 pub(crate) fn c_pointers_proven_equal_for_memory_resolution(
     left: &Pointer,
     right: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     super::reasoning::pointers_proven_equal_for_memory_resolution(left, right, assumptions)
 }
@@ -52,7 +52,7 @@ pub(crate) fn c_pointers_proven_equal_for_memory_resolution(
 pub fn c_condition_facts_match_for_transport(
     source: &Proposition,
     target: &Proposition,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let (
         Proposition::ConditionIs(source_condition, source_value),
@@ -72,7 +72,7 @@ pub fn c_condition_facts_match_for_transport(
 pub fn prove_c_condition_fact_target_transport(
     source: &Proposition,
     target: &Proposition,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Theorem> {
     if !matches!(source, Proposition::ConditionIs(_, _))
         || !matches!(target, Proposition::ConditionIs(_, _))
@@ -116,7 +116,7 @@ pub fn c_loop_preservation_contexts(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     body: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<Vec<CLoopPreservationContext>, String> {
     let mut budget = ExecutionBudget::default();
     let mut existing_variables = BTreeSet::new();
@@ -205,7 +205,7 @@ pub fn c_loop_invariants_hold_at_back_edge(
     state: &CState,
     iteration_entry_state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<(), String> {
     let obligations = c_loop_invariant_obligations_at_back_edge(
         state,
@@ -230,7 +230,7 @@ pub fn c_loop_invariant_obligations_at_back_edge(
     state: &CState,
     iteration_entry_state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<Vec<ProofObligation>, String> {
     collect_invariant_check_obligations_without_search(
         state,
@@ -247,7 +247,7 @@ pub fn c_loop_invariants_hold_at_back_edge_using(
     state: &CState,
     iteration_entry_state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<(), String> {
     verify_invariant_checks_at_back_edge_using(
         state,
@@ -262,7 +262,7 @@ pub fn c_loop_invariants_hold_at_back_edge_using(
 pub fn c_loop_invariant_obligations_at_entry(
     state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<Vec<ProofObligation>, String> {
     collect_invariant_check_obligations_without_search(
         state,
@@ -280,7 +280,7 @@ pub fn c_loop_effects_hold_at_back_edge(
     state: &CState,
     effect_checks: &[CLoopEffectCheck],
     pure_facts: &[Proposition],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<(), String> {
     let execution_facts = pure_facts
         .iter()
@@ -313,7 +313,7 @@ pub fn c_loop_effects_hold_at_back_edge(
 pub fn c_loop_invariants_hold_at_entry(
     state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<(), String> {
     let obligations = collect_invariant_check_obligations(
         state,
@@ -696,7 +696,7 @@ pub fn c_function_contract_entry_state(
     caller_state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<CState, String> {
     let values = arguments
         .iter()
@@ -730,7 +730,7 @@ pub fn apply_c_function_contract_resource_transition(
     function: &CFunction,
     arguments: &[CExpression],
     outcome: CFunctionOutcome,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<(CFunctionOutcome, Vec<ProofObligation>), String> {
     match apply_verified_contract_resource_transition(
         caller_state,
@@ -753,7 +753,7 @@ pub fn c_function_outcome_from_statement_outcome(
     function: &CFunction,
     outcome: CStatementOutcome,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> (CFunctionOutcome, Vec<ProofObligation>) {
     function_outcome_from_body(
         caller_state,
@@ -805,7 +805,7 @@ pub fn c_expression_definedness_proposition(
     let paths = evaluate_c_expression_paths(
         state,
         expression,
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &mut ExecutionBudget::default(),
     )?;
     let mut normal_paths = paths.into_iter().filter_map(|path| {
@@ -857,7 +857,7 @@ pub fn forall_instantiation_candidate_values(
     };
     let mut candidates = match target {
         Proposition::ConditionIs(condition, _) => {
-            Assumptions::guided_forall_condition_candidates(*var, body, condition)
+            PureFactContext::guided_forall_condition_candidates(*var, body, condition)
         }
         _ => BTreeSet::new(),
     };
@@ -921,7 +921,7 @@ pub fn prove_c_expression_evaluation(state: CState, expression: CExpression) -> 
     let outcome = evaluate_c_expression(
         &state,
         &expression,
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &mut ExecutionBudget::default(),
     )?;
     Some(Theorem::new(Proposition::CExpressionEvaluates {
@@ -934,7 +934,7 @@ pub fn prove_c_expression_evaluation(state: CState, expression: CExpression) -> 
 pub fn prove_symbolic_c_condition_evaluation(
     state: CState,
     condition: CExpression,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
 ) -> SymbolicCConditionEvaluation {
     let mut budget = ExecutionBudget::default();
     let expression_paths =
@@ -1002,13 +1002,13 @@ pub fn prove_symbolic_c_condition_evaluation(
 }
 
 pub fn prove_c_statement_execution(state: CState, statement: CStatement) -> Option<Theorem> {
-    prove_symbolic_c_execution(state, statement, Assumptions::new())
+    prove_symbolic_c_execution(state, statement, PureFactContext::new())
 }
 
 pub fn prove_c_statement_execution_under_assumptions(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
 ) -> Option<Theorem> {
     prove_symbolic_c_execution(state, statement, assumptions)
 }
@@ -1016,7 +1016,7 @@ pub fn prove_c_statement_execution_under_assumptions(
 pub fn prove_symbolic_c_execution(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
 ) -> Option<Theorem> {
     prove_symbolic_c_execution_with_budget(
         state,
@@ -1029,7 +1029,7 @@ pub fn prove_symbolic_c_execution(
 pub fn prove_symbolic_c_execution_with_budget(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     budget: ExecutionBudget,
 ) -> Option<Theorem> {
     prove_symbolic_c_execution_with_environment_and_budget(
@@ -1045,7 +1045,7 @@ pub fn prove_symbolic_c_execution_with_budget(
 pub fn prove_symbolic_c_execution_with_environment(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> Option<Theorem> {
@@ -1062,7 +1062,7 @@ pub fn prove_symbolic_c_execution_with_environment(
 pub fn prove_symbolic_c_execution_with_environment_and_budget(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: ExecutionBudget,
@@ -1089,7 +1089,7 @@ pub fn prove_symbolic_c_execution_with_environment_and_budget(
 pub fn prove_symbolic_c_execution_paths(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
 ) -> SymbolicCExecution {
     prove_symbolic_c_execution_paths_with_budget(
         state,
@@ -1102,7 +1102,7 @@ pub fn prove_symbolic_c_execution_paths(
 pub fn prove_symbolic_c_execution_paths_with_budget(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     budget: ExecutionBudget,
 ) -> SymbolicCExecution {
     prove_symbolic_c_execution_paths_with_environment_and_budget(
@@ -1118,7 +1118,7 @@ pub fn prove_symbolic_c_execution_paths_with_budget(
 pub fn prove_symbolic_c_execution_paths_with_environment(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
@@ -1135,7 +1135,7 @@ pub fn prove_symbolic_c_execution_paths_with_environment(
 pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     mut budget: ExecutionBudget,
@@ -1196,7 +1196,7 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
 pub fn prove_symbolic_c_statement_verification_paths_with_environment(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
@@ -1213,7 +1213,7 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment(
 pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
@@ -1232,7 +1232,7 @@ fn statement_verification_variables(
     lower_bound: u64,
     state: &CState,
     statement: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
 ) -> VerificationVariableGenerator {
     let mut existing = BTreeSet::new();
@@ -1246,7 +1246,7 @@ fn statement_verification_variables(
 pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
@@ -1287,7 +1287,7 @@ pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and
 pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     initialization_proven: bool,
     preservation_proven: bool,
@@ -1307,7 +1307,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
 pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     initialization_proven: bool,
     preservation_proven: bool,
@@ -1370,7 +1370,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
 fn symbolic_c_statement_execution_with_loop_rule(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     paths: Vec<CStatementExecutionPath>,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let loop_rule = (matches!(statement, CStatement::While { .. })
@@ -1420,7 +1420,7 @@ pub fn prove_symbolic_c_function_execution(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
 ) -> Option<Theorem> {
     prove_symbolic_c_function_execution_with_budget(
         state,
@@ -1435,7 +1435,7 @@ pub fn prove_symbolic_c_function_execution_with_budget(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     budget: ExecutionBudget,
 ) -> Option<Theorem> {
     prove_symbolic_c_function_execution_with_environment_and_budget(
@@ -1453,7 +1453,7 @@ pub fn prove_symbolic_c_function_execution_with_environment(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> Option<Theorem> {
@@ -1472,7 +1472,7 @@ pub fn prove_symbolic_c_function_execution_with_environment_and_budget(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: ExecutionBudget,
@@ -1501,7 +1501,7 @@ pub fn prove_symbolic_c_function_execution_paths(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
 ) -> SymbolicCExecution {
     prove_symbolic_c_function_execution_paths_with_budget(
         state,
@@ -1516,7 +1516,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_budget(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     budget: ExecutionBudget,
 ) -> SymbolicCExecution {
     prove_symbolic_c_function_execution_paths_with_environment_and_budget(
@@ -1534,7 +1534,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
@@ -1553,7 +1553,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: ExecutionBudget,
@@ -1575,7 +1575,7 @@ fn prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     mut budget: ExecutionBudget,
@@ -1642,7 +1642,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
@@ -1661,7 +1661,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: ExecutionBudget,
@@ -1687,7 +1687,7 @@ pub fn prove_symbolic_c_function_contract_verification_paths_with_environment(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
@@ -1710,7 +1710,7 @@ pub fn prove_checked_c_function_execution_with_environment(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     mode: CFunctionContractExecutionMode,
@@ -1767,7 +1767,7 @@ fn checked_execution_at_definitionally_equal_entry_state(
     checked: &CCheckedFunctionExecution,
     state: &CState,
     function: &CFunction,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<SymbolicCExecution> {
     // Recursive composites can expose an unbounded proof relation between
     // folded and projected entry contexts. Certification must not turn a
@@ -1895,7 +1895,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
     checked_artifacts: &[CCheckedFunctionExecution],
 ) -> CFunctionContractExecution {
     let selection_assumptions =
-        assumptions_with_propositions(&Assumptions::new(), &derived_entry_facts);
+        assumptions_with_propositions(&PureFactContext::new(), &derived_entry_facts);
     let Some(base_assumptions) = crate::instrumentation::measure_operation(
         function.name(),
         "contract certification",
@@ -1905,7 +1905,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
                 &state,
                 &function,
                 &arguments,
-                Assumptions::new(),
+                PureFactContext::new(),
                 &selection_assumptions,
             )
         },
@@ -1948,7 +1948,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
     };
     let mut combined_paths = Vec::new();
     for case_facts in resource_condition_cases {
-        let case_seed = assumptions_with_propositions(&Assumptions::new(), &case_facts);
+        let case_seed = assumptions_with_propositions(&PureFactContext::new(), &case_facts);
         let Some(mut assumptions) = crate::instrumentation::measure_operation(
             function.name(),
             "contract certification",
@@ -2355,7 +2355,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
 pub fn prove_c_function_satisfies_specification(
     function: CFunction,
     specification: CFunctionSpecification,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
 ) -> Option<Theorem> {
     prove_c_function_satisfies_specification_with_environment(
         function,
@@ -2369,7 +2369,7 @@ pub fn prove_c_function_satisfies_specification(
 pub fn prove_c_function_satisfies_specification_with_environment(
     function: CFunction,
     specification: CFunctionSpecification,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> Option<Theorem> {
@@ -2414,7 +2414,7 @@ pub fn prove_c_function_satisfies_specification_with_environment(
 pub fn prove_c_function_satisfies_specification_and_propositions(
     function: CFunction,
     specification: CFunctionSpecification,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     propositions: Vec<Proposition>,
 ) -> Option<Theorem> {
     prove_c_function_satisfies_specification(
@@ -2458,7 +2458,7 @@ pub fn prove_c_function_satisfies_specification_and_propositions(
 pub fn prove_c_statement_executes_and_propositions(
     state: CState,
     statement: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     propositions: Vec<Proposition>,
 ) -> Option<Theorem> {
     let paths = execute_c_statement_paths(
@@ -2505,7 +2505,7 @@ pub fn prove_c_max_lt_returns_right(a: Variable, b: Variable) -> Option<Theorem>
     let b_value = int32(b_bits.clone());
     let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
     let state = c_max_state(a_value, b_value.clone());
-    let assumptions = Assumptions::new().assume_condition(condition.clone(), true);
+    let assumptions = PureFactContext::new().assume_condition(condition.clone(), true);
     let outcome = execute_c_statement(&state, &c_max_body(), &assumptions)?;
 
     if outcome
@@ -2540,7 +2540,7 @@ pub fn prove_c_max_not_lt_returns_left(a: Variable, b: Variable) -> Option<Theor
     let b_value = int32(b_bits.clone());
     let condition = c_max_lt_condition(a_bits, b_bits);
     let state = c_max_state(a_value.clone(), b_value);
-    let assumptions = Assumptions::new().assume_condition(condition.clone(), false);
+    let assumptions = PureFactContext::new().assume_condition(condition.clone(), false);
     let outcome = execute_c_statement(&state, &c_max_body(), &assumptions)?;
 
     if outcome
@@ -3201,7 +3201,7 @@ pub fn prove_memory_load_after_store_distinct_under_assumptions(
     stored_pointer: Pointer,
     stored_value: CValue,
     loaded_pointer: Pointer,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
 ) -> Option<Theorem> {
     if !pointers_proven_distinct(&stored_pointer, &loaded_pointer, &assumptions) {
         return None;
@@ -3274,7 +3274,7 @@ pub(super) fn prove_c_while_invariant_rule(
     condition: CExpression,
     invariant: Vec<Proposition>,
     body: CStatement,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     preserved: Vec<Proposition>,
     postcondition: Proposition,
 ) -> Option<Theorem> {

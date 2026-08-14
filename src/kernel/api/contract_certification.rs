@@ -15,7 +15,7 @@ pub(super) fn contract_resource_condition_cases(
     caller_state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Vec<Vec<Proposition>>> {
     let entry_state = c_function_entry_state(caller_state, function, arguments)?;
     let mut budget = ExecutionBudget::default();
@@ -194,7 +194,7 @@ fn split_additive_constant(term: &Bitvector32Term) -> (Bitvector32Term, u32) {
 /// Certifies a loadability goal from an assumed wider loadable fact over the
 /// same memory snapshot: the goal's base must sit at a provably in-bounds
 /// byte offset within the fact's span.
-pub fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bool {
+pub fn loadable_covered_by_fact(assumptions: &PureFactContext, goal: &Proposition) -> bool {
     let Proposition::CMemoryLoadable {
         memory,
         base,
@@ -286,7 +286,7 @@ pub fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -
 /// assumed loadable facts: the bound premises become facts about the free
 /// bound variable, and the loadable body must then be covered by a wider
 /// assumed span.
-fn forall_loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bool {
+fn forall_loadable_covered_by_fact(assumptions: &PureFactContext, goal: &Proposition) -> bool {
     let Proposition::ForAll {
         sort: Sort::CInt32 | Sort::Bitvector32,
         body,
@@ -313,7 +313,10 @@ fn forall_loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition
 /// the obligation also assumes. Facts enter assumptions only through
 /// safety-checked lowering, so a stated fact about `load(p)` witnesses that
 /// the first byte at `p` is loadable.
-fn quantified_load_fact_certifies_loadable(assumptions: &Assumptions, goal: &Proposition) -> bool {
+fn quantified_load_fact_certifies_loadable(
+    assumptions: &PureFactContext,
+    goal: &Proposition,
+) -> bool {
     fn implication_parts(body: &Proposition) -> (Vec<Proposition>, &Proposition) {
         let mut premises = Vec::new();
         let mut conclusion = body;
@@ -371,7 +374,7 @@ fn quantified_load_fact_certifies_loadable(assumptions: &Assumptions, goal: &Pro
 fn condition_fact_mentions_load_of(
     fact: &Proposition,
     base: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     fn collect_load_pointers(term: &Bitvector32Term, pointers: &mut Vec<Pointer>) {
         match term {
@@ -421,7 +424,7 @@ fn condition_fact_mentions_load_of(
 /// The leaf form of the load-fact witness: a single-byte loadability goal is
 /// certified by any assumed condition fact constraining a load of the same
 /// pointer.
-fn load_fact_certifies_loadable(assumptions: &Assumptions, goal: &Proposition) -> bool {
+fn load_fact_certifies_loadable(assumptions: &PureFactContext, goal: &Proposition) -> bool {
     let Proposition::CMemoryLoadable { base, bytes, .. } = goal else {
         return false;
     };
@@ -440,7 +443,7 @@ fn load_fact_certifies_loadable(assumptions: &Assumptions, goal: &Proposition) -
 /// bound variable has become an ordinary symbolic variable and its guard is
 /// already present in `assumptions`.
 pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     base: &Pointer,
 ) -> bool {
     if crate::instrumentation::deadline_exceeded() {
@@ -594,7 +597,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
 /// value of each written cell without returning a separate ad-hoc permission
 /// proposition.
 pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     memory: &CMemory,
     base: &Pointer,
     bytes: &Bitvector32Term,
@@ -748,7 +751,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
 /// body conjuncts become facts, and the obligation body must then certify
 /// pointwise.
 fn certification_proves_exists_obligation_from_facts(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     obligation: &Proposition,
 ) -> bool {
     let Proposition::Exists {
@@ -797,9 +800,9 @@ pub(super) fn c_function_contract_certification_assumptions(
     caller_state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
-    mut assumptions: Assumptions,
-    selection_assumptions: &Assumptions,
-) -> Option<Assumptions> {
+    mut assumptions: PureFactContext,
+    selection_assumptions: &PureFactContext,
+) -> Option<PureFactContext> {
     let mut entry_state = c_function_entry_state(caller_state, function, arguments)?;
     let mut budget = ExecutionBudget::default();
     // Entry facts derived from declared parameter spellings (for example
@@ -1043,7 +1046,7 @@ pub(super) fn prove_symbolic_c_function_verification_paths_with_environment_and_
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     mut budget: ExecutionBudget,
@@ -1231,7 +1234,7 @@ fn certified_function_path_parts<'a>(
     &'a CState,
     &'a [CExpression],
     &'a CFunctionOutcome,
-    Assumptions,
+    PureFactContext,
 )> {
     let mut proposition = path.theorem().proposition();
     while let Proposition::Implies(_, body) = proposition {
@@ -1273,7 +1276,7 @@ fn resource_contexts_definitionally_equal(
     left: &ResourceContext,
     right_memory: &CMemory,
     right: &ResourceContext,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     resource_contexts_definitionally_equal_with_definitions(
         function.composite_resource_definitions(),
@@ -1291,7 +1294,7 @@ pub(in crate::kernel) fn resource_contexts_definitionally_equal_with_definitions
     left: &ResourceContext,
     right_memory: &CMemory,
     right: &ResourceContext,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left == right {
         return true;
@@ -1324,7 +1327,7 @@ pub(in crate::kernel) fn resource_contexts_definitionally_equal_with_definitions
     let enriched_assumptions = assumptions_with_propositions(assumptions, &relation_facts);
     let assumptions = &enriched_assumptions;
     let _assumptions_memo_scope =
-        crate::kernel::assumptions::AssumptionsIdScope::enter(assumptions);
+        crate::kernel::assumptions::PureFactContextIdScope::enter(assumptions);
     let facts_directly_match = |left: &CResourceFact, right: &CResourceFact| match (left, right) {
         (CResourceFact::Own(left, left_quantity), CResourceFact::Own(right, right_quantity))
             if left_quantity == right_quantity =>
@@ -1702,7 +1705,7 @@ fn exists_equality_witness_candidates(
 /// addition overflow-free (the executing code already checked it). For
 /// example `x + 1 > 0` becomes `x >= 0` under `!AddOverflows(x, 1)`.
 fn shifted_order_condition_proven(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     condition: &ConditionTerm,
     value: bool,
 ) -> bool {
@@ -1874,7 +1877,7 @@ fn range_folds_alpha_equivalent(left: &Bitvector32Term, right: &Bitvector32Term)
 fn pointer_offsets_equal_with_resolved_atoms(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let resolve = |offset: &PointerOffsetTerm| {
         let (atoms, mut constant) = crate::kernel::reasoning::offset_atoms_and_constant(offset);
@@ -2014,7 +2017,7 @@ fn pointer_offsets_equal_with_resolved_atoms(
 /// The load spellings a term denotes: the term itself when it is a load,
 /// plus every load one equality fact away.
 fn load_spellings_of<'a>(
-    assumptions: &'a Assumptions,
+    assumptions: &'a PureFactContext,
     term: &'a Bitvector32Term,
 ) -> Vec<(&'a CMemory, &'a Pointer)> {
     let mut loads = Vec::new();
@@ -2045,7 +2048,7 @@ fn load_spellings_of<'a>(
 /// framed cell: same block, offsets equal with constant-resolved atoms, and
 /// the loaded cell provably unchanged between the two snapshots.
 fn certification_proves_equality_via_load_fact(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     left: &Bitvector32Term,
     right: &Bitvector32Term,
 ) -> bool {
@@ -2076,7 +2079,7 @@ fn certification_proves_equality_via_load_fact(
 }
 
 pub(super) fn certification_proves_proposition(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: &Proposition,
 ) -> bool {
     if assumptions.proves_exact(proposition) {
@@ -2334,7 +2337,7 @@ pub(in crate::kernel) fn certification_proves_context_free_forall(
         return true;
     }
     let proved_facts = PROVED.with(|proved| proved.borrow().iter().cloned().collect::<Vec<_>>());
-    let closed_assumptions = assumptions_with_propositions(&Assumptions::new(), &proved_facts);
+    let closed_assumptions = assumptions_with_propositions(&PureFactContext::new(), &proved_facts);
     let proved = certification_proves_proposition(&closed_assumptions, proposition);
     if proved && crate::instrumentation::exceeded_verification_limit_context().is_none() {
         PROVED.with(|cache| {
@@ -2371,7 +2374,7 @@ fn quantified_predicate_implication_fact(fact: &Proposition) -> bool {
 /// fact's predicate conclusion pins each bound variable against the goal's
 /// arguments, and every premise must then certify under that instantiation.
 fn certification_proves_predicate_from_quantified_implication(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     goal: &Proposition,
 ) -> bool {
     let Proposition::Predicate { name, arguments } = goal else {
@@ -2450,7 +2453,7 @@ fn certification_proves_predicate_from_quantified_implication(
 }
 
 fn certification_proves_post_proposition(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: &Proposition,
     post_memory: &CMemory,
     execution_facts: &[ExecutionPureFact],
@@ -2592,7 +2595,7 @@ pub(super) fn resources_certify_loadability(
     state: &CState,
     resources: &ResourceContext,
     proposition: &Proposition,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     match proposition {
         Proposition::ForAll { body, .. } => {
@@ -2630,7 +2633,7 @@ fn contract_endpoints_certify_loadability(
     post_state: &CState,
     post_resources: &ResourceContext,
     proposition: &Proposition,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     resources_certify_loadability(entry_state, entry_resources, proposition, assumptions)
         || resources_certify_loadability(post_state, post_resources, proposition, assumptions)

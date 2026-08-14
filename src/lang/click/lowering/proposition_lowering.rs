@@ -280,7 +280,7 @@ impl KernelPropositionLowerer {
                     &state,
                     &state,
                     None,
-                    &Assumptions::new(),
+                    &PureFactContext::new(),
                     &self.predicate_environment,
                     &self.click_function_environment,
                     &program_point_states,
@@ -408,7 +408,9 @@ impl KernelPropositionLowerer {
                 let count = self
                     .resource_state
                     .as_ref()
-                    .map(|state| state.counted_population_sum(name, &values, &Assumptions::new()))
+                    .map(|state| {
+                        state.counted_population_sum(name, &values, &PureFactContext::new())
+                    })
                     .unwrap_or(Bitvector32Term::Constant(0));
                 Ok(CValue::Int32(count))
             }
@@ -484,7 +486,7 @@ impl KernelPropositionLowerer {
                 else_branch,
             } => {
                 let condition = self.lower_requirement_proposition(condition)?;
-                let assumptions = Assumptions::new();
+                let assumptions = PureFactContext::new();
                 if assumptions.proves(&condition) {
                     return self.lower_requirement_value(then_branch);
                 }
@@ -588,7 +590,7 @@ impl KernelPropositionLowerer {
                     &state,
                     &state,
                     None,
-                    &Assumptions::new(),
+                    &PureFactContext::new(),
                     &self.predicate_environment.clone(),
                     &program_point_states,
                     &mut self.active_functions,
@@ -667,7 +669,7 @@ impl KernelPropositionLowerer {
                     &self.memory,
                     pointer,
                     CType::Int32,
-                    &Assumptions::new(),
+                    &PureFactContext::new(),
                 )
                 .map_err(ClickError::new)
             }
@@ -683,7 +685,7 @@ impl KernelPropositionLowerer {
                     &self.memory,
                     pointer,
                     *value_type,
-                    &Assumptions::new(),
+                    &PureFactContext::new(),
                 )
                 .map_err(ClickError::new)
             }
@@ -777,7 +779,7 @@ pub(in crate::lang::click) fn proposition_as_single_condition(
 }
 
 pub(in crate::lang::click) fn assumptions_prove_proposition_false(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: &Proposition,
 ) -> bool {
     match proposition {

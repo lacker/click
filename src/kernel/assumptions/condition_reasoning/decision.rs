@@ -1,6 +1,6 @@
 use super::*;
 
-impl Assumptions {
+impl PureFactContext {
     /// Decides a condition against this fact set, memoizing results by the
     /// fact set's content identity.
     ///
@@ -38,7 +38,7 @@ impl Assumptions {
         let scope = if inside_condition_decision() {
             None
         } else {
-            Some(AssumptionsIdScope::enter(self))
+            Some(PureFactContextIdScope::enter(self))
         };
         let memo_id = scope
             .as_ref()
@@ -660,7 +660,7 @@ impl Assumptions {
         if decide_memo_disabled() {
             return self.signed_constant_after_equality_normalization_unmemoized(term);
         }
-        let _scope = AssumptionsIdScope::enter(self);
+        let _scope = PureFactContextIdScope::enter(self);
         let key = (_scope.id, term.clone());
         if let Some(hit) = CONSTANT_NORMALIZATION_MEMO.with(|memo| memo.borrow().get(&key).copied())
         {

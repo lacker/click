@@ -5,7 +5,7 @@ type ValidShiftCountEvaluator = fn(
     Bitvector32Term,
     Vec<ExecutionPureFact>,
     Vec<ProofObligation>,
-    &Assumptions,
+    &PureFactContext,
 ) -> Vec<CExpressionPath>;
 
 fn c_type_mismatch_expression_path(
@@ -23,7 +23,7 @@ pub(in crate::kernel) fn evaluate_c_add_paths(
     state: &CState,
     left: &CExpression,
     right: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
@@ -112,7 +112,7 @@ pub(in crate::kernel) fn apply_c_add(
     right_step_width: Option<u32>,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     match (left, right) {
         (
@@ -181,7 +181,7 @@ pub(in crate::kernel) fn apply_c_int32_add(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let overflow = ConditionTerm::signed_add_overflows(left.clone(), right.clone());
     match crate::instrumentation::measure_operation(
@@ -232,7 +232,7 @@ pub(in crate::kernel) fn apply_c_int32_subtract(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let overflow = ConditionTerm::signed_subtract_overflows(left.clone(), right.clone());
     match decide_with_facts(assumptions, &facts, &overflow) {
@@ -280,7 +280,7 @@ pub(in crate::kernel) fn apply_c_int32_multiply(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let overflow = ConditionTerm::signed_multiply_overflows(
         normalize_exact_memory_loads_in_bitvector(&left, assumptions, 0),
@@ -331,7 +331,7 @@ pub(in crate::kernel) fn apply_c_int32_divide(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     apply_c_int32_division_like(
         left,
@@ -348,7 +348,7 @@ pub(in crate::kernel) fn apply_c_int32_remainder(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     apply_c_int32_division_like(
         left,
@@ -365,7 +365,7 @@ fn apply_c_int32_division_like(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     result: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
 ) -> Vec<CExpressionPath> {
     let zero = Bitvector32Term::Constant(0);
@@ -425,7 +425,7 @@ fn apply_c_int32_division_nonzero(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     result: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
 ) -> Vec<CExpressionPath> {
     let overflow = ConditionTerm::signed_divide_overflows(left.clone(), right.clone());
@@ -472,7 +472,7 @@ pub(in crate::kernel) fn apply_c_int32_shift_left(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     apply_c_int32_with_valid_shift_count(
         left,
@@ -489,7 +489,7 @@ pub(in crate::kernel) fn apply_c_int32_shift_right(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     apply_c_int32_with_valid_shift_count(
         left,
@@ -514,7 +514,7 @@ fn apply_c_int32_with_valid_shift_count(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     apply_valid_count: ValidShiftCountEvaluator,
 ) -> Vec<CExpressionPath> {
     let negative_count =
@@ -574,7 +574,7 @@ fn apply_c_int32_with_nonnegative_shift_count(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     apply_valid_count: ValidShiftCountEvaluator,
 ) -> Vec<CExpressionPath> {
     let too_large_count =
@@ -617,7 +617,7 @@ fn apply_c_int32_shift_left_valid_count(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let negative_left = ConditionTerm::signed_less_than(left.clone(), Bitvector32Term::Constant(0));
     match decide_with_facts(assumptions, &facts, &negative_left) {
@@ -668,7 +668,7 @@ fn apply_c_int32_shift_left_nonnegative(
     right: Bitvector32Term,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let overflow = ConditionTerm::signed_shift_left_overflows(left.clone(), right.clone());
     match decide_with_facts(assumptions, &facts, &overflow) {
@@ -715,7 +715,7 @@ pub(in crate::kernel) fn evaluate_c_equal_paths(
     state: &CState,
     left: &CExpression,
     right: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
@@ -794,7 +794,7 @@ pub(in crate::kernel) fn apply_c_equal(
     right: CValue,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     match (left, right) {
         (CValue::Pointer(left), CValue::Pointer(right)) => condition_as_c_int32_paths(
@@ -840,7 +840,7 @@ pub(in crate::kernel) fn evaluate_c_not_equal_paths(
     state: &CState,
     left: &CExpression,
     right: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
@@ -919,7 +919,7 @@ pub(in crate::kernel) fn apply_c_not_equal(
     right: CValue,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     match (left, right) {
         (CValue::Pointer(left), CValue::Pointer(right)) => condition_as_c_int32_not_paths(
@@ -964,7 +964,7 @@ pub(in crate::kernel) fn apply_c_not_equal(
 pub(in crate::kernel) fn evaluate_c_not_paths(
     state: &CState,
     expression: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
@@ -1008,7 +1008,7 @@ pub(in crate::kernel) fn evaluate_c_logical_and_paths(
     state: &CState,
     left: &CExpression,
     right: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
@@ -1099,7 +1099,7 @@ pub(in crate::kernel) fn evaluate_c_logical_or_paths(
     state: &CState,
     left: &CExpression,
     right: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
@@ -1205,7 +1205,7 @@ pub(in crate::kernel) fn evaluate_c_int32_binary_paths(
     state: &CState,
     left: &CExpression,
     right: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     apply: impl Fn(
         Bitvector32Term,
@@ -1313,7 +1313,7 @@ pub(in crate::kernel) fn apply_c_int32_total_binary(
 pub(in crate::kernel) fn evaluate_c_int32_total_unary_paths(
     state: &CState,
     expression: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     apply: fn(Bitvector32Term) -> Bitvector32Term,
 ) -> ExecutionResult<Vec<CExpressionPath>> {

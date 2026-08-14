@@ -1218,7 +1218,7 @@ pub(in crate::lang::click) enum SimpEvidence {
 
 pub(in crate::lang::click) fn plan_simp_certificate(
     proposition: &Proposition,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<SimpEvidence> {
     if matches!(normalize_proposition(proposition), SimpProposition::True) {
         Some(SimpEvidence::Normalize)
@@ -1231,7 +1231,7 @@ pub(in crate::lang::click) fn plan_simp_certificate(
 
 pub(in crate::lang::click) fn replay_simp_certificate(
     proposition: &Proposition,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     certificate: &SimpEvidence,
 ) -> bool {
     match certificate {
@@ -1388,7 +1388,7 @@ mod tests {
 
 pub(in crate::lang::click) fn simp_proposition(
     proposition: &Proposition,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> SimpProposition {
     if let Some(certificate) = plan_simp_certificate(proposition, assumptions)
         && replay_simp_certificate(proposition, assumptions, &certificate)
@@ -1533,7 +1533,7 @@ pub(in crate::lang::click) fn simp_term(term: &Term) -> Term {
 
 pub(in crate::lang::click) fn simp_condition(
     condition: &ConditionTerm,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<bool> {
     simp_condition_without_assumptions(condition)
         .or_else(|| assumptions.decide_condition_for_simp(condition))

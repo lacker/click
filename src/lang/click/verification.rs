@@ -1877,11 +1877,11 @@ pub(in crate::lang::click) fn implication_body(proposition: &Proposition) -> &Pr
 
 pub(in crate::lang::click) fn assumptions_from_propositions(
     propositions: &[Proposition],
-) -> Assumptions {
+) -> PureFactContext {
     propositions
         .iter()
         .cloned()
-        .fold(Assumptions::new(), Assumptions::assume_proposition)
+        .fold(PureFactContext::new(), PureFactContext::assume_proposition)
 }
 
 pub(in crate::lang::click) fn check_signature(

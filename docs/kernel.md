@@ -20,7 +20,7 @@ Kernel files:
 
 - `primitives.rs`: core terms, C values/state, propositions, path structs, and
   basic data-type impls.
-- `assumptions.rs`: `Assumptions`, proof obligations, execution-derived pure
+- `assumptions.rs`: `PureFactContext`, proof obligations, execution-derived pure
   facts (`ExecutionPureFact`), and symbolic execution accessors.
 - `api.rs`: public constructors and theorem-producing entry points.
 - `reasoning.rs`: deterministic proof helpers, finite forall/range reasoning,
@@ -175,7 +175,7 @@ In `src/kernel/`:
   obligation, rather than selecting an operational alias-resolution path.
 - `Proposition`: proof propositions, including `ForAll` and `Exists`, C
   semantic judgments, memory facts, and loop invariant rules.
-- `Assumptions`: known condition/proposition facts plus deterministic reasoning.
+- `PureFactContext`: known condition/proposition facts plus deterministic reasoning.
 - `ProofObligation`, `ExecutionPureFact`: obligations and facts produced during symbolic
   execution.
 - `Theorem`: abstract proven proposition.
@@ -363,7 +363,7 @@ still rejected.
 
 ## Assumption Reasoning
 
-`Assumptions::proves` is the main deterministic proposition checker. It handles
+`PureFactContext::proves` is the main deterministic proposition checker. It handles
 trivial propositions, condition facts, conjunctions, disjunction cases,
 implications, finite forall instantiation, memory access, equality facts, order
 facts, and selected memory/frame patterns.

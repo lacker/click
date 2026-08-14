@@ -4,7 +4,7 @@ pub fn c_function_outcomes_definitionally_equal(
     function: &CFunction,
     left: &CFunctionOutcome,
     right: &CFunctionOutcome,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     match (left, right) {
         (
@@ -54,7 +54,7 @@ pub fn c_function_outcomes_definitionally_equal(
 pub fn c_function_outcomes_program_state_definitionally_equal(
     left: &CFunctionOutcome,
     right: &CFunctionOutcome,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     match (left, right) {
         (
@@ -88,7 +88,7 @@ pub fn c_function_outcomes_equal_by_execution_provenance(
     left_facts: &[ExecutionPureFact],
     right: &CFunctionOutcome,
     right_facts: &[ExecutionPureFact],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if !c_function_outcomes_program_state_equal_by_execution_provenance(
         left,
@@ -140,7 +140,7 @@ pub fn c_function_outcomes_program_state_equal_by_execution_provenance(
     left_facts: &[ExecutionPureFact],
     right: &CFunctionOutcome,
     right_facts: &[ExecutionPureFact],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let (
         CFunctionOutcome::Return {
@@ -183,7 +183,7 @@ fn return_values_equal_by_certified_stores(
     post_memory: &CMemory,
     execution_facts: &[ExecutionPureFact],
     right: &CValue,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let (CValue::Int32(left) | CValue::UInt8(left), CValue::Int32(right) | CValue::UInt8(right)) =
         (left, right)
@@ -218,7 +218,7 @@ fn memories_equal_by_execution_provenance(
     left_facts: &[ExecutionPureFact],
     right_final: &CMemory,
     right_facts: &[ExecutionPureFact],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if memories_equal_by_matching_derivations(left_final, right_final, assumptions, 0) {
         return true;
@@ -268,7 +268,7 @@ fn memories_equal_by_execution_provenance(
 fn memories_equal_by_matching_derivations(
     left: &CMemory,
     right: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> bool {
     fn transparent_base(derivation: &CMemoryDerivation) -> Option<&SharedCMemory> {
@@ -351,7 +351,7 @@ fn memories_equal_by_matching_derivations(
 fn memory_range_lists_definitionally_equal(
     left: &[CMemoryRange],
     right: &[CMemoryRange],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     left.len() == right.len()
         && left.iter().zip(right).all(|(left, right)| {
@@ -372,7 +372,7 @@ fn memory_range_lists_definitionally_equal(
 fn c_memories_definitionally_equal(
     left: &CMemory,
     right: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if memories_proven_equal_for_memory_resolution(left, right, assumptions) {
         return true;
@@ -395,7 +395,7 @@ fn c_memories_definitionally_equal(
 fn memory_cells_definitionally_contained(
     source: &CMemory,
     target: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     for (source_pointer, source_value) in source
         .cells
@@ -421,7 +421,7 @@ fn materialized_load_is_unchanged(
     value: &CValue,
     symbolic_memory: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let load = match value {
         CValue::Int32(Bitvector32Term::MemoryLoad(memory, load_pointer))
@@ -551,7 +551,7 @@ fn certify_c_function_execution_path_resource_representation_uncached(
     premises.extend(observable_resource_facts);
     let assumptions = assumptions_with_propositions(&path.assumptions, &premises);
     let _assumptions_memo_scope =
-        crate::kernel::assumptions::AssumptionsIdScope::enter(&assumptions);
+        crate::kernel::assumptions::PureFactContextIdScope::enter(&assumptions);
     let values_equal = crate::instrumentation::measure_operation(
         function.name(),
         "resource representation",
@@ -708,7 +708,7 @@ struct CertifiedFunctionClaimPath {
     entry_resources: ResourceContext,
     post_state: Option<CState>,
     post_resources: Option<ResourceContext>,
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     execution_facts: Vec<ExecutionPureFact>,
     effect_facts: Vec<ExecutionPureFact>,
 }
@@ -1173,7 +1173,7 @@ fn function_claim_holds_on_prepared_path(
 pub(in crate::kernel) fn c_effect_memories_definitionally_equal(
     left: &CMemory,
     right: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let without_locals = |memory: &CMemory| {
         let mut external = memory.clone();
@@ -1196,7 +1196,7 @@ pub(in crate::kernel) fn c_effect_memory_advances_over_internal_heap_state(
     before: &CMemory,
     after: &CMemory,
     function_entry: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let fresh_blocks = after
         .blocks

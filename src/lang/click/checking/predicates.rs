@@ -63,7 +63,7 @@ pub(in crate::lang::click) fn unfold_predicates_in_proposition(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
     proposition: &Proposition,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<Proposition, String> {
     let mut active = BTreeSet::new();
     unfold_predicates_in_proposition_with_active(
@@ -81,7 +81,7 @@ pub(in crate::lang::click) fn unfold_predicates_in_proposition_with_active(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
     proposition: &Proposition,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     active: &mut BTreeSet<String>,
 ) -> Result<Proposition, String> {
     match proposition {
@@ -217,7 +217,7 @@ pub(in crate::lang::click) fn unfold_predicates_in_proposition_with_active(
 pub(in crate::lang::click) fn instantiate_predicate_definition(
     definition: &PredicateDefinition,
     arguments: &[Term],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
@@ -338,7 +338,7 @@ pub(in crate::lang::click) fn lower_predicate_body_proposition_with_environment(
     values: &mut BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     state: &CState,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: &ClickProposition,
     next_variable: &mut u64,
     predicate_environment: &PredicateEnvironment,
@@ -839,7 +839,7 @@ fn evaluate_predicate_contract_segment(
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     state: &CState,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     segment: &ContractSegment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -905,7 +905,7 @@ fn evaluate_predicate_resource_subject(
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     state: &CState,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     resource: &ResourceSubject,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -984,7 +984,7 @@ pub(in crate::lang::click) fn evaluate_predicate_contract_expression(
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     state: &CState,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     expression: &ContractExpression,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,

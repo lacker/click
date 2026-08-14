@@ -34,8 +34,11 @@ fn signed_add_overflow_is_native_undefined_behavior() {
 fn condition_evaluation_certifies_c_truthiness_directly() {
     let state = CState::new();
     let condition = c_less_than(c_int32_literal(1), c_int32_literal(2));
-    let evaluation =
-        prove_symbolic_c_condition_evaluation(state.clone(), condition.clone(), Assumptions::new());
+    let evaluation = prove_symbolic_c_condition_evaluation(
+        state.clone(),
+        condition.clone(),
+        PureFactContext::new(),
+    );
 
     assert_eq!(evaluation.paths().len(), 1);
     assert_eq!(
@@ -55,8 +58,11 @@ fn condition_evaluation_certifies_c_truthiness_directly() {
 fn void_truthiness_is_an_explicit_type_error() {
     let state = CState::new();
     let condition = c_void_value();
-    let evaluation =
-        prove_symbolic_c_condition_evaluation(state.clone(), condition.clone(), Assumptions::new());
+    let evaluation = prove_symbolic_c_condition_evaluation(
+        state.clone(),
+        condition.clone(),
+        PureFactContext::new(),
+    );
 
     assert_eq!(evaluation.paths().len(), 1);
     assert_eq!(
@@ -94,7 +100,7 @@ fn void_local_declaration_is_an_explicit_type_error() {
     let paths = execute_c_statement_paths(
         &CState::new(),
         &c_declare("invalid", CType::Void),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -110,7 +116,7 @@ fn void_local_declaration_is_an_explicit_type_error() {
     let paths = execute_c_statement_paths(
         &CState::new(),
         &c_if(c_void_value(), CStatement::Skip, CStatement::Skip),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -128,7 +134,8 @@ fn symbolic_condition_evaluation_exposes_both_truthiness_paths() {
     let x = Variable(90);
     let state = CState::new().with_local("x", int32(Bitvector32Term::Variable(x)));
     let condition = c_greater_equal(c_variable("x"), c_int32_literal(0));
-    let evaluation = prove_symbolic_c_condition_evaluation(state, condition, Assumptions::new());
+    let evaluation =
+        prove_symbolic_c_condition_evaluation(state, condition, PureFactContext::new());
 
     let outcomes = evaluation
         .paths()
@@ -153,8 +160,9 @@ fn symbolic_condition_evaluation_exposes_both_truthiness_paths() {
 fn int32_subtraction_is_native() {
     let state = CState::new();
     let statement = c_return(c_subtract(c_int32_literal(7), c_int32_literal(2)));
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("concrete subtraction should execute");
+    let theorem =
+        prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
+            .expect("concrete subtraction should execute");
 
     assert_eq!(
         theorem.proposition(),
@@ -173,7 +181,7 @@ fn int32_subtraction_is_native() {
 fn nonnegative_ordered_subtraction_does_not_overflow() {
     let position = Bitvector32Term::Variable(Variable(24));
     let length = Bitvector32Term::Variable(Variable(25));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_greater_equal(position.clone(), Bitvector32Term::Constant(0)),
             true,
@@ -322,7 +330,7 @@ fn symbolic_pointer_truthiness_keeps_null_and_nonnull_paths() {
         CValue::Pointer(Pointer::symbolic(Variable(22_000))),
         Vec::new(),
         Vec::new(),
-        &Assumptions::new(),
+        &PureFactContext::new(),
     );
 
     assert_eq!(paths.len(), 2);
@@ -521,7 +529,7 @@ fn symbolic_pointer_equality_reports_branch_facts() {
         c_return(c_int32_literal(0)),
     );
     let execution =
-        prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
+        prove_symbolic_c_execution_paths(state.clone(), statement.clone(), PureFactContext::new());
 
     assert_eq!(execution.paths().len(), 2);
     assert_eq!(
@@ -570,8 +578,9 @@ fn if_uses_c_int32_truthiness() {
         c_return(c_int32_literal(1)),
         c_return(c_int32_literal(0)),
     );
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("nonzero int32 condition should take then branch");
+    let theorem =
+        prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
+            .expect("nonzero int32 condition should take then branch");
 
     assert_eq!(
         theorem.proposition(),
@@ -591,8 +600,9 @@ fn if_uses_c_int32_truthiness() {
         c_return(c_int32_literal(1)),
         c_return(c_int32_literal(0)),
     );
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("zero int32 condition should take else branch");
+    let theorem =
+        prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
+            .expect("zero int32 condition should take else branch");
 
     assert_eq!(
         theorem.proposition(),
@@ -612,8 +622,9 @@ fn assignment_and_sequence_update_native_state() {
     let state = CState::new().with_local("x", int32(0));
     let statement = c_seq(c_assign("x", c_int32_literal(2)), c_return(c_variable("x")));
     let final_state = CState::new().with_local("x", int32(2));
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("assignment sequence should execute");
+    let theorem =
+        prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
+            .expect("assignment sequence should execute");
 
     assert_eq!(
         theorem.proposition(),
@@ -647,8 +658,9 @@ fn store_then_load_threads_native_memory() {
     let final_state = CState::new()
         .with_memory(CMemory::new().store(pointer.clone(), int32(9)))
         .with_resource_context(resources);
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("store then load should execute");
+    let theorem =
+        prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
+            .expect("store then load should execute");
 
     assert_eq!(
         theorem.proposition(),
@@ -674,7 +686,7 @@ fn read_element_permits_symbolic_external_load_from_incomplete_memory() {
         .with_resource_context(read_context(pointer.clone(), 0, 1));
     let statement = c_return(c_load(c_variable("p")));
     let execution =
-        prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
+        prove_symbolic_c_execution_paths(state.clone(), statement.clone(), PureFactContext::new());
 
     assert_eq!(execution.paths().len(), 1);
     assert_eq!(execution.paths()[0].obligations(), &[]);
@@ -716,8 +728,9 @@ fn block_backed_store_then_load_needs_no_memory_obligation() {
     let final_state = CState::new()
         .with_memory(memory.store(pointer, int32(9)))
         .with_resource_context(resources);
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("in-range block store/load should execute");
+    let theorem =
+        prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
+            .expect("in-range block store/load should execute");
 
     assert_eq!(
         theorem.proposition(),
@@ -744,8 +757,9 @@ fn block_backed_missing_load_returns_symbolic_value_without_obligation() {
         .with_memory(memory.clone())
         .with_resource_context(read_context(pointer.clone(), 0, 1));
     let statement = c_return(c_load(c_variable("p")));
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("in-range missing load should produce symbolic value");
+    let theorem =
+        prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
+            .expect("in-range missing load should produce symbolic value");
 
     assert_eq!(
         theorem.proposition(),
@@ -782,8 +796,9 @@ fn pointer_addition_scales_int32_offsets_for_loads() {
         .with_memory(memory)
         .with_resource_context(resources.clone());
     let statement = c_return(c_load(c_add(c_variable("p"), c_int32_literal(1))));
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("pointer arithmetic load should execute");
+    let theorem =
+        prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
+            .expect("pointer arithmetic load should execute");
 
     assert_eq!(
         theorem.proposition(),
@@ -828,7 +843,7 @@ fn read_element_permits_pointer_addition_load_beyond_memory_block() {
         .with_resource_context(read_context(base, 1, 2));
     let statement = c_return(c_load(c_add(c_variable("p"), c_int32_literal(1))));
     let execution =
-        prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
+        prove_symbolic_c_execution_paths(state.clone(), statement.clone(), PureFactContext::new());
 
     assert_eq!(execution.paths().len(), 1);
     assert_eq!(execution.paths()[0].obligations(), &[]);
@@ -904,7 +919,7 @@ fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
         .with_memory(final_memory)
         .with_resource_context(resources);
     let execution =
-        prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
+        prove_symbolic_c_execution_paths(state.clone(), statement.clone(), PureFactContext::new());
 
     assert_eq!(execution.paths().len(), 1);
     assert_eq!(
@@ -941,7 +956,7 @@ fn symbolic_loadable_discharges_pointer_access_obligation() {
         .with_memory(memory.clone())
         .with_resource_context(write_context(base.clone(), 0, n_bits.clone()));
     let statement = c_store(c_add(c_variable("p"), c_variable("i")), c_int32_literal(7));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CMemoryLoadable {
             memory: memory.clone(),
             base: base.clone(),
@@ -979,7 +994,7 @@ fn interval_arithmetic_proves_increment_bounds_and_no_overflow() {
     );
     let state = CState::new().with_local("i", int32(i_bits.clone()));
     let statement = c_assign("i", c_add(c_variable("i"), c_int32_literal(1)));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(0)),
             true,
@@ -1021,7 +1036,7 @@ fn signed_order_solver_knows_int32_universal_bounds() {
     let x = Bitvector32Term::Variable(Variable(71));
     let int_min = Bitvector32Term::Constant(i32::MIN as u32);
     let int_max = Bitvector32Term::Constant(i32::MAX as u32);
-    let assumptions = Assumptions::new();
+    let assumptions = PureFactContext::new();
 
     assert_eq!(
         assumptions.decide(&ConditionTerm::signed_less_equal(
@@ -1050,7 +1065,7 @@ fn signed_order_solver_knows_int32_universal_bounds() {
 #[test]
 fn strict_positive_bound_rules_out_decrement_overflow() {
     let value = Bitvector32Term::Variable(Variable(72_001));
-    let assumptions = Assumptions::new().assume_condition(
+    let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::signed_less_than(Bitvector32Term::Constant(1), value.clone()),
         true,
     );
@@ -1067,7 +1082,7 @@ fn strict_positive_bound_rules_out_decrement_overflow() {
 #[test]
 fn nonnegative_bound_rules_out_decrement_overflow() {
     let value = Bitvector32Term::Variable(Variable(72_002));
-    let assumptions = Assumptions::new().assume_condition(
+    let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::signed_greater_equal(value.clone(), Bitvector32Term::Constant(0)),
         true,
     );
@@ -1091,7 +1106,7 @@ fn interval_arithmetic_uses_lower_bound_for_incremented_values() {
     );
     // A lower bound alone is not enough: `i + 1` wraps at INT_MAX, so
     // `i >= 1` does not entail `i + 1 >= 1` (false at i = INT_MAX).
-    let lower_only = Assumptions::new().assume_condition(
+    let lower_only = PureFactContext::new().assume_condition(
         ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(1)),
         true,
     );
@@ -1120,7 +1135,7 @@ fn interval_arithmetic_uses_lower_bound_for_incremented_values() {
 fn nonnegative_successor_requires_no_overflow_evidence() {
     let x = Bitvector32Term::Variable(Variable(74_001));
     let successor = Bitvector32Term::add(x.clone(), Bitvector32Term::Constant(1));
-    let assumptions = Assumptions::new().assume_condition(
+    let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(0)),
         true,
     );
@@ -1152,7 +1167,7 @@ fn additive_upper_bound_covers_incremented_pointer_access() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let pointer = base.offset_by_int32_elements(incremented.clone());
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_greater_equal(j_bits.clone(), Bitvector32Term::Constant(0)),
             true,
@@ -1202,7 +1217,7 @@ fn relative_dependent_range_is_covered_by_owned_range() {
         indexed_start.clone(),
         Bitvector32Term::add(indexed_start, Bitvector32Term::Constant(1)),
     ));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_greater_equal(index.clone(), Bitvector32Term::Constant(0)),
             true,
@@ -1230,7 +1245,7 @@ fn addition_cancels_a_negated_pointer_base() {
 #[test]
 fn negative_equality_fact_decides_equality_false() {
     let x = Bitvector32Term::Variable(Variable(79));
-    let assumptions = Assumptions::new().assume_condition(
+    let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::equal(x.clone(), Bitvector32Term::Constant(0)),
         false,
     );
@@ -1245,7 +1260,7 @@ fn negative_equality_fact_decides_equality_false() {
 fn equality_facts_are_transitive() {
     let i = Bitvector32Term::Variable(Variable(84));
     let k = Bitvector32Term::Variable(Variable(85));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(ConditionTerm::equal(k.clone(), i.clone()), true)
         .assume_condition(ConditionTerm::equal(i, Bitvector32Term::Constant(1)), true);
 
@@ -1259,7 +1274,7 @@ fn equality_facts_are_transitive() {
 fn equality_transports_signed_order_facts_in_both_directions() {
     let selected = Bitvector32Term::Variable(Variable(86));
     let key = Bitvector32Term::Variable(Variable(87));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(ConditionTerm::equal(selected.clone(), key.clone()), true)
         .assume_condition(
             ConditionTerm::signed_greater_equal(key.clone(), Bitvector32Term::Constant(0)),
@@ -1290,7 +1305,7 @@ fn equality_transports_signed_order_facts_in_both_directions() {
 fn simp_combines_equality_with_discrete_integer_bounds() {
     let length = Bitvector32Term::Variable(Variable(87_100));
     let owner_length = Bitvector32Term::Variable(Variable(87_101));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
             true,
@@ -1310,7 +1325,7 @@ fn simp_combines_equality_with_discrete_integer_bounds() {
 fn simp_evaluates_equality_arithmetic_chains() {
     let old_split = Bitvector32Term::Variable(Variable(87_102));
     let split = Bitvector32Term::Variable(Variable(87_103));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::equal(old_split.clone(), Bitvector32Term::Constant(1)),
             true,
@@ -1337,7 +1352,7 @@ fn equality_transport_reaches_chains_and_arithmetic_terms() {
     let x = Bitvector32Term::Variable(Variable(88));
     let y = Bitvector32Term::Variable(Variable(89));
     let z = Bitvector32Term::Variable(Variable(90));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(ConditionTerm::equal(x.clone(), y), true)
         .assume_condition(ConditionTerm::equal(z.clone(), x), true)
         .assume_condition(
@@ -1363,7 +1378,7 @@ fn equality_transport_reaches_chains_and_arithmetic_terms() {
 #[test]
 fn excluded_small_integer_range_is_inconsistent() {
     let k = Bitvector32Term::Variable(Variable(80));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), k.clone()),
             true,
@@ -1388,7 +1403,7 @@ fn excluded_small_integer_range_is_inconsistent() {
 #[test]
 fn singleton_integer_range_forces_equality() {
     let k = Bitvector32Term::Variable(Variable(86));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), k.clone()),
             true,

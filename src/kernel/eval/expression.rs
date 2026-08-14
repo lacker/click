@@ -3,7 +3,7 @@ use super::*;
 pub(in crate::kernel) fn evaluate_c_expression(
     state: &CState,
     expression: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> Option<CExpressionOutcome> {
     let paths = evaluate_c_expression_paths(state, expression, assumptions, budget).ok()?;
@@ -17,7 +17,7 @@ pub(in crate::kernel) fn evaluate_c_expression(
 
 pub(in crate::kernel) fn add_uint8_range_execution_pure_facts(
     facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     value: &Bitvector32Term,
 ) -> Option<()> {
     add_internal_condition_path_fact(
@@ -37,7 +37,7 @@ pub(in crate::kernel) fn add_uint8_range_execution_pure_facts(
 pub(in crate::kernel) fn promote_c_int32_path_value(
     value: CValue,
     facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Bitvector32Term> {
     match value {
         CValue::Void => None,
@@ -54,7 +54,7 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
     value: CValue,
     target_type: CType,
     obligations: &mut Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<CValue> {
     if let Some(value) = coerce_c_null_pointer_constant(value.clone(), target_type) {
         return Some(value);
@@ -108,7 +108,7 @@ pub(in crate::kernel) fn coerce_c_null_pointer_constant(
 pub(in crate::kernel) fn evaluate_c_expression_paths(
     state: &CState,
     expression: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     budget.consume_expression_step()?;
@@ -370,7 +370,7 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
 pub(in crate::kernel) fn evaluate_c_lvalue_paths(
     state: &CState,
     expression: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CLValuePath>> {
     budget.consume_expression_step()?;
@@ -507,7 +507,7 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
 pub(in crate::kernel) fn read_c_lvalue_expression_paths(
     state: &CState,
     expression: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
@@ -529,7 +529,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
     outcome: CLValueOutcome,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     match outcome {
         CLValueOutcome::LValue(lvalue) => match &lvalue.storage {
@@ -614,7 +614,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
 pub(in crate::kernel) fn address_of_lvalue_paths(
     state: &CState,
     target: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
@@ -701,7 +701,7 @@ pub(in crate::kernel) fn condition_as_c_int32_paths(
     condition: ConditionTerm,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     match decide_with_facts(assumptions, &facts, &condition) {
         Some(true) => vec![CExpressionPath {
@@ -743,7 +743,7 @@ pub(in crate::kernel) fn condition_as_c_int32_not_paths(
     condition: ConditionTerm,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     match decide_with_facts(assumptions, &facts, &condition) {
         Some(true) => vec![CExpressionPath {
@@ -792,7 +792,7 @@ pub(in crate::kernel) fn c_truthiness_paths(
     value: CValue,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CTruthinessPath> {
     match value {
         CValue::Void => unreachable!("void truthiness must be rejected by the caller"),
@@ -882,7 +882,7 @@ pub(in crate::kernel) fn c_truthiness_as_c_int32_paths(
     value: CValue,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     c_truthiness_paths(value, facts, obligations, assumptions)
         .into_iter()

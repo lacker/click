@@ -4,7 +4,7 @@ pub(in crate::lang::click) fn evaluate_c_contract_expression(
     parameter_values: &BTreeMap<String, CValue>,
     state: &CState,
     result: Option<&CValue>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     expression: &CExpression,
 ) -> Result<CValue, String> {
     match expression {
@@ -247,7 +247,7 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load(
     state: &CState,
     pointer: Pointer,
     value_type: CType,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<CValue, String> {
     evaluate_contract_memory_load_from_memory(state.memory(), pointer, value_type, assumptions)
 }
@@ -256,7 +256,7 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
     memory: &CMemory,
     pointer: Pointer,
     value_type: CType,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<CValue, String> {
     let required = Proposition::CMemoryLoadable {
         memory: memory.clone(),
@@ -334,7 +334,7 @@ fn proposition_certifies_contract_load(
     proposition: &Proposition,
     memory: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let Proposition::ConditionIs(condition, _) = proposition else {
         return false;
@@ -346,7 +346,7 @@ fn condition_contains_contract_load(
     condition: &ConditionTerm,
     memory: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     match condition {
         ConditionTerm::Bitvector32SignedLessThan(left, right)
@@ -383,7 +383,7 @@ fn pointer_offset_contains_contract_load(
     term: &PointerOffsetTerm,
     memory: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     match term {
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
@@ -401,7 +401,7 @@ fn bitvector_contains_contract_load(
     term: &Bitvector32Term,
     memory: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     match term {
         Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
@@ -513,7 +513,7 @@ mod tests {
             ),
             true,
         );
-        let assumptions = Assumptions::new()
+        let assumptions = PureFactContext::new()
             .assume_proposition(certified_load.clone())
             .assume_proposition(Proposition::ConditionIs(
                 ConditionTerm::PointerEqual(
@@ -547,7 +547,7 @@ mod tests {
             .into_iter()
             .map(|size| {
                 let mut assumptions =
-                    Assumptions::new().assume_proposition(Proposition::ConditionIs(
+                    PureFactContext::new().assume_proposition(Proposition::ConditionIs(
                         ConditionTerm::Bitvector32Equal(
                             Box::new(Bitvector32Term::MemoryLoad(
                                 crate::kernel::intern_c_memory(memory.clone()),

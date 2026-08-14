@@ -198,7 +198,7 @@ pub(crate) fn pointers_equal_ignoring_memories(left: &Pointer, right: &Pointer) 
 }
 
 /// Cheap, assumption-free necessary condition for
-/// [`Assumptions::conditions_equal_modulo_proven_snapshots`]: same structure,
+/// [`PureFactContext::conditions_equal_modulo_proven_snapshots`]: same structure,
 /// with load atoms compared by pointer only.
 ///
 /// Snapshot-blind, so it is NOT an equivalence and must never decide fact
@@ -351,7 +351,10 @@ pub(crate) fn collect_reasoning_provenance<T>(body: impl FnOnce() -> T) -> (T, V
     (result, premises.into_iter().collect())
 }
 
-pub(crate) fn record_reasoning_provenance(assumptions: &Assumptions, proposition: &Proposition) {
+pub(crate) fn record_reasoning_provenance(
+    assumptions: &PureFactContext,
+    proposition: &Proposition,
+) {
     if RECORDING_REASONING_PROVENANCE.with(Cell::get) {
         return;
     }
@@ -400,7 +403,7 @@ pub(crate) fn capture_implicit_reasoning_provenance<T>(body: impl FnOnce() -> T)
 }
 
 pub(crate) fn record_implicit_reasoning_provenance(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: &Proposition,
 ) {
     if CAPTURING_IMPLICIT_REASONING_PROVENANCE.with(|depth| depth.get() != 0) {
@@ -439,7 +442,7 @@ thread_local! {
     static SEARCH_TRUNCATIONS: Cell<u64> = const { Cell::new(0) };
     static DECIDE_MEMO: RefCell<std::collections::HashMap<(u64, ConditionTerm), Option<bool>>> =
         RefCell::new(std::collections::HashMap::new());
-    static ASSUMPTIONS_MEMO_IDS: RefCell<std::collections::HashMap<Assumptions, u64>> =
+    static ASSUMPTIONS_MEMO_IDS: RefCell<std::collections::HashMap<PureFactContext, u64>> =
         RefCell::new(std::collections::HashMap::new());
     static NEXT_ASSUMPTIONS_MEMO_ID: Cell<u64> = const { Cell::new(0) };
     static EQUAL_FROM_FACTS_MEMO: RefCell<
@@ -470,7 +473,7 @@ const SIGNED_INTERVAL_MEMO_LIMIT: usize = 100_000;
 /// Content-derived memo identity: equal fact sets share an id, and any
 /// in-place mutation changes the contents and therefore the id, so a decision
 /// memoized under an id can never be replayed against different facts.
-fn assumptions_memo_id(assumptions: &Assumptions) -> u64 {
+fn assumptions_memo_id(assumptions: &PureFactContext) -> u64 {
     ASSUMPTIONS_MEMO_IDS.with(|ids| {
         let mut ids = ids.borrow_mut();
         if let Some(id) = ids.get(assumptions) {
@@ -493,7 +496,7 @@ fn assumptions_memo_id(assumptions: &Assumptions) -> u64 {
 /// id when one is live (no hashing), the content-derived id otherwise.
 /// `None` when memoization is disabled, so `CLICK_DISABLE_DECIDE_MEMO`
 /// bypasses those tables too.
-pub(super) fn dag_memo_assumptions_id(assumptions: &Assumptions) -> Option<u64> {
+pub(super) fn dag_memo_assumptions_id(assumptions: &PureFactContext) -> Option<u64> {
     if decide_memo_disabled() {
         return None;
     }
@@ -515,30 +518,30 @@ thread_local! {
 /// live borrow further up the stack: while such a borrow is alive its object
 /// cannot be dropped, so an equal address is the same object with the same
 /// contents.
-pub(crate) struct AssumptionsIdScope {
+pub(crate) struct PureFactContextIdScope {
     id: u64,
     pushed: bool,
 }
 
-impl AssumptionsIdScope {
-    pub(crate) fn enter(assumptions: &Assumptions) -> Self {
+impl PureFactContextIdScope {
+    pub(crate) fn enter(assumptions: &PureFactContext) -> Self {
         if let Some(id) = ambient_assumptions_memo_id(assumptions) {
             return Self { id, pushed: false };
         }
-        let address = assumptions as *const Assumptions as usize;
+        let address = assumptions as *const PureFactContext as usize;
         let id = assumptions_memo_id(assumptions);
         ASSUMPTIONS_ID_SCOPES.with(|scopes| scopes.borrow_mut().push((address, id)));
         Self { id, pushed: true }
     }
 }
 
-/// The memo id for this fact set if an enclosing [`AssumptionsIdScope`]
+/// The memo id for this fact set if an enclosing [`PureFactContextIdScope`]
 /// already resolved this same object, with no content hashing. Interior
 /// reasoning helpers use this so only designated entry points ever pay the
 /// hash; outside any scope they simply run unmemoized, as before memoization
 /// existed.
-pub(super) fn ambient_assumptions_memo_id(assumptions: &Assumptions) -> Option<u64> {
-    let address = assumptions as *const Assumptions as usize;
+pub(super) fn ambient_assumptions_memo_id(assumptions: &PureFactContext) -> Option<u64> {
+    let address = assumptions as *const PureFactContext as usize;
     ASSUMPTIONS_ID_SCOPES.with(|scopes| {
         scopes
             .borrow()
@@ -549,7 +552,7 @@ pub(super) fn ambient_assumptions_memo_id(assumptions: &Assumptions) -> Option<u
     })
 }
 
-impl Drop for AssumptionsIdScope {
+impl Drop for PureFactContextIdScope {
     fn drop(&mut self) {
         if self.pushed {
             ASSUMPTIONS_ID_SCOPES.with(|scopes| {
@@ -984,7 +987,7 @@ impl Proposition {
     }
 }
 
-impl Assumptions {
+impl PureFactContext {
     #[cfg(test)]
     pub(crate) fn reset_bitvector_equality_index_fact_visits() {
         BITVECTOR_EQUALITY_INDEX_FACT_VISITS.with(|visits| visits.set(0));
@@ -1400,8 +1403,8 @@ impl Assumptions {
     /// identity. Recursive memory resolution can ask several alias questions
     /// about the same large context; without an enclosing scope each question
     /// re-hashes the entire context before consulting the decision memo.
-    pub(super) fn enter_id_scope(&self) -> AssumptionsIdScope {
-        AssumptionsIdScope::enter(self)
+    pub(super) fn enter_id_scope(&self) -> PureFactContextIdScope {
+        PureFactContextIdScope::enter(self)
     }
 
     pub fn new() -> Self {
@@ -1676,8 +1679,8 @@ fn proposition_derivation(
 impl PropositionDerivation {
     /// Check this proof tree against an available context without searching for
     /// alternate proofs.
-    pub fn replay(&self, available: &Assumptions) -> bool {
-        let id_scope = AssumptionsIdScope::enter(available);
+    pub fn replay(&self, available: &PureFactContext) -> bool {
+        let id_scope = PureFactContextIdScope::enter(available);
         match &self.rule {
             PropositionDerivationRule::ContextFree => solve_builtin_prop(&self.conclusion),
             PropositionDerivationRule::ContextualAtomic {
@@ -1958,7 +1961,7 @@ pub(in crate::kernel) fn memory_range_shallowly_contained(
 pub(super) fn memory_range_contained_for_memory_resolution(
     range: &CMemoryRange,
     parent: &CMemoryRange,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     super::reasoning::with_memory_resolution_fuel(|| {
         memory_range_contained_for_memory_resolution_with_depth(range, parent, assumptions, 0)
@@ -1968,7 +1971,7 @@ pub(super) fn memory_range_contained_for_memory_resolution(
 fn memory_range_contained_for_memory_resolution_with_depth(
     range: &CMemoryRange,
     parent: &CMemoryRange,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> bool {
     if memory_range_shallowly_contained(range, parent) {
@@ -2008,7 +2011,7 @@ fn memory_range_contained_for_memory_resolution_with_depth(
 fn exact_less_equal_for_memory_resolution(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if let (Some(left), Some(right)) = (
         signed_bitvector_constant(left),
@@ -2090,7 +2093,7 @@ pub(in crate::kernel) fn pointer_in_memory_range_shallow(
 fn pointer_offsets_match_by_shallow_fact_graph(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left == right {
         return true;
@@ -2117,7 +2120,7 @@ fn pointer_offsets_match_by_shallow_fact_graph(
 fn pointer_in_memory_range_for_memory_resolution_with_depth(
     pointer: &Pointer,
     range: &CMemoryRange,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> bool {
     pointer_in_range_for_memory_resolution_with_depth(
@@ -2135,7 +2138,7 @@ fn pointer_in_range_for_memory_resolution(
     base: &Pointer,
     start: &Bitvector32Term,
     end: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     super::reasoning::with_memory_resolution_fuel(|| {
         pointer_in_range_for_memory_resolution_with_depth(pointer, base, start, end, assumptions, 0)
@@ -2147,7 +2150,7 @@ fn pointer_in_range_for_memory_resolution_with_depth(
     base: &Pointer,
     start: &Bitvector32Term,
     end: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> bool {
     if pointer.block != base.block
@@ -2196,7 +2199,7 @@ fn pointer_in_range_for_memory_resolution_with_depth(
 /// One hop, no recursion: a value-dependent range endpoint like
 /// `owner->len` is separated from its constant by exactly the recorded
 /// resource fact, never by a rewrite chain.
-fn exact_signed_constant(term: &Bitvector32Term, assumptions: &Assumptions) -> Option<i64> {
+fn exact_signed_constant(term: &Bitvector32Term, assumptions: &PureFactContext) -> Option<i64> {
     if let Some(value) = signed_bitvector_constant(term) {
         return Some(value);
     }
@@ -2224,7 +2227,7 @@ fn bitvector_index_in_range_shallow(
     index: &Bitvector32Term,
     start: &Bitvector32Term,
     end: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if let (Some(index), Some(start), Some(end)) = (
         signed_bitvector_constant(index),
@@ -2315,7 +2318,7 @@ fn bitvector_index_outside_range_shallow(
     index: &Bitvector32Term,
     start: &Bitvector32Term,
     end: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if let (Some(index), Some(start), Some(end)) = (
         signed_bitvector_constant(index),
@@ -2587,7 +2590,7 @@ impl SymbolicCExecution {
 }
 
 impl SymbolicCExecutionPath {
-    pub(crate) fn assumptions(&self) -> &Assumptions {
+    pub(crate) fn assumptions(&self) -> &PureFactContext {
         &self.assumptions
     }
 
@@ -2733,7 +2736,7 @@ fn bitvector_term_contains_load(term: &Bitvector32Term) -> bool {
 /// can re-enter the atomic prover through condition decisions, so run it at
 /// most once per call tree.
 fn atomic_load_equality_resolves(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     left: &Bitvector32Term,
     right: &Bitvector32Term,
 ) -> bool {

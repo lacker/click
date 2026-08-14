@@ -57,7 +57,7 @@ const RESOLUTION_QUERY_MEMO_LIMIT: usize = 200_000;
 /// weakening records a search truncation, which already blocks negative
 /// caching, and a positive answer is found evidence that remains valid
 /// outside the weakened context.
-fn resolution_query_memo_id(assumptions: &Assumptions) -> Option<(u64, bool)> {
+fn resolution_query_memo_id(assumptions: &PureFactContext) -> Option<(u64, bool)> {
     if crate::kernel::assumptions::decide_memo_disabled() {
         return None;
     }
@@ -218,14 +218,14 @@ pub(in crate::kernel) fn consume_resource_prover_fuel() -> bool {
 /// Test-only: the sole caller is the fenced `prove_c_while_invariant_rule`.
 /// The production loop path forks the condition through
 /// `assume_condition_truthiness`, which threads facts and obligations rather
-/// than collapsing them into bare `Assumptions`.
+/// than collapsing them into bare `PureFactContext`.
 #[cfg(test)]
 pub(in crate::kernel) fn condition_contexts_for_truthiness(
     state: &CState,
     condition: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     desired_truthiness: bool,
-) -> Vec<Assumptions> {
+) -> Vec<PureFactContext> {
     let mut contexts = Vec::new();
     let Ok(condition_paths) = evaluate_c_expression_paths(
         state,
@@ -263,7 +263,7 @@ pub(in crate::kernel) fn condition_contexts_for_truthiness(
 pub(in crate::kernel) fn pointers_proven_distinct(
     left: &Pointer,
     right: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left == right {
         return false;
@@ -324,7 +324,7 @@ pub(in crate::kernel) fn pointers_proven_distinct(
 pub(in crate::kernel) fn pointers_proven_distinct_for_memory_resolution(
     left: &Pointer,
     right: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let key = resolution_query_memo_id(assumptions).map(|(id, bridging)| {
         let (left, right) = if left <= right {
@@ -344,7 +344,7 @@ pub(in crate::kernel) fn pointers_proven_distinct_for_memory_resolution(
 fn pointers_proven_distinct_for_memory_resolution_with_depth(
     left: &Pointer,
     right: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> bool {
     if left == right
@@ -402,7 +402,7 @@ fn pointers_proven_distinct_for_memory_resolution_with_depth(
 fn pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
     left: &Pointer,
     right: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> bool {
     if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || left.block != right.block {
@@ -470,7 +470,7 @@ fn pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
 pub(in crate::kernel) fn pointers_proven_equal_for_memory_resolution(
     left: &Pointer,
     right: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let key = resolution_query_memo_id(assumptions).map(|(id, bridging)| {
         ResolutionQueryKey::PointerEqual(id, bridging, left.clone(), right.clone())
@@ -485,7 +485,7 @@ pub(in crate::kernel) fn pointers_proven_equal_for_memory_resolution(
 pub(in crate::kernel) fn pointer_offsets_proven_equal_for_memory_resolution(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let key = resolution_query_memo_id(assumptions).map(|(id, bridging)| {
         ResolutionQueryKey::PointerOffsetEqual(id, bridging, left.clone(), right.clone())
@@ -500,7 +500,7 @@ pub(in crate::kernel) fn pointer_offsets_proven_equal_for_memory_resolution(
 pub(in crate::kernel) fn pointers_proven_equal_for_memory_resolution_with_depth(
     left: &Pointer,
     right: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> bool {
     if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || !consume_memory_resolution_fuel() {
@@ -530,7 +530,7 @@ pub(in crate::kernel) fn pointers_proven_equal_for_memory_resolution_with_depth(
 pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> Option<bool> {
     if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || !consume_memory_resolution_fuel() {
@@ -563,7 +563,7 @@ pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
 fn bitvector_terms_equal_for_memory_resolution(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> bool {
     if left == right {
@@ -726,7 +726,7 @@ fn bitvector_terms_equal_for_memory_resolution(
 pub(in crate::kernel) fn bitvector_terms_proven_equal_for_memory_resolution(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let key = resolution_query_memo_id(assumptions).map(|(id, bridging)| {
         ResolutionQueryKey::BitvectorEqual(id, bridging, left.clone(), right.clone())
@@ -741,7 +741,7 @@ pub(in crate::kernel) fn bitvector_terms_proven_equal_for_memory_resolution(
 pub(in crate::kernel) fn c_values_proven_equal_for_memory_resolution(
     left: &CValue,
     right: &CValue,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     match (left, right) {
         (CValue::Void, CValue::Void) => true,
@@ -759,7 +759,7 @@ pub(in crate::kernel) fn c_values_proven_equal_for_memory_resolution(
 pub(in crate::kernel) fn memories_proven_equal_for_memory_resolution(
     left: &CMemory,
     right: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left == right {
         return true;
@@ -800,7 +800,7 @@ pub(in crate::kernel) fn memories_proven_equal_for_memory_resolution(
 pub(in crate::kernel) fn memory_load_terms_equal_for_fact_transport(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let (
         Bitvector32Term::MemoryLoad(left_memory, left_pointer),
@@ -826,7 +826,7 @@ fn memory_snapshots_match_for_resolution(
     left: &CMemory,
     right: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> bool {
     if memories_match_for_pointer_load(left, right, pointer) {
@@ -885,7 +885,7 @@ pub(in crate::kernel) fn memory_snapshots_proven_equal_at_pointer(
     left: &CMemory,
     right: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     memory_snapshots_match_for_resolution(left, right, pointer, assumptions, 0)
 }
@@ -894,7 +894,7 @@ fn memory_has_materialized_load_from(
     source: &CMemory,
     materialized: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> bool {
     let Some(CValue::Int32(Bitvector32Term::MemoryLoad(snapshot, load_pointer))) =
@@ -913,7 +913,7 @@ fn memory_has_materialized_load_from(
 pub(in crate::kernel) fn pointer_offsets_with_common_base_proven_distinct(
     left: &Pointer,
     right: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left.block != right.block {
         return false;
@@ -953,7 +953,7 @@ pub(in crate::kernel) fn pointer_offsets_with_common_base_proven_distinct(
 pub(in crate::kernel) fn pointers_proven_equal(
     left: &Pointer,
     right: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     left == right
         || left.block == right.block
@@ -1167,7 +1167,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
     left: &CMemory,
     right: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if memories_match_for_pointer_load(left, right, pointer) {
         return true;

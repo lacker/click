@@ -1160,7 +1160,7 @@ pub(super) fn execute_step_from_execution_point(
     function: &CFunction,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    _assumptions: &Assumptions,
+    _assumptions: &PureFactContext,
     function_environment: &CExecutionEnvironment,
     claim_label: &str,
     tactic_index: usize,

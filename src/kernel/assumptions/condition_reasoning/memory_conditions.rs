@@ -1,6 +1,6 @@
 use super::*;
 
-impl Assumptions {
+impl PureFactContext {
     /// Decides whether two conditions are two spellings of one fact that
     /// differ only in the memory snapshots their load atoms carry.
     ///

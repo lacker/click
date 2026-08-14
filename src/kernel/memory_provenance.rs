@@ -12,7 +12,7 @@ pub(crate) fn canonical_c_memory_for_pointer_load(memory: &CMemory, pointer: &Po
 pub(crate) fn c_resources_directly_match(
     left: &CResource,
     right: &CResource,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left == right {
         return true;
@@ -96,7 +96,7 @@ pub(crate) fn c_resources_directly_match(
 fn bitvectors_match_for_resource_replay(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left == right {
         return true;
@@ -144,7 +144,7 @@ fn bitvectors_match_for_resource_replay(
 fn pointer_offsets_match_from_memory_derivations(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left == right {
         return true;
@@ -176,7 +176,7 @@ fn pointer_offsets_match_from_memory_derivations(
 fn pointer_offsets_match_for_resource_replay(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if crate::instrumentation::measure_operation(
         "kernel",
@@ -237,7 +237,7 @@ fn pointer_offsets_match_for_resource_replay(
 fn pointers_match_for_resource_replay(
     left: &Pointer,
     right: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left == right {
         return true;
@@ -300,7 +300,7 @@ pub(crate) fn c_memory_load_is_unchanged(
     before: &CMemory,
     after: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if crate::instrumentation::deadline_exceeded() {
         return false;
@@ -382,7 +382,7 @@ fn c_memory_load_is_unchanged_unmemoized(
     before: &CMemory,
     after: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if memories_match_for_pointer_load(before, after, pointer) {
         return true;
@@ -552,7 +552,7 @@ fn load_unchanged_along_memory_derivations(
     before: &CMemory,
     after: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if memory_dag_disabled() {
         return false;
@@ -581,7 +581,7 @@ fn memory_derivations_reach(
     from: &SharedCMemory,
     target: &SharedCMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     const MEMORY_DERIVATION_HOP_LIMIT: usize = 64;
     let mut current = from.clone();
@@ -795,7 +795,7 @@ pub(super) fn with_extended_dag_bridging<T>(body: impl FnOnce() -> T) -> T {
 fn memory_dag_cell_source(
     memory: &SharedCMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> MemoryDagCell {
     const MEMORY_DAG_CELL_HOP_LIMIT: usize = 64;
     let mut current = memory.clone();
@@ -917,7 +917,7 @@ pub(super) fn heap_allocation_proven_separate_from_pointer(
     allocation_base: &Pointer,
     bytes: &Bitvector32Term,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let allocation_token = CResourceFact::own_allocation(allocation_base.clone(), bytes.clone())
         .resource()
@@ -959,7 +959,7 @@ pub(super) fn loads_equal_along_memory_derivations_at(
     left_memory: &SharedCMemory,
     right_memory: &SharedCMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if memory_dag_disabled() {
         return false;
@@ -1008,7 +1008,7 @@ fn with_cell_lookup_depth<T>(body: impl FnOnce() -> T) -> Option<T> {
 pub(super) fn atomic_loads_equal_along_memory_derivations(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let (
         Bitvector32Term::MemoryLoad(left_memory, left_pointer),
@@ -1114,7 +1114,7 @@ pub(super) fn atomic_loads_equal_along_memory_derivations(
 pub(crate) fn explicit_atomic_equality_from_memory_derivations(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let _assumptions_id_scope = assumptions.enter_id_scope();
     let previous = EXPLICIT_DAG_REPLAY.with(|flag| flag.replace(true));
@@ -1169,7 +1169,7 @@ fn load_unchanged_via_effect_chain(
     before: &CMemory,
     after: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     // Real allocator/copy/install/free paths routinely cross more than eight
     // individually certified effects. The effect graph is finite, so a proof
@@ -1267,7 +1267,7 @@ fn load_unchanged_via_effect_chain(
 pub(crate) fn c_memories_connected_by_effects(
     before: &CMemory,
     after: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let mut steps = Vec::new();
     for proposition in assumptions.prop_facts.iter() {
@@ -1324,7 +1324,7 @@ fn c_memory_load_is_directly_unchanged(
     before: &CMemory,
     after: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if crate::instrumentation::deadline_exceeded() {
         return false;
@@ -1420,7 +1420,7 @@ fn memories_directly_match_for_pointer_load(
     left: &CMemory,
     right: &CMemory,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if memories_match_for_pointer_load(left, right, pointer) {
         return true;
@@ -1491,7 +1491,7 @@ fn memory_materializes_atomic_load(
 pub(crate) fn prove_c_condition_fact_transport(
     fact: &Proposition,
     after: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Theorem> {
     prove_c_condition_fact_transport_with_assumptions(fact, after, Some((assumptions, false)))
 }
@@ -1499,7 +1499,7 @@ pub(crate) fn prove_c_condition_fact_transport(
 pub(crate) fn prove_c_condition_fact_direct_transport(
     fact: &Proposition,
     after: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Theorem> {
     prove_c_condition_fact_transport_with_assumptions(fact, after, Some((assumptions, true)))
 }
@@ -1543,7 +1543,7 @@ pub fn prove_forall_int32_application(
 fn prove_c_condition_fact_transport_with_assumptions(
     fact: &Proposition,
     after: &CMemory,
-    assumptions: Option<(&Assumptions, bool)>,
+    assumptions: Option<(&PureFactContext, bool)>,
 ) -> Option<Theorem> {
     let Proposition::ConditionIs(condition, value) = fact else {
         return None;
@@ -1823,7 +1823,7 @@ pub(super) fn canonicalize_pointer_loads(pointer: &Pointer, depth: usize) -> Poi
 pub(crate) fn c_condition_facts_equivalent_for_memory_resolution(
     left: &Proposition,
     right: &Proposition,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let (Proposition::ConditionIs(left, left_value), Proposition::ConditionIs(right, right_value)) =
         (left, right)
@@ -2086,7 +2086,7 @@ fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<SharedC
 fn transport_framed_atomic_condition(
     condition: &ConditionTerm,
     after: &CMemory,
-    assumptions: Option<(&Assumptions, bool)>,
+    assumptions: Option<(&PureFactContext, bool)>,
 ) -> Option<ConditionTerm> {
     if crate::instrumentation::deadline_exceeded() {
         return None;
@@ -2159,7 +2159,7 @@ fn transport_framed_atomic_condition(
 fn transport_framed_atomic_pointer_offset(
     offset: &PointerOffsetTerm,
     after: &CMemory,
-    assumptions: Option<(&Assumptions, bool)>,
+    assumptions: Option<(&PureFactContext, bool)>,
 ) -> Option<PointerOffsetTerm> {
     if crate::instrumentation::deadline_exceeded() {
         return None;
@@ -2180,7 +2180,7 @@ fn transport_framed_atomic_pointer_offset(
 fn transport_framed_atomic_bitvector(
     term: &Bitvector32Term,
     after: &CMemory,
-    assumptions: Option<(&Assumptions, bool)>,
+    assumptions: Option<(&PureFactContext, bool)>,
 ) -> Option<Bitvector32Term> {
     if crate::instrumentation::deadline_exceeded() {
         return None;
@@ -2358,7 +2358,7 @@ fn transport_framed_atomic_bitvector(
 pub(crate) fn c_pointer_offsets_proven_equal_for_effect(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if crate::instrumentation::deadline_exceeded() {
         return false;
@@ -2381,7 +2381,7 @@ pub(crate) fn c_pointer_offsets_proven_equal_for_effect(
 
 pub(super) fn normalize_exact_memory_loads_in_pointer_offset(
     offset: &PointerOffsetTerm,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> PointerOffsetTerm {
     if depth >= 64 || crate::instrumentation::deadline_exceeded() {
@@ -2402,7 +2402,7 @@ pub(super) fn normalize_exact_memory_loads_in_pointer_offset(
 
 pub(super) fn normalize_exact_memory_loads_in_bitvector(
     term: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     depth: usize,
 ) -> Bitvector32Term {
     if depth >= 64 || crate::instrumentation::deadline_exceeded() {
@@ -2510,7 +2510,7 @@ fn effect_pointer_equality_stops_at_the_verification_deadline() {
         assert!(!c_pointer_offsets_proven_equal_for_effect(
             &offset,
             &offset,
-            &Assumptions::new(),
+            &PureFactContext::new(),
         ));
     });
 }

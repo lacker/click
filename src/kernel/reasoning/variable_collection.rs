@@ -723,7 +723,7 @@ pub(in crate::kernel) fn collect_c_function_specification_bitvector_variables(
 }
 
 pub(in crate::kernel) fn collect_assumption_variables(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     variables: &mut BTreeSet<Variable>,
 ) {
     for proposition in assumptions.pure_facts() {
@@ -770,7 +770,7 @@ pub(in crate::kernel) fn resource_context_has_read(
     resources: &ResourceContext,
     pointer: &Pointer,
     byte_width: u32,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     resources.permits_memory_read(pointer, byte_width, assumptions)
 }
@@ -779,7 +779,7 @@ pub(in crate::kernel) fn resource_context_has_structural_read(
     resources: &ResourceContext,
     pointer: &Pointer,
     byte_width: u32,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     resources.permits_memory_read_structurally(pointer, byte_width, assumptions)
 }

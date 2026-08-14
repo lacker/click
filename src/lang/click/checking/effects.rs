@@ -444,7 +444,7 @@ fn segment_contains_pointer_exact(
 fn pointer_containment_goals(
     segment: &EvaluatedContractSegment,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Vec<Proposition>> {
     let (index, mut goals) =
         pointer_element_index_from_base_with_alignment(pointer, &segment.base, assumptions)?;
@@ -497,7 +497,7 @@ fn segment_contains_range_exact(
 fn range_containment_goals(
     segment: &EvaluatedContractSegment,
     range: &CMemoryRange,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Vec<Proposition>> {
     let (base_index, mut goals) =
         pointer_element_index_from_base_with_alignment(range.base(), &segment.base, assumptions)?;
@@ -535,7 +535,7 @@ fn derive_goals_from_individual_facts(
                 if crate::instrumentation::deadline_exceeded() {
                     return None;
                 }
-                Assumptions::new()
+                PureFactContext::new()
                     .assume_proposition(fact.clone())
                     .derive_proposition(&goal)
             })
@@ -644,7 +644,7 @@ fn bitvector_index_relative_to_base(
 fn pointer_element_index_from_base_with_alignment(
     pointer: &Pointer,
     base: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<(Bitvector32Term, Vec<Proposition>)> {
     if pointer.block != base.block {
         return None;
@@ -734,7 +734,7 @@ pub(in crate::lang::click) fn evaluate_effect_segment(
     }
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
-    let evaluate = |assumptions: &Assumptions| {
+    let evaluate = |assumptions: &PureFactContext| {
         let base = evaluate_c_contract_expression(
             &parameter_values,
             entry_state,
@@ -778,7 +778,7 @@ pub(in crate::lang::click) fn evaluate_effect_segment(
     // without indexing the proof's accumulated snapshot facts; fall back to
     // contextual equality reasoning only when the expression actually needs
     // it.
-    evaluate(&Assumptions::new()).or_else(|_| {
+    evaluate(&PureFactContext::new()).or_else(|_| {
         let assumptions = assumptions_from_propositions(available_pure_facts);
         evaluate(&assumptions)
     })
@@ -798,7 +798,7 @@ pub(in crate::lang::click) fn evaluate_requirement_segment(
     }
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
-    let assumptions = Assumptions::new();
+    let assumptions = PureFactContext::new();
     let base = evaluate_c_contract_expression(
         &parameter_values,
         entry_state,
@@ -841,7 +841,7 @@ pub(in crate::lang::click) fn evaluate_requirement_segment(
 pub(in crate::lang::click) fn segment_contains_pointer(
     segment: &EvaluatedContractSegment,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let Some(index) = pointer_element_index_from_base(pointer, &segment.base, assumptions) else {
         return false;
@@ -858,7 +858,7 @@ pub(in crate::lang::click) fn segment_contains_pointer(
 pub(in crate::lang::click) fn segment_contains_range(
     segment: &EvaluatedContractSegment,
     range: &CMemoryRange,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let Some(base_index) =
         pointer_element_index_from_base(range.base(), &segment.base, assumptions)
@@ -880,7 +880,7 @@ pub(in crate::lang::click) fn segment_contains_range(
 pub(in crate::lang::click) fn pointer_element_index_from_base(
     pointer: &Pointer,
     base: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Bitvector32Term> {
     if pointer.block != base.block {
         return None;
@@ -925,7 +925,7 @@ pub(in crate::lang::click) fn pointer_element_index_from_base(
 fn pointer_offsets_equal_for_effect(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     c_pointer_offsets_proven_equal_for_effect(left, right, assumptions)
 }

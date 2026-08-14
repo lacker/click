@@ -423,7 +423,7 @@ impl CMemory {
         mut self,
         variable: Variable,
         mutable_ranges: &[CMemoryRange],
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Self {
         let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
         std::sync::Arc::make_mut(&mut self.cells).retain(|pointer, _| {
@@ -492,7 +492,7 @@ impl CMemory {
     pub(in crate::kernel) fn without_possible_aliasing_cells(
         &self,
         pointer: &Pointer,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Self {
         let normalized_pointer = Pointer {
             block: pointer.block.clone(),
@@ -692,7 +692,7 @@ impl CState {
         &self,
         name: &str,
         arguments: &[CValue],
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Option<(String, Vec<CValue>, Bitvector32Term)> {
         self.counted_populations
             .iter()
@@ -721,7 +721,7 @@ impl CState {
         &self,
         name: &str,
         arguments: &[Option<CValue>],
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Bitvector32Term {
         self.counted_populations
             .iter()

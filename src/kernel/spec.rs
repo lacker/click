@@ -21,7 +21,7 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
     state: &CState,
     proposition: &SpecProposition,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     match proposition {
@@ -288,7 +288,7 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
                 state,
                 expression,
                 loop_entry_state,
-                &Assumptions::new(),
+                &PureFactContext::new(),
                 budget,
             )?;
             let mut normal_paths = paths.into_iter().map(|path| {
@@ -332,7 +332,7 @@ fn evaluate_spec_values_at_state(
     state: &CState,
     expressions: &[SpecExpression],
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecValuesPath>> {
     let mut paths = vec![SpecValuesPath {
@@ -379,7 +379,7 @@ fn evaluate_spec_resource_at_state(
     state: &CState,
     resource: &SpecResource,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<EvaluatedSpecResource>> {
     let (expressions, build): (Vec<SpecExpression>, SpecResourceBuilder) = match resource {
@@ -438,7 +438,7 @@ fn lower_spec_resource_relation_at_state(
     left: &SpecResource,
     right: &SpecResource,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     relation: impl Fn(CResource, CResource) -> Proposition,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
@@ -483,7 +483,7 @@ fn lower_spec_memory_loadable_at_state(
     end: &SpecExpression,
     element_width: u32,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     let memory = match memory {
@@ -543,7 +543,7 @@ pub(super) fn lower_spec_binary_proposition_at_state(
     left: &SpecProposition,
     right: &SpecProposition,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     combine: impl Fn(Proposition, Proposition) -> Proposition,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
@@ -588,7 +588,7 @@ pub(super) fn lower_spec_comparison_proposition_at_state(
     operator: CComparisonOperator,
     right: &SpecExpression,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     let mut paths = Vec::new();
@@ -650,7 +650,7 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
     name: &str,
     arguments: &[SpecPredicateArgument],
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     let mut paths = vec![SpecPropositionPath {
@@ -729,7 +729,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
     state: &CState,
     expression: &SpecExpression,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     budget.consume_expression_step()?;
@@ -1134,7 +1134,7 @@ fn evaluate_spec_pure_function_application_paths(
     name: &str,
     arguments: &[SpecExpression],
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = vec![(Vec::new(), Vec::new(), Vec::new())];
@@ -1188,7 +1188,7 @@ pub(super) fn evaluate_spec_pointer_offset_paths(
     elements: &SpecExpression,
     byte_width: u32,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
@@ -1252,7 +1252,7 @@ pub(super) fn evaluate_spec_add_paths(
     left: &SpecExpression,
     right: &SpecExpression,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
@@ -1304,7 +1304,7 @@ pub(super) fn evaluate_spec_int32_binary_paths(
     left: &SpecExpression,
     right: &SpecExpression,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     apply: impl Fn(
         Bitvector32Term,
@@ -1363,7 +1363,7 @@ pub(super) fn evaluate_spec_int32_unary_paths(
     state: &CState,
     expression: &SpecExpression,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     apply: fn(Bitvector32Term) -> Bitvector32Term,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
@@ -1394,7 +1394,7 @@ pub(super) fn evaluate_spec_if_paths(
     then_branch: &SpecExpression,
     else_branch: &SpecExpression,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
@@ -1509,7 +1509,7 @@ pub(super) fn evaluate_spec_range_fold_paths(
     item: &str,
     body: &SpecExpression,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
@@ -1597,7 +1597,7 @@ pub(super) fn evaluate_spec_range_fold_body_path(
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     loop_entry_state: Option<&CState>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Option<SpecExpressionPath>> {
     match (start.as_const(), end.as_const()) {
@@ -1779,7 +1779,7 @@ pub(super) fn proposition_as_single_condition(
 }
 
 pub(super) fn assumptions_prove_proposition_false(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: &Proposition,
 ) -> bool {
     match proposition {

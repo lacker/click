@@ -108,7 +108,7 @@ impl ResourceContext {
         &self,
         left: &CResource,
         right: &CResource,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> bool {
         let Some(_guard) = ResourceCompositionQueryGuard::enter() else {
             return false;
@@ -330,7 +330,7 @@ impl ResourceContext {
     pub fn try_compose_with_fact(
         self,
         fact: CResourceFact,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Result<Self, ResourceContextValidityError> {
         self.try_compose_with_facts(std::iter::once(fact), assumptions)
     }
@@ -338,7 +338,7 @@ impl ResourceContext {
     pub fn try_compose_with_facts(
         self,
         facts: impl IntoIterator<Item = CResourceFact>,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Result<Self, ResourceContextValidityError> {
         self.try_compose_with_facts_delaying_normalization(facts, assumptions)
             .map(|context| context.normalized(assumptions))
@@ -347,7 +347,7 @@ impl ResourceContext {
     pub(crate) fn try_compose_with_facts_delaying_normalization(
         self,
         facts: impl IntoIterator<Item = CResourceFact>,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Result<Self, ResourceContextValidityError> {
         let context = self.unchecked_with_facts(facts);
         if let Some(error) = context.validity_error(assumptions) {
@@ -361,7 +361,7 @@ impl ResourceContext {
     pub(in crate::kernel) fn try_compose_into_valid_context_delaying_normalization(
         mut self,
         facts: impl IntoIterator<Item = CResourceFact>,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Result<Self, ResourceContextValidityError> {
         let first_new = self.facts.len();
         self.facts_mut().extend(facts);
@@ -449,7 +449,7 @@ impl ResourceContext {
 
     pub fn validity_error(
         &self,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Option<ResourceContextValidityError> {
         for positions in self.index().memory_by_block.values() {
             let owned = positions
@@ -516,13 +516,13 @@ impl ResourceContext {
         None
     }
 
-    pub fn is_valid(&self, assumptions: &Assumptions) -> bool {
+    pub fn is_valid(&self, assumptions: &PureFactContext) -> bool {
         self.validity_error(assumptions).is_none()
     }
 
     pub fn observable_facts(
         &self,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Result<Vec<Proposition>, ResourceContextValidityError> {
         if let Some(error) = self.validity_error(assumptions) {
             return Err(error);
@@ -534,7 +534,7 @@ impl ResourceContext {
     /// been established by an enclosing resource law.
     pub(crate) fn observable_facts_assuming_valid(
         &self,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Vec<Proposition> {
         let mut propositions = Vec::new();
         let memory_facts = self
@@ -549,7 +549,7 @@ impl ResourceContext {
         propositions
     }
 
-    pub fn satisfies_fact(&self, fact: &CResourceFact, assumptions: &Assumptions) -> bool {
+    pub fn satisfies_fact(&self, fact: &CResourceFact, assumptions: &PureFactContext) -> bool {
         if self.index().exact.contains_key(fact) {
             return true;
         }
@@ -611,7 +611,7 @@ impl ResourceContext {
         &self,
         pointer: &Pointer,
         byte_width: u32,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> bool {
         if self.permits_memory_read_structurally(pointer, byte_width, assumptions) {
             return true;
@@ -625,7 +625,7 @@ impl ResourceContext {
         &self,
         pointer: &Pointer,
         byte_width: u32,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> bool {
         for resource in self.memory_block_facts(&pointer.block) {
             let Some(range) = resource_fact_read_core_range(resource) else {
@@ -644,7 +644,7 @@ impl ResourceContext {
         &self,
         pointer: &Pointer,
         byte_width: u32,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Option<&CMemoryRange> {
         for resource in self.memory_block_facts(&pointer.block) {
             let CResourceFact::Own(CResource::Memory(range), _) = resource else {
@@ -663,7 +663,7 @@ impl ResourceContext {
         })
     }
 
-    pub fn without_fact(self, fact: &CResourceFact, assumptions: &Assumptions) -> Option<Self> {
+    pub fn without_fact(self, fact: &CResourceFact, assumptions: &PureFactContext) -> Option<Self> {
         self.without_fact_delaying_normalization(fact, assumptions)
             .map(|context| context.normalized(assumptions))
     }
@@ -671,7 +671,7 @@ impl ResourceContext {
     pub(in crate::kernel) fn without_fact_delaying_normalization(
         mut self,
         fact: &CResourceFact,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Option<Self> {
         self.consume_fact_without_normalizing(fact, assumptions)
             .then_some(self)
@@ -686,7 +686,11 @@ impl ResourceContext {
     /// Consumes several facts while postponing whole-context normalization
     /// until the end. If a required fact is only available after adjacent
     /// resources are merged, normalize once at that point and retry it.
-    pub fn without_facts(self, facts: &[CResourceFact], assumptions: &Assumptions) -> Option<Self> {
+    pub fn without_facts(
+        self,
+        facts: &[CResourceFact],
+        assumptions: &PureFactContext,
+    ) -> Option<Self> {
         let mut context = self;
         for fact in facts {
             if context.consume_fact_without_normalizing(fact, assumptions) {
@@ -703,7 +707,7 @@ impl ResourceContext {
     fn consume_fact_without_normalizing(
         &mut self,
         fact: &CResourceFact,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> bool {
         let algebra = resource_family_algebra(fact.family());
         let mut candidates = self
@@ -768,7 +772,7 @@ impl ResourceContext {
         false
     }
 
-    pub(in crate::kernel) fn normalized(mut self, assumptions: &Assumptions) -> Self {
+    pub(in crate::kernel) fn normalized(mut self, assumptions: &PureFactContext) -> Self {
         let mut slots = self.facts.iter().cloned().map(Some).collect::<Vec<_>>();
         let mut index = ResourceNormalizationIndex::default();
         for (position, fact) in self.facts.iter().enumerate() {
@@ -906,7 +910,7 @@ fn resource_family_algebra(family: ResourceFamily) -> &'static dyn ResourceFamil
 fn resource_fact_entails(
     available: &CResourceFact,
     required: &CResourceFact,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     available.family() == required.family()
         && resource_family_algebra(available.family()).entails(available, required, assumptions)
@@ -915,7 +919,7 @@ fn resource_fact_entails(
 fn normalize_resource_fact_pair(
     left: &CResourceFact,
     right: &CResourceFact,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<CResourceFact> {
     if left.family() != right.family() {
         return None;
@@ -926,7 +930,7 @@ fn normalize_resource_fact_pair(
 fn memory_resource_fact_entails(
     available: &CResourceFact,
     required: &CResourceFact,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if available == required {
         return true;
@@ -953,7 +957,7 @@ fn memory_resource_fact_entails(
 fn consume_memory_resource_fact(
     available: &CResourceFact,
     required: &CResourceFact,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<ResourceFactConsumption> {
     if let Some(required) = required.memory_view_range() {
         return resource_fact_read_core_range(available)
@@ -978,7 +982,7 @@ fn consume_memory_resource_fact(
 fn exact_resources_proven_equal(
     left: &CResource,
     right: &CResource,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left == right {
         return true;
@@ -1020,7 +1024,7 @@ fn exact_resources_proven_equal(
 fn exact_resource_fact_entails(
     available: &CResourceFact,
     required: &CResourceFact,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     match (available, required) {
         (
@@ -1041,7 +1045,7 @@ fn exact_resource_fact_entails(
 fn consume_exact_resource_fact(
     available: &CResourceFact,
     required: &CResourceFact,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<ResourceFactConsumption> {
     if !exact_resource_fact_entails(available, required, assumptions) {
         return None;
@@ -1068,7 +1072,7 @@ fn consume_exact_resource_fact(
 fn combine_exact_resource_facts(
     left: &CResourceFact,
     right: &CResourceFact,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<CResourceFact> {
     match (left, right) {
         (CResourceFact::Own(left, quantity), CResourceFact::View(right))
@@ -1200,7 +1204,7 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
         &self,
         left: &CResourceFact,
         right: &CResourceFact,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Option<ResourceContextValidityError> {
         let (Some(left), Some(right)) = (left.memory_own_range(), right.memory_own_range()) else {
             return None;
@@ -1217,7 +1221,7 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
         &self,
         available: &CResourceFact,
         required: &CResourceFact,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> bool {
         memory_resource_fact_entails(available, required, assumptions)
     }
@@ -1226,7 +1230,7 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
         &self,
         available: &CResourceFact,
         required: &CResourceFact,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Option<ResourceFactConsumption> {
         consume_memory_resource_fact(available, required, assumptions)
     }
@@ -1235,7 +1239,7 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
         &self,
         left: &CResourceFact,
         right: &CResourceFact,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Option<CResourceFact> {
         combine_memory_resource_facts(left, right, assumptions)
     }
@@ -1247,7 +1251,7 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
     fn observable_facts(
         &self,
         facts: &[&CResourceFact],
-        _assumptions: &Assumptions,
+        _assumptions: &PureFactContext,
     ) -> Vec<Proposition> {
         memory_separate_facts(facts)
     }
@@ -1264,7 +1268,7 @@ macro_rules! impl_exact_resource_algebra {
                 &self,
                 _left: &CResourceFact,
                 _right: &CResourceFact,
-                _assumptions: &Assumptions,
+                _assumptions: &PureFactContext,
             ) -> Option<ResourceContextValidityError> {
                 None
             }
@@ -1273,7 +1277,7 @@ macro_rules! impl_exact_resource_algebra {
                 &self,
                 available: &CResourceFact,
                 required: &CResourceFact,
-                assumptions: &Assumptions,
+                assumptions: &PureFactContext,
             ) -> bool {
                 exact_resource_fact_entails(available, required, assumptions)
             }
@@ -1282,7 +1286,7 @@ macro_rules! impl_exact_resource_algebra {
                 &self,
                 available: &CResourceFact,
                 required: &CResourceFact,
-                assumptions: &Assumptions,
+                assumptions: &PureFactContext,
             ) -> Option<ResourceFactConsumption> {
                 consume_exact_resource_fact(available, required, assumptions)
             }
@@ -1291,7 +1295,7 @@ macro_rules! impl_exact_resource_algebra {
                 &self,
                 left: &CResourceFact,
                 right: &CResourceFact,
-                assumptions: &Assumptions,
+                assumptions: &PureFactContext,
             ) -> Option<CResourceFact> {
                 match (left, right) {
                     (
@@ -1313,7 +1317,7 @@ macro_rules! impl_exact_resource_algebra {
             fn observable_facts(
                 &self,
                 facts: &[&CResourceFact],
-                _assumptions: &Assumptions,
+                _assumptions: &PureFactContext,
             ) -> Vec<Proposition> {
                 same_family_separate_facts(facts)
             }
@@ -1336,7 +1340,7 @@ fn memory_resource_fact_permits_read(
     resource: &CResourceFact,
     pointer: &Pointer,
     byte_width: u32,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     resource_fact_read_core_range(resource).is_some_and(|range| {
         assumptions.pointer_access_in_range(
@@ -1353,7 +1357,7 @@ fn memory_resource_fact_permits_write(
     resource: &CResourceFact,
     pointer: &Pointer,
     byte_width: u32,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     match resource {
         CResourceFact::Own(CResource::Memory(range), _) => assumptions.pointer_access_in_range(
@@ -1401,7 +1405,7 @@ fn pointer_has_structural_range_base(pointer: &Pointer, base: &Pointer) -> bool 
 fn range_endpoint_terms_equal(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left == right {
         return true;
@@ -1409,7 +1413,7 @@ fn range_endpoint_terms_equal(
     fn loads_bridged(
         left: &Bitvector32Term,
         right: &Bitvector32Term,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> bool {
         // The load-unchanged check re-enters separation reasoning, which can
         // re-enter range comparison; guard against unbounded mutual
@@ -1475,7 +1479,7 @@ fn range_endpoint_terms_equal(
 fn pointer_bases_equal_with_load_bridging(
     left: &Pointer,
     right: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     left.block == right.block
         && pointer_offsets_equal_with_load_bridging(&left.offset, &right.offset, assumptions)
@@ -1484,7 +1488,7 @@ fn pointer_bases_equal_with_load_bridging(
 fn pointer_offsets_equal_with_load_bridging(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left == right {
         return true;
@@ -1514,7 +1518,7 @@ fn pointer_offsets_equal_with_load_bridging(
 pub(in crate::kernel) fn memory_range_covers(
     available: &CMemoryRange,
     required: &CMemoryRange,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if available == required {
         return true;
@@ -1636,7 +1640,7 @@ fn memory_ranges_structurally_disjoint(left: &CMemoryRange, right: &CMemoryRange
 fn split_memory_range(
     available: &CMemoryRange,
     required: &CMemoryRange,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Vec<CMemoryRange>> {
     // Prefer the held range's own start spelling when the required base is
     // provably that address. A merely structural delta can contain an
@@ -1692,7 +1696,7 @@ fn split_memory_range(
 fn memory_ranges_proven_overlapping(
     left: &CMemoryRange,
     right: &CMemoryRange,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if left.base().blocks_proven_distinct(right.base()) {
         return false;
@@ -1790,7 +1794,7 @@ impl CResourceFact {
         &self,
         base: &Pointer,
         bytes: &Bitvector32Term,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> bool {
         let Some(element_count) = crate::kernel::reasoning::int32_element_count_from_bytes(bytes)
         else {
@@ -1879,7 +1883,7 @@ impl CResourceFact {
 fn combine_memory_resource_facts(
     left: &CResourceFact,
     right: &CResourceFact,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<CResourceFact> {
     if let (Some(left_range), Some(right_range)) = (
         memory_resource_fact_range(left),
@@ -1906,7 +1910,7 @@ fn combine_memory_resource_facts(
 fn merge_memory_ranges(
     left: &CMemoryRange,
     right: &CMemoryRange,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<CMemoryRange> {
     if left.base() != right.base() {
         return None;
@@ -1935,7 +1939,7 @@ fn merge_memory_ranges(
 fn bitvector_terms_proven_equal(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     left == right
         || assumptions.decide(&ConditionTerm::equal(left.clone(), right.clone())) == Some(true)

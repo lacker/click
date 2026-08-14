@@ -13,7 +13,7 @@ impl MemoryLoadAliasCache {
         &mut self,
         pointer: &Pointer,
         stored_pointer: &Pointer,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> bool {
         *self
             .resolution_equal
@@ -27,7 +27,7 @@ impl MemoryLoadAliasCache {
         &mut self,
         pointer: &Pointer,
         stored_pointer: &Pointer,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> bool {
         *self
             .resolution_distinct
@@ -41,7 +41,7 @@ impl MemoryLoadAliasCache {
         &mut self,
         pointer: &Pointer,
         stored_pointer: &Pointer,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> bool {
         *self
             .equal
@@ -53,7 +53,7 @@ impl MemoryLoadAliasCache {
         &mut self,
         pointer: &Pointer,
         stored_pointer: &Pointer,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> bool {
         *self
             .distinct
@@ -68,7 +68,7 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
     value_type: CType,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     has_external_read_resource: bool,
 ) -> Vec<CExpressionPath> {
     let _assumptions_id_scope = assumptions.enter_id_scope();
@@ -92,7 +92,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     value_type: CType,
     facts: Vec<ExecutionPureFact>,
     mut obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     has_external_read_resource: bool,
     alias_cache: &mut MemoryLoadAliasCache,
 ) -> Vec<CExpressionPath> {

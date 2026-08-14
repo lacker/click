@@ -1,6 +1,6 @@
 use super::*;
 
-impl Assumptions {
+impl PureFactContext {
     pub(crate) fn decide_condition_for_simp(&self, condition: &ConditionTerm) -> Option<bool> {
         if let Some(value) = self.exact_condition_value(condition) {
             return Some(value);

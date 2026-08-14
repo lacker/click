@@ -1918,7 +1918,7 @@ pub(super) fn fold_composite_resources_on_outcome(
                 .map(|fact| fact.proposition().clone()),
         );
         let assumptions = assumptions_from_propositions(&fold_facts);
-        let _assumptions_id_scope = crate::kernel::AssumptionsIdScope::enter(&assumptions);
+        let _assumptions_id_scope = crate::kernel::PureFactContextIdScope::enter(&assumptions);
         let mut lowered_contained = Vec::new();
         let preserve_exposed_body = matches!(
             closure,

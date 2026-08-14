@@ -165,19 +165,19 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
         let called = base.clone().with_call_memory_havoc(
             Variable(3),
             &[memory_range(arc_pointer(8), 0, 8)],
-            &Assumptions::new(),
+            &PureFactContext::new(),
         );
         assert!(
             !memories_match_for_pointer_load_under_assumptions(
                 &base,
                 &called,
                 &read,
-                &Assumptions::new()
+                &PureFactContext::new()
             ),
             "the snapshot-diff matcher is expected not to cross the marker block"
         );
         assert!(
-            c_memory_load_is_unchanged(&base, &called, &read, &Assumptions::new()),
+            c_memory_load_is_unchanged(&base, &called, &read, &PureFactContext::new()),
             "a call that may only write a disjoint range preserves the load"
         );
     }
@@ -186,7 +186,7 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
         .clone()
         .with_loop_memory_havoc(Variable(7), &BTreeSet::new());
     assert!(
-        !c_memory_load_is_unchanged(&base, &havoced, &read, &Assumptions::new()),
+        !c_memory_load_is_unchanged(&base, &havoced, &read, &PureFactContext::new()),
         "loop havoc must never be crossed without explicit frame evidence"
     );
 
@@ -194,7 +194,7 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
         .clone()
         .store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(9)));
     assert!(
-        !c_memory_load_is_unchanged(&base, &havoced_then_stored, &read, &Assumptions::new()),
+        !c_memory_load_is_unchanged(&base, &havoced_then_stored, &read, &PureFactContext::new()),
         "a crossable store must not smuggle a walk past an intervening havoc"
     );
 }
@@ -223,7 +223,7 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
         base.clone().with_call_memory_havoc(
             Variable(variable),
             &[memory_range(arc_pointer(8), 0, 8)],
-            &Assumptions::new(),
+            &PureFactContext::new(),
         )
     };
     let (left, right) = (call_havoc(3), call_havoc(4));
@@ -233,12 +233,12 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
             &left,
             &right,
             &read,
-            &Assumptions::new()
+            &PureFactContext::new()
         ),
         "the two marker blocks are expected to stop the snapshot matcher"
     );
     assert_eq!(
-        Assumptions::new().memory_loads_proven_equal(&load_in(&left), &load_in(&right)),
+        PureFactContext::new().memory_loads_proven_equal(&load_in(&left), &load_in(&right)),
         !skip_without_memory_dag(),
         "the common-ancestor lookup is exactly what the DAG adds here"
     );
@@ -249,7 +249,7 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
         .clone()
         .with_loop_memory_havoc(Variable(9), &BTreeSet::new());
     assert!(
-        !Assumptions::new().memory_loads_proven_equal(&load_in(&left), &load_in(&havoced)),
+        !PureFactContext::new().memory_loads_proven_equal(&load_in(&left), &load_in(&havoced)),
         "loop havoc must stop the cell lookup"
     );
 }
@@ -277,7 +277,7 @@ fn loadable_bound_check_bridges_len_spellings_across_block_and_prune_edges() {
 
     // The recorded facts: the buffer permission and both `len` bounds, all
     // spelled at entry.
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         // Same-block permissions that cannot cover `buffer[len]`. These used
         // to trigger costly general equality searches before the matching
         // symbolic range was considered.
@@ -352,7 +352,7 @@ fn a_store_to_the_loaded_cell_is_not_crossable() {
         .store(read.clone(), CValue::Int32(Bitvector32Term::Constant(9)));
 
     assert!(
-        !c_memory_load_is_unchanged(&base, &stored, &read, &Assumptions::new()),
+        !c_memory_load_is_unchanged(&base, &stored, &read, &PureFactContext::new()),
         "the walk must refuse the very cell that was written"
     );
 }
@@ -390,21 +390,21 @@ fn conditions_equal_modulo_proven_snapshots_needs_frame_evidence() {
 
     // Same snapshot: the two spellings are literally one condition.
     assert!(
-        Assumptions::new()
+        PureFactContext::new()
             .conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&before))
     );
 
     // A call havoc stands between the snapshots and nothing frames the load,
     // so the later spelling is a different fact, not another spelling.
     assert!(
-        !Assumptions::new()
+        !PureFactContext::new()
             .conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&after)),
         "an unframed call havoc must not be matched away"
     );
 
     // With an effect summary whose mutable range misses the loaded pointer,
     // the two snapshots provably agree there and the spellings match.
-    let framed = Assumptions::new().assume_proposition(Proposition::CMemoryEffectSummary {
+    let framed = PureFactContext::new().assume_proposition(Proposition::CMemoryEffectSummary {
         before: before.clone(),
         after: after.clone(),
         mutable_ranges: vec![CMemoryRange::new(

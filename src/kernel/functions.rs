@@ -34,7 +34,7 @@ pub(super) fn execute_c_function_paths(
     state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
@@ -55,7 +55,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
     state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
@@ -207,7 +207,7 @@ pub(super) fn execute_c_function_verification_paths(
     state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
@@ -381,7 +381,7 @@ pub(super) fn execute_c_function_call_paths(
     caller_state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
@@ -520,7 +520,7 @@ fn execute_verified_function_rule(
     caller_state: &CState,
     rule: &CVerifiedFunctionRule,
     arguments: &[CExpression],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     let function = &rule.function;
@@ -964,7 +964,7 @@ fn apply_verified_allocation_lifetime_effects(
     input_resources: &ResourceContext,
     output_resources: &ResourceContext,
     function: &CFunction,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<(CMemory, Vec<ExecutionPureFact>), CRuntimeError> {
     let mut effects = Vec::new();
     let input = expand_all_composite_resource_facts(
@@ -1108,7 +1108,7 @@ pub(super) fn add_memory_store_obligation(
     pointer: &Pointer,
     value: &CValue,
     mut obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Vec<ProofObligation>> {
     if memory.can_store_concretely(pointer, value) {
         return Some(obligations);
@@ -1129,7 +1129,7 @@ pub(super) fn add_memory_store_obligation(
 pub(super) fn evaluate_c_arguments_paths(
     state: &CState,
     arguments: &[CExpression],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CArgumentsPath>> {
     let mut paths = vec![CArgumentsPath {
@@ -1220,7 +1220,7 @@ fn evaluate_resource_population_body_resources(
     required_resources: &ResourceContext,
     callee_state: &CState,
     definitions: &[CCompositeResourceDefinition],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     include_ordinary: bool,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
@@ -1301,7 +1301,7 @@ fn prepare_function_resource_transfer(
     caller_state: &CState,
     callee_state: &CState,
     function: &CFunction,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     preserve_explicit_representation: bool,
 ) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
@@ -1485,7 +1485,7 @@ fn evaluate_function_return_resources(
     caller_resources_after_requirements: &ResourceContext,
     post_state: &CState,
     function: &CFunction,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     let ensured_resources = match crate::instrumentation::measure_operation(
@@ -1559,7 +1559,7 @@ fn evaluate_function_return_resources(
         "contract resource transition",
         "ensured resource core projection",
         || {
-            let _assumptions_id_scope = crate::kernel::AssumptionsIdScope::enter(assumptions);
+            let _assumptions_id_scope = crate::kernel::PureFactContextIdScope::enter(assumptions);
             expanded_ensured_resources
                 .facts()
                 .iter()
@@ -1579,7 +1579,7 @@ fn counted_population_quantities(
     resources: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     tracked_state: &CState,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     track_ordinary_populations: bool,
 ) -> BTreeMap<(String, Vec<CValue>), u32> {
     let mut quantities = BTreeMap::new();
@@ -1692,7 +1692,7 @@ struct CCountedPopulationTransition {
 fn apply_counted_population_transition_resources(
     mut resources: ResourceContext,
     transition: &CCountedPopulationTransition,
-    _assumptions: &Assumptions,
+    _assumptions: &PureFactContext,
 ) -> Result<ResourceContext, CRuntimeError> {
     for resource in &transition.finalized_body_resources {
         for representation in [Some(resource.clone()), resource.core()]
@@ -1731,7 +1731,7 @@ fn apply_counted_population_transitions(
     post_state: &mut CState,
     function: &CFunction,
     argument_values: &[CValue],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     obligations: &mut Vec<ProofObligation>,
     reestablish_invariants: bool,
     track_ordinary_populations: bool,
@@ -2059,7 +2059,7 @@ fn apply_counted_population_transitions(
         &active_populations,
         function.composite_resource_definitions(),
         &post_contract_state,
-        &Assumptions::new(),
+        &PureFactContext::new(),
         true,
     ) else {
         return Ok(Err(CRuntimeError::FunctionContract(
@@ -2090,7 +2090,7 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
     caller_state: &CState,
     function: &CFunction,
     argument_values: &[CValue],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CState, CRuntimeError>> {
     let Some(callee_state) = bind_c_function_arguments(caller_state, function, argument_values)
@@ -2128,7 +2128,7 @@ pub(super) fn expand_composite_resource_fact(
     composite: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<ResourceContext> {
     expand_composite_resource_fact_with_children(
         context,
@@ -2145,7 +2145,7 @@ fn expand_composite_resource_fact_with_children(
     composite: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<(ResourceContext, Vec<CResourceFact>)> {
     let CResource::Composite { name, arguments } = composite.resource() else {
         return None;
@@ -2233,7 +2233,7 @@ fn expand_composite_resource_fact_with_children(
 fn resource_context_contains_exact_owned_fact(
     context: &ResourceContext,
     required: &CResourceFact,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if !required.is_own() {
         return false;
@@ -2267,7 +2267,7 @@ fn resource_context_contains_exact_owned_fact(
 pub(super) fn evaluate_guarded_contract_condition(
     condition: &SpecProposition,
     state: &CState,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> Option<bool> {
     let paths = lower_spec_proposition_at_state_with_loop_entry(
@@ -2324,7 +2324,7 @@ pub(super) fn evaluate_guarded_contract_condition(
 fn evaluate_composite_resource_body_condition(
     definition: &CCompositeResourceDefinition,
     state: &CState,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> Option<bool> {
     definition.condition().map_or(Some(true), |condition| {
@@ -2336,7 +2336,7 @@ pub(super) fn expand_all_composite_resource_facts(
     context: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<ResourceContext> {
     expand_composite_resource_context(context, definitions, memory, assumptions)
         .map(|(resources, _)| resources)
@@ -2348,7 +2348,7 @@ fn expand_decidable_composite_resource_frontier(
     context: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> ResourceContext {
     let mut expanded = context.clone();
     let mut seen = BTreeSet::new();
@@ -2389,7 +2389,7 @@ pub(super) fn expose_composite_resource_fact(
     target: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<ResourceContext> {
     let target_is_available = |context: &ResourceContext| {
         context.facts().iter().any(|available| {
@@ -2449,7 +2449,7 @@ fn expand_composite_resource_context(
     context: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<(ResourceContext, Vec<CResourceFact>)> {
     let mut expanded = context.clone();
     let mut composites = Vec::new();
@@ -2478,7 +2478,7 @@ fn expand_composite_resource_tree(
     composite: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     ancestors: &[String],
     composites: &mut Vec<CResourceFact>,
 ) -> Option<ResourceContext> {
@@ -2527,7 +2527,7 @@ pub(super) fn expand_all_composite_resource_facts_and_propositions(
     context: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<(ResourceContext, Vec<Proposition>)> {
     let (expanded, composites) =
         expand_composite_resource_context(context, definitions, memory, assumptions)?;
@@ -2555,7 +2555,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
     context: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     state: &CState,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     include_ordinary: bool,
 ) -> Option<Vec<Proposition>> {
     let mut populations = BTreeMap::<(String, Vec<CValue>), u32>::new();
@@ -2739,7 +2739,7 @@ pub(super) fn evaluate_composite_resource_relation_propositions(
     composite: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Vec<Proposition>> {
     let CResource::Composite { name, arguments } = composite.resource() else {
         return None;
@@ -2817,7 +2817,7 @@ fn evaluate_composite_resource_fact_propositions(
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
     resources: &ResourceContext,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Vec<Proposition>> {
     let CResource::Composite { name, arguments } = composite.resource() else {
         return None;
@@ -2932,7 +2932,7 @@ pub(super) fn resource_context_satisfies_definitional_fact(
     required: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     if available.satisfies_fact(required, assumptions) {
         return true;
@@ -2987,14 +2987,14 @@ fn consume_resource_fact_definitionally(
     required: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<ResourceContext> {
     fn consume(
         available: &ResourceContext,
         required: &CResourceFact,
         definitions: &[CCompositeResourceDefinition],
         memory: &CMemory,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
         seen: &mut BTreeSet<(ResourceContext, CResourceFact)>,
     ) -> Option<ResourceContext> {
         if !seen.insert((available.clone(), required.clone())) {
@@ -3106,7 +3106,7 @@ pub(super) fn resource_context_definitionally_contains(
     required: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let mut remaining = available.clone();
     let mut required = required.facts().to_vec();
@@ -3134,7 +3134,7 @@ pub(super) fn resource_context_definitionally_contains_without_owned_residue(
     required: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let mut remaining = available.clone();
     let mut required = required.facts().to_vec();
@@ -3162,7 +3162,7 @@ pub(super) fn resource_contexts_definitionally_equivalent_by_consumption(
     right: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     resource_context_definitionally_contains(left, right, definitions, memory, assumptions)
         && resource_context_definitionally_contains(right, left, definitions, memory, assumptions)
@@ -3171,7 +3171,7 @@ pub(super) fn resource_contexts_definitionally_equivalent_by_consumption(
 pub(super) fn evaluate_function_resource_context(
     state: &CState,
     resources: &[CResourceSpec],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     let mut context = ResourceContext::new();
@@ -3216,7 +3216,7 @@ fn resource_context_runtime_error(error: ResourceContextValidityError) -> CRunti
 pub(super) fn evaluate_function_resource_spec(
     state: &CState,
     resource: &CResourceSpec,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
     match resource {
@@ -3290,7 +3290,7 @@ fn evaluate_function_declared_resource_spec(
     name: &str,
     arguments: &[CExpression],
     parameter_types: &[CType],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
     if arguments.len() != parameter_types.len() {
@@ -3391,7 +3391,7 @@ fn unreturned_allocation_obligation(
     actual_state: &CState,
     returned_resources: &ResourceContext,
     function: &CFunction,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<Option<CResourceFact>, CRuntimeError> {
     let Some(actual) = expand_all_composite_resource_facts(
         actual_state.resources(),
@@ -3445,7 +3445,7 @@ pub(crate) fn unreturned_allocation_at_function_exit(
     value: &CValue,
     function: &CFunction,
     arguments: &[CExpression],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<Option<CResourceFact>, CRuntimeError>> {
     let function_can_package_allocation =
@@ -3529,7 +3529,7 @@ fn function_outcome_from_body_with_population_transition(
     function: &CFunction,
     outcome: CStatementOutcome,
     mut obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     argument_values: &[CValue],
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<(CFunctionOutcome, Vec<ProofObligation>)> {
@@ -3588,7 +3588,7 @@ fn function_outcome_from_body_with_resource_transfer(
     function: &CFunction,
     outcome: CStatementOutcome,
     mut obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     transfer: &CFunctionResourceTransfer,
     argument_values: &[CValue],
     reestablish_population_invariants: bool,
@@ -3718,7 +3718,7 @@ pub(super) fn apply_verified_contract_resource_transition(
     function: &CFunction,
     arguments: &[CExpression],
     outcome: CFunctionOutcome,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<(CFunctionOutcome, Vec<ProofObligation>), CRuntimeError>> {
     let Some(argument_values) = arguments
@@ -3787,7 +3787,7 @@ pub(super) fn function_outcome_from_body(
     function: &CFunction,
     outcome: CStatementOutcome,
     mut obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     return_resources: Option<&ResourceContext>,
 ) -> (CFunctionOutcome, Vec<ProofObligation>) {
     match outcome {

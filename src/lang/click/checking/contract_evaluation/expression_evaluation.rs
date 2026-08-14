@@ -6,7 +6,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
     pre_state: &CState,
     post_state: &CState,
     result: Option<&CValue>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     expression: &ContractExpression,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,

@@ -146,7 +146,7 @@ fn exact_struct_field_offsets_remain_resolvable_after_deadline() {
     let field = base.offset_by_bytes(4);
 
     let index = crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
-        super::checking::pointer_element_index_from_base(&field, &base, &Assumptions::new())
+        super::checking::pointer_element_index_from_base(&field, &base, &PureFactContext::new())
     });
 
     assert_eq!(index, Some(Bitvector32Term::Constant(1)));
@@ -207,7 +207,7 @@ fn missing_contract_load_diagnostic_omits_raw_memory_snapshots() {
             },
         },
         CType::Int32,
-        &Assumptions::new(),
+        &PureFactContext::new(),
     )
     .expect_err("an unowned external load should require loadability");
 
@@ -514,7 +514,7 @@ fn simp_uses_assumed_compound_proposition() {
             arguments: Vec::new(),
         }),
     );
-    let assumptions = Assumptions::new().assume_proposition(proposition.clone());
+    let assumptions = PureFactContext::new().assume_proposition(proposition.clone());
 
     assert_eq!(
         simp_proposition(&proposition, &assumptions),

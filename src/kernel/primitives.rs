@@ -645,7 +645,7 @@ impl CVerifiedFunctionContractClaim {
 pub struct CVerifiedLoopRule {
     pub(super) symbolic_entry_state: CState,
     pub(super) loop_statement: CStatement,
-    pub(super) required_assumptions: Assumptions,
+    pub(super) required_assumptions: PureFactContext,
     pub(super) paths: Vec<CStatementExecutionPath>,
     pub(super) composite_resource_definitions: Vec<CCompositeResourceDefinition>,
 }
@@ -1327,21 +1327,21 @@ pub(super) trait ResourceFamilyAlgebra {
         &self,
         left: &CResourceFact,
         right: &CResourceFact,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Option<ResourceContextValidityError>;
 
     fn entails(
         &self,
         available: &CResourceFact,
         required: &CResourceFact,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> bool;
 
     fn consume(
         &self,
         available: &CResourceFact,
         required: &CResourceFact,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Option<ResourceFactConsumption>;
 
     /// Returns one fact equivalent to composing this pair when the pair can be
@@ -1350,7 +1350,7 @@ pub(super) trait ResourceFamilyAlgebra {
         &self,
         left: &CResourceFact,
         right: &CResourceFact,
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Option<CResourceFact>;
 
     fn core(&self, fact: &CResourceFact) -> Option<CResourceFact>;
@@ -1358,7 +1358,7 @@ pub(super) trait ResourceFamilyAlgebra {
     fn observable_facts(
         &self,
         facts: &[&CResourceFact],
-        assumptions: &Assumptions,
+        assumptions: &PureFactContext,
     ) -> Vec<Proposition>;
 }
 
@@ -1502,7 +1502,7 @@ pub enum Proposition {
         right: CResource,
     },
     /// Internal carrier for an already-validated resource composition.
-    /// Assumptions store this as indexed kernel authority rather than as an
+    /// PureFactContext store this as indexed kernel authority rather than as an
     /// ambient proposition visible to proof search.
     CResourceComposition(ResourceContext),
     CResourceContains {
@@ -1570,12 +1570,12 @@ pub struct PropositionDerivation {
 pub(super) enum PropositionDerivationRule {
     ContextFree,
     ContextualAtomic {
-        premises: Assumptions,
+        premises: PureFactContext,
         premises_id: u64,
         for_simp: bool,
     },
     Explosion {
-        premises: Assumptions,
+        premises: PureFactContext,
     },
     And {
         left: Box<PropositionDerivation>,
@@ -1597,7 +1597,7 @@ pub(super) enum PropositionDerivationRule {
         variable: Variable,
         lower: i64,
         upper: i64,
-        premises: Assumptions,
+        premises: PureFactContext,
         instances: Vec<PropositionDerivation>,
     },
     DisjunctionCases {
@@ -1617,7 +1617,7 @@ pub(super) enum PropositionDerivationRule {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Assumptions {
+pub struct PureFactContext {
     pub(super) condition_facts: std::sync::Arc<BTreeMap<ConditionTerm, bool>>,
     /// Exact signed-order bounds keyed by either endpoint. Counts preserve
     /// synonymous condition spellings when one source fact is replaced.
@@ -1651,7 +1651,7 @@ pub struct Assumptions {
     pub(super) allow_symbolic_contract_loads: bool,
 }
 
-impl PartialEq for Assumptions {
+impl PartialEq for PureFactContext {
     fn eq(&self, other: &Self) -> bool {
         self.content_fingerprint == other.content_fingerprint
             && self.condition_facts == other.condition_facts
@@ -1666,9 +1666,9 @@ impl PartialEq for Assumptions {
     }
 }
 
-impl Eq for Assumptions {}
+impl Eq for PureFactContext {}
 
-impl std::hash::Hash for Assumptions {
+impl std::hash::Hash for PureFactContext {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_u64(self.content_fingerprint);
     }
@@ -1726,7 +1726,7 @@ pub struct CCheckedFunctionExecution {
     pub(super) state: CState,
     pub(super) function: CFunction,
     pub(super) arguments: Vec<CExpression>,
-    pub(super) assumptions: Assumptions,
+    pub(super) assumptions: PureFactContext,
     pub(super) environment: CExecutionEnvironment,
     pub(super) execution_semantics: CExecutionSemantics,
     pub(super) mode: CFunctionContractExecutionMode,
@@ -1761,7 +1761,7 @@ impl CCheckedFunctionExecution {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SymbolicCExecutionPath {
-    pub(super) assumptions: Assumptions,
+    pub(super) assumptions: PureFactContext,
     pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) effect_facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,

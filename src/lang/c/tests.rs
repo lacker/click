@@ -272,7 +272,7 @@ fn kernel_skip_preserves_state_without_facts_or_obligations() {
     let theorem = crate::kernel::prove_symbolic_c_execution(
         state.clone(),
         crate::kernel::c_skip(),
-        crate::kernel::Assumptions::new(),
+        crate::kernel::PureFactContext::new(),
     )
     .expect("skip should execute");
 
@@ -353,7 +353,7 @@ fn c0_unary_minus_preserves_signed_overflow_semantics() {
     let theorem = crate::kernel::prove_symbolic_c_execution(
         state.clone(),
         function.body_kernel_statement(),
-        crate::kernel::Assumptions::new(),
+        crate::kernel::PureFactContext::new(),
     )
     .expect("concrete signed overflow should have an execution theorem");
     let mut proposition = theorem.proposition();
@@ -572,7 +572,7 @@ fn c0_chained_field_load_executes_through_typed_pointer_memory() {
     let theorem = crate::kernel::prove_symbolic_c_execution(
         state,
         function.body_kernel_statement(),
-        crate::kernel::Assumptions::new(),
+        crate::kernel::PureFactContext::new(),
     )
     .expect("the nested typed loads should execute");
     let mut proposition = theorem.proposition();
@@ -674,7 +674,8 @@ fn c0_syntax_targets_kernel_max_body() {
     let condition = crate::kernel::c_max_lt_condition(a_bits.clone(), b_bits.clone());
     let state =
         crate::kernel::c_max_state(crate::kernel::int32(a_bits), crate::kernel::int32(b_bits));
-    let assumptions = crate::kernel::Assumptions::new().assume_condition(condition.clone(), true);
+    let assumptions =
+        crate::kernel::PureFactContext::new().assume_condition(condition.clone(), true);
     let theorem =
         crate::kernel::prove_symbolic_c_execution(state.clone(), statement.clone(), assumptions)
             .expect("parsed max should symbolically execute");
@@ -1424,7 +1425,7 @@ fn c0_syntax_targets_kernel_pointer_null_equality() {
         state.clone(),
         function.clone(),
         arguments.clone(),
-        crate::kernel::Assumptions::new(),
+        crate::kernel::PureFactContext::new(),
     )
     .expect("parsed pointer null check should execute");
 
@@ -1501,7 +1502,7 @@ fn c0_syntax_targets_kernel_logical_short_circuiting() {
             state.clone(),
             function.clone(),
             arguments.clone(),
-            crate::kernel::Assumptions::new(),
+            crate::kernel::PureFactContext::new(),
         )
         .expect("logical short-circuit function should execute");
 
@@ -1546,7 +1547,7 @@ fn c0_syntax_targets_kernel_unary_not() {
         state.clone(),
         function.clone(),
         arguments.clone(),
-        crate::kernel::Assumptions::new(),
+        crate::kernel::PureFactContext::new(),
     )
     .expect("unary not function should execute");
 
@@ -2064,7 +2065,7 @@ fn c0_clamp_demo_proves_symbolic_branch_specifications() {
         let theorem = crate::kernel::prove_c_function_satisfies_specification(
             function.clone(),
             specification.clone(),
-            crate::kernel::Assumptions::new(),
+            crate::kernel::PureFactContext::new(),
         )
         .expect("clamp branch specification should prove");
         let expected = requires.iter().rev().fold(

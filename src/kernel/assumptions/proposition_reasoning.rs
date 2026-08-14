@@ -46,7 +46,7 @@ fn canonical_contradiction_condition(condition: &ConditionTerm) -> ConditionTerm
 }
 
 /// Cheap necessary condition for the assumption-sensitive equalities checked
-/// by [`Assumptions::bitvector_terms_proven_equal`]. Exact equality and
+/// by [`PureFactContext::bitvector_terms_proven_equal`]. Exact equality and
 /// explicit equality-graph paths are handled separately by its caller.
 ///
 /// The remaining theory rules can only relate two conditionals, two folds, an
@@ -128,7 +128,7 @@ pub(crate) fn finite_forall_goal_instances(
     Some(instances)
 }
 
-impl Assumptions {
+impl PureFactContext {
     #[cfg(test)]
     pub(crate) fn reset_context_inconsistency_full_scans() {
         CONTEXT_INCONSISTENCY_FULL_SCANS.with(|scans| scans.set(0));
@@ -145,7 +145,7 @@ impl Assumptions {
         }
         // One id resolution up front so every decision this proof attempt
         // makes shares it instead of rehashing the fact set per decision.
-        let _id_scope = AssumptionsIdScope::enter(self);
+        let _id_scope = PureFactContextIdScope::enter(self);
         if solve_builtin_prop(proposition) {
             return true;
         }
@@ -352,9 +352,9 @@ impl Assumptions {
         &self,
         proposition: &Proposition,
         for_simp: bool,
-    ) -> Option<(Assumptions, u64)> {
+    ) -> Option<(PureFactContext, u64)> {
         if self.proves_exact(proposition) {
-            let exact = Assumptions::new().assume_proposition(proposition.clone());
+            let exact = PureFactContext::new().assume_proposition(proposition.clone());
             let (proved, premises_id) =
                 exact.proves_atomic_for_derivation_with_id(proposition, for_simp);
             if proved {
@@ -497,7 +497,7 @@ impl Assumptions {
         proposition: &Proposition,
         for_simp: bool,
     ) -> Option<PropositionDerivation> {
-        let _id_scope = AssumptionsIdScope::enter(self);
+        let _id_scope = PureFactContextIdScope::enter(self);
         if !consume_simp_reasoning_fuel() {
             return None;
         }
@@ -941,7 +941,7 @@ impl Assumptions {
         proposition: &Proposition,
         for_simp: bool,
     ) -> (bool, u64) {
-        let id_scope = AssumptionsIdScope::enter(self);
+        let id_scope = PureFactContextIdScope::enter(self);
         let premises_id = id_scope.id;
         if !decide_memo_disabled()
             && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {
@@ -2315,7 +2315,7 @@ impl Assumptions {
         /// canonical load memories), so terms sharing a canonical form are
         /// provably equal.
         fn canonical_order_endpoint(
-            assumptions: &Assumptions,
+            assumptions: &PureFactContext,
             term: &Bitvector32Term,
             depth: usize,
         ) -> Bitvector32Term {
@@ -2413,7 +2413,7 @@ impl Assumptions {
         /// with disjoint bucket sets are rejected by the rules themselves, so
         /// skipping their comparison cannot lose a conclusion.
         fn residue_bucket_keys(
-            assumptions: &Assumptions,
+            assumptions: &PureFactContext,
             term: &Bitvector32Term,
             depth: usize,
             keys: &mut BTreeSet<ResidueBucket>,

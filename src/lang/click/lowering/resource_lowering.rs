@@ -432,7 +432,7 @@ fn lower_resource_clause_with_values(
             arguments: resource_arguments,
             parameter_types,
         } => {
-            let assumptions = Assumptions::new();
+            let assumptions = PureFactContext::new();
             let mut resource_values = Vec::new();
             if resource_arguments.len() != parameter_types.len() {
                 return Err(ClickError::new(format!(
@@ -558,7 +558,7 @@ fn lower_resource_segment_with_values(
     // Resource ranges embed field loads symbolically (the canonical
     // `load(arg-memory@...)` spellings), so segment evaluation must not
     // demand concrete loadability.
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
     let base = evaluate_c_contract_expression(values, state, result, &assumptions, &segment.base)

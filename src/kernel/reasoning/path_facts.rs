@@ -19,7 +19,7 @@ pub(in crate::kernel) fn forall_int32(var: Variable, body: Proposition) -> Propo
 
 pub(in crate::kernel) fn wrap_proof_facts(
     proposition: Proposition,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     facts: &[ExecutionPureFact],
     obligations: &[ProofObligation],
 ) -> Proposition {
@@ -307,7 +307,7 @@ pub(in crate::kernel) fn signed_const_add(
 
 pub(in crate::kernel) fn add_path_fact(
     facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: Proposition,
 ) -> Option<()> {
     add_path_fact_with_visibility(facts, assumptions, proposition, true)
@@ -315,7 +315,7 @@ pub(in crate::kernel) fn add_path_fact(
 
 pub(in crate::kernel) fn add_path_fact_with_visibility(
     facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: Proposition,
     public: bool,
 ) -> Option<()> {
@@ -324,7 +324,7 @@ pub(in crate::kernel) fn add_path_fact_with_visibility(
 
 fn add_path_fact_with_visibility_after_effect(
     facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: Proposition,
     public: bool,
     certified_after_effect: bool,
@@ -355,7 +355,7 @@ fn add_path_fact_with_visibility_after_effect(
 
 pub(in crate::kernel) fn add_condition_path_fact(
     facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     condition: ConditionTerm,
     value: bool,
 ) -> Option<()> {
@@ -364,7 +364,7 @@ pub(in crate::kernel) fn add_condition_path_fact(
 
 pub(in crate::kernel) fn add_internal_condition_path_fact(
     facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     condition: ConditionTerm,
     value: bool,
 ) -> Option<()> {
@@ -373,7 +373,7 @@ pub(in crate::kernel) fn add_internal_condition_path_fact(
 
 fn add_condition_path_fact_with_visibility(
     facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     condition: ConditionTerm,
     value: bool,
     public: bool,
@@ -391,7 +391,7 @@ fn add_condition_path_fact_with_visibility(
             return None;
         }
     }
-    if let Some(known) = Assumptions::decide_intrinsically(&condition) {
+    if let Some(known) = PureFactContext::decide_intrinsically(&condition) {
         return (known == value).then_some(());
     }
     if !assumptions.should_defer_non_exact_condition_reasoning()
@@ -431,7 +431,7 @@ fn add_condition_path_fact_with_visibility(
 
 pub(in crate::kernel) fn add_pointer_offset_equality_execution_pure_facts(
     facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     left: PointerOffsetTerm,
     right: PointerOffsetTerm,
     value: bool,
@@ -460,7 +460,7 @@ pub(in crate::kernel) fn add_pointer_offset_equality_execution_pure_facts(
 
 pub(in crate::kernel) fn add_proof_obligation(
     obligations: &mut Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: Proposition,
 ) -> Option<()> {
     add_proof_obligation_with_context(obligations, assumptions, proposition, None)
@@ -468,7 +468,7 @@ pub(in crate::kernel) fn add_proof_obligation(
 
 pub(in crate::kernel) fn add_proof_obligation_with_context(
     obligations: &mut Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: Proposition,
     context: Option<&str>,
 ) -> Option<()> {
@@ -497,7 +497,7 @@ pub(in crate::kernel) fn add_proof_obligation_with_context(
 
 pub(in crate::kernel) fn add_required_proof_obligation_with_context(
     obligations: &mut Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: Proposition,
     context: Option<&str>,
 ) {
@@ -518,7 +518,7 @@ pub(in crate::kernel) fn add_required_proof_obligation_with_context(
 
 pub(in crate::kernel) fn add_required_proof_obligation_without_search(
     obligations: &mut Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     proposition: Proposition,
     context: Option<&str>,
 ) {
@@ -538,7 +538,7 @@ pub(in crate::kernel) fn add_required_proof_obligation_without_search(
 
 pub(in crate::kernel) fn append_required_proof_obligations(
     obligations: &mut Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     new_obligations: &[ProofObligation],
 ) {
     for obligation in new_obligations {
@@ -553,7 +553,7 @@ pub(in crate::kernel) fn append_required_proof_obligations(
 
 pub(in crate::kernel) fn append_required_proof_obligations_without_search(
     obligations: &mut Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     new_obligations: &[ProofObligation],
 ) {
     for obligation in new_obligations {
@@ -568,7 +568,7 @@ pub(in crate::kernel) fn append_required_proof_obligations_without_search(
 
 pub(in crate::kernel) fn append_required_proof_obligations_under_path_context(
     obligations: &mut Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     new_obligations: &[ProofObligation],
     facts: &[ExecutionPureFact],
     context_obligations: &[ProofObligation],
@@ -585,7 +585,7 @@ pub(in crate::kernel) fn append_required_proof_obligations_under_path_context(
 
 pub(in crate::kernel) fn add_condition_obligation(
     obligations: &mut Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     condition: ConditionTerm,
     value: bool,
     context: Option<&str>,
@@ -596,7 +596,7 @@ pub(in crate::kernel) fn add_condition_obligation(
     if assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), !value)) {
         return None;
     }
-    if let Some(known) = Assumptions::decide_intrinsically(&condition) {
+    if let Some(known) = PureFactContext::decide_intrinsically(&condition) {
         return (known == value).then_some(());
     }
     if !assumptions.should_defer_non_exact_condition_reasoning()
@@ -631,7 +631,7 @@ pub(in crate::kernel) fn add_condition_obligation(
 pub(in crate::kernel) fn merge_obligations(
     left: &[ProofObligation],
     right: &[ProofObligation],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Vec<ProofObligation>> {
     let mut obligations = left.to_vec();
     for obligation in right {
@@ -651,7 +651,7 @@ pub(in crate::kernel) fn merge_obligations(
             }
             if let Proposition::ConditionIs(condition, value) = obligation.proposition()
                 && (assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), !*value))
-                    || Assumptions::decide_intrinsically(condition)
+                    || PureFactContext::decide_intrinsically(condition)
                         .is_some_and(|known| known != *value)
                     || obligations.iter().any(|existing| {
                         matches!(
@@ -685,7 +685,7 @@ pub(in crate::kernel) fn merge_obligations(
 pub(in crate::kernel) fn merge_facts(
     left: &[ExecutionPureFact],
     right: &[ExecutionPureFact],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Vec<ExecutionPureFact>> {
     let mut facts = left.to_vec();
     let mut saw_memory_effect = false;
@@ -725,7 +725,7 @@ pub(in crate::kernel) fn merge_execution_pure_facts_and_obligations(
     left_obligations: &[ProofObligation],
     right_facts: &[ExecutionPureFact],
     right_obligations: &[ProofObligation],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<(Vec<ExecutionPureFact>, Vec<ProofObligation>)> {
     let facts = merge_facts(left_facts, right_facts, assumptions)?;
     // The right fragment was executed under the left fragment's path
@@ -741,7 +741,7 @@ pub(in crate::kernel) fn merge_execution_pure_facts_and_obligations(
 }
 
 pub(in crate::kernel) fn decide_with_facts(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     facts: &[ExecutionPureFact],
     condition: &ConditionTerm,
 ) -> Option<bool> {
@@ -750,7 +750,7 @@ pub(in crate::kernel) fn decide_with_facts(
         .find(|value| {
             assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), *value))
         })
-        .or_else(|| Assumptions::decide_intrinsically(condition))
+        .or_else(|| PureFactContext::decide_intrinsically(condition))
         .or_else(|| {
             (!assumptions.should_defer_non_exact_condition_reasoning())
                 .then(|| assumptions.decide(condition))
@@ -771,7 +771,7 @@ pub(in crate::kernel) fn decide_with_facts(
                 .iter()
                 .fold(
                     if assumptions.should_defer_non_exact_condition_reasoning() {
-                        Assumptions::new()
+                        PureFactContext::new()
                     } else {
                         assumptions.clone()
                     },
@@ -782,10 +782,10 @@ pub(in crate::kernel) fn decide_with_facts(
 }
 
 pub(in crate::kernel) fn assumptions_with_path_context(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     facts: &[ExecutionPureFact],
     obligations: &[ProofObligation],
-) -> Assumptions {
+) -> PureFactContext {
     let mut assumptions = assumptions.clone();
     for fact in facts {
         assumptions = assumptions.assume_proposition(fact.proposition().clone());
@@ -799,9 +799,9 @@ pub(in crate::kernel) fn assumptions_with_path_context(
 }
 
 pub(in crate::kernel) fn assumptions_with_propositions(
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     propositions: &[Proposition],
-) -> Assumptions {
+) -> PureFactContext {
     let mut assumptions = assumptions.clone();
     for proposition in propositions {
         assumptions = assumptions.assume_proposition(proposition.clone());

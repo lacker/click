@@ -5,7 +5,7 @@ pub(super) fn execute_c_call_assign_paths(
     target: &str,
     function_name: &str,
     arguments: &[CExpression],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
@@ -77,7 +77,7 @@ pub(super) fn execute_c_call_paths(
     state: &CState,
     function_name: &str,
     arguments: &[CExpression],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
@@ -122,7 +122,7 @@ pub(super) fn execute_c_call_paths(
 pub(super) fn execute_c_statement_paths_with_prefix(
     state: &CState,
     statement: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     prefix_facts: &[ExecutionPureFact],
@@ -162,7 +162,7 @@ pub(super) fn execute_c_statement_paths_with_prefix(
 pub(super) fn execute_c_statement_verification_paths(
     state: &CState,
     statement: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
@@ -369,7 +369,7 @@ pub(super) fn execute_c_statement_verification_paths(
 pub(super) fn execute_c_statement_verification_paths_with_prefix(
     state: &CState,
     statement: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     prefix_facts: &[ExecutionPureFact],
@@ -415,7 +415,7 @@ pub(super) fn execute_c_while_verification_paths(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     body: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
@@ -444,7 +444,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     body: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     initialization_proven: bool,
@@ -476,7 +476,7 @@ fn execute_c_while_exit_paths(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     body: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     preservation_environment: Option<&CExecutionEnvironment>,
     execution_semantics: CExecutionSemantics,
     initialization_proven: bool,
@@ -626,7 +626,7 @@ pub(super) fn collect_invariant_check_obligations(
     loop_entry_state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
     phase: InvariantPhase,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<ProofObligation>> {
     collect_invariant_check_obligations_with_mode(
@@ -645,7 +645,7 @@ pub(super) fn collect_invariant_check_obligations_without_search(
     loop_entry_state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
     phase: InvariantPhase,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<ProofObligation>> {
     collect_invariant_check_obligations_with_mode(
@@ -666,7 +666,7 @@ fn verify_lowered_invariant_path(
     facts: &[ExecutionPureFact],
     obligations: &[ProofObligation],
     path: SpecPropositionPath,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Result<Option<VerifiedInvariantPath>, String> {
     let Some((mut merged_facts, merged_obligations)) = merge_execution_pure_facts_and_obligations(
         facts,
@@ -731,7 +731,7 @@ pub(super) fn verify_invariant_checks_at_back_edge_using(
     state: &CState,
     loop_entry_state: &CState,
     checks: &[CLoopInvariantCheck],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> Result<(), String> {
     let mut contexts = vec![(Vec::new(), Vec::new())];
@@ -843,7 +843,7 @@ fn collect_invariant_check_obligations_with_mode(
     loop_entry_state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
     phase: InvariantPhase,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     without_search: bool,
 ) -> ExecutionResult<Vec<ProofObligation>> {
@@ -929,7 +929,7 @@ pub(super) fn collect_loop_preservation_summary(
     effect_checks: &[CLoopEffectCheck],
     whole_loop_effect_summaries: &[Proposition],
     body: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
@@ -1047,7 +1047,7 @@ pub(super) fn collect_whole_loop_effect_summaries(
     after_state: &CState,
     effect_checks: &[CLoopEffectCheck],
     include_mutable_summaries: bool,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<Proposition>> {
     let mut summaries = Vec::new();
@@ -1097,7 +1097,7 @@ pub(super) fn prepare_loop_top_state(
     entry_state: &CState,
     effect_checks: &[CLoopEffectCheck],
     body: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<(CState, Vec<Proposition>)> {
@@ -1160,7 +1160,7 @@ pub(super) fn collect_loop_effect_check_obligations(
     effect_checks: &[CLoopEffectCheck],
     facts: &[ExecutionPureFact],
     path_obligations: &[ProofObligation],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<ProofObligation>> {
     if effect_checks.is_empty() {
@@ -1292,7 +1292,7 @@ pub(super) fn collect_loop_effect_check_obligations(
 pub(super) fn evaluate_loop_effect_segment(
     state: &CState,
     segment: &CMemorySegment,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<EvaluatedMemorySegment, String>> {
     let base = match evaluate_loop_effect_segment_value(
@@ -1347,7 +1347,7 @@ pub(super) fn evaluate_loop_effect_segment(
 pub(super) fn evaluate_loop_effect_segment_value(
     state: &CState,
     expression: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     label: &str,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CValue, String>> {
@@ -1381,7 +1381,7 @@ pub(super) fn evaluate_loop_effect_segment_value(
 pub(super) fn loop_effect_segment_contains_pointer(
     segment: &EvaluatedMemorySegment,
     pointer: &Pointer,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let Some(index) = pointer.element_index_from_base(&segment.base) else {
         return false;
@@ -1398,7 +1398,7 @@ pub(super) fn loop_effect_segment_contains_pointer(
 pub(super) fn loop_effect_segment_contains_range(
     segment: &EvaluatedMemorySegment,
     range: &CMemoryRange,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let Some(base_index) = range.base().element_index_from_base(&segment.base) else {
         return false;
@@ -1446,7 +1446,7 @@ pub(super) fn assume_invariant_checks(
     state: &CState,
     loop_entry_state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
     budget: &mut ExecutionBudget,
@@ -1500,7 +1500,7 @@ pub(super) fn assume_invariant_checks(
 pub(super) fn assume_condition_truthiness(
     state: &CState,
     condition: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
     desired_truthiness: bool,

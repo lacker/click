@@ -13,9 +13,9 @@ fn exact_resource_lookup_is_indexed_after_context_construction() {
     let required = CResourceFact::own_token("target".to_string(), vec![int32(0)]);
     for size in [16, 32, 64, 128] {
         let context = unrelated_token_context(size).unchecked_with_fact(required.clone());
-        assert!(context.satisfies_fact(&required, &Assumptions::new()));
+        assert!(context.satisfies_fact(&required, &PureFactContext::new()));
         let (satisfied, work) = crate::instrumentation::measure_deterministic_work(|| {
-            context.satisfies_fact(&required, &Assumptions::new())
+            context.satisfies_fact(&required, &PureFactContext::new())
         });
         assert!(satisfied);
         assert_eq!(
@@ -41,9 +41,9 @@ fn exact_owned_resource_satisfies_view_without_entailment_scan() {
         .into_iter()
         .map(|size| {
             let context = unrelated_token_context(size).unchecked_with_fact(owned.clone());
-            assert!(context.satisfies_fact(&required, &Assumptions::new()));
+            assert!(context.satisfies_fact(&required, &PureFactContext::new()));
             let (satisfied, work) = crate::instrumentation::measure_deterministic_work(|| {
-                context.satisfies_fact(&required, &Assumptions::new())
+                context.satisfies_fact(&required, &PureFactContext::new())
             });
             assert!(satisfied);
             (size, work)
@@ -113,7 +113,7 @@ fn nonexact_memory_entailment_ignores_unrelated_blocks() {
                 )));
             assert_eq!(context.direct_match_candidates(&required).count(), 1);
             let (satisfied, work) = crate::instrumentation::measure_deterministic_work(|| {
-                context.satisfies_fact(&required, &Assumptions::new())
+                context.satisfies_fact(&required, &PureFactContext::new())
             });
             assert!(satisfied);
             (size, work)
@@ -133,7 +133,7 @@ fn unrelated_resource_normalization_has_linear_deterministic_work() {
         .map(|size| {
             let context = unrelated_token_context(size);
             let (normalized, work) = crate::instrumentation::measure_deterministic_work(|| {
-                context.normalized(&Assumptions::new())
+                context.normalized(&PureFactContext::new())
             });
             assert_eq!(normalized.facts().len(), size);
             (size, work)
@@ -164,7 +164,7 @@ fn adjacent_memory_normalization_has_linearithmic_deterministic_work() {
                 ))
             }));
             let (normalized, work) = crate::instrumentation::measure_deterministic_work(|| {
-                context.normalized(&Assumptions::new())
+                context.normalized(&PureFactContext::new())
             });
             assert_eq!(normalized.facts().len(), 1);
             (size, work)
@@ -195,7 +195,7 @@ fn disjoint_concrete_range_validity_scales_near_linearly() {
                 ))
             }));
             let (error, work) = crate::instrumentation::measure_deterministic_work(|| {
-                context.validity_error(&Assumptions::new())
+                context.validity_error(&PureFactContext::new())
             });
             assert!(error.is_none());
             (size, work)
@@ -231,15 +231,17 @@ fn observable_structural_separation_does_not_materialize_owned_pairs() {
                 }));
                 let (facts, work) = crate::instrumentation::measure_deterministic_work(|| {
                     context
-                        .observable_facts(&Assumptions::new())
+                        .observable_facts(&PureFactContext::new())
                         .expect("structurally disjoint memory ranges should compose")
                 });
                 assert_eq!(facts.len(), 1, "size-{size} projection materialized pairs");
                 assert!(matches!(facts[0], Proposition::CResourceComposition(_)));
-                assert!(Assumptions::new().proves(&Proposition::CResourceSeparate {
-                    left: context.facts()[0].resource().clone(),
-                    right: context.facts()[size - 1].resource().clone(),
-                }));
+                assert!(
+                    PureFactContext::new().proves(&Proposition::CResourceSeparate {
+                        left: context.facts()[0].resource().clone(),
+                        right: context.facts()[size - 1].resource().clone(),
+                    })
+                );
                 (size, work)
             })
             .collect::<Vec<_>>();
@@ -271,7 +273,7 @@ fn inserting_a_disjoint_concrete_range_uses_interval_neighbors() {
         let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
             context.try_compose_into_valid_context_delaying_normalization(
                 std::iter::once(next),
-                &Assumptions::new(),
+                &PureFactContext::new(),
             )
         });
         assert!(result.is_ok());
@@ -320,7 +322,7 @@ fn declared_resource_families_accumulate_equal_owned_units() {
         CResourceFact::own_composite("box".to_string(), vec![int32(1)]),
     ] {
         let context = ResourceContext::new()
-            .try_compose_with_facts([fact.clone(), fact.clone()], &Assumptions::new())
+            .try_compose_with_facts([fact.clone(), fact.clone()], &PureFactContext::new())
             .expect("equal declared resources should form a quantity");
         assert_eq!(context.facts().len(), 1);
         assert_eq!(context.facts()[0].owned_quantity(), Some(2));
@@ -341,7 +343,7 @@ fn exact_resource_views_are_preserved_when_satisfied() {
     ] {
         let context = ResourceContext::new().unchecked_with_fact(owned.clone());
         let after_view = context
-            .without_fact(&viewed, &Assumptions::new())
+            .without_fact(&viewed, &PureFactContext::new())
             .expect("owned exact resource should satisfy its view");
         assert_eq!(after_view.facts(), &[owned]);
     }
@@ -351,14 +353,14 @@ fn exact_resource_views_are_preserved_when_satisfied() {
 fn declared_resources_normalize_and_consume_one_unit_at_a_time() {
     let unit = CResourceFact::own_token("object_ref".to_string(), vec![int32(7)]);
     let context = ResourceContext::new()
-        .try_compose_with_facts([unit.clone(), unit.clone()], &Assumptions::new())
+        .try_compose_with_facts([unit.clone(), unit.clone()], &PureFactContext::new())
         .expect("equal counted facts should compose");
 
     assert_eq!(context.facts().len(), 1);
     assert_eq!(context.facts()[0].owned_quantity(), Some(2));
 
     let remaining = context
-        .without_fact(&unit, &Assumptions::new())
+        .without_fact(&unit, &PureFactContext::new())
         .expect("one unit should be consumable from a count of two");
     assert_eq!(remaining.facts(), &[unit]);
 }
@@ -367,10 +369,10 @@ fn declared_resources_normalize_and_consume_one_unit_at_a_time() {
 fn declared_resource_quantities_are_part_of_context_equality() {
     let unit = CResourceFact::own_token("object_ref".to_string(), vec![int32(7)]);
     let one = ResourceContext::new()
-        .try_compose_with_fact(unit.clone(), &Assumptions::new())
+        .try_compose_with_fact(unit.clone(), &PureFactContext::new())
         .unwrap();
     let two = ResourceContext::new()
-        .try_compose_with_facts([unit.clone(), unit], &Assumptions::new())
+        .try_compose_with_facts([unit.clone(), unit], &PureFactContext::new())
         .unwrap();
     let two_uncompacted = ResourceContext::new()
         .unchecked_with_fact(CResourceFact::own_token(
@@ -388,7 +390,7 @@ fn declared_resource_quantities_are_part_of_context_equality() {
         &one,
         &CMemory::new(),
         &two,
-        &Assumptions::new(),
+        &PureFactContext::new(),
     ));
     assert!(resource_contexts_definitionally_equal_with_definitions(
         &[],
@@ -396,7 +398,7 @@ fn declared_resource_quantities_are_part_of_context_equality() {
         &two_uncompacted,
         &CMemory::new(),
         &two,
-        &Assumptions::new(),
+        &PureFactContext::new(),
     ));
 }
 
@@ -416,7 +418,7 @@ fn resource_consumption_ignores_unrelated_exact_shapes() {
                 ));
             assert_eq!(context.direct_match_candidates(&required).count(), 1);
             let (remaining, work) = crate::instrumentation::measure_deterministic_work(|| {
-                context.without_fact_delaying_normalization(&required, &Assumptions::new())
+                context.without_fact_delaying_normalization(&required, &PureFactContext::new())
             });
             assert!(remaining.is_some());
             (size, work)
@@ -440,7 +442,7 @@ fn missing_composite_query_ignores_ambient_memory_splits() {
         .unchecked_with_fact(CResourceFact::own_memory(memory_range(base, 1, 2)));
     let required = CResourceFact::own_composite("allocated".to_string(), vec![int32(0)]);
 
-    assert!(!context.satisfies_fact(&required, &Assumptions::new()));
+    assert!(!context.satisfies_fact(&required, &PureFactContext::new()));
 }
 
 #[test]
@@ -458,7 +460,7 @@ fn owned_memory_query_without_owned_memory_is_rejected_structurally() {
         1,
     ));
 
-    assert!(!context.satisfies_fact(&required, &Assumptions::new()));
+    assert!(!context.satisfies_fact(&required, &PureFactContext::new()));
 }
 
 #[test]
@@ -475,7 +477,7 @@ fn batch_resource_consumption_splits_without_repeated_normalization() {
     ];
 
     let remaining = context
-        .without_facts(&required, &Assumptions::new())
+        .without_facts(&required, &PureFactContext::new())
         .expect("both subranges should be consumable");
 
     assert!(remaining.is_empty());
@@ -493,7 +495,7 @@ fn batch_resource_consumption_normalizes_when_a_requirement_needs_a_merge() {
     let required = [CResourceFact::own_memory(memory_range(base, 0, 2))];
 
     let remaining = context
-        .without_facts(&required, &Assumptions::new())
+        .without_facts(&required, &PureFactContext::new())
         .expect("adjacent ranges should merge before consumption");
 
     assert!(remaining.is_empty());
@@ -510,15 +512,17 @@ fn resource_context_observes_write_separation() {
     let facts = ResourceContext::new()
         .unchecked_with_fact(CResourceFact::own_memory(left.clone()))
         .unchecked_with_fact(CResourceFact::own_memory(right.clone()))
-        .observable_facts(&Assumptions::new())
+        .observable_facts(&PureFactContext::new())
         .expect("adjacent writes should be a valid resource context");
 
     assert_eq!(facts.len(), 1);
     assert!(matches!(facts[0], Proposition::CResourceComposition(_)));
-    assert!(Assumptions::new().proves(&Proposition::CResourceSeparate {
-        left: CResource::Memory(left),
-        right: CResource::Memory(right),
-    }));
+    assert!(
+        PureFactContext::new().proves(&Proposition::CResourceSeparate {
+            left: CResource::Memory(left),
+            right: CResource::Memory(right),
+        })
+    );
 }
 
 #[test]
@@ -543,12 +547,12 @@ fn resource_context_observes_same_and_cross_family_separation() {
         .unchecked_with_fact(CResourceFact::own(memory.clone()))
         .unchecked_with_fact(CResourceFact::own(token.clone()))
         .unchecked_with_fact(CResourceFact::own(other_token.clone()))
-        .observable_facts(&Assumptions::new())
+        .observable_facts(&PureFactContext::new())
         .expect("distinct owned resources should compose validly");
 
     let assumptions = facts
         .into_iter()
-        .fold(Assumptions::new(), |assumptions, fact| {
+        .fold(PureFactContext::new(), |assumptions, fact| {
             assumptions.assume_proposition(fact)
         });
     assert!(assumptions.proves(&Proposition::CResourceSeparate {
@@ -571,12 +575,12 @@ fn observable_abstract_resources_use_one_indexed_composition() {
             })
         }));
         let facts = context
-            .observable_facts(&Assumptions::new())
+            .observable_facts(&PureFactContext::new())
             .expect("distinct token resources should compose");
         assert_eq!(facts.len(), 1, "size-{size} projection materialized pairs");
         let assumptions = facts
             .into_iter()
-            .fold(Assumptions::new(), |assumptions, fact| {
+            .fold(PureFactContext::new(), |assumptions, fact| {
                 assumptions.assume_proposition(fact)
             });
         assert!(assumptions.proves(&Proposition::CResourceSeparate {
@@ -604,7 +608,7 @@ fn composite_resource_arguments_respect_proven_pointer_equality() {
         name: "list".to_string(),
         arguments: vec![CValue::Pointer(right_pointer.clone())],
     });
-    let assumptions = Assumptions::new().assume_condition(
+    let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::pointer_equal(left_pointer, right_pointer),
         true,
     );
@@ -631,7 +635,7 @@ fn resource_separation_proves_memory_disjointness() {
     };
     let left = memory_range(base.clone(), 0, 1);
     let right = memory_range(base.clone(), 1, 2);
-    let assumptions = Assumptions::new().assume_proposition(Proposition::CResourceSeparate {
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
         left: CResource::Memory(left),
         right: CResource::Memory(right),
     });
@@ -656,7 +660,7 @@ fn resource_separation_covers_larger_memory_range() {
     let left_second = CResource::Memory(memory_range(base.clone(), 1, 2));
     let left_combined = CResource::Memory(memory_range(base.clone(), 0, 2));
     let right = CResource::Memory(memory_range(base, 10, 11));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CResourceSeparate {
             left: left_first,
             right: right.clone(),
@@ -687,7 +691,7 @@ fn resource_separation_transports_across_equal_memory_ranges() {
     ));
     let equal_resource =
         CResource::Memory(memory_range(equal_data.clone(), 0, equal_length.clone()));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CResourceSeparate {
             left: target_resource.clone(),
             right: original_resource,
@@ -716,7 +720,7 @@ fn resource_contains_projects_separation_to_children() {
     };
     let child = CResource::Memory(memory_range(base.clone(), 0, 1));
     let other = CResource::Memory(memory_range(base.clone(), 1, 2));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CResourceSeparate {
             left: parent.clone(),
             right: other.clone(),
@@ -744,7 +748,7 @@ fn checked_resource_composition_rejects_invalid_state_before_normalizing() {
                 write_element(base.clone(), 0, 1),
                 write_element(base.clone(), 0, 1),
             ],
-            &Assumptions::new(),
+            &PureFactContext::new(),
         )
         .expect_err("duplicate writes must be rejected before normalization");
 

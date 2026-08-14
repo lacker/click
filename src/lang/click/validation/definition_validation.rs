@@ -1359,7 +1359,7 @@ fn collect_resource_fact_reads_from_c_expression(
 fn analyze_resource_fact_read_ownership(
     read: &ResourceFactRead,
     contained: &[ResourceClause],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     memory: &CMemory,
@@ -1469,7 +1469,7 @@ fn resource_fact_read_ownership_error(
 fn evaluated_segment_covers_resource_fact_read(
     segment: &ContractSegment,
     read: &ResourceFactRead,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     values: &BTreeMap<String, CValue>,
     memory: &CMemory,
 ) -> bool {
@@ -1513,7 +1513,7 @@ fn symbolic_segment_covers_index(
     start: &CExpression,
     end: &CExpression,
     index: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     memory: &CMemory,

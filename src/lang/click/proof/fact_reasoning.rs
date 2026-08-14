@@ -53,7 +53,7 @@ pub(super) fn snapshot_bridged_fact_is_available(
 pub(super) fn snapshot_bridged_fact_is_available_under(
     required: &Proposition,
     available: &[Proposition],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     framing: &[ExecutionPureFact],
 ) -> bool {
     let Some((required_condition, candidates)) = snapshot_blind_candidates(required, available)
@@ -103,7 +103,7 @@ fn snapshot_blind_candidates(
 fn snapshot_bridge_proves(
     required_condition: &ConditionTerm,
     candidates: &[ConditionTerm],
-    assumptions: Assumptions,
+    assumptions: PureFactContext,
     framing: &[ExecutionPureFact],
 ) -> bool {
     let assumptions = framing.iter().fold(assumptions, |assumptions, fact| {
@@ -539,7 +539,7 @@ pub(super) fn directly_matching_separation_fact(
 pub(super) fn directly_matching_separation_fact_under(
     required: &Proposition,
     available: &[Proposition],
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<Proposition> {
     let Proposition::CResourceSeparate {
         left: required_left,
@@ -840,7 +840,7 @@ fn normalized_exact_facts_directly_conflict(left: &Proposition, right: &Proposit
 
 pub(super) fn fact_conflicts_with_assumptions(
     fact: &Proposition,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     match fact {
         Proposition::And(left, right) => {
@@ -855,7 +855,9 @@ pub(super) fn fact_conflicts_with_assumptions(
     }
 }
 
-pub(super) fn assumptions_for_direct_fact_transport(propositions: &[Proposition]) -> Assumptions {
+pub(super) fn assumptions_for_direct_fact_transport(
+    propositions: &[Proposition],
+) -> PureFactContext {
     fn collect(proposition: &Proposition, facts: &mut Vec<Proposition>) {
         match proposition {
             Proposition::ConditionIs(_, _)

@@ -479,7 +479,7 @@ pub(super) fn evaluate_witness_tactic_value(
     pre_state: &CState,
     post_state: &CState,
     result: Option<&CValue>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     program_point_states: &ProgramPointStates,
@@ -922,7 +922,7 @@ pub(super) fn prove_value_comparison(
     let assumptions = available_pure_facts
         .iter()
         .cloned()
-        .fold(Assumptions::new(), Assumptions::assume_proposition);
+        .fold(PureFactContext::new(), PureFactContext::assume_proposition);
     assumptions.proves(&proposition).then_some(())
 }
 

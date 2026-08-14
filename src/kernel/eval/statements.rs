@@ -3,7 +3,7 @@ use super::*;
 pub(in crate::kernel) fn execute_c_statement(
     state: &CState,
     statement: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Option<CStatementOutcome> {
     let paths = execute_c_statement_paths(
         state,
@@ -26,7 +26,7 @@ pub(in crate::kernel) fn execute_c_lvalue_assignment_paths(
     state: &CState,
     target: &CExpression,
     value: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let mut paths = Vec::new();
@@ -104,7 +104,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     value: CValue,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CStatementExecutionPath> {
     let mut obligations = obligations;
     let effective_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
@@ -232,7 +232,7 @@ fn execute_c_heap_allocate_paths(
     state: &CState,
     target: &str,
     bytes_expression: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     if state.local_object_type(target) != Some(CType::Int32Pointer) {
@@ -365,7 +365,7 @@ fn execute_c_heap_allocate_paths(
 fn execute_c_heap_free_paths(
     state: &CState,
     expression: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let mut paths = Vec::new();
@@ -549,7 +549,7 @@ fn execute_c_heap_free_paths(
 
 pub(crate) fn resolve_pending_heap_allocations(
     state: &CState,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> CState {
     let pending = state
         .memory
@@ -600,7 +600,7 @@ pub(crate) fn resolve_pending_heap_allocations(
 fn execute_c_return_expression_paths(
     state: &CState,
     expression: &CExpression,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let mut paths = Vec::new();
@@ -688,7 +688,7 @@ fn pending_allocation_outcome_paths(
     pointer: Pointer,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> Vec<CTruthinessPath> {
     let is_null = pointer_is_null_condition(pointer);
     match decide_with_facts(assumptions, &facts, &is_null) {
@@ -740,7 +740,7 @@ fn pending_allocation_outcome_paths(
 pub(in crate::kernel) fn execute_c_statement_paths(
     state: &CState,
     statement: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
@@ -966,7 +966,7 @@ pub(in crate::kernel) fn execute_c_assert_paths(
     state: &CState,
     condition: &CExpression,
     label: Option<&str>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let mut paths = Vec::new();
@@ -1029,7 +1029,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
     condition: &CExpression,
     invariant: &[Proposition],
     body: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
@@ -1110,7 +1110,7 @@ pub(in crate::kernel) fn execute_c_while_body_paths(
     condition: &CExpression,
     invariant: &[Proposition],
     body: &CStatement,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     facts: Vec<ExecutionPureFact>,

@@ -5,7 +5,7 @@ fn heap_allocation_paths() -> Vec<CStatementExecutionPath> {
     execute_c_statement_paths(
         &state,
         &c_heap_allocate("p", 16),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -27,7 +27,7 @@ fn successful_heap_allocation_state() -> CState {
     let Some(CValue::Pointer(pointer)) = pending.locals().get("p") else {
         panic!("allocation should assign a pointer");
     };
-    let assumptions = Assumptions::new().assume_proposition(Proposition::ConditionIs(
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
         ConditionTerm::pointer_equal(pointer.clone(), Pointer::null()),
         false,
     ));
@@ -65,7 +65,7 @@ fn heap_allocate_has_null_or_fresh_uninitialized_outcomes() {
     let read = evaluate_c_expression_paths(
         &success,
         &c_load(c_variable("p")),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &mut ExecutionBudget::default(),
     )
     .expect("heap read should execute");
@@ -85,7 +85,7 @@ fn heap_allocate_has_null_or_fresh_uninitialized_outcomes() {
     };
     let null = resolve_pending_heap_allocations(
         pending,
-        &Assumptions::new().assume_proposition(Proposition::ConditionIs(
+        &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
             ConditionTerm::pointer_equal(pointer.clone(), Pointer::null()),
             true,
         )),
@@ -114,7 +114,7 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
     let paths = execute_c_statement_paths(
         &state,
         &c_heap_allocate("p", 16),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -153,12 +153,12 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
         state.memory(),
         &pending_memory,
         &existing,
-        &Assumptions::new(),
+        &PureFactContext::new(),
     )));
 
     let failed = resolve_pending_heap_allocations(
         pending,
-        &Assumptions::new().assume_proposition(Proposition::ConditionIs(
+        &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
             ConditionTerm::pointer_equal(pending_pointer.clone(), Pointer::null()),
             true,
         )),
@@ -174,13 +174,13 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
         state.memory(),
         failed.memory(),
         &existing,
-        &Assumptions::new(),
+        &PureFactContext::new(),
     )));
     assert_eq!(failed.memory(), state.memory());
 
     let succeeded = resolve_pending_heap_allocations(
         pending,
-        &Assumptions::new().assume_proposition(Proposition::ConditionIs(
+        &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
             ConditionTerm::pointer_equal(pending_pointer.clone(), Pointer::null()),
             false,
         )),
@@ -198,7 +198,7 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
         &pending_memory,
         succeeded.memory(),
         &existing,
-        &Assumptions::new(),
+        &PureFactContext::new(),
     )));
 }
 
@@ -212,12 +212,12 @@ fn successful_heap_allocation_is_fresh_from_every_existing_block() {
     assert!(pointers_proven_distinct(
         &first_pointer,
         &Pointer::null(),
-        &Assumptions::new(),
+        &PureFactContext::new(),
     ));
     assert!(pointers_proven_distinct(
         &first_pointer,
         &CMemory::local_pointer("local"),
-        &Assumptions::new(),
+        &PureFactContext::new(),
     ));
     assert!(pointers_proven_distinct(
         &first_pointer,
@@ -225,14 +225,14 @@ fn successful_heap_allocation_is_fresh_from_every_existing_block() {
             block: PointerBlock::ExternalArgument,
             offset: PointerOffsetTerm::Constant(0),
         },
-        &Assumptions::new(),
+        &PureFactContext::new(),
     ));
 
     let state = first.with_local("q", CValue::Pointer(Pointer::null()));
     let paths = execute_c_statement_paths(
         &state,
         &c_heap_allocate("q", 16),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         // Deliberately reset the generator: existing heap identities still
@@ -254,7 +254,7 @@ fn successful_heap_allocation_is_fresh_from_every_existing_block() {
     };
     let second = resolve_pending_heap_allocations(
         pending,
-        &Assumptions::new().assume_proposition(Proposition::ConditionIs(
+        &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
             ConditionTerm::pointer_equal(pending_pointer.clone(), Pointer::null()),
             false,
         )),
@@ -265,7 +265,7 @@ fn successful_heap_allocation_is_fresh_from_every_existing_block() {
     assert!(pointers_proven_distinct(
         &first_pointer,
         second_pointer,
-        &Assumptions::new(),
+        &PureFactContext::new(),
     ));
 }
 
@@ -275,7 +275,7 @@ fn heap_free_retires_the_complete_block_and_rejects_double_free() {
     let freed = execute_c_statement_paths(
         &success,
         &c_heap_free(c_variable("p")),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -324,7 +324,7 @@ fn heap_free_retires_the_complete_block_and_rejects_double_free() {
     let double = execute_c_statement_paths(
         freed,
         &c_heap_free(c_variable("p")),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -360,8 +360,8 @@ fn consuming_a_whole_range_drops_snapshot_equivalent_prefix_residues() {
         Bitvector32Term::Constant(0),
         length,
     ));
-    let assumptions =
-        Assumptions::new().assume_condition(ConditionTerm::equal(held_start, required_start), true);
+    let assumptions = PureFactContext::new()
+        .assume_condition(ConditionTerm::equal(held_start, required_start), true);
     let remaining = ResourceContext::new()
         .unchecked_with_fact(held)
         .without_fact(&required, &assumptions)
@@ -396,7 +396,7 @@ fn scoped_call_borrows_end_before_free() {
     let paths = execute_c_statement_paths(
         &state,
         &statement,
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &environment,
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         &mut ExecutionBudget::default(),
@@ -431,7 +431,7 @@ fn standalone_view_cannot_authorize_free() {
     let paths = execute_c_statement_paths(
         &state,
         &c_heap_free(c_variable("p")),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -467,7 +467,7 @@ fn persistent_composite_view_blocks_free_locally() {
     let paths = execute_c_statement_paths(
         &state,
         &c_heap_free(c_variable("p")),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -505,7 +505,7 @@ fn separated_persistent_view_survives_free() {
     let paths = execute_c_statement_paths(
         &state,
         &c_heap_free(c_variable("p")),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -550,7 +550,7 @@ fn free_of_external_allocation_preserves_unrelated_external_cells() {
     let paths = execute_c_statement_paths(
         &state,
         &c_heap_free(c_variable("p")),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -587,7 +587,7 @@ fn free_requires_allocation_authority_not_just_write_access() {
     let paths = execute_c_statement_paths(
         &success,
         &c_heap_free(c_variable("p")),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -610,7 +610,7 @@ fn heap_storage_becomes_readable_only_after_a_store() {
     let stored = execute_c_statement_paths(
         &success,
         &c_store(c_variable("p"), c_int32_literal(37)),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -628,7 +628,7 @@ fn heap_storage_becomes_readable_only_after_a_store() {
     let read = evaluate_c_expression_paths(
         stored,
         &c_load(c_variable("p")),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &mut ExecutionBudget::default(),
     )
     .expect("initialized heap read should execute");
@@ -647,7 +647,7 @@ fn free_null_needs_no_allocation_resources() {
     let paths = execute_c_statement_paths(
         &state,
         &c_heap_free(c_variable("p")),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -693,7 +693,7 @@ fn free_preserves_a_separate_recursive_tail_with_the_same_symbolic_block() {
     let paths = execute_c_statement_paths(
         &state,
         &c_heap_free(c_variable("p")),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -796,7 +796,7 @@ fn guarded_opaque_call_footprints_skip_only_inactive_segments() {
     let null_paths = execute_c_statement_paths(
         &null_state,
         &c_call_assign("result", "item_destroy", vec![c_int32_literal(0)]),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &environment,
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         &mut ExecutionBudget::default(),
@@ -823,7 +823,7 @@ fn guarded_opaque_call_footprints_skip_only_inactive_segments() {
     let nonnull_paths = execute_c_statement_paths(
         &nonnull_state,
         &c_call_assign("result", "item_destroy", vec![c_pointer_value(nonnull)]),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &environment,
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         &mut ExecutionBudget::default(),
@@ -889,7 +889,7 @@ fn interior_free_and_store_after_free_are_rejected() {
     let interior = execute_c_statement_paths(
         &success,
         &c_heap_free(c_add(c_variable("p"), c_int32_literal(1))),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -908,7 +908,7 @@ fn interior_free_and_store_after_free_are_rejected() {
     let freed = execute_c_statement_paths(
         &success,
         &c_heap_free(c_variable("p")),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -926,7 +926,7 @@ fn interior_free_and_store_after_free_are_rejected() {
     let store = execute_c_statement_paths(
         freed,
         &c_store(c_variable("p"), c_int32_literal(1)),
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -948,7 +948,7 @@ fn returning_malloc_result_resolves_null_and_success_outcomes() {
     let paths = execute_c_statement_paths(
         &state,
         &statement,
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
@@ -1000,7 +1000,7 @@ fn unreturned_unresolved_malloc_result_cannot_cross_a_return() {
     let paths = execute_c_statement_paths(
         &state,
         &statement,
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),

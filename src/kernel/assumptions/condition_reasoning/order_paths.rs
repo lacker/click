@@ -1,6 +1,6 @@
 use super::*;
 
-impl Assumptions {
+impl PureFactContext {
     pub(in crate::kernel) fn decide_from_order_facts(
         &self,
         condition: &ConditionTerm,

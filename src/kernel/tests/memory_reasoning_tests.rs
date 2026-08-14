@@ -14,8 +14,8 @@ fn structural_range_offset_precedes_proof_aware_pointer_resolution() {
         0,
         1,
     );
-    let assumptions = Assumptions::new();
-    Assumptions::reset_proof_aware_pointer_index_queries();
+    let assumptions = PureFactContext::new();
+    PureFactContext::reset_proof_aware_pointer_index_queries();
 
     assert!(assumptions.range_covered_by_fact_range(
         &required,
@@ -23,13 +23,13 @@ fn structural_range_offset_precedes_proof_aware_pointer_resolution() {
         &Bitvector32Term::Constant(0),
         &Bitvector32Term::Constant(8),
     ));
-    assert_eq!(Assumptions::proof_aware_pointer_index_queries(), 0);
+    assert_eq!(PureFactContext::proof_aware_pointer_index_queries(), 0);
 }
 
 #[test]
 fn safe_positive_subtraction_is_below_its_base() {
     let x = Bitvector32Term::Variable(Variable(87));
-    let assumptions = Assumptions::new().assume_condition(
+    let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(1)),
         true,
     );
@@ -65,7 +65,7 @@ fn mutable_frame_proves_unwritten_load_equal_across_stack_locals() {
             byte_width: 4,
         },
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_greater_equal(i_bits, Bitvector32Term::Constant(1)),
             true,
@@ -108,7 +108,7 @@ fn mutable_frame_transports_load_across_certified_effect_chain() {
     let before = CMemory::new();
     let middle = before.clone().store(first_write.clone(), int32(1));
     let after = middle.clone().store(second_write.clone(), int32(2));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before: before.clone(),
             after: middle.clone(),
@@ -147,7 +147,7 @@ fn loadability_transports_across_long_certified_effect_chain() {
     };
     let before = CMemory::new();
     let mut after = before.clone();
-    let mut assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryLoadable {
+    let mut assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
         memory: before,
         base: loadable.clone(),
         bytes: Bitvector32Term::Constant(4),
@@ -204,7 +204,7 @@ fn target_directed_transport_preserves_pointer_field_across_disjoint_buffer_writ
         ),
         4,
     );
-    let assumptions = Assumptions::new().assume_proposition(Proposition::CResourceSeparate {
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
         left: CResource::Memory(memory_range(field_pointer, 0, 1)),
         right: CResource::Memory(memory_range(written_pointer, 0, 1)),
     });
@@ -240,7 +240,7 @@ fn unrelated_external_cell_store_preserves_memory_load_with_stack_temporary() {
         )),
     );
 
-    assert!(Assumptions::new().proves(&Proposition::ConditionIs(
+    assert!(PureFactContext::new().proves(&Proposition::ConditionIs(
         ConditionTerm::equal(
             Bitvector32Term::MemoryLoad(
                 crate::kernel::intern_c_memory(current_memory),
@@ -278,8 +278,9 @@ fn target_directed_transport_preserves_one_old_load_spelling() {
     );
     let target = Proposition::ConditionIs(ConditionTerm::equal(current_load, old_load), true);
 
-    let theorem = prove_c_condition_fact_target_transport(&source, &target, &Assumptions::new())
-        .expect("the disjoint store should preserve one side of the target equality");
+    let theorem =
+        prove_c_condition_fact_target_transport(&source, &target, &PureFactContext::new())
+            .expect("the disjoint store should preserve one side of the target equality");
     assert_eq!(
         theorem.proposition(),
         &Proposition::Implies(Box::new(source), Box::new(target))
@@ -298,7 +299,7 @@ fn exact_changed_cell_frame_precedes_abstract_effect_search() {
     };
     let before = CMemory::new().with_block("call-havoc:0", 0);
     let after = before.clone().store(materialized.clone(), int32(7));
-    let assumptions = Assumptions::new().assume_proposition(Proposition::CResourceSeparate {
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
         left: CResource::Memory(memory_range(queried.clone(), 0, 1)),
         right: CResource::Memory(memory_range(materialized, 0, 1)),
     });
@@ -324,7 +325,7 @@ fn exact_separation_resolves_contained_symbolic_ranges_without_general_search() 
     let length = Bitvector32Term::Variable(Variable(41_002));
     let owner_range = memory_range(owner.clone(), 0, 4);
     let data_range = memory_range(data.clone(), 0, length.clone());
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CResourceSeparate {
             left: CResource::Memory(owner_range.clone()),
             right: CResource::Memory(data_range.clone()),
@@ -404,10 +405,10 @@ fn direct_resource_match_uses_exact_field_load_equalities() {
     assert!(!c_resources_directly_match(
         &loaded,
         &named,
-        &Assumptions::new()
+        &PureFactContext::new()
     ));
 
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::pointer_offset_equal(loaded_data.offset, named_data.offset),
             true,
@@ -441,7 +442,7 @@ fn direct_composite_resource_match_replays_pointer_load_across_block_declaration
     assert!(c_resources_directly_match(
         &resource_at(entry),
         &resource_at(later),
-        &Assumptions::new(),
+        &PureFactContext::new(),
     ));
 }
 
@@ -455,10 +456,11 @@ fn memory_separation_candidates_ignore_unrelated_propositions() {
         block: "indexed-right".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let mut assumptions = Assumptions::new().assume_proposition(Proposition::CResourceSeparate {
-        left: CResource::Memory(memory_range(left.clone(), 0, 1)),
-        right: CResource::Memory(memory_range(right.clone(), 0, 1)),
-    });
+    let mut assumptions =
+        PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(memory_range(left.clone(), 0, 1)),
+            right: CResource::Memory(memory_range(right.clone(), 0, 1)),
+        });
     for index in 0..128 {
         assumptions = assumptions.assume_proposition(Proposition::ConditionIs(
             ConditionTerm::equal(
@@ -475,11 +477,11 @@ fn memory_separation_candidates_ignore_unrelated_propositions() {
     );
     assert!(assumptions.pointers_proven_disjoint_by_range(&left, &right));
 
-    Assumptions::reset_memory_separation_candidate_checks();
+    PureFactContext::reset_memory_separation_candidate_checks();
     assert!(
         assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution(&left, &right)
     );
-    assert_eq!(Assumptions::memory_separation_candidate_checks(), 1);
+    assert_eq!(PureFactContext::memory_separation_candidate_checks(), 1);
 }
 
 #[test]
@@ -489,7 +491,7 @@ fn memory_loadable_candidates_ignore_unrelated_pointer_blocks() {
         block: "indexed-loadable-target".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let mut assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryLoadable {
+    let mut assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
         memory: memory.clone(),
         base: target.clone(),
         bytes: Bitvector32Term::Constant(8),
@@ -527,7 +529,7 @@ fn memory_loadable_query_ignores_same_block_unrelated_pointer_shapes() {
         .into_iter()
         .map(|size| {
             let mut assumptions =
-                Assumptions::new().assume_proposition(Proposition::CMemoryLoadable {
+                PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
                     memory: memory.clone(),
                     base: target.clone(),
                     bytes: Bitvector32Term::Constant(8),
@@ -576,7 +578,7 @@ fn equivalent_memory_load_order_facts_can_be_inconsistent() {
     );
     let stack_p0 =
         Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(stack_memory), Box::new(p0));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_than(old_p0.clone(), stack_p0.clone()),
             true,
@@ -616,7 +618,7 @@ fn equivalent_condition_facts_with_different_truth_values_are_inconsistent() {
     );
     let right_b =
         Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(memory_b), Box::new(p1));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(ConditionTerm::signed_less_than(left_a, right_a), true)
         .assume_condition(ConditionTerm::signed_less_than(left_b, right_b), false);
 
@@ -657,7 +659,7 @@ fn disjoint_range_proves_mutable_frame_cell_distinct() {
         Box::new(j_bits.clone()),
         Box::new(Bitvector32Term::Constant(1)),
     );
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_than(i_bits.clone(), i_plus_one.clone()),
             true,
@@ -711,7 +713,7 @@ fn disjoint_ranges_frame_metadata_across_symbolic_index_store() {
     let written_cell = data.offset_by_int32_elements(index.clone());
     let before_memory = CMemory::new();
     let after_memory = before_memory.clone().store(written_cell.clone(), int32(7));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone()),
             true,
@@ -788,7 +790,7 @@ fn equivalent_field_derived_bases_frame_symbolic_index_store() {
     let after_memory = execution_memory
         .clone()
         .store(written_cell.clone(), int32(7));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone()),
             true,
@@ -866,7 +868,7 @@ fn direct_transport_composes_framed_loads_inside_an_indexed_address() {
         ),
         true,
     );
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(ConditionTerm::signed_less_than(index, length), true)
         .assume_proposition(Proposition::CResourceSeparate {
             left: CResource::Memory(CMemoryRange::new(
@@ -923,7 +925,7 @@ fn direct_transport_rewrites_loads_inside_pointer_equality() {
     );
     let after = before.clone().with_block("local:result", 8);
 
-    let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &Assumptions::new())
+    let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &PureFactContext::new())
         .expect("an unrelated local-memory change should transport a pointer-valued field load");
     let Proposition::Implies(source, target) = theorem.proposition() else {
         panic!("transport theorem must be an implication");
@@ -965,7 +967,7 @@ fn direct_transport_rewrites_loads_inside_signed_add_overflow_guard() {
     );
     let after = before.clone().with_block("local:result", 4);
 
-    let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &Assumptions::new())
+    let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &PureFactContext::new())
         .expect("an unrelated local allocation should transport an arithmetic definedness guard");
     let Proposition::Implies(source, target) = theorem.proposition() else {
         panic!("transport theorem must be an implication");
@@ -988,7 +990,7 @@ fn pointer_equality_composes_across_same_block_offset_equalities() {
         block: PointerBlock::Symbolic(Variable(122)),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::pointer_offset_equal(
                 final_pointer.offset.clone(),
@@ -1031,7 +1033,7 @@ fn explicit_separation_contains_one_element_under_a_positive_length() {
         Bitvector32Term::Constant(6),
     );
     let data_range = CMemoryRange::new(data, Bitvector32Term::Constant(0), length.clone());
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), length),
             true,
@@ -1068,7 +1070,7 @@ fn direct_separation_contains_zero_under_a_constant_lower_bound() {
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(105)), 4),
     };
     let length = Bitvector32Term::Variable(Variable(106));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
             true,
@@ -1109,7 +1111,9 @@ fn constant_field_offset_is_disjoint_from_earlier_constant_range() {
     );
     let third_field = base.offset_by_int32_elements(Bitvector32Term::Constant(2));
 
-    assert!(Assumptions::new().ranges_proven_disjoint_from_pointer(&[first_field], &third_field));
+    assert!(
+        PureFactContext::new().ranges_proven_disjoint_from_pointer(&[first_field], &third_field)
+    );
 }
 
 #[test]
@@ -1152,7 +1156,7 @@ fn bounded_separation_uses_order_fact_across_equivalent_snapshots() {
         Bitvector32Term::Constant(4),
     );
     let owned_data_range = CMemoryRange::new(data.clone(), Bitvector32Term::Constant(0), query_cap);
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(ConditionTerm::signed_less_equal(fact_len, fact_cap), true)
         .assume_proposition(Proposition::CResourceSeparate {
             left: CResource::Memory(owner_range),
@@ -1187,7 +1191,7 @@ fn covering_disjoint_fact_handles_shifted_mutable_range() {
     };
     let src_cell = src_base.offset_by_int32_elements(k_bits.clone());
     let shifted_dst = dst_base.offset_by_int32_elements(Bitvector32Term::Constant(1));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_greater_equal(k_bits.clone(), Bitvector32Term::Constant(0)),
             true,
@@ -1253,15 +1257,16 @@ fn atomic_condition_fact_transport_uses_certified_effect_summary() {
         ),
         true,
     );
-    let assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryEffectSummary {
-        before: before.clone(),
-        after: after.clone(),
-        mutable_ranges: vec![CMemoryRange::new(
-            mutated,
-            Bitvector32Term::Constant(0),
-            Bitvector32Term::Constant(1),
-        )],
-    });
+    let assumptions =
+        PureFactContext::new().assume_proposition(Proposition::CMemoryEffectSummary {
+            before: before.clone(),
+            after: after.clone(),
+            mutable_ranges: vec![CMemoryRange::new(
+                mutated,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )],
+        });
 
     let theorem = prove_c_condition_fact_transport(&fact, &after, &assumptions)
         .expect("the framed load should transport");
@@ -1303,7 +1308,7 @@ fn memory_load_equality_does_not_ignore_loop_havoc_identity() {
     );
 
     assert!(
-        !Assumptions::new().proves(&equality),
+        !PureFactContext::new().proves(&equality),
         "a havoced snapshot requires explicit frame evidence"
     );
 }
@@ -1335,7 +1340,7 @@ fn atomic_condition_fact_transport_ignores_distinct_materialized_cell() {
         true,
     );
 
-    let theorem = prove_c_condition_fact_transport(&fact, &after, &Assumptions::new())
+    let theorem = prove_c_condition_fact_transport(&fact, &after, &PureFactContext::new())
         .expect("a distinct materialized cell must not change the framed load");
     assert_eq!(
         theorem.proposition(),
@@ -1383,15 +1388,16 @@ fn atomic_condition_fact_transport_preserves_pointer_offset_equality() {
         ),
         true,
     );
-    let assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryEffectSummary {
-        before,
-        after: after.clone(),
-        mutable_ranges: vec![CMemoryRange::new(
-            mutated,
-            Bitvector32Term::Constant(0),
-            Bitvector32Term::Constant(1),
-        )],
-    });
+    let assumptions =
+        PureFactContext::new().assume_proposition(Proposition::CMemoryEffectSummary {
+            before,
+            after: after.clone(),
+            mutable_ranges: vec![CMemoryRange::new(
+                mutated,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )],
+        });
 
     let theorem = prove_c_condition_fact_transport(&fact, &after, &assumptions)
         .expect("the framed pointer-valued field should transport");
@@ -1459,7 +1465,7 @@ fn equality_fact_matching_transports_both_pointer_offset_endpoints() {
         ),
         true,
     );
-    let assumptions = Assumptions::new().assume_proposition(fact);
+    let assumptions = PureFactContext::new().assume_proposition(fact);
 
     assert!(assumptions.proves(&target));
 }
@@ -1497,7 +1503,7 @@ fn memory_load_equality_combines_equal_pointer_base_and_zero_index() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(data.clone(), 4),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::ConditionIs(
             ConditionTerm::pointer_offset_equal(
                 PointerOffsetTerm::scale_int32(data_load, 4),
@@ -1530,7 +1536,7 @@ fn pointer_offset_equality_combines_equal_base_and_zero_index() {
     let index = Bitvector32Term::Variable(Variable(92));
     let base_offset = PointerOffsetTerm::scale_int32(base, 4);
     let target_offset = PointerOffsetTerm::scale_int32(target, 4);
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::pointer_offset_equal(base_offset.clone(), target_offset.clone()),
             true,
@@ -1571,7 +1577,7 @@ fn atomic_condition_fact_transport_uses_exact_separate_range() {
         ),
         true,
     );
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CResourceSeparate {
             left: CResource::Memory(CMemoryRange::new(
                 left.clone(),
@@ -1640,7 +1646,7 @@ fn direct_condition_transport_uses_relative_separate_range() {
         ),
         true,
     );
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_than(
                 data_index_from_owner.clone(),
@@ -1718,7 +1724,7 @@ fn direct_condition_transport_uses_indexed_relative_separate_range() {
         ),
         true,
     );
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
             true,
@@ -1787,7 +1793,7 @@ fn condition_fact_transport_preserves_arithmetic_structure() {
         true,
     );
 
-    let theorem = prove_c_condition_fact_transport(&fact, &after, &Assumptions::new())
+    let theorem = prove_c_condition_fact_transport(&fact, &after, &PureFactContext::new())
         .expect("arithmetic around a framed load should transport structurally");
     assert_eq!(
         theorem.proposition(),
@@ -1822,7 +1828,7 @@ fn adjacent_disjoint_fact_ranges_cover_larger_disjoint_goal() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(88)), 4),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CMemoryDisjoint {
             left_base: p_base.clone(),
             left_start: Bitvector32Term::Constant(0),
@@ -1867,14 +1873,18 @@ fn constant_non_overlapping_ranges_on_one_base_are_separate() {
         Bitvector32Term::Constant(4),
     ));
 
-    assert!(Assumptions::new().proves(&Proposition::CResourceSeparate {
-        left: left.clone(),
-        right: right.clone(),
-    }));
-    assert!(Assumptions::new().proves(&Proposition::CResourceSeparate {
-        left: right,
-        right: left,
-    }));
+    assert!(
+        PureFactContext::new().proves(&Proposition::CResourceSeparate {
+            left: left.clone(),
+            right: right.clone(),
+        })
+    );
+    assert!(
+        PureFactContext::new().proves(&Proposition::CResourceSeparate {
+            left: right,
+            right: left,
+        })
+    );
 }
 
 #[test]
@@ -1896,7 +1906,7 @@ fn symbolic_disjoint_fact_proves_itself() {
         right_start: Bitvector32Term::Constant(0),
         right_end: n_bits,
     };
-    let assumptions = Assumptions::new().assume_proposition(fact.clone());
+    let assumptions = PureFactContext::new().assume_proposition(fact.clone());
 
     assert!(assumptions.proves(&fact));
 }
@@ -1929,7 +1939,7 @@ fn while_invariant_rule_proves_symbolic_loop_exit_fact() {
     let assumptions = invariant
         .iter()
         .cloned()
-        .fold(Assumptions::new(), Assumptions::assume_proposition)
+        .fold(PureFactContext::new(), PureFactContext::assume_proposition)
         .assume_condition(
             ConditionTerm::signed_less_equal(
                 n_bits.clone(),
@@ -2002,7 +2012,7 @@ fn while_invariant_rule_ignores_what_the_body_does_to_the_invariant() {
     let assumptions = invariant
         .iter()
         .cloned()
-        .fold(Assumptions::new(), Assumptions::assume_proposition)
+        .fold(PureFactContext::new(), PureFactContext::assume_proposition)
         .assume_condition(
             ConditionTerm::signed_less_equal(
                 n_bits.clone(),
@@ -2086,7 +2096,7 @@ fn same_block_frame_uses_symbolic_offset_inequality() {
     let stored_pointer = base.offset_by_int32_elements(i_bits);
     let loaded_pointer = base.offset_by_int32_elements(j_bits);
     let memory = CMemory::new().store(loaded_pointer.clone(), int32(42));
-    let assumptions = Assumptions::new().assume_condition(
+    let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::pointer_offset_equal(
             stored_pointer.offset.clone(),
             loaded_pointer.offset.clone(),
@@ -2127,7 +2137,7 @@ fn same_symbolic_base_constant_offsets_are_distinct() {
     assert!(pointers_proven_distinct(
         &first,
         &second,
-        &Assumptions::new()
+        &PureFactContext::new()
     ));
 }
 
@@ -2135,7 +2145,7 @@ fn same_symbolic_base_constant_offsets_are_distinct() {
 fn additive_equality_cancellation_feeds_range_contradictions() {
     let base = Bitvector32Term::Variable(Variable(91));
     let index = Bitvector32Term::Variable(Variable(92));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::equal(Bitvector32Term::add(base.clone(), index.clone()), base),
             true,
@@ -2152,7 +2162,7 @@ fn additive_equality_cancellation_feeds_range_contradictions() {
 fn equality_facts_close_signed_order_contradiction_cycles() {
     let left = Bitvector32Term::Variable(Variable(193));
     let right = Bitvector32Term::Variable(Variable(194));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(ConditionTerm::equal(left.clone(), right.clone()), true)
         .assume_condition(
             ConditionTerm::signed_less_than(left, Bitvector32Term::Constant(1)),
@@ -2194,7 +2204,7 @@ fn separation_refutes_an_alias_guard_exactly_when_the_index_is_in_range() {
         PointerOffsetTerm::scale_int32(index.clone(), 4),
     );
     let capacity_field = PointerOffsetTerm::add(owner_offset, PointerOffsetTerm::Constant(4));
-    let unbounded = Assumptions::new()
+    let unbounded = PureFactContext::new()
         .assume_proposition(Proposition::CResourceSeparate {
             left: CResource::Memory(memory_range(owner, 1, 2)),
             right: CResource::Memory(memory_range(data_base, 0, capacity.clone())),
@@ -2231,7 +2241,7 @@ fn an_assumed_upper_bound_splits_a_goal_at_its_final_index() {
         ConditionTerm::signed_less_equal(index.clone(), bound.clone()),
         true,
     );
-    let context = Assumptions::new().assume_condition(
+    let context = PureFactContext::new().assume_condition(
         ConditionTerm::signed_less_than(
             index.clone(),
             Bitvector32Term::add(bound.clone(), Bitvector32Term::Constant(1)),
@@ -2248,7 +2258,7 @@ fn an_assumed_upper_bound_splits_a_goal_at_its_final_index() {
     ));
     assert!(derivation.replay(&context));
     // Without the bound there is no split to license and nothing to prove.
-    let unbounded = Assumptions::new();
+    let unbounded = PureFactContext::new();
     assert!(!derivation.replay(&unbounded));
     assert!(unbounded.derive_proposition(&goal).is_none());
 }
@@ -2256,7 +2266,7 @@ fn an_assumed_upper_bound_splits_a_goal_at_its_final_index() {
 #[test]
 fn equality_to_constant_feeds_signed_order_decisions() {
     let value = Bitvector32Term::Variable(Variable(93));
-    let assumptions = Assumptions::new().assume_condition(
+    let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::equal(value.clone(), Bitvector32Term::Constant(1)),
         true,
     );
@@ -2346,12 +2356,12 @@ fn count_shaped_range_fold_split_is_proven_equal() {
     // holds for lo <= mid <= hi. Without that ordering it is unsound
     // (half-open ranges make an out-of-order mid over- or under-count),
     // so the rule must not fire on unconstrained bounds.
-    assert!(!Assumptions::new().proves(&Proposition::ConditionIs(
+    assert!(!PureFactContext::new().proves(&Proposition::ConditionIs(
         ConditionTerm::equal(whole.clone(), split.clone()),
         true,
     )));
 
-    let ordered = Assumptions::new()
+    let ordered = PureFactContext::new()
         .assume_condition(ConditionTerm::signed_less_equal(lo, mid.clone()), true)
         .assume_condition(ConditionTerm::signed_less_equal(mid, hi), true);
     assert!(ordered.proves(&Proposition::ConditionIs(
@@ -2380,11 +2390,11 @@ fn symbolic_store_invalidates_only_possible_aliasing_cells() {
         .store(concrete_cell.clone(), int32(42));
 
     let aliased = memory
-        .without_possible_aliasing_cells(&symbolic_cell, &Assumptions::new())
+        .without_possible_aliasing_cells(&symbolic_cell, &PureFactContext::new())
         .store(symbolic_cell.clone(), int32(7));
     assert_eq!(aliased.known_value(&concrete_cell), None);
 
-    let distinct_assumptions = Assumptions::new().assume_condition(
+    let distinct_assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::equal(i_bits, Bitvector32Term::Constant(1)),
         false,
     );
@@ -2404,7 +2414,7 @@ fn memory_resolution_alias_check_uses_explicit_separation() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(91)), 4),
     };
-    let assumptions = Assumptions::new().assume_proposition(Proposition::CResourceSeparate {
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
         left: CResource::Memory(memory_range(left_base.clone(), 0, 4)),
         right: CResource::Memory(memory_range(right_base.clone(), 0, 4)),
     });
@@ -2425,7 +2435,7 @@ fn memory_resolution_alias_check_uses_explicit_separation() {
         Bitvector32Term::Variable(Variable(90)),
     );
     let normalized_assumptions =
-        Assumptions::new().assume_proposition(Proposition::CResourceSeparate {
+        PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
             left: CResource::Memory(memory_range(left_base.clone(), 0, 4)),
             right: CResource::Memory(memory_range(
                 left_base.clone(),
@@ -2456,12 +2466,12 @@ fn memory_resolution_uses_compact_resource_composition_with_shallow_equalities()
         .unchecked_with_fact(CResourceFact::own_memory(left_range.clone()))
         .unchecked_with_fact(CResourceFact::own_memory(right_range));
     let composition = context
-        .observable_facts(&Assumptions::new())
+        .observable_facts(&PureFactContext::new())
         .expect("the two owned ranges should compose")
         .into_iter()
         .find(|fact| matches!(fact, Proposition::CResourceComposition(_)))
         .expect("multi-owner contexts should expose one compact authority");
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(composition)
         .assume_condition(
             ConditionTerm::equal(query_left_index.clone(), member_left_index),
@@ -2502,12 +2512,12 @@ fn compact_composition_projects_symbolic_separation_without_pair_facts() {
         .unchecked_with_fact(CResourceFact::own_memory(prefix.clone()))
         .unchecked_with_fact(CResourceFact::own_memory(suffix.clone()));
     let composition = context
-        .observable_facts(&Assumptions::new())
+        .observable_facts(&PureFactContext::new())
         .expect("the two owned ranges should compose")
         .into_iter()
         .find(|fact| matches!(fact, Proposition::CResourceComposition(_)))
         .expect("multi-owner contexts should expose one compact authority");
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(composition)
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), len.clone()),
@@ -2573,7 +2583,7 @@ fn memory_resolution_alias_check_uses_exact_transitive_range_bounds() {
     let index = Bitvector32Term::Variable(Variable(94));
     let length = Bitvector32Term::Variable(Variable(95));
     let capacity = Bitvector32Term::Variable(Variable(96));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CResourceSeparate {
             left: CResource::Memory(memory_range(owner.clone(), 0, 4)),
             right: CResource::Memory(memory_range(data.clone(), 0, capacity.clone())),
@@ -2652,7 +2662,7 @@ fn memory_resolution_alias_check_uses_strict_indices_across_equal_loaded_bases()
             PointerOffsetTerm::scale_int32(length.clone(), 4),
         ),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(ConditionTerm::equal(data_after, data_before), true)
         .assume_condition(ConditionTerm::signed_less_than(index, length), true);
 
@@ -2694,7 +2704,7 @@ fn memory_resolution_alias_check_transports_unchanged_field_loads() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(data_after, 4),
     };
-    let assumptions = Assumptions::new().assume_condition(
+    let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::equal(zero_index, Bitvector32Term::Constant(0)),
         true,
     );
@@ -2747,7 +2757,7 @@ fn memory_resolution_separation_transports_unchanged_range_base_loads() {
             PointerOffsetTerm::scale_int32(index.clone(), 4),
         ),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CResourceSeparate {
             left: CResource::Memory(memory_range(owner.clone(), 0, 4)),
             right: CResource::Memory(CMemoryRange::new(
@@ -2810,7 +2820,7 @@ fn incremented_materialized_index_transports_its_nonnegative_bound() {
     );
     let incremented = Bitvector32Term::add(materialized_index, Bitvector32Term::Constant(1));
     let upper = Bitvector32Term::Variable(Variable(932));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), old_len.clone()),
             true,
@@ -2864,7 +2874,7 @@ fn assumptions_resolve_materialized_symbolic_memory_load_aliases() {
             });
 
     for (index, pointer) in src_pointers.into_iter().enumerate() {
-        let assumptions = Assumptions::new()
+        let assumptions = PureFactContext::new()
             .assume_condition(
                 ConditionTerm::pointer_offset_equal(
                     symbolic_src.offset.clone(),
@@ -2986,7 +2996,7 @@ fn assumptions_reject_forall_based_on_a_shadowed_materialized_load_index() {
         )),
     );
 
-    assert!(!Assumptions::new().proves(&proposition));
+    assert!(!PureFactContext::new().proves(&proposition));
 }
 
 #[test]
@@ -3081,5 +3091,5 @@ fn assumptions_reject_forall_based_on_a_shadowed_prefix_index() {
         )),
     );
 
-    assert!(!Assumptions::new().proves(&proposition));
+    assert!(!PureFactContext::new().proves(&proposition));
 }

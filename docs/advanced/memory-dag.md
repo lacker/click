@@ -76,7 +76,7 @@ arm, restoring the pre-arc path exactly. Default on; the A/B handle.
    against the certified fact. Cleared `verifies_old_memory_loop_
    invariant` (un-ignored) and `fill_tail_keeps_first` (de-quarantined).
 4. **(3) Two closer fixes**, neither a DAG consumer:
-   `alias_guard_refuted_by_separation` in `Assumptions::is_inconsistent`
+   `alias_guard_refuted_by_separation` in `PureFactContext::is_inconsistent`
    (an assumed `PointerOffsetEqual(a, b)` contradicts recorded
    separation putting a and b in disjoint ranges of one block — uses
    plain `pointer_in_range`, NOT the memory-resolution variant, which
@@ -154,7 +154,7 @@ byte-for-byte; unscoped enabling broke owned-string's later functions
 available source fact") and drifted Return-value spellings through
 shared-fuel exhaustion. The power is therefore gated behind
 `with_extended_dag_bridging`, entered ONLY by
-`Assumptions::proves_memory_loadable`; everywhere else the new edges
+`PureFactContext::proves_memory_loadable`; everywhere else the new edges
 look exactly like the pre-arc absence of an edge. Fuel discipline
 matters for the same reason: the hop distinctness runs under
 `with_isolated_memory_resolution_fuel` so it cannot drain the
@@ -248,6 +248,6 @@ marker blocks — that would launder freshness) and `CellsForgotten`
 `without_cell` prune must never record one). These connected the
 previously disjoint DAG components. The extended bridging power that
 uses them is scoped via `with_extended_dag_bridging` to
-`Assumptions::proves_memory_loadable` only — enabling it globally
+`PureFactContext::proves_memory_loadable` only — enabling it globally
 measurably changes certified spellings and simp case-split structure
 elsewhere.

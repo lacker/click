@@ -26,7 +26,7 @@ fn exact_contradiction_lookup_scales_near_linearly() {
     let samples = [16, 32, 64, 128]
         .into_iter()
         .map(|size| {
-            let mut assumptions = Assumptions::new();
+            let mut assumptions = PureFactContext::new();
             for index in 0..size {
                 assumptions = assumptions.assume_condition(
                     ConditionTerm::equal(
@@ -65,7 +65,7 @@ fn exact_contradiction_lookup_scales_near_linearly() {
 #[test]
 fn equality_graph_queries_share_one_condition_fact_index_build() {
     let root = Bitvector32Term::Variable(Variable(210_000));
-    let mut assumptions = Assumptions::new();
+    let mut assumptions = PureFactContext::new();
     let mut connected = Vec::new();
     for index in 0..32 {
         let term = Bitvector32Term::Variable(Variable(210_001 + index));
@@ -84,14 +84,14 @@ fn equality_graph_queries_share_one_condition_fact_index_build() {
     }
     let expected_visits = assumptions.condition_facts.len();
     let _scope = assumptions.enter_id_scope();
-    Assumptions::reset_bitvector_equality_index_fact_visits();
+    PureFactContext::reset_bitvector_equality_index_fact_visits();
 
     for term in &connected {
         assert!(assumptions.bitvector_terms_equal_from_facts(&root, term));
     }
 
     assert_eq!(
-        Assumptions::bitvector_equality_index_fact_visits(),
+        PureFactContext::bitvector_equality_index_fact_visits(),
         expected_visits,
         "distinct equality queries must share one index build instead of rescanning ambient facts"
     );
@@ -814,7 +814,7 @@ fn int32_lt_le_transitive_axiom_has_the_exact_implications() {
 
 #[test]
 fn proposition_derivation_honors_active_deadline() {
-    let assumptions = Assumptions::new();
+    let assumptions = PureFactContext::new();
     let proposition = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
     assert!(assumptions.derive_proposition(&proposition).is_some());
     assert!(
@@ -848,7 +848,7 @@ fn strict_reverse_order_derives_a_false_comparison() {
         true,
     );
     let target = Proposition::ConditionIs(ConditionTerm::signed_less_than(left, right), false);
-    let assumptions = Assumptions::new().assume_proposition(reverse.clone());
+    let assumptions = PureFactContext::new().assume_proposition(reverse.clone());
     let derivation = assumptions
         .derive_proposition(&target)
         .expect("a strict reverse order should prove the comparison false");
@@ -875,7 +875,7 @@ fn signed_less_equal_and_inequality_derive_strict_order() {
     let unequal =
         Proposition::ConditionIs(ConditionTerm::equal(left.clone(), right.clone()), false);
     let strict = Proposition::ConditionIs(ConditionTerm::signed_less_than(left, right), true);
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(less_equal)
         .assume_proposition(unequal);
 
@@ -893,7 +893,7 @@ fn condition_search_skips_irrelevant_implication_antecedents() {
         Bitvector32Term::Variable(Variable(9_004)),
     );
     let true_fact = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::Implies(
             Box::new(true_fact.clone()),
             Box::new(Proposition::ConditionIs(unrelated_condition, true)),
@@ -903,10 +903,10 @@ fn condition_search_skips_irrelevant_implication_antecedents() {
             Box::new(Proposition::ConditionIs(target_condition.clone(), true)),
         ));
 
-    Assumptions::reset_condition_implication_antecedent_checks();
+    PureFactContext::reset_condition_implication_antecedent_checks();
     assert!(assumptions.proves(&Proposition::ConditionIs(target_condition, true)));
     assert_eq!(
-        Assumptions::condition_implication_antecedent_checks(),
+        PureFactContext::condition_implication_antecedent_checks(),
         1,
         "only an implication whose conclusion can establish the target should inspect its antecedent"
     );
@@ -915,7 +915,7 @@ fn condition_search_skips_irrelevant_implication_antecedents() {
 #[test]
 fn merging_required_obligations_preserves_the_certification_frontier() {
     let value = Bitvector32Term::Variable(Variable(9_010));
-    let assumptions = Assumptions::new().assume_proposition(Proposition::ConditionIs(
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
         ConditionTerm::equal(value.clone(), Bitvector32Term::Constant(1)),
         true,
     ));
@@ -985,7 +985,7 @@ fn condition_fact_matching_ignores_unrelated_local_memory() {
         ),
         true,
     );
-    let assumptions = Assumptions::new().assume_proposition(fact);
+    let assumptions = PureFactContext::new().assume_proposition(fact);
 
     assert_replayable_derivation(&assumptions, &target);
 }
@@ -1011,7 +1011,7 @@ fn bounded_order_replay_ignores_unrelated_local_memory() {
             Box::new(pointer.clone()),
         )
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::equal(load(&fact_memory, &position), Bitvector32Term::Constant(0)),
             true,
@@ -1058,7 +1058,7 @@ fn equality_chains_across_observationally_equivalent_memory_loads() {
     );
     let after_load =
         Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(after), Box::new(owner));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::equal(before_materialized_load, Bitvector32Term::Constant(1)),
             true,
@@ -1092,7 +1092,7 @@ fn proposition_derivation_proves_implication_from_false_antecedent() {
             true,
         )),
     );
-    let assumptions = Assumptions::new().assume_condition(condition, true);
+    let assumptions = PureFactContext::new().assume_condition(condition, true);
 
     let derivation = assumptions
         .derive_simp_proposition(&conclusion)
@@ -1102,7 +1102,7 @@ fn proposition_derivation_proves_implication_from_false_antecedent() {
 
 #[test]
 fn builtin_obligation_solver_proves_trivial_props() {
-    let assumptions = Assumptions::new();
+    let assumptions = PureFactContext::new();
     let memory = CMemory::new().with_block("block", 8);
     let pointer = Pointer {
         block: "block".into(),
@@ -1140,7 +1140,7 @@ fn empty_memory_range_is_vacuously_loadable() {
         bytes: Bitvector32Term::Constant(0),
     };
 
-    assert!(Assumptions::new().proves(&proposition));
+    assert!(PureFactContext::new().proves(&proposition));
 }
 
 #[test]
@@ -1160,7 +1160,7 @@ fn deferred_obligations_keep_contextual_memory_proofs_explicit() {
         base: base.offset_by_int32_elements(Bitvector32Term::Constant(1)),
         bytes: Bitvector32Term::Constant(4),
     };
-    let assumptions = Assumptions::new().assume_proposition(range);
+    let assumptions = PureFactContext::new().assume_proposition(range);
 
     let mut ordinary = Vec::new();
     assert!(add_proof_obligation(&mut ordinary, &assumptions, element.clone()).is_some());
@@ -1201,7 +1201,7 @@ fn memory_derivation_records_the_selected_range_candidate() {
         base: data.offset_by_int32_elements(Bitvector32Term::Constant(1)),
         bytes: Bitvector32Term::Constant(4),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(unrelated)
         .assume_proposition(selected.clone());
     let derivation = assumptions
@@ -1235,7 +1235,7 @@ fn loadable_symbolic_subrange_proves_an_indexed_cell() {
         base: data.offset_by_int32_elements(index.clone()),
         bytes: Bitvector32Term::Constant(4),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(range)
         .assume_condition(ConditionTerm::signed_less_equal(split, index.clone()), true)
         .assume_condition(ConditionTerm::signed_less_than(index, len), true);
@@ -1268,7 +1268,7 @@ fn adjacent_loadable_regions_certify_their_concatenation() {
         base: data.clone(),
         bytes: Bitvector32Term::Constant(12),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(prefix.clone())
         .assume_proposition(next_cell.clone());
     let derivation = assumptions
@@ -1289,7 +1289,7 @@ fn adjacent_loadable_regions_certify_their_concatenation() {
         base: data.clone(),
         bytes: Bitvector32Term::Constant(12),
     };
-    let stored_assumptions = Assumptions::new().assume_proposition(prefix.clone());
+    let stored_assumptions = PureFactContext::new().assume_proposition(prefix.clone());
     let stored_derivation = stored_assumptions
         .derive_atomic_proposition(&stored_goal)
         .expect("a materialized next cell should extend the loadable prefix");
@@ -1301,7 +1301,7 @@ fn adjacent_loadable_regions_certify_their_concatenation() {
         base: data.offset_by_int32_elements(Bitvector32Term::Constant(4)),
         bytes: Bitvector32Term::Constant(4),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(goal.clone())
         .assume_proposition(gap);
     let too_wide = Proposition::CMemoryLoadable {
@@ -1369,7 +1369,7 @@ fn field_derived_capacity_range_covers_a_shorter_live_prefix() {
         },
     };
     let index = Bitvector32Term::Variable(Variable(2_000_000));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CMemoryLoadable {
             memory: after_cap,
             base: range_data,
@@ -1436,7 +1436,7 @@ fn quantified_int32_fact_certifies_an_instantiated_load() {
             )),
         ),
     );
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(guarded_fact)
         .assume_condition(
             ConditionTerm::signed_less_equal(
@@ -1460,7 +1460,7 @@ fn quantified_int32_fact_certifies_an_instantiated_load() {
         assert!(!assumptions.proves(&target));
     });
     assert!(
-        !Assumptions::new()
+        !PureFactContext::new()
             .assume_proposition(forall_int32(
                 fact_index,
                 Proposition::ConditionIs(ConditionTerm::Constant(true), true),
@@ -1520,7 +1520,7 @@ fn quantified_int32_fact_certifies_a_concrete_indexed_load() {
     );
 
     assert!(
-        Assumptions::new()
+        PureFactContext::new()
             .assume_proposition(guarded_fact)
             .proves(&target)
     );
@@ -1573,7 +1573,7 @@ fn quantified_copy_fact_certifies_concrete_pointer_indices() {
             )),
         ),
     );
-    let assumptions = Assumptions::new().assume_proposition(copied);
+    let assumptions = PureFactContext::new().assume_proposition(copied);
 
     for index in [0, 1] {
         let index = Bitvector32Term::Constant(index);
@@ -1620,7 +1620,7 @@ fn quantified_int32_fact_certifies_its_complete_guarded_range() {
             )),
         ),
     );
-    let assumptions = Assumptions::new().assume_proposition(guarded_fact);
+    let assumptions = PureFactContext::new().assume_proposition(guarded_fact);
     let target = Proposition::CMemoryLoadable {
         memory: memory.clone(),
         base: data.clone(),
@@ -1650,13 +1650,13 @@ fn proposition_derivation_replay_requires_its_context() {
         ConditionTerm::signed_greater_equal(x, Bitvector32Term::Constant(0)),
         true,
     );
-    let assumptions = Assumptions::new().assume_proposition(proposition.clone());
+    let assumptions = PureFactContext::new().assume_proposition(proposition.clone());
     let derivation = assumptions
         .derive_simp_proposition(&proposition)
         .expect("exact fact should produce a derivation");
 
     assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&Assumptions::new()));
+    assert!(!derivation.replay(&PureFactContext::new()));
     assert_eq!(derivation.context_premises(), vec![proposition]);
 }
 
@@ -1667,7 +1667,7 @@ fn implication_derivation_context_excludes_its_local_antecedent() {
         arguments: Vec::new(),
     };
     let goal = Proposition::Implies(Box::new(antecedent.clone()), Box::new(antecedent));
-    let assumptions = Assumptions::new();
+    let assumptions = PureFactContext::new();
     let derivation = assumptions
         .derive_simp_proposition(&goal)
         .expect("an implication may use its own antecedent");
@@ -1687,7 +1687,7 @@ fn forall_introduction_rejects_a_variable_free_in_ambient_assumptions() {
         arguments: vec![Term::Bitvector32(Bitvector32Term::Variable(variable))],
     };
     let goal = forall_int32(variable, body.clone());
-    let assumptions = Assumptions::new().assume_proposition(body);
+    let assumptions = PureFactContext::new().assume_proposition(body);
 
     assert!(!assumptions.proves(&goal));
     assert!(assumptions.derive_proposition(&goal).is_none());
@@ -1701,15 +1701,15 @@ fn forall_derivation_replay_shadows_ambient_uses_of_the_binder_id() {
         variable,
         Proposition::ConditionIs(ConditionTerm::equal(value.clone(), value), true),
     );
-    let derivation = Assumptions::new()
+    let derivation = PureFactContext::new()
         .derive_proposition(&goal)
         .expect("reflexivity should prove a universal in an empty context");
-    let contaminated = Assumptions::new().assume_proposition(Proposition::Predicate {
+    let contaminated = PureFactContext::new().assume_proposition(Proposition::Predicate {
         name: "ambient".to_string(),
         arguments: vec![Term::Bitvector32(Bitvector32Term::Variable(variable))],
     });
 
-    assert!(derivation.replay(&Assumptions::new()));
+    assert!(derivation.replay(&PureFactContext::new()));
     assert!(derivation.replay(&contaminated));
 }
 
@@ -1729,7 +1729,7 @@ fn finite_context_split_derivation_records_its_range_premises() {
         ConditionTerm::equal(value, Bitvector32Term::Constant(3)),
         true,
     );
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(lower.clone())
         .assume_proposition(upper.clone());
     let derivation = assumptions
@@ -1737,7 +1737,7 @@ fn finite_context_split_derivation_records_its_range_premises() {
         .expect("the singleton finite range should establish equality");
 
     assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&Assumptions::new()));
+    assert!(!derivation.replay(&PureFactContext::new()));
     let context = derivation.context_premises();
     assert!(context.contains(&lower));
     assert!(context.contains(&upper));
@@ -1763,7 +1763,7 @@ fn successor_order_derivation_needs_only_an_upper_bound() {
         ),
         true,
     );
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(unrelated_order)
         .assume_proposition(upper_bound.clone())
         .assume_proposition(Proposition::Predicate {
@@ -1784,7 +1784,7 @@ fn upper_bound_extends_to_a_nonoverflowing_successor() {
     let capacity = Bitvector32Term::Variable(Variable(89_101));
     let successor = Bitvector32Term::add(capacity.clone(), Bitvector32Term::Constant(1));
     let goal = ConditionTerm::signed_less_equal(length.clone(), successor.clone());
-    let bounded = Assumptions::new()
+    let bounded = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(length, capacity.clone()),
             true,
@@ -1810,7 +1810,7 @@ fn upper_bound_extends_to_a_nonoverflowing_successor() {
     );
     assert_eq!(bounded.decide(&goal), Some(true));
     assert_eq!(
-        Assumptions::new()
+        PureFactContext::new()
             .assume_condition(
                 ConditionTerm::signed_less_equal(
                     Bitvector32Term::Variable(Variable(89_100)),
@@ -1830,7 +1830,7 @@ fn upper_bound_extends_to_a_nonoverflowing_successor() {
 #[test]
 fn assumptions_split_small_finite_context_variable() {
     let j = Bitvector32Term::Variable(Variable(87));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_greater_equal(j.clone(), Bitvector32Term::Constant(0)),
             true,
@@ -1857,7 +1857,7 @@ fn assumptions_split_small_finite_context_variable() {
 #[test]
 fn finite_context_derivation_replays_under_a_narrower_range() {
     let j = Bitvector32Term::Variable(Variable(88));
-    let broad = Assumptions::new()
+    let broad = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_greater_equal(j.clone(), Bitvector32Term::Constant(0)),
             true,
@@ -1893,7 +1893,7 @@ fn finite_context_derivation_replays_under_a_narrower_range() {
 #[test]
 fn proposition_derivation_composes_case_split_conjuncts() {
     let j = Bitvector32Term::Variable(Variable(187));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_greater_equal(j.clone(), Bitvector32Term::Constant(0)),
             true,
@@ -1958,7 +1958,7 @@ fn finite_forall_order_fact_participates_in_transitive_order_path() {
             )),
         )),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(finite_order_fact)
         .assume_condition(
             ConditionTerm::signed_less_equal(load_1, load_2.clone()),
@@ -1999,7 +1999,7 @@ fn conditional_forall_instantiates_at_same_named_variable_in_order_path() {
             )),
         )),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(induction_hypothesis)
         .assume_condition(
             ConditionTerm::signed_less_than(
@@ -2165,7 +2165,7 @@ fn assumptions_prove_by_bounded_disjunction_cases() {
         ConditionTerm::equal(x.clone(), Bitvector32Term::Constant(1)),
         true,
     );
-    let assumptions = Assumptions::new().assume_proposition(Proposition::Or(
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::Or(
         Box::new(x_is_zero.clone()),
         Box::new(x_is_one.clone()),
     ));
@@ -2179,7 +2179,7 @@ fn assumptions_prove_by_bounded_disjunction_cases() {
 fn known_memory_block_bounds_prove_symbolic_element_access() {
     let index = Variable(91);
     let index_bits = Bitvector32Term::Variable(index);
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_greater_equal(index_bits.clone(), Bitvector32Term::Constant(0)),
             true,
@@ -2211,7 +2211,7 @@ fn symbolic_int32_range_directly_proves_constant_element_loadable() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let length = Bitvector32Term::Variable(Variable(89));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
             true,
@@ -2254,7 +2254,7 @@ fn assumptions_prove_forall_int32_array_range_body() {
         base: indexed_pointer,
         bytes: Bitvector32Term::Constant(4),
     };
-    let assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryLoadable {
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
         memory,
         base,
         bytes: Bitvector32Term::Constant(12),
@@ -2276,7 +2276,7 @@ fn loadability_transports_to_snapshot_with_symbolic_index_bounds() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CMemoryLoadable {
             memory: range_memory,
             base: base.clone(),
@@ -2352,7 +2352,7 @@ fn assumptions_prove_finite_forall_int32_by_instantiation() {
         )),
     );
 
-    assert!(Assumptions::new().proves(&forall_int32(
+    assert!(PureFactContext::new().proves(&forall_int32(
         i,
         forall_int32(
             j,
@@ -2384,7 +2384,7 @@ fn assumptions_use_finite_forall_fact_to_prove_condition() {
         ),
         true,
     );
-    let assumptions = Assumptions::new().assume_proposition(forall_int32(
+    let assumptions = PureFactContext::new().assume_proposition(forall_int32(
         k,
         Proposition::Implies(Box::new(antecedent), Box::new(consequent)),
     ));
@@ -2403,7 +2403,7 @@ fn order_solver_uses_negated_less_than_transitively() {
     let a = Bitvector32Term::Variable(Variable(94));
     let b = Bitvector32Term::Variable(Variable(95));
     let c = Bitvector32Term::Variable(Variable(96));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(ConditionTerm::signed_less_than(b.clone(), a.clone()), false)
         .assume_condition(ConditionTerm::signed_less_than(c.clone(), b), false);
 
@@ -2423,7 +2423,7 @@ fn assumptions_do_not_prove_implication_by_treating_unknown_antecedent_as_false(
     let consequent =
         Proposition::ConditionIs(ConditionTerm::equal(x, Bitvector32Term::Constant(0)), true);
 
-    assert!(!Assumptions::new().proves(&Proposition::Implies(
+    assert!(!PureFactContext::new().proves(&Proposition::Implies(
         Box::new(antecedent),
         Box::new(consequent),
     )));
@@ -2433,7 +2433,7 @@ fn assumptions_do_not_prove_implication_by_treating_unknown_antecedent_as_false(
 fn assumptions_prove_implication_with_refuted_antecedent() {
     let x = Bitvector32Term::Variable(Variable(91));
     let condition = ConditionTerm::equal(x, Bitvector32Term::Constant(0));
-    let assumptions = Assumptions::new().assume_condition(condition.clone(), true);
+    let assumptions = PureFactContext::new().assume_condition(condition.clone(), true);
     let antecedent = Proposition::ConditionIs(condition, false);
     let consequent = Proposition::ConditionIs(
         ConditionTerm::equal(
@@ -2471,7 +2471,7 @@ fn simp_derives_vacuous_implication_before_searching_large_consequent() {
     let antecedent = Proposition::ConditionIs(condition.clone(), true);
     let consequent = unknown_tree(9, 0);
     let goal = Proposition::Implies(Box::new(antecedent), Box::new(consequent));
-    let assumptions = Assumptions::new().assume_condition(condition, false);
+    let assumptions = PureFactContext::new().assume_condition(condition, false);
 
     let derivation = assumptions
         .derive_simp_proposition(&goal)
@@ -2493,7 +2493,7 @@ fn simp_derives_implication_body_before_refuting_known_antecedent() {
         Box::new(Proposition::ConditionIs(antecedent_condition.clone(), true)),
         Box::new(Proposition::ConditionIs(consequent_condition.clone(), true)),
     );
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(antecedent_condition, true)
         .assume_condition(consequent_condition, true);
 
@@ -2507,7 +2507,7 @@ fn simp_derives_implication_body_before_refuting_known_antecedent() {
 fn assumptions_simplify_overflow_through_equality_chain() {
     let index = Bitvector32Term::Variable(Variable(91));
     let length = Bitvector32Term::Variable(Variable(92));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(ConditionTerm::equal(index.clone(), length.clone()), true)
         .assume_condition(
             ConditionTerm::equal(length, Bitvector32Term::Constant(0)),
@@ -2533,7 +2533,7 @@ fn same_block_pointer_equality_transports_through_equal_offsets() {
         block: "shared".into(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(92)), 4),
     };
-    let assumptions = Assumptions::new().assume_condition(
+    let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::pointer_equal(left.clone(), right.clone()),
         true,
     );
@@ -2563,8 +2563,9 @@ fn builtin_obligation_solver_discharges_concrete_invariant() {
         vec![invariant],
         c_assign("x", c_subtract(c_variable("x"), c_int32_literal(1))),
     );
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("concrete invariant should be solved");
+    let theorem =
+        prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
+            .expect("concrete invariant should be solved");
 
     assert_eq!(
         theorem.proposition(),
@@ -2596,7 +2597,7 @@ fn countdown_loop_body_preserves_nonnegative_invariant_symbolically() {
         ),
         true,
     );
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(invariant.clone(), true)
         .assume_condition(condition.clone(), true);
     let theorem = prove_c_statement_executes_and_propositions(
@@ -2641,7 +2642,7 @@ fn equality_rewrites_through_matching_decrement() {
     );
 
     assert!(
-        Assumptions::new()
+        PureFactContext::new()
             .assume_proposition(equality)
             .derive_simp_proposition(&goal)
             .is_some()
@@ -2725,7 +2726,7 @@ fn repeated_order_fact_collections_share_one_scan() {
     let left = Bitvector32Term::Variable(Variable(93_101));
     let right = Bitvector32Term::Variable(Variable(93_102));
     let assumptions =
-        Assumptions::new().assume_condition(ConditionTerm::signed_less_than(left, right), true);
+        PureFactContext::new().assume_condition(ConditionTerm::signed_less_than(left, right), true);
     let _scope = assumptions.enter_id_scope();
 
     let first = assumptions.condition_order_facts();
@@ -2748,7 +2749,7 @@ fn repeated_resolution_queries_do_not_repay_their_search() {
         block: "memo-regression".into(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(93_104)), 4),
     };
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_than(
                 Bitvector32Term::Variable(Variable(93_103)),
@@ -2762,7 +2763,7 @@ fn repeated_resolution_queries_do_not_repay_their_search() {
         });
     let _scope = assumptions.enter_id_scope();
 
-    let work_for = |index: usize, query: fn(&Pointer, &Pointer, &Assumptions) -> bool| {
+    let work_for = |index: usize, query: fn(&Pointer, &Pointer, &PureFactContext) -> bool| {
         let tactic = crate::instrumentation::TacticEvent {
             claim: "memo.regression".to_string(),
             tactic_index: index,
@@ -2831,7 +2832,7 @@ fn consistent_order_context_scales_near_linearly() {
     let samples = [16, 32, 64, 128]
         .into_iter()
         .map(|size| {
-            let mut assumptions = Assumptions::new();
+            let mut assumptions = PureFactContext::new();
             for index in 0..size {
                 assumptions = assumptions.assume_condition(
                     ConditionTerm::signed_less_than(
@@ -2871,7 +2872,7 @@ fn derived_order_contradiction_uses_theory_equal_endpoints() {
         left_sum, right_sum,
         "the endpoints must not be exactly equal, or the class check would decide them"
     );
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_than(left_sum, middle.clone()),
             true,
@@ -2895,7 +2896,7 @@ fn fixed_overflow_decision_scales_near_linearly_with_unrelated_order_facts() {
         .map(|size| {
             let x = Bitvector32Term::Variable(Variable(94_001));
             let y = Bitvector32Term::Variable(Variable(94_002));
-            let mut assumptions = Assumptions::new();
+            let mut assumptions = PureFactContext::new();
             for index in 0..size {
                 assumptions = assumptions.assume_condition(
                     ConditionTerm::signed_less_equal(
@@ -2983,7 +2984,7 @@ fn quantified_fact_query_scales_near_linearly_with_unrelated_quantified_facts() 
                     )),
                 ),
             );
-            let mut assumptions = Assumptions::new().assume_proposition(guarded_fact);
+            let mut assumptions = PureFactContext::new().assume_proposition(guarded_fact);
             for index in 0..size {
                 let unrelated_index = Variable(95_000 + index as u64 * 2);
                 let unrelated = Pointer {
@@ -3057,7 +3058,7 @@ fn long_order_path_decision_scales_near_linearly_with_path_length() {
     let samples = [16, 32, 64, 128]
         .into_iter()
         .map(|size| {
-            let mut assumptions = Assumptions::new();
+            let mut assumptions = PureFactContext::new();
             for index in 0..size {
                 assumptions = assumptions.assume_condition(
                     ConditionTerm::signed_less_than(
@@ -3095,7 +3096,7 @@ fn theory_capable_order_endpoints_scale_near_linearly() {
     let samples = [16, 32, 64, 128]
         .into_iter()
         .map(|size| {
-            let mut assumptions = Assumptions::new();
+            let mut assumptions = PureFactContext::new();
             for index in 0..size {
                 let cell = Pointer {
                     block: format!("arg-memory-{index}").into(),
@@ -3137,7 +3138,7 @@ fn derived_order_contradiction_resolves_load_endpoints() {
     };
     let memory = CMemory::new().store(cell.clone(), int32(Bitvector32Term::Constant(7)));
     let load = Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(memory), Box::new(cell));
-    let assumptions = Assumptions::new().assume_condition(
+    let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::signed_less_than(load, Bitvector32Term::Constant(7)),
         true,
     );
@@ -3174,7 +3175,7 @@ fn derived_order_contradiction_bridges_snapshot_loads() {
         crate::kernel::intern_c_memory(after.clone()),
         Box::new(preserved),
     );
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before,
             after,
@@ -3201,7 +3202,7 @@ fn derived_order_contradiction_uses_graph_equal_addends() {
     let middle = Bitvector32Term::Variable(Variable(97_012));
     let left_sum = Bitvector32Term::add(x.clone(), Bitvector32Term::Constant(1));
     let right_sum = Bitvector32Term::add(y.clone(), Bitvector32Term::Constant(1));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(ConditionTerm::equal(x, y), true)
         .assume_condition(
             ConditionTerm::signed_less_than(left_sum, middle.clone()),
@@ -3219,13 +3220,13 @@ fn derived_order_contradiction_uses_graph_equal_addends() {
 fn repeated_context_inconsistency_queries_do_not_rescan_facts() {
     let x = Bitvector32Term::Variable(Variable(93_201));
     let y = Bitvector32Term::Variable(Variable(93_202));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(ConditionTerm::signed_less_than(x.clone(), y.clone()), true)
         .assume_condition(ConditionTerm::signed_less_than(y, x), true);
     let _scope = assumptions.enter_id_scope();
-    Assumptions::reset_context_inconsistency_full_scans();
+    PureFactContext::reset_context_inconsistency_full_scans();
     assert!(assumptions.is_inconsistent());
-    assert_eq!(Assumptions::context_inconsistency_full_scans(), 1);
+    assert_eq!(PureFactContext::context_inconsistency_full_scans(), 1);
     assert!(assumptions.is_inconsistent());
-    assert_eq!(Assumptions::context_inconsistency_full_scans(), 1);
+    assert_eq!(PureFactContext::context_inconsistency_full_scans(), 1);
 }

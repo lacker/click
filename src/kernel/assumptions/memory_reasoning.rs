@@ -5,7 +5,7 @@ thread_local! {
     static PROOF_AWARE_POINTER_INDEX_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-impl Assumptions {
+impl PureFactContext {
     #[cfg(test)]
     pub(crate) fn reset_proof_aware_pointer_index_queries() {
         PROOF_AWARE_POINTER_INDEX_QUERIES.with(|queries| queries.set(0));
@@ -58,7 +58,7 @@ impl Assumptions {
         base: &Pointer,
         bytes: &Bitvector32Term,
     ) -> bool {
-        let _id_scope = AssumptionsIdScope::enter(self);
+        let _id_scope = PureFactContextIdScope::enter(self);
         // A loadability claim quantifies over the bytes in the range.  An
         // empty range has no accesses to justify, irrespective of whether
         // its base currently names a live block.

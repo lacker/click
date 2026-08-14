@@ -799,7 +799,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             .surfaces(candidate)
                             .next()
                             .is_some()
-                            .then_some((candidate, bases, None::<Assumptions>))
+                            .then_some((candidate, bases, None::<PureFactContext>))
                     })
                     .collect::<Vec<_>>();
                 for fact in &available_conjuncts {

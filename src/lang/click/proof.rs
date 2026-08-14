@@ -741,9 +741,9 @@ pub(super) fn plan_restricted_simp_goal(
 
 pub(in crate::lang::click) fn normalizes_context_free(goal: &Proposition) -> bool {
     matches!(normalize_proposition(goal), SimpProposition::True)
-        || Assumptions::new()
+        || PureFactContext::new()
             .derive_atomic_proposition(goal)
-            .or_else(|| Assumptions::new().derive_proposition(goal))
+            .or_else(|| PureFactContext::new().derive_proposition(goal))
             .is_some()
 }
 
@@ -984,7 +984,7 @@ mod certificate_tests {
             right: range(PointerBlock::Heap(7)),
         };
 
-        assert!(Assumptions::new().proves(&separation));
+        assert!(PureFactContext::new().proves(&separation));
         assert!(
             !statement_step_permission_needs_surface_premise(&separation, &[]),
             "fresh heap provenance is replayable without a potentially stale surface spelling"

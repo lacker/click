@@ -236,7 +236,7 @@ pub(super) fn theorem_application_bindings(
     theorem: &TheoremDefinition,
     application: &TheoremApplication,
     context: &TheoremApplicationContext<'_>,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(BTreeMap<String, CValue>, ClickArrayRefs), String> {

@@ -16,7 +16,7 @@ thread_local! {
 
 const ORDER_FACTS_MEMO_LIMIT: usize = 20_000;
 
-impl Assumptions {
+impl PureFactContext {
     pub(in crate::kernel) fn condition_order_facts(&self) -> std::rc::Rc<Vec<OrderFact>> {
         // Ambient scope id when live, content id otherwise — the same
         // hash-once-per-distinct-fact-set policy `decide` pays at its entry.

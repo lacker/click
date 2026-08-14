@@ -53,7 +53,7 @@ fn apply_pool_transition(state: &CState, function: &CFunction, pool: u32, object
         function,
         &arguments,
         outcome,
-        &Assumptions::new(),
+        &PureFactContext::new(),
     )
     .expect("the checked resource transition should replay");
     assert!(obligations.is_empty());
@@ -67,7 +67,7 @@ fn pool_count(state: &CState, pool: u32) -> Bitvector32Term {
     state.counted_population_sum(
         "pool_object",
         &[Some(int32(pool)), None],
-        &Assumptions::new(),
+        &PureFactContext::new(),
     )
 }
 
@@ -137,8 +137,9 @@ fn local_declaration_allocates_stack_object_for_address_of() {
             .with_block("local:x", 4)
             .store(local_pointer, int32(5)),
     );
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("local declaration/address-of should execute");
+    let theorem =
+        prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
+            .expect("local declaration/address-of should execute");
 
     assert_eq!(
         theorem.proposition(),
@@ -162,7 +163,7 @@ fn symbolic_execution_stops_without_needed_overflow_fact() {
         .with_local("right", int32(Bitvector32Term::Variable(right)));
     let statement = c_return(c_add(c_variable("left"), c_variable("right")));
 
-    assert!(prove_symbolic_c_execution(state, statement, Assumptions::new()).is_none());
+    assert!(prove_symbolic_c_execution(state, statement, PureFactContext::new()).is_none());
 }
 
 #[test]
@@ -174,7 +175,7 @@ fn symbolic_execution_reports_branch_facts() {
     let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
     let state = c_max_state(int32(a_bits), int32(b_bits));
     let execution =
-        prove_symbolic_c_execution_paths(state.clone(), c_max_body(), Assumptions::new());
+        prove_symbolic_c_execution_paths(state.clone(), c_max_body(), PureFactContext::new());
 
     assert_eq!(execution.paths().len(), 2);
     assert_eq!(
@@ -236,7 +237,7 @@ fn symbolic_execution_reports_overflow_facts() {
     let statement = c_return(c_add(c_variable("left"), c_variable("right")));
     let overflow = ConditionTerm::signed_add_overflows(left_bits.clone(), right_bits.clone());
     let execution =
-        prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
+        prove_symbolic_c_execution_paths(state.clone(), statement.clone(), PureFactContext::new());
 
     assert_eq!(execution.paths().len(), 2);
     assert_eq!(
@@ -297,7 +298,7 @@ fn symbolic_execution_uses_no_overflow_fact() {
         .with_local("right", int32(right_bits.clone()));
     let statement = c_return(c_add(c_variable("left"), c_variable("right")));
     let no_overflow = ConditionTerm::signed_add_overflows(left_bits.clone(), right_bits.clone());
-    let assumptions = Assumptions::new().assume_condition(no_overflow.clone(), false);
+    let assumptions = PureFactContext::new().assume_condition(no_overflow.clone(), false);
     let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), assumptions)
         .expect("no-overflow fact should let symbolic add execute");
 
@@ -330,7 +331,7 @@ fn symbolic_add_uses_exact_intervals_to_rule_out_overflow() {
         .with_local("left", int32(left_bits.clone()))
         .with_local("right", int32(right_bits.clone()));
     let statement = c_return(c_add(c_variable("left"), c_variable("right")));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::equal(left_bits, Bitvector32Term::Constant(1)),
             true,
@@ -371,7 +372,7 @@ fn symbolic_increment_uses_int_max_bound_to_rule_out_overflow() {
     let statement = c_return(c_add(c_variable("x"), c_int32_literal(1)));
     let x_lt_int_max =
         ConditionTerm::signed_less_than(x_bits.clone(), Bitvector32Term::Constant(i32::MAX as u32));
-    let assumptions = Assumptions::new().assume_condition(x_lt_int_max.clone(), true);
+    let assumptions = PureFactContext::new().assume_condition(x_lt_int_max.clone(), true);
     let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), assumptions)
         .expect("x < INT_MAX should prove x + 1 does not overflow");
 
@@ -399,7 +400,7 @@ fn symbolic_increment_uses_any_strict_upper_bound_to_rule_out_overflow() {
     let x_bits = Bitvector32Term::Variable(Variable(651));
     let upper_bits = Bitvector32Term::Variable(Variable(652));
     let assumption = ConditionTerm::signed_less_than(x_bits.clone(), upper_bits);
-    let assumptions = Assumptions::new().assume_condition(assumption, true);
+    let assumptions = PureFactContext::new().assume_condition(assumption, true);
 
     assert_eq!(
         assumptions.decide(&ConditionTerm::signed_add_overflows(
@@ -415,7 +416,7 @@ fn signed_addition_uses_both_operand_intervals_to_rule_out_overflow() {
     let left = Bitvector32Term::Variable(Variable(653));
     let right = Bitvector32Term::Variable(Variable(654));
     let million = Bitvector32Term::Constant(1_000_000);
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), left.clone()),
             true,
@@ -445,7 +446,7 @@ fn signed_addition_uses_negative_operand_intervals_to_rule_out_overflow() {
     let right = Bitvector32Term::Variable(Variable(656));
     let negative_million = Bitvector32Term::Constant((-1_000_000i32) as u32);
     let zero = Bitvector32Term::Constant(0);
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(negative_million.clone(), left.clone()),
             true,
@@ -472,7 +473,7 @@ fn signed_addition_ranges_nested_additions_only_when_each_level_is_safe() {
     let middle = Bitvector32Term::Variable(Variable(658));
     let right = Bitvector32Term::Variable(Variable(659));
     let upper = Bitvector32Term::Constant(700_000_000);
-    let mut assumptions = Assumptions::new();
+    let mut assumptions = PureFactContext::new();
     for term in [&left, &middle, &right] {
         assumptions = assumptions
             .assume_condition(
@@ -513,7 +514,7 @@ fn signed_addition_matches_interval_facts_across_unchanged_snapshots() {
     );
     let after_load =
         Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(after), Box::new(cell));
-    let assumptions = Assumptions::new()
+    let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), before_load.clone()),
             true,
@@ -550,8 +551,9 @@ fn pointer_store_through_local_address_updates_named_lvalue() {
             .with_block("local:x", 4)
             .store(local_pointer, int32(5)),
     );
-    let theorem = prove_symbolic_c_execution(CState::new(), statement.clone(), Assumptions::new())
-        .expect("pointer store through local address should execute");
+    let theorem =
+        prove_symbolic_c_execution(CState::new(), statement.clone(), PureFactContext::new())
+            .expect("pointer store through local address should execute");
 
     assert_eq!(
         theorem.proposition(),
@@ -699,7 +701,7 @@ fn function_execution_theorem_retains_non_assumable_verification_conditions() {
     let conclusion = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
     let theorem = Theorem::new(wrap_proof_facts(
         conclusion,
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &[],
         &[ProofObligation::verification_condition(
             verification_condition.clone(),
@@ -725,7 +727,7 @@ fn symbolic_path_can_only_certify_its_exact_function_specification() {
         CState::new(),
         function.clone(),
         Vec::new(),
-        Assumptions::new(),
+        PureFactContext::new(),
     );
     let false_specification = c_function_specification(
         CState::new(),
@@ -776,7 +778,7 @@ fn verified_function_rule_applies_contract_without_executing_body() {
     let execution = prove_symbolic_c_execution_paths_with_environment(
         CState::new(),
         statement.clone(),
-        Assumptions::new(),
+        PureFactContext::new(),
         environment.clone(),
         CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
@@ -805,7 +807,7 @@ fn verified_function_rule_applies_contract_without_executing_body() {
         path.facts().iter().any(ExecutionPureFact::is_certified),
         "verified-call ensures should be marked as kernel-certified facts"
     );
-    let assumptions = assumptions_with_propositions(&Assumptions::new(), &propositions);
+    let assumptions = assumptions_with_propositions(&PureFactContext::new(), &propositions);
     let CValue::Int32(result) = value else {
         panic!("opaque helper should return int32")
     };
@@ -820,7 +822,7 @@ fn verified_function_rule_applies_contract_without_executing_body() {
     let body_execution = prove_symbolic_c_execution_paths_with_environment(
         CState::new(),
         statement,
-        Assumptions::new(),
+        PureFactContext::new(),
         environment,
         CExecutionSemantics::EXECUTE_BODIES,
     );
@@ -868,7 +870,7 @@ fn verified_function_rule_coerces_null_constants_in_contract_views() {
     let execution = prove_symbolic_c_execution_paths_with_environment(
         CState::new(),
         c_call_assign("result", "pointer_is_null", vec![c_int32_literal(0)]),
-        Assumptions::new(),
+        PureFactContext::new(),
         environment,
         CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
@@ -940,7 +942,7 @@ fn verified_function_rule_does_not_publish_one_spec_alias_path() {
             "opaque_alias_probe",
             vec![c_pointer_value(queried)],
         ),
-        Assumptions::new(),
+        PureFactContext::new(),
         environment,
         CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
@@ -992,7 +994,7 @@ fn opaque_pointer_result_can_alias_its_argument() {
             "opaque_identity_pointer",
             vec![c_pointer_value(argument.clone())],
         ),
-        Assumptions::new(),
+        PureFactContext::new(),
         environment,
         CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
@@ -1015,7 +1017,7 @@ fn opaque_pointer_result_can_alias_its_argument() {
     assert!(result.has_symbolic_block());
     assert!(!result.blocks_proven_distinct(&argument));
     let assumptions = assumptions_with_propositions(
-        &Assumptions::new(),
+        &PureFactContext::new(),
         &path
             .facts()
             .iter()
@@ -1060,7 +1062,7 @@ fn verified_immutable_calls_allocate_distinct_results() {
     let execution = prove_symbolic_c_execution_paths_with_environment(
         CState::new(),
         statement,
-        Assumptions::new(),
+        PureFactContext::new(),
         environment,
         CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
@@ -1111,7 +1113,7 @@ fn separate_statement_verification_calls_preserve_fresh_identity_progress() {
         prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
             CState::new(),
             c_call_assign("first", "opaque_identity", vec![c_int32_literal(5)]),
-            Assumptions::new(),
+            PureFactContext::new(),
             environment.clone(),
             CExecutionSemantics::APPLY_VERIFIED_RULES,
             &mut budget,
@@ -1135,7 +1137,7 @@ fn separate_statement_verification_calls_preserve_fresh_identity_progress() {
         prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
             first_state.clone(),
             c_call_assign("second", "opaque_identity", vec![c_int32_literal(7)]),
-            Assumptions::new(),
+            PureFactContext::new(),
             environment,
             CExecutionSemantics::APPLY_VERIFIED_RULES,
             &mut budget,
@@ -1268,7 +1270,7 @@ fn contract_certification_reuses_a_matching_kernel_checked_execution() {
         state.clone(),
         function.clone(),
         Vec::new(),
-        Assumptions::new(),
+        PureFactContext::new(),
         environment.clone(),
         semantics,
         mode,
@@ -1296,7 +1298,7 @@ fn contract_certification_reuses_a_matching_kernel_checked_execution() {
     );
     assert!(c_verified_function_contract_claims(&function, &execution).is_some());
 
-    let extra_assumption = Assumptions::new().assume_condition(
+    let extra_assumption = PureFactContext::new().assume_condition(
         ConditionTerm::equal(
             Bitvector32Term::Variable(Variable(919_000)),
             Bitvector32Term::Constant(0),
@@ -1369,7 +1371,7 @@ fn contract_certification_reuses_complementary_checked_entry_partitions() {
         state.clone(),
         function.clone(),
         arguments.clone(),
-        Assumptions::new().assume_condition(branch.clone(), true),
+        PureFactContext::new().assume_condition(branch.clone(), true),
         environment.clone(),
         semantics,
         mode,
@@ -1378,7 +1380,7 @@ fn contract_certification_reuses_complementary_checked_entry_partitions() {
         state.clone(),
         function.clone(),
         arguments.clone(),
-        Assumptions::new().assume_condition(branch, false),
+        PureFactContext::new().assume_condition(branch, false),
         environment.clone(),
         semantics,
         mode,
@@ -1431,7 +1433,7 @@ fn contract_certification_reuses_definitionally_equal_entry_resources() {
         .unchecked_with_fact(unit.clone())
         .unchecked_with_fact(unit.clone());
     let contract_resources = ResourceContext::new()
-        .try_compose_with_facts([unit.clone(), unit], &Assumptions::new())
+        .try_compose_with_facts([unit.clone(), unit], &PureFactContext::new())
         .expect("the contract representation should normalize the two units");
     assert_ne!(proof_resources, contract_resources);
     assert!(resource_contexts_definitionally_equal_with_definitions(
@@ -1440,7 +1442,7 @@ fn contract_certification_reuses_definitionally_equal_entry_resources() {
         &proof_resources,
         &CMemory::new(),
         &contract_resources,
-        &Assumptions::new(),
+        &PureFactContext::new(),
     ));
 
     let function = c_function(
@@ -1470,7 +1472,7 @@ fn contract_certification_reuses_definitionally_equal_entry_resources() {
         proof_state,
         function.clone(),
         Vec::new(),
-        Assumptions::new(),
+        PureFactContext::new(),
         environment.clone(),
         semantics,
         mode,
@@ -1511,7 +1513,7 @@ fn contract_certification_reuses_definitionally_equal_entry_resources() {
         CState::new().with_resource_context(proof_resources),
         recursive_function.clone(),
         Vec::new(),
-        Assumptions::new(),
+        PureFactContext::new(),
         CExecutionEnvironment::new(),
         semantics,
         mode,
@@ -1605,13 +1607,13 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
         },
     };
     let path = SymbolicCExecutionPath {
-        assumptions: Assumptions::new(),
+        assumptions: PureFactContext::new(),
         facts: Vec::new(),
         effect_facts: Vec::new(),
         obligations: vec![obligation.clone()],
         theorem: Theorem::new(wrap_proof_facts(
             proposition,
-            &Assumptions::new(),
+            &PureFactContext::new(),
             &[],
             &[obligation],
         )),
@@ -1668,13 +1670,13 @@ fn body_safety_claim_uses_path_facts_for_verification_conditions() {
         },
     };
     let path = SymbolicCExecutionPath {
-        assumptions: Assumptions::new(),
+        assumptions: PureFactContext::new(),
         facts: vec![fact.clone()],
         effect_facts: Vec::new(),
         obligations: vec![obligation.clone()],
         theorem: Theorem::new(wrap_proof_facts(
             proposition,
-            &Assumptions::new(),
+            &PureFactContext::new(),
             &[fact],
             &[obligation],
         )),
@@ -1709,7 +1711,7 @@ fn effect_endpoint_comparison_ignores_function_local_cells() {
     assert!(crate::kernel::api::c_effect_memories_definitionally_equal(
         &before,
         &after,
-        &Assumptions::new(),
+        &PureFactContext::new(),
     ));
 
     let external = Pointer {
@@ -1720,7 +1722,7 @@ fn effect_endpoint_comparison_ignores_function_local_cells() {
     assert!(!crate::kernel::api::c_effect_memories_definitionally_equal(
         &before,
         &changed_external,
-        &Assumptions::new(),
+        &PureFactContext::new(),
     ));
 }
 
@@ -1741,7 +1743,7 @@ fn effect_endpoint_allows_resource_allocation_bookkeeping() {
             &before,
             &after,
             &before,
-            &Assumptions::new(),
+            &PureFactContext::new(),
         )
     );
 }
@@ -1797,8 +1799,8 @@ fn decision_memo_distinguishes_equal_shaped_fact_sets_by_content() {
     // answer to the other.
     let x = Bitvector32Term::Variable(Variable(1));
     let below = ConditionTerm::signed_less_than(x.clone(), Bitvector32Term::Constant(10));
-    let assumes_true = Assumptions::new().assume_condition(below.clone(), true);
-    let assumes_false = Assumptions::new().assume_condition(below.clone(), false);
+    let assumes_true = PureFactContext::new().assume_condition(below.clone(), true);
+    let assumes_false = PureFactContext::new().assume_condition(below.clone(), false);
 
     for _ in 0..2 {
         assert_eq!(assumes_true.decide(&below), Some(true));
@@ -1813,11 +1815,11 @@ fn assumptions_clones_share_facts_and_cache_keys_are_content_stable() {
         Bitvector32Term::Variable(Variable(9)),
         Bitvector32Term::Constant(10),
     );
-    let first = Assumptions::new().assume_condition(condition.clone(), true);
+    let first = PureFactContext::new().assume_condition(condition.clone(), true);
     let clone = first.clone();
     let idempotent = clone.clone().assume_condition(condition.clone(), true);
-    let rebuilt = Assumptions::new().assume_condition(condition.clone(), true);
-    let changed = Assumptions::new().assume_condition(condition, false);
+    let rebuilt = PureFactContext::new().assume_condition(condition.clone(), true);
+    let changed = PureFactContext::new().assume_condition(condition, false);
 
     assert!(first.shares_fact_storage_with(&clone));
     assert!(clone.shares_fact_storage_with(&idempotent));

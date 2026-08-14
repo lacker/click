@@ -707,7 +707,7 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches_through(
     source: &Proposition,
     target: &Proposition,
     after: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
     transitions: &[ExecutionPureFact],
 ) -> bool {
     if certified_fact_transport_reaches(source, target, after, assumptions) {
@@ -731,7 +731,7 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches(
     source: &Proposition,
     target: &Proposition,
     after: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let equivalent = |left: &Proposition, right: &Proposition| {
         left == right

@@ -96,10 +96,10 @@ fn symbolic_pointer_blocks_do_not_imply_non_aliasing() {
     assert!(!pointers_proven_distinct(
         &symbolic,
         &concrete,
-        &Assumptions::new()
+        &PureFactContext::new()
     ));
     assert_eq!(
-        Assumptions::new().decide(&ConditionTerm::pointer_equal(symbolic, concrete)),
+        PureFactContext::new().decide(&ConditionTerm::pointer_equal(symbolic, concrete)),
         None
     );
 }
@@ -147,7 +147,7 @@ fn concrete_max_function_call_preserves_caller_locals() {
         state.clone(),
         function.clone(),
         arguments.clone(),
-        Assumptions::new(),
+        PureFactContext::new(),
     )
     .expect("max function call should execute");
 
@@ -182,7 +182,7 @@ fn symbolic_max_function_call_reports_branch_facts() {
         state.clone(),
         function.clone(),
         arguments.clone(),
-        Assumptions::new(),
+        PureFactContext::new(),
     );
 
     assert_eq!(execution.paths().len(), 2);
@@ -248,7 +248,7 @@ fn resource_representation_requires_certified_replay_facts_and_exact_state() {
             CExpression::Value(int32(other_argument)),
             CExpression::Value(int32(certified_result.clone())),
         ],
-        Assumptions::new(),
+        PureFactContext::new(),
     );
     let certified_path = &execution.paths()[0];
     let desired_outcome = CFunctionOutcome::Return {
@@ -315,7 +315,7 @@ fn resource_representation_requires_certified_replay_facts_and_exact_state() {
 
 #[test]
 fn execution_provenance_matches_only_equivalent_call_havoc() {
-    let assumptions = Assumptions::new();
+    let assumptions = PureFactContext::new();
     let base = CMemory::new().with_block("arc", 16);
     let first_range = memory_range(arc_pointer(0), 0, 1);
     let other_range = memory_range(arc_pointer(4), 0, 1);
@@ -394,7 +394,7 @@ fn function_call_threads_memory_but_discards_callee_locals() {
         state.clone(),
         function.clone(),
         arguments.clone(),
-        Assumptions::new(),
+        PureFactContext::new(),
     )
     .expect("store/load function call should execute");
 
@@ -440,7 +440,7 @@ fn function_call_does_not_inherit_undeclared_resources() {
         state.clone(),
         caller.clone(),
         arguments.clone(),
-        Assumptions::new(),
+        PureFactContext::new(),
         CExecutionEnvironment::new().with_function(helper),
         CExecutionSemantics::EXECUTE_BODIES,
     )
@@ -474,7 +474,7 @@ fn concrete_function_specification_is_native_theorem() {
     let theorem = prove_c_function_satisfies_specification(
         function.clone(),
         specification.clone(),
-        Assumptions::new(),
+        PureFactContext::new(),
     )
     .expect("concrete max specification should prove");
 
@@ -510,7 +510,7 @@ fn symbolic_function_specification_uses_requirements_as_execution_pure_facts() {
     let theorem = prove_c_function_satisfies_specification(
         function.clone(),
         specification.clone(),
-        Assumptions::new(),
+        PureFactContext::new(),
     )
     .expect("symbolic branch specification should prove under condition");
 
@@ -551,7 +551,7 @@ fn symbolic_max_branch_specifications_include_bounds() {
     prove_c_function_satisfies_specification_and_propositions(
         function.clone(),
         right_specification,
-        Assumptions::new(),
+        PureFactContext::new(),
         vec![
             Proposition::ConditionIs(
                 ConditionTerm::signed_greater_equal(b_bits.clone(), a_bits.clone()),
@@ -577,7 +577,7 @@ fn symbolic_max_branch_specifications_include_bounds() {
     prove_c_function_satisfies_specification_and_propositions(
         function,
         left_specification,
-        Assumptions::new(),
+        PureFactContext::new(),
         vec![
             Proposition::ConditionIs(
                 ConditionTerm::signed_greater_equal(a_bits.clone(), a_bits.clone()),
@@ -667,7 +667,7 @@ fn symbolic_clamp_branch_specifications_include_bounds_under_ordered_limits() {
         prove_c_function_satisfies_specification_and_propositions(
             function.clone(),
             specification,
-            Assumptions::new(),
+            PureFactContext::new(),
             vec![
                 Proposition::ConditionIs(
                     ConditionTerm::signed_greater_equal(result.clone(), lo_bits.clone()),
@@ -702,7 +702,7 @@ fn incomplete_symbolic_function_specification_does_not_prove() {
     );
 
     assert!(
-        prove_c_function_satisfies_specification(function, specification, Assumptions::new())
+        prove_c_function_satisfies_specification(function, specification, PureFactContext::new())
             .is_none()
     );
 }
@@ -725,7 +725,7 @@ fn call_assign_uses_function_environment() {
     let theorem = prove_symbolic_c_execution_with_environment(
         state.clone(),
         statement.clone(),
-        Assumptions::new(),
+        PureFactContext::new(),
         environment,
         CExecutionSemantics::EXECUTE_BODIES,
     )
@@ -761,7 +761,7 @@ fn loop_semantics_explicitly_select_verification_or_verified_rules() {
         )],
         c_assign("i", c_add(c_variable("i"), c_int32_literal(1))),
     );
-    let assumptions = Assumptions::new();
+    let assumptions = PureFactContext::new();
     let (certified, loop_rule) =
         prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule(
             state.clone(),
@@ -853,7 +853,7 @@ fn perpetual_loop_verifies_safety_without_minting_a_concrete_exit() {
         prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule(
             state.clone(),
             statement.clone(),
-            Assumptions::new(),
+            PureFactContext::new(),
             CExecutionEnvironment::new(),
             CExecutionSemantics::EXECUTE_BODIES,
         );
@@ -871,7 +871,7 @@ fn perpetual_loop_verifies_safety_without_minting_a_concrete_exit() {
         }
     ));
 
-    let concrete = prove_symbolic_c_execution_paths(state, statement, Assumptions::new());
+    let concrete = prove_symbolic_c_execution_paths(state, statement, PureFactContext::new());
     assert!(concrete.paths().is_empty());
     assert!(concrete.limit().is_some());
 }
@@ -893,7 +893,7 @@ fn loop_exit_rule_with_proven_preservation_does_not_reverify_the_body() {
         )],
         c_assign("i", c_int32_literal(u32::MAX)),
     );
-    let assumptions = Assumptions::new();
+    let assumptions = PureFactContext::new();
     let automatic = prove_symbolic_c_statement_verification_paths_with_environment(
         state.clone(),
         statement.clone(),
@@ -945,7 +945,7 @@ fn loop_exit_with_unproven_preservation_does_not_produce_rule() {
     let (execution, loop_rule) = prove_symbolic_c_loop_exit_with_proven_phases(
         state,
         statement,
-        Assumptions::new(),
+        PureFactContext::new(),
         CExecutionEnvironment::new(),
         true,
         false,
@@ -976,7 +976,7 @@ fn unknown_call_assign_is_runtime_error() {
     let theorem = prove_symbolic_c_execution_with_environment(
         state.clone(),
         statement.clone(),
-        Assumptions::new(),
+        PureFactContext::new(),
         CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
     )
@@ -1004,8 +1004,9 @@ fn while_loop_executes_concrete_countdown() {
     );
     let statement = c_seq(loop_statement, c_return(c_variable("x")));
     let final_state = CState::new().with_local("x", int32(0));
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("concrete countdown loop should execute");
+    let theorem =
+        prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
+            .expect("concrete countdown loop should execute");
 
     assert_eq!(
         theorem.proposition(),
@@ -1032,14 +1033,14 @@ fn loop_budget_exhaustion_is_executor_failure_not_c_runtime_error() {
     let execution = prove_symbolic_c_execution_paths_with_budget(
         state.clone(),
         statement.clone(),
-        Assumptions::new(),
+        PureFactContext::new(),
         budget.clone(),
     );
 
     assert_eq!(execution.limit(), Some(ExecutionLimit::LoopUnrolls));
     assert_eq!(execution.paths(), &[] as &[SymbolicCExecutionPath]);
     assert!(
-        prove_symbolic_c_execution_with_budget(state, statement, Assumptions::new(), budget,)
+        prove_symbolic_c_execution_with_budget(state, statement, PureFactContext::new(), budget,)
             .is_none()
     );
 }
@@ -1053,7 +1054,7 @@ fn executor_budgets_cap_steps_calls_and_paths() {
         prove_symbolic_c_execution_paths_with_budget(
             state.clone(),
             statement.clone(),
-            Assumptions::new(),
+            PureFactContext::new(),
             ExecutionBudget::new().with_statement_steps(0),
         )
         .limit(),
@@ -1063,7 +1064,7 @@ fn executor_budgets_cap_steps_calls_and_paths() {
         prove_symbolic_c_execution_paths_with_budget(
             state.clone(),
             statement,
-            Assumptions::new(),
+            PureFactContext::new(),
             ExecutionBudget::new().with_expression_steps(0),
         )
         .limit(),
@@ -1081,7 +1082,7 @@ fn executor_budgets_cap_steps_calls_and_paths() {
             CState::new(),
             function,
             vec![c_int32_literal(1)],
-            Assumptions::new(),
+            PureFactContext::new(),
             ExecutionBudget::new().with_function_calls(0),
         )
         .limit(),
@@ -1098,7 +1099,7 @@ fn executor_budgets_cap_steps_calls_and_paths() {
         prove_symbolic_c_execution_paths_with_budget(
             state,
             branchy_statement,
-            Assumptions::new(),
+            PureFactContext::new(),
             ExecutionBudget::new().with_paths(3),
         )
         .limit(),
@@ -1123,8 +1124,9 @@ fn while_invariant_is_proof_obligation() {
         vec![invariant.clone()],
         c_assign("x", c_subtract(c_variable("x"), c_int32_literal(1))),
     );
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("false loop should execute under invariant obligation");
+    let theorem =
+        prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
+            .expect("false loop should execute under invariant obligation");
 
     assert_eq!(
         theorem.proposition(),

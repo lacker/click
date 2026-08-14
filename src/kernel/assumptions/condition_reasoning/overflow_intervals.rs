@@ -12,7 +12,7 @@ struct SignedOrderBound {
     upper: bool,
 }
 
-impl Assumptions {
+impl PureFactContext {
     #[cfg(test)]
     fn reset_signed_interval_fallback_fact_visits() {
         SIGNED_INTERVAL_FALLBACK_FACT_VISITS.with(|visits| visits.set(0));
@@ -417,7 +417,7 @@ mod tests {
     fn exact_signed_bounds_avoid_context_scan() {
         let x = Bitvector32Term::Variable(Variable(91_001));
         let y = Bitvector32Term::Variable(Variable(91_002));
-        let mut assumptions = Assumptions::new();
+        let mut assumptions = PureFactContext::new();
         for index in 0..128 {
             let unrelated = Bitvector32Term::Variable(Variable(92_000 + index));
             assumptions = assumptions.assume_condition(
@@ -437,11 +437,11 @@ mod tests {
                 );
         }
 
-        Assumptions::reset_signed_interval_fallback_fact_visits();
+        PureFactContext::reset_signed_interval_fallback_fact_visits();
         assert_eq!(
             assumptions.decide(&ConditionTerm::signed_add_overflows(x, y)),
             Some(false)
         );
-        assert_eq!(Assumptions::signed_interval_fallback_fact_visits(), 0);
+        assert_eq!(PureFactContext::signed_interval_fallback_fact_visits(), 0);
     }
 }

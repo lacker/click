@@ -465,7 +465,7 @@ pub(in crate::kernel) fn count_fold_parts(term: &Bitvector32Term) -> Option<Coun
 pub(in crate::kernel) fn count_fold_split_matches(
     whole: &Bitvector32Term,
     split: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let Some(whole) = count_fold_parts(whole) else {
         return false;
@@ -482,7 +482,7 @@ pub(in crate::kernel) fn count_fold_split_parts_match(
     whole: &CountFoldParts,
     first: &Bitvector32Term,
     second: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let (Some(first), Some(second)) = (count_fold_parts(first), count_fold_parts(second)) else {
         return false;
@@ -515,7 +515,7 @@ pub(in crate::kernel) fn count_fold_split_parts_match(
 pub(in crate::kernel) fn range_fold_terms_alpha_equivalent(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
-    assumptions: &Assumptions,
+    assumptions: &PureFactContext,
 ) -> bool {
     let (
         Bitvector32Term::RangeFold {

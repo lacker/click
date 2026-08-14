@@ -47,7 +47,7 @@ fn write_context(
     ResourceContext::new().unchecked_with_fact(write_element(base, start, end))
 }
 
-fn assert_replayable_derivation(assumptions: &Assumptions, proposition: &Proposition) {
+fn assert_replayable_derivation(assumptions: &PureFactContext, proposition: &Proposition) {
     let derivation = assumptions
         .derive_proposition(proposition)
         .expect("expected an explicit proposition derivation");
