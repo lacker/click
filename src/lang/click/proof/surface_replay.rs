@@ -2260,6 +2260,11 @@ pub(super) fn construct_smart_have_certificate(
     tactic_index: usize,
     unfolded_predicates: &[String],
 ) -> Result<(Proposition, SimpleProof), ClickError> {
+    let planning_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        claim_label,
+        "smart have planning",
+    );
     let (fact, evidence) = plan_smart_have_at_current_point(
         have,
         claim_label,
@@ -2276,6 +2281,12 @@ pub(super) fn construct_smart_have_certificate(
         unfolded_predicates,
         None,
     )?;
+    drop(planning_span);
+    let _construction_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        claim_label,
+        "smart have certificate construction",
+    );
     let certificate = surface_smart_have_certificate(
         replay,
         state,

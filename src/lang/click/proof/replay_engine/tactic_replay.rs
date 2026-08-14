@@ -2218,6 +2218,11 @@ fn replay_linear_tactics_without_frontier_loops(
                     );
                     continue;
                 }
+                let _have_span = crate::instrumentation::OperationTiming::new(
+                    "have",
+                    claim_label,
+                    "contract have replay",
+                );
                 let mut have_facts = requirement_pure_facts.clone();
                 have_facts.extend(
                     replay

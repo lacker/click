@@ -306,11 +306,22 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     // lowering must not silently apply those (or other ambient equalities)
     // before the smart plan is recorded, or expansion loses a required proof
     // step. Keep only the facts needed to spell direct program values.
+    let _prologue_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        claim_label,
+        "smart have: lowering fact preparation",
+    );
     let direct_lowering_facts = if restricted_simp {
         facts_for_restricted_simp_lowering(available)
     } else {
         facts_for_smart_have_lowering(available)
     };
+    drop(_prologue_span);
+    let goal_lowering = crate::instrumentation::OperationTiming::new(
+        "have",
+        claim_label,
+        "smart have: goal lowering",
+    );
     let fact = match lower_point_proposition(
         &have.proposition,
         &direct_lowering_facts,
@@ -350,6 +361,12 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
             }
         },
     };
+    drop(goal_lowering);
+    let unfold_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        claim_label,
+        "smart have: predicate unfolding",
+    );
     let available = if unfolded_predicates.is_empty() {
         available.to_vec()
     } else {
@@ -445,7 +462,19 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     } else {
         available.clone()
     };
+    drop(unfold_span);
+    let context_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        claim_label,
+        "smart have: assumption context build",
+    );
     let assumptions = assumptions_from_propositions(&reasoning_available);
+    drop(context_span);
+    let _equivalence_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        claim_label,
+        "smart have: exact and equivalent goal checks",
+    );
     if reasoning_available.contains(&goal) {
         return Ok((fact, SimpEvidence::Assumption));
     }
@@ -464,10 +493,23 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     {
         return Ok((fact, SimpEvidence::Derivation(derivation)));
     }
-    if let Some(derivation) = search_condition_derivation(&goal, &reasoning_available)? {
+    drop(_equivalence_span);
+    let condition_search = crate::instrumentation::OperationTiming::new(
+        "have",
+        claim_label,
+        "smart have: condition premise search",
+    );
+    let searched = search_condition_derivation(&goal, &reasoning_available)?;
+    drop(condition_search);
+    if let Some(derivation) = searched {
         return Ok((fact, SimpEvidence::Derivation(derivation)));
     }
 
+    let _simp_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        claim_label,
+        "smart have: simp certificate planning",
+    );
     let Some(plan) = plan_simp_certificate(&goal, &assumptions) else {
         let mut message = format!(
             "`{claim_label}` tactic {outer_tactic_index}: `have` failed: {}",
@@ -665,6 +707,11 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
     let mut next_choice_variable = 3_000_000;
 
     for (inner_tactic_index, tactic) in proof_case.tactics.iter().enumerate() {
+        let _tactic_span = crate::instrumentation::OperationTiming::new(
+            "have",
+            claim_label,
+            format!("have body tactic: {}", tactic_name(tactic)),
+        );
         add_have_case_assumptions(
             proof_case,
             inner_tactic_index,
