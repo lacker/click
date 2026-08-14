@@ -114,6 +114,82 @@ fn snapshot_bridge_proves(
     })
 }
 
+/// Respells every spec-pristine load atom (a `MemoryLoad` whose memory has
+/// no blocks and no cells — the abstract "current value" spelling premise
+/// lowering produces) over the given concrete memory. The result denotes the
+/// same value at the point whose memory this is, but in live vocabulary, so
+/// availability bridging can decide it against live-spelled facts by framing
+/// across recorded effects instead of by spelling coincidence.
+pub(super) fn concretize_pristine_loads(
+    proposition: &Proposition,
+    memory: &crate::kernel::CMemory,
+) -> Proposition {
+    fn map_bitvector(term: &Bitvector32Term, memory: &crate::kernel::CMemory) -> Bitvector32Term {
+        let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+            (
+                Box::new(map_bitvector(left, memory)),
+                Box::new(map_bitvector(right, memory)),
+            )
+        };
+        match term {
+            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
+            Bitvector32Term::MemoryLoad(load_memory, pointer) => {
+                if load_memory.as_ref() == &crate::kernel::CMemory::new() {
+                    Bitvector32Term::MemoryLoad(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        pointer.clone(),
+                    )
+                } else {
+                    term.clone()
+                }
+            }
+            Bitvector32Term::Add(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::Add(left, right)
+            }
+            Bitvector32Term::Subtract(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::Subtract(left, right)
+            }
+            Bitvector32Term::Multiply(left, right) => {
+                let (left, right) = binary(left, right);
+                Bitvector32Term::Multiply(left, right)
+            }
+            _ => term.clone(),
+        }
+    }
+    let Proposition::ConditionIs(condition, value) = proposition else {
+        return proposition.clone();
+    };
+    let binary = |constructor: fn(Box<Bitvector32Term>, Box<Bitvector32Term>) -> ConditionTerm,
+                  left: &Bitvector32Term,
+                  right: &Bitvector32Term| {
+        constructor(
+            Box::new(map_bitvector(left, memory)),
+            Box::new(map_bitvector(right, memory)),
+        )
+    };
+    let condition = match condition {
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            binary(ConditionTerm::Bitvector32Equal, left, right)
+        }
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            binary(ConditionTerm::Bitvector32SignedLessThan, left, right)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            binary(ConditionTerm::Bitvector32SignedLessEqual, left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            binary(ConditionTerm::Bitvector32SignedGreaterThan, left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            binary(ConditionTerm::Bitvector32SignedGreaterEqual, left, right)
+        }
+        _ => return proposition.clone(),
+    };
+    Proposition::ConditionIs(condition, *value)
+}
+
 pub(super) fn exact_fact_contains_conjunct(fact: &Proposition, required: &Proposition) -> bool {
     condition_polarity_equivalent(fact, required)
         || matches!(fact, Proposition::And(left, right)

@@ -432,3 +432,34 @@ fn conditions_equal_modulo_proven_snapshots_needs_frame_evidence() {
     );
     assert!(!framed.conditions_equal_modulo_proven_snapshots(&condition(&before), &other));
 }
+
+/// A soundness property: load canonicalization may follow materialization
+/// cells to their common source, but the jump must not erase a havoc that
+/// could have written the loaded pointer. Here the loaded cell sits inside
+/// the havoc's mutable range while a sibling materialization cell provably
+/// survives; treating the post-havoc load as unchanged would transport a
+/// stale fact across the mutation.
+#[test]
+fn sibling_materialization_cells_must_not_launder_a_havoc() {
+    let pristine = CMemory::new().with_block("arg-memory", 16);
+    let loaded = arc_pointer(0);
+    let sibling = arc_pointer(4);
+    let materialized = pristine
+        .clone()
+        .store(sibling.clone(), pristine.symbolic_int32_load(&sibling));
+    let havocked = materialized.clone().with_call_memory_havoc(
+        Variable(9000),
+        &[CMemoryRange::new(
+            loaded.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )],
+        &PureFactContext::new(),
+    );
+
+    assert!(
+        !c_memory_load_is_unchanged(&materialized, &havocked, &loaded, &PureFactContext::new()),
+        "a havoc of the loaded pointer must not be laundered by sibling \
+         materialization cells jumping to their common source"
+    );
+}

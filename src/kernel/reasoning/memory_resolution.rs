@@ -1074,7 +1074,27 @@ fn canonical_memory_for_pointer_load_with_depth(
             .all(|source| source == first)
             .then(|| first.clone())
     });
+    let jumped = common_materialization_source.is_some();
     let mut canonical = common_materialization_source.unwrap_or_else(|| memory.clone());
+    if jumped {
+        // The jump rebases the load onto the cells' common source, which
+        // witnesses only that the surviving cells are unchanged since that
+        // source. The original memory's havoc markers must survive the
+        // jump: a havoc may have written the loaded pointer itself, and
+        // erasing the marker would let the canonical-equality shortcut
+        // treat the load as unchanged with no frame evidence (pinned by
+        // `sibling_materialization_cells_must_not_launder_a_havoc`).
+        let markers = memory
+            .blocks
+            .iter()
+            .filter(|(block, _)| block.starts_with("havoc:") || block.starts_with("call-havoc:"))
+            .map(|(block, size)| (block.clone(), size.clone()))
+            .collect::<Vec<_>>();
+        let blocks = std::sync::Arc::make_mut(&mut canonical.blocks);
+        for (block, size) in markers {
+            blocks.entry(block).or_insert(size);
+        }
+    }
     std::sync::Arc::make_mut(&mut canonical.blocks).retain(|block, _| {
         block == &pointer.block || block.starts_with("havoc:") || block.starts_with("call-havoc:")
     });

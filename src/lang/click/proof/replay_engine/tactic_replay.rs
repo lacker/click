@@ -1185,7 +1185,26 @@ fn replay_linear_tactics_without_frontier_loops(
                             // can lower to a context-free truth on this path
                             // (a shared post-branch step's premise after a
                             // constant assignment); it demands no evidence.
-                            || PureFactContext::new().proves(&premise);
+                            || PureFactContext::new().proves(&premise)
+                            // A premise whose load atoms carry the abstract
+                            // spec spelling ("the current value") cannot be
+                            // related to live-spelled facts by history — the
+                            // pristine memory is not a snapshot. Respell
+                            // those atoms over the current point's memory
+                            // and decide the live pair by framing across
+                            // the recorded effects.
+                            || {
+                                let concretized = concretize_pristine_loads(
+                                    &premise,
+                                    state.memory(),
+                                );
+                                concretized != premise
+                                    && exact_fact_is_available_across_effects(
+                                        &concretized,
+                                        &all_pure_facts,
+                                        &replay.effect_facts,
+                                    )
+                            };
                     if !premise_is_available {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise: {}",
