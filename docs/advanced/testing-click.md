@@ -373,6 +373,16 @@ verification. The marker contains no theorem or proof object: it only attests
 that the reference full gate passed. Full `click verify` remains the reference
 release check.
 
+### Expansion is not a repair operation
+
+Expansion is deliberately not a repair operation for a broken proof. The
+selected proof unit and the contracts it depends on must verify before `click
+expand` will emit a rewrite. In particular, a failure later in the same proof
+blocks expansion of an earlier tactic. First restore correctness with ordinary
+proof steps; then profile and expand the green proof. Broken proof units must
+not be moved between partially checked intermediate states under an expansion
+label.
+
 ### Auditing smart-tactic expansion
 
 Use `click audit` for a slow, exhaustive check of the source-expansion

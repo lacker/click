@@ -76,6 +76,17 @@ or inserting irrelevant proof bookkeeping. See
 [Performance Tools](performance-tools.md) and
 [Testing Click](testing-click.md) for the operational workflow.
 
+## Classifying smart versus simple tactics
+
+Classify tactics by whether they select a proof rule, not by whether the user
+listed their input facts. A tactic that receives hints and chooses among
+normalization, rewriting, arithmetic, transport, framing, or other theories is
+smart and must expand. A simple tactic checks one named rule from explicit
+evidence with work proportional to that certificate. Simple replay must not
+fall through alternate strategies or reconstruct a proof from ambient history;
+if expansion cannot express the selected rule, that is a certificate-language
+issue.
+
 ## Classification summary
 
 Use the narrowest description supported by the evidence:
