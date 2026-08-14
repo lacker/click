@@ -798,9 +798,7 @@ impl PureFactContext {
             // the same containment relation the materialized-pair loops use,
             // served by the compact composition's indexed candidates.
             resources.proves_owned_memory_ranges_separate_by(left, right, |child, parent| {
-                memory_range_contained_for_memory_resolution_with_depth(
-                    child, parent, self, depth,
-                )
+                memory_range_contained_for_memory_resolution_with_depth(child, parent, self, depth)
             })
         })
     }
@@ -1080,10 +1078,7 @@ impl PureFactContext {
         // composition are separate by the composition law.
         if let (CResource::Memory(left_range), CResource::Memory(right_range)) = (left, right)
             && self
-                .memory_separation_candidates(
-                    &left_range.base().block,
-                    &right_range.base().block,
-                )
+                .memory_separation_candidates(&left_range.base().block, &right_range.base().block)
                 .any(|(_, fact_left, fact_right)| {
                     separation_fact_entails(
                         &CResource::Memory(fact_left.clone()),

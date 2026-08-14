@@ -1209,8 +1209,6 @@ fn same_family_separate_facts(facts: &[&CResourceFact]) -> Vec<Proposition> {
     propositions
 }
 
-
-
 /// Separation cases whose proof depends only on the resource constructors,
 /// not on ambient facts or the composition that happened to contain them.
 pub(in crate::kernel) fn resources_structurally_separate(
