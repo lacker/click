@@ -13,6 +13,8 @@ predicate valid_pool(pool: struct pool*) {
 
 verifying "pool_init.c";
 verifying "pool_checkout.c";
+verifying "pool_transfer.c";
+verifying "pool_transfer_pipeline.c";
 verifying "pool_return.c";
 verifying "pool_destroy.c";
 verifying "pool_pipeline.c";
@@ -70,6 +72,141 @@ void pool_return(struct pool* pool, struct object* object) {
     execute();
     frame();
     simp();
+}
+
+void pool_transfer(
+    struct pool* source,
+    struct pool* destination,
+    struct object* object
+) {
+    requires source != destination;
+    requires valid_pool(source);
+    requires valid_pool(destination);
+    requires count(pool_object(source, object)) == 1;
+    requires count(pool_object(destination, object)) == 0;
+    requires destination->checked_out < destination->capacity;
+    owns object(source);
+    owns object(destination);
+    consumes pool_object(source, object);
+    mutable source->checked_out, destination->checked_out;
+    produces pool_object(destination, object);
+
+    ensures valid_pool(source);
+    ensures valid_pool(destination);
+} by {
+    unfold(valid_pool);
+    unfold(pool_object(source, object));
+    step() using {
+        source != destination;
+        count(pool_object(source, object)) == 1;
+        count(pool_object(destination, object)) == 0;
+        destination->checked_out < destination->capacity;
+        loadable(source[0..2]);
+        loadable(destination[0..2]);
+        loadable(object[0..1]);
+        0 <= source->checked_out;
+        source->checked_out <= source->capacity;
+        source->checked_out == count(pool_object(source, _));
+        0 <= destination->checked_out;
+        destination->checked_out <= destination->capacity;
+        destination->checked_out == count(pool_object(destination, _));
+    }
+    step() using {
+        source != destination;
+        count(pool_object(source, object)) == 1;
+        count(pool_object(destination, object)) == 0;
+        destination->checked_out < destination->capacity;
+        loadable(old(source[0..2]));
+        loadable(old(destination[0..2]));
+        loadable(old(object[0..1]));
+        at(statement(0).entry, 0) <= at(statement(0).entry, source->checked_out);
+        at(statement(0).entry, source->checked_out) <= at(statement(0).entry, source->capacity);
+        at(statement(0).entry, source->checked_out) == at(statement(0).entry, count(pool_object(source, _)));
+        0 <= destination->checked_out;
+        destination->checked_out <= destination->capacity;
+        destination->checked_out == count(pool_object(destination, _));
+    }
+    step() using {
+        source != destination;
+        count(pool_object(source, object)) == 1;
+        count(pool_object(destination, object)) == 0;
+        at(statement(1).entry, destination->checked_out) < at(statement(1).entry, destination->capacity);
+        loadable(old(source[0..2]));
+        loadable(old(destination[0..2]));
+        loadable(old(object[0..1]));
+        at(statement(0).entry, 0) <= at(statement(0).entry, source->checked_out);
+        at(statement(0).entry, source->checked_out) <= at(statement(0).entry, source->capacity);
+        at(statement(0).entry, source->checked_out) == at(statement(0).entry, count(pool_object(source, _)));
+        at(statement(1).entry, 0) <= at(statement(1).entry, destination->checked_out);
+        at(statement(1).entry, destination->checked_out) <= at(statement(1).entry, destination->capacity);
+        at(statement(1).entry, destination->checked_out) == at(statement(1).entry, count(pool_object(destination, _)));
+    }
+    fold(pool_object(destination, object));
+    frame() using {
+    }
+    have 0 <= source->checked_out and source->checked_out <= source->capacity and source->checked_out == count(pool_object(source, _)) by {
+        unfold(valid_pool);
+        have 0 <= source->checked_out and source->checked_out <= source->capacity by {
+            unfold(valid_pool);
+            have 0 <= source->checked_out by {
+                unfold(valid_pool);
+                rewrite(at(statement(2).entry, 1) == at(statement(2).entry, count(pool_object(source, object))));
+                rewrite(at(statement(0).entry, source->checked_out) == at(statement(0).entry, count(pool_object(source, _))));
+                normalize();
+            }
+            have source->checked_out <= source->capacity by {
+                unfold(valid_pool);
+                have 0 <= at(statement(0).entry, source->checked_out) by {
+                    rewrite(at(statement(0).entry, source->checked_out) == at(statement(0).entry, count(pool_object(source, _))));
+                    rewrite(at(statement(2).entry, count(pool_object(source, object))) == at(statement(2).entry, 1));
+                    normalize();
+                }
+                apply(int32_nonnegative_predecessor_upper_bound(at(statement(0).entry, source->checked_out), at(statement(0).entry, source->capacity))) using {
+                    0 <= at(statement(0).entry, source->checked_out);
+                    at(statement(0).entry, source->checked_out) <= at(statement(0).entry, source->capacity);
+                }
+                assumption();
+            }
+            split();
+        }
+        have source->checked_out == count(pool_object(source, _)) by {
+            unfold(valid_pool);
+            rewrite(at(statement(0).entry, 1) == at(statement(0).entry, count(pool_object(source, object))));
+            rewrite(at(statement(0).entry, source->checked_out) == at(statement(0).entry, count(pool_object(source, _))));
+            normalize();
+        }
+        split();
+    }
+    have 0 <= destination->checked_out and destination->checked_out <= destination->capacity and destination->checked_out == count(pool_object(destination, _)) by {
+        unfold(valid_pool);
+        have 0 <= destination->checked_out and destination->checked_out <= destination->capacity by {
+            unfold(valid_pool);
+            have 0 <= destination->checked_out by {
+                unfold(valid_pool);
+                rewrite(at(statement(1).entry, destination->checked_out) == at(statement(1).entry, count(pool_object(destination, _))));
+                normalize();
+            }
+            have destination->checked_out <= destination->capacity by {
+                unfold(valid_pool);
+                apply(int32_increment_upper_bound(at(statement(1).entry, destination->checked_out), at(statement(1).entry, destination->capacity))) using {
+                    at(statement(1).entry, destination->checked_out) < at(statement(1).entry, destination->capacity);
+                }
+                assumption();
+            }
+            split();
+        }
+        have destination->checked_out == count(pool_object(destination, _)) by {
+            unfold(valid_pool);
+            rewrite(at(statement(1).entry, destination->checked_out) == at(statement(1).entry, count(pool_object(destination, _))));
+            normalize();
+        }
+        split();
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }
 
 void pool_destroy(struct pool* pool) {
@@ -174,4 +311,33 @@ void pool_pipeline(
     assumption();
     assumption();
     assumption();
+}
+
+void pool_transfer_pipeline(
+    struct pool* source,
+    struct pool* destination,
+    struct object* object
+) {
+    requires source != destination;
+    owns object(source);
+    owns object(destination);
+    owns object(object);
+    mutable source->checked_out, source->capacity,
+        destination->checked_out, destination->capacity;
+    produces pool_object(destination, object);
+
+    ensures valid_pool(source);
+    ensures valid_pool(destination);
+    ensures source->checked_out == 0;
+    ensures source->capacity == 1;
+    ensures destination->checked_out == 1;
+    ensures destination->capacity == 1;
+} by {
+    step();
+    step();
+    step();
+    step();
+    step();
+    frame();
+    simp();
 }
