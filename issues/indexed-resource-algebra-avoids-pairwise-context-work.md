@@ -244,6 +244,23 @@ missing owns nonempty_buffer(owner)". The final investigation is why folding
 a composite body loses snapshot evidence without materialized pairs — the
 one consumer whose failure was never budget-related.
 
+That investigation is now cell-precise (prototype commit 851fde96). The
+representation certifier's three gates were probed individually: values and
+resources pass; the memory gate fails, and inside it the definitional
+cell-by-cell walk fails on pointer and value equalities between two
+spellings of the same cells — one side resolved to concrete or entry-load
+forms, the other left as nested symbolic snapshot loads. Adding the
+proof-aware composition fallback to the memory-ranges disjointness variant
+(mirroring the landed pointer-variant fix) did not change the outcome,
+which eliminates the comparison-side hypothesis: the pair facts' remaining
+load-bearing effect is upstream, in the executor's memory resolution, which
+resolved loads while building the certified snapshots when pairs were
+present and leaves them symbolic without them. The next session should
+probe which executor-side resolution call produces the differently spelled
+cells — comparing the certified snapshots' cell spellings with pairs on and
+off will name it directly — and give that call the composition fallback.
+The final comparison machinery needs no further work.
+
 Budget-exhaustion diagnostics now attribute their work, and bracketing with
 them reframed the box_pipeline blocker before its resolution: the same `have` replay costs between
 1.0 and 1.9 million units on the current tree with pairs present — half to
