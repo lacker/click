@@ -29,6 +29,12 @@ when evidence exposes one.
   remains, its diverging query is traced to call-havoc load framing, and
   the decided design (stratified derivation edges plus canonical terms
   with bounded guards) is recorded in the issue.
+- [Canonical load jump launders havoc markers](canonical-load-jump-launders-havoc-markers.md):
+  a kernel soundness gap — the materialization-source jump in load
+  canonicalization erases havoc markers, so a load can be treated as
+  unchanged across a havoc of its own pointer; the one-hunk fix exposes a
+  premise-bridge completeness debt in input-cursor shared with the
+  lazy-separation close-out.
 - [Declared resources need symbolic quantities](symbolic-declared-resource-quantities.md):
   every `owns`/`consumes`/`produces` clause transfers exactly one unit, so
   runtime-sized capacity cannot become linear authority; bounded-pool is the
