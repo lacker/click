@@ -261,6 +261,20 @@ cells — comparing the certified snapshots' cell spellings with pairs on and
 off will name it directly — and give that call the composition fallback.
 The final comparison machinery needs no further work.
 
+A further probing round (prototype commit 66064886) sharpened this again.
+With pairs present the certifier never engages: certified and desired
+outcomes are exactly equal. Without pairs the certified path's final
+resources still hold buffer_storage folded plus a stray view where the
+desired outcome holds nonempty_buffer, so independent contract
+certification's replay of the test's unfold/have/fold sequence itself takes
+a different course before any comparison machinery runs. The remaining
+investigation is a step-by-step trace of that independent replay's resource
+state against the planning replay's, on
+`execute_until_expands_vector_storage_call_postconditions` alone: find the
+first step where the two diverge without pairs, which will name the exact
+query the compositions must serve. Comparison-side and endpoint-matching
+hypotheses are all measured and eliminated.
+
 Budget-exhaustion diagnostics now attribute their work, and bracketing with
 them reframed the box_pipeline blocker before its resolution: the same `have` replay costs between
 1.0 and 1.9 million units on the current tree with pairs present — half to
