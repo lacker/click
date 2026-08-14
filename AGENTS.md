@@ -87,6 +87,16 @@ reading output, but the verdict comes from an unpiped run. The default `cargo
 test --lib` is also not the gate: it passes while both proof-fixture gates
 fail.
 
+## File issues as one markdown file each in `issues/`
+
+Any problem worth tracking becomes one kebab-case `.md` file in `issues/`
+plus a one-line entry in the Open list in `issues/README.md` — bugs, design
+gaps, and deferred work alike, not only tooling failures. State the violated
+invariant, a small intended regression, and acceptance criteria, written so
+a fresh agent can act on the file alone without the conversation that
+produced it. Delete the file and its list line when the fix, its regression
+coverage, and any documentation land.
+
 ## Existing C is the verification boundary
 
 Click exists to prove properties of existing C programs. Adoption in a large
