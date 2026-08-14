@@ -173,3 +173,21 @@ The final deletion should therefore add one proof-producing on-demand
 projection shared by certificate planning and representation replay; widening
 snapshot-aware pointer search globally was measured, crossed the deterministic
 smart-work budget, and was rejected.
+
+Re-running that experiment against the current tree corrects the design in
+one important way: the kernel-side projection already exists.
+`compact_composition_projects_symbolic_separation_without_pair_facts` proves
+symbolic subrange separation from carrier-only assumptions with zero pair
+facts through the existing composition branch of the separation prover, so no
+new kernel proof object is required. The three failures reproduce exactly,
+and instrumenting them shows their separation queries run against assumptions
+whose composition set is empty: certificate planning and replay build many
+small proposition-list contexts (for example inside
+`append_simple_proof_step_for_operation`), the internal carrier is not a
+surface-spellable proposition, and only the former pair facts rode along in
+those vectors. The remaining work is therefore not prover strength but
+carrier attachment: the consumer sites that construct assumptions while
+holding a `CState` must attach that state's compact composition, the way the
+write-invalidation path already does, and derivations that consume a
+projected separation must record the projected `separate(...)` proposition as
+provenance so certificate premise spelling and replay agree.

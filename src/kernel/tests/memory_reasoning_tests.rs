@@ -2485,6 +2485,84 @@ fn memory_resolution_uses_compact_resource_composition_with_shallow_equalities()
     ));
 }
 
+/// The on-demand form of the former materialized separation pairs: with only
+/// the compact composition assumed — zero pair facts — a separation between
+/// subranges of two distinct owned symbolic ranges must still be provable,
+/// because two owned facts of one valid composition are separate and each
+/// subrange is provably contained in its parent. Overlapping subranges of one
+/// owned fact must stay unprovable.
+#[test]
+fn compact_composition_projects_symbolic_separation_without_pair_facts() {
+    let len = Bitvector32Term::Variable(Variable(93_420));
+    let cap = Bitvector32Term::Variable(Variable(93_421));
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let prefix = CMemoryRange::new(base.clone(), Bitvector32Term::Constant(0), len.clone());
+    let suffix = CMemoryRange::new(base.clone(), len.clone(), cap.clone());
+    let context = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_memory(prefix.clone()))
+        .unchecked_with_fact(CResourceFact::own_memory(suffix.clone()));
+    let composition = context
+        .observable_facts(&Assumptions::new())
+        .expect("the two owned ranges should compose")
+        .into_iter()
+        .find(|fact| matches!(fact, Proposition::CResourceComposition(_)))
+        .expect("multi-owner contexts should expose one compact authority");
+    let assumptions = Assumptions::new()
+        .assume_proposition(composition)
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), len.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(
+                Bitvector32Term::add(len.clone(), Bitvector32Term::Constant(1)),
+                cap.clone(),
+            ),
+            true,
+        );
+
+    assert!(
+        assumptions.proves(&Proposition::CResourceSeparate {
+            left: CResource::Memory(prefix.clone()),
+            right: CResource::Memory(suffix.clone()),
+        }),
+        "the two owned ranges themselves are separate by composition"
+    );
+    assert!(
+        assumptions.proves(&Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                base.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                base.clone(),
+                len.clone(),
+                Bitvector32Term::add(len, Bitvector32Term::Constant(1)),
+            )),
+        }),
+        "subranges of distinct owned facts inherit the composition's separation"
+    );
+    assert!(
+        !assumptions.proves(&Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                base.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(2),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                base,
+                Bitvector32Term::Constant(1),
+                Bitvector32Term::Constant(3),
+            )),
+        }),
+        "overlapping subranges of one owned fact must not become separate"
+    );
+}
+
 #[test]
 fn memory_resolution_alias_check_uses_exact_transitive_range_bounds() {
     let owner = Pointer {
