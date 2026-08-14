@@ -117,6 +117,32 @@ class (`step` used an assumption-derived theorem premise without a
 replayable derivation). The prototype unit suite stays 964/964 under the
 fix.
 
+## Bridge completion in progress (branch `claude/havoc-marker-bridge`)
+
+The local branch `claude/havoc-marker-bridge` (`3bb3804d`) carries the
+fix, the regression, and two bridge-completion pieces, unit suite
+965/965:
+
+- `memory_loads_proven_equal` falls back to the framed-load prover
+  (`c_memory_load_is_unchanged`), so marker-differing spellings are
+  decided by framing across recorded effects.
+- `step() using` premise availability retries with spec-pristine load
+  atoms respelled over the current point's memory
+  (`concretize_pristine_loads` in `fact_reasoning.rs`): premise
+  lowering deliberately spells loads over an empty spec memory, which
+  no history-based prover can relate to live snapshots — master only
+  ever connected the two through the laundering. Respelling turns the
+  comparison live-vs-live.
+
+With all three, `input-cursor` verifies. The examples frontier is
+`owned-vector`'s `allocated_vector_push.contract` tactic 7 (in the
+`if c(grown) == 0` branch): the same pristine premise shape, the
+concretized retry runs, but the live-vs-live bridge still misses —
+diagnose with a scoped bridge trace on that premise (the pattern used
+for bounded-pool: flag the one `snapshot_bridge_proves` call and log
+`memory_loads_proven_equal` branches). Expect a small number of further
+per-example corners; the corpus is 19 examples.
+
 ## Acceptance criteria
 
 - The regression above is in `memory_dag_tests.rs` and passes.
