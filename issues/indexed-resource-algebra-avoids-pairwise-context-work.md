@@ -232,21 +232,39 @@ first time.
 
 ## Remaining to close, in order
 
-1. The examples fixture gate: `bounded-pool`'s `pool_pipeline.contract`
-   `step()` at statement 4 exhausts its 500,000-unit simple budget under
-   the prototype (also at the pre-canonicalization prototype base, so
-   none of the landed slices caused it). This is the same failure the
-   monotonicity blocker below records from the symbolic-quantities side.
-   Attribution: ~370k units in `snapshot comparison: general alias` →
-   `general alias: range`, with `range disjointness: derived separation`
-   at ~247k and `indexed candidate`/`indexed facts` at ~184k each.
-   Measured and eliminated: memoizing
+1. The examples fixture gate. The 500,000-unit budget exhaustion is
+   **fixed** (prototype `c6644a83`): the cost was per-query depth, not
+   repetition — three snapshot comparisons of four differing cells each
+   ran the composition-backed general alias search per cell, from the
+   small-snapshot pre-pass in `c_memory_load_is_unchanged` (which ran
+   before the bounded DAG walk) and from the effect-summary
+   endpoint-matching closures inside a prop-facts candidate scan. Both
+   now use a bounded-alias comparison (memoized resolution check +
+   assumption-free constant-offset intervals + a materialization-aware
+   case for a cell at the loaded pointer), and the full comparison runs
+   after the DAG walk for all snapshot sizes, so nothing provable is
+   lost. `pool_pipeline` drops from 6.2s budget-death to 39ms; unit
+   suite 964/964. Measured and eliminated along the way: memoizing
    `pointers_proven_disjoint_by_range` by (fact-set fingerprint, pointer
-   pair) changed nothing — the queries are not identical repeats (the
-   fact set evolves between them); the cost is ~40 individually
-   expensive queries (~6k units each), so the fix must reduce per-query
-   work or stop the exact-premise replay path from running general-alias
-   comparison per cell at all.
+   pair) changed nothing — the queries are not identical repeats.
+
+   What remains is functional: the second `open`'s `step() using`
+   premise `0 <= pool->checked_out` does not replay. The traced state:
+   `snapshot_blind_candidates` normalizes all six candidate facts to the
+   pristine spelling `load(empty-memory, p)` while the required side
+   keeps a memory with a cross-object materialized cell
+   (`first->value == 11`, unstrippable by the assumption-free
+   canonicalizer because all external objects share one block). On
+   master the same bridge succeeds — branch tracing shows
+   `memory_loads_proven_equal` wins overwhelmingly through
+   `resolve_memory_load_term` (resolving the load to a materialized
+   cell value) plus 18 DAG-walk successes; on the prototype the same
+   sites show zero DAG successes and fewer resolutions, and the
+   resolve branch short-circuits (resolved-but-unequal returns false
+   without trying the DAG). Next: premise-context-aware tracing of the
+   one `memory_loads_proven_equal` call behind the failing premise —
+   global branch traces are too noisy (1,252 expected resolve-unequal
+   misses from candidate scanning drown the one load-bearing failure).
 2. A red deterministic curve: N symbolic same-block owned ranges through
    `observable_facts_assuming_valid` must emit no `CResourceSeparate`
    propositions and near-linear work (red on master today, green on the
