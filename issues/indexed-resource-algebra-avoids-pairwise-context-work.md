@@ -133,6 +133,42 @@ post-store certificate transport
 modular-call snapshot path
 (`modular_call_snapshot_anchor_replays_with_owned_resource`).
 
+## Monotonicity blocker exposed by symbolic quantities
+
+The symbolic declared-resource quantity prototype exposed a second concrete
+consumer on 2026-08-14. The unchanged `examples/bounded-pool` pipeline passes
+on master with four historical `CResourceComposition` facts. Replacing the
+owned-resource coefficient representation with a symbolic term causes one
+additional valid composition fact to survive at the second object store. The
+explicit premise `0 <= pool->checked_out` then stops replaying across the
+preceding store snapshot even though the same six explicit separation facts,
+the same sixteen execution-effect facts, and the same candidate condition
+facts remain available.
+
+The failure is not a quantity-arithmetic obligation. After zero populations
+were excluded from body activation and transition guarantees were made
+proof-producing, the contexts differed only in compact composition history:
+
+- master: four compositions, with fact counts `3, 3, 5, 7`;
+- prototype: five compositions, with fact counts `3, 3, 5, 5, 6`.
+
+With normal memoization, `pool_pipeline.contract` tactic 6 (`step() using` at
+statement 4) returns a false-negative exact-premise diagnostic. With
+`CLICK_DISABLE_DECIDE_MEMO=1`, the same simple store consumes more than
+500,000 deterministic work units and trips the simple-tactic gate. Timings on
+the normal failure attribute about 40,568 work units to that step, including
+repeated `range disjointness: derived separation` queries at about 6,193 work
+and `snapshot comparison: general alias` queries at about 6,637 work each.
+
+This pins an additional required property of the canonicalization design:
+adding a valid compact composition carrier must be monotone for an already
+provable snapshot equality, and a simple exact-premise check must not fall
+back to context-wide repeated range derivation. Add a focused regression that
+constructs the store/snapshot premise with four carriers, proves it, adds a
+fifth unrelated valid carrier, and proves it again with bounded near-constant
+work. The symbolic-quantity feature remains blocked until that regression and
+the unchanged bounded-pool project both pass.
+
 ## Measured and eliminated — do not re-walk
 
 - An earlier note here claimed the representation certifier never engages
