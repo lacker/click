@@ -6,6 +6,10 @@ struct CFunctionResourceTransfer {
     caller_resources_after_requirements: ResourceContext,
 }
 
+fn canonical_memory_range(range: CMemoryRange, assumptions: &PureFactContext) -> CMemoryRange {
+    assumptions.canonical_memory_range(&range)
+}
+
 fn function_needs_outcome_resource_transfer(function: &CFunction) -> bool {
     function
         .composite_resource_definitions()
@@ -748,7 +752,17 @@ fn execute_verified_function_rule(
                 budget,
             )? {
                 Ok(segment) => {
-                    mutable_ranges.push(CMemoryRange::new(segment.base, segment.start, segment.end))
+                    // Canonicalize the recorded footprint while its defining
+                    // equalities (earlier callees' ensures, path facts) are
+                    // in scope: every later frame query against this range
+                    // then matches entry-vocabulary facts syntactically
+                    // instead of re-proving the lowering per query. See the
+                    // canonicalize-at-creation design in
+                    // issues/indexed-resource-algebra-avoids-pairwise-context-work.md.
+                    mutable_ranges.push(canonical_memory_range(
+                        CMemoryRange::new(segment.base, segment.start, segment.end),
+                        &effective_assumptions,
+                    ))
                 }
                 Err(message) => {
                     footprint_error = Some(message);

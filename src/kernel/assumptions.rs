@@ -1195,6 +1195,175 @@ impl PureFactContext {
         })
     }
 
+    /// The canonical representative of `term`'s recorded-equality class:
+    /// constants first, then the member mentioning the fewest memory loads,
+    /// ties broken by term order. One bounded walk over the indexed equality
+    /// graph — no recursive proving, no fuel. This is the ground-equality
+    /// half of canonicalize-at-creation: a term created while its defining
+    /// equalities (a callee's ensures, a store's effect) are in scope can be
+    /// lowered to snapshot-free vocabulary before it is ever recorded.
+    pub(in crate::kernel) fn canonical_bitvector_from_direct_equalities(
+        &self,
+        term: &Bitvector32Term,
+    ) -> Bitvector32Term {
+        fn memory_load_nodes(term: &Bitvector32Term) -> usize {
+            match term {
+                Bitvector32Term::MemoryLoad(_, pointer) => {
+                    1 + pointer_offset_memory_load_nodes(&pointer.offset)
+                }
+                Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => 0,
+                Bitvector32Term::Add(left, right)
+                | Bitvector32Term::Subtract(left, right)
+                | Bitvector32Term::Multiply(left, right)
+                | Bitvector32Term::Divide(left, right)
+                | Bitvector32Term::Remainder(left, right)
+                | Bitvector32Term::ShiftLeft(left, right)
+                | Bitvector32Term::ArithmeticShiftRight(left, right)
+                | Bitvector32Term::BitwiseAnd(left, right)
+                | Bitvector32Term::BitwiseOr(left, right)
+                | Bitvector32Term::BitwiseXor(left, right) => {
+                    memory_load_nodes(left) + memory_load_nodes(right)
+                }
+                Bitvector32Term::BitwiseNot(value) => memory_load_nodes(value),
+                Bitvector32Term::If {
+                    then_term,
+                    else_term,
+                    ..
+                } => memory_load_nodes(then_term) + memory_load_nodes(else_term),
+                Bitvector32Term::RangeFold {
+                    start,
+                    end,
+                    initial,
+                    body,
+                    ..
+                } => {
+                    memory_load_nodes(start)
+                        + memory_load_nodes(end)
+                        + memory_load_nodes(initial)
+                        + memory_load_nodes(body)
+                }
+                Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+                    arguments.iter().map(memory_load_nodes).sum()
+                }
+            }
+        }
+        fn pointer_offset_memory_load_nodes(offset: &PointerOffsetTerm) -> usize {
+            match offset {
+                PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => 0,
+                PointerOffsetTerm::Add(left, right) => {
+                    pointer_offset_memory_load_nodes(left) + pointer_offset_memory_load_nodes(right)
+                }
+                PointerOffsetTerm::Int32Scaled { value, .. } => memory_load_nodes(value),
+            }
+        }
+        // (constants-first, load count, term order): a total, deterministic
+        // preference so replay sees identical canonical forms.
+        fn preference(term: &Bitvector32Term) -> (bool, usize, Bitvector32Term) {
+            (
+                term.as_const().is_none(),
+                memory_load_nodes(term),
+                term.clone(),
+            )
+        }
+        let index = self.bitvector_equality_index();
+        let start = equality_graph_term_key(term);
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![start];
+        let mut best = term.clone();
+        while let Some(current) = stack.pop() {
+            if !seen.insert(current.clone()) {
+                continue;
+            }
+            if preference(&current) < preference(&best) {
+                best = current.clone();
+            }
+            // A class member may simplify structurally (its subterms have
+            // their own recorded equalities); the simplified form is equal to
+            // the member, so it joins the walk. Bounded: simplification is
+            // deterministic, and the visited set caps the walk at twice the
+            // recorded class size.
+            let simplified = self.simplify_bitvector_under_assumptions(&current);
+            if simplified != current {
+                stack.push(equality_graph_term_key(&simplified));
+            }
+            if let Some(neighbors) = index.get(&current) {
+                stack.extend(neighbors.iter().cloned());
+            }
+        }
+        // Adopt the representative only when it genuinely lowers the term —
+        // strictly fewer memory loads, or a constant for a non-constant.
+        // Same-shape alternates (a load respelled through another snapshot)
+        // are a new vocabulary, not a canonical form; keeping the original
+        // preserves recordings that consumers re-derive and match
+        // structurally.
+        if memory_load_nodes(&best) < memory_load_nodes(term)
+            || (best.as_const().is_some() && term.as_const().is_none())
+        {
+            best
+        } else {
+            term.clone()
+        }
+    }
+
+    /// Lowers a memory range to canonical vocabulary through recorded ground
+    /// equalities and constant simplification — bounded lookups only, no
+    /// search. Applied where ranges are created and recorded (the
+    /// verified-call mutable footprint, resource segment evaluation) so
+    /// downstream frame queries compare canonical forms syntactically.
+    pub(in crate::kernel) fn canonical_memory_range(&self, range: &CMemoryRange) -> CMemoryRange {
+        let base = Pointer {
+            block: range.base().block.clone(),
+            offset: self.canonical_pointer_offset(&range.base().offset),
+        };
+        CMemoryRange::new(
+            base,
+            self.canonical_bitvector(range.start()),
+            self.canonical_bitvector(range.end()),
+        )
+    }
+
+    pub(in crate::kernel) fn canonical_pointer(&self, pointer: &Pointer) -> Pointer {
+        Pointer {
+            block: pointer.block.clone(),
+            offset: self.canonical_pointer_offset(&pointer.offset),
+        }
+    }
+
+    pub(in crate::kernel) fn canonical_bitvector(&self, term: &Bitvector32Term) -> Bitvector32Term {
+        // A few alternating rounds of structural simplification and
+        // equality-class selection: simplification rewrites inside a class
+        // member (`new_len` -> `old_len + 1` -> `1`), class selection swaps
+        // whole terms. The round count is a small constant, so this stays a
+        // bounded lookup rather than congruence-closure search.
+        const CANONICALIZATION_ROUNDS: usize = 3;
+        let mut term = term.clone();
+        for _ in 0..CANONICALIZATION_ROUNDS {
+            let simplified = self.simplify_bitvector_under_assumptions(&term);
+            let canonical = self.canonical_bitvector_from_direct_equalities(&simplified);
+            if canonical == term {
+                break;
+            }
+            term = canonical;
+        }
+        term
+    }
+
+    fn canonical_pointer_offset(&self, offset: &PointerOffsetTerm) -> PointerOffsetTerm {
+        match offset {
+            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
+            PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
+                self.canonical_pointer_offset(left),
+                self.canonical_pointer_offset(right),
+            ),
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(self.canonical_bitvector(value)),
+                    byte_width: *byte_width,
+                }
+            }
+        }
+    }
+
     fn memory_load_condition_index(
         &self,
     ) -> &BTreeMap<(PointerBlock, u64), BTreeSet<ConditionTerm>> {
