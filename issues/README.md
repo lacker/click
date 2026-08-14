@@ -100,6 +100,13 @@ Keep one file per independent open problem. Put durable implementation design
 in `docs/`, and delete an issue when its fix, regression coverage, and
 documentation land.
 
+## Certificate construction
+
+- [Atomic derivation returns premises, not steps](atomic-derivation-returns-premises-not-steps.md):
+  smart search discards how it proved its goal, so certificate construction
+  re-searches; measured at 97 percent of one tactic's budget before the
+  landed relief ordering.
+
 ## Verification performance burndown
 
 The governing invariant is [Verification Efficiency](../docs/advanced/verification-efficiency.md).

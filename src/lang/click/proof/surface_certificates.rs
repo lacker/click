@@ -344,6 +344,25 @@ pub(super) fn lower_surface_atomic_derivation(
         .filter(|(kernel, surface)| surface_replays_kernel(kernel, surface))
         .cloned()
         .collect::<Vec<_>>();
+    // The premises the planner selected are already spelled and validated;
+    // when they suffice to spell the rewrite chain, the ambient harvest
+    // below never runs. Attributed measurement showed that harvest spelling
+    // every ambient equality cost ninety-seven percent of one certificate
+    // construction before this ordering.
+    if let Some(tactics) = plan_explicit_equality_rewrites(&lowered_conclusion, &rewrite_pairs, available)
+    {
+        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "atomic derivation produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, Proof::Script(tactics)));
+    }
+    let _harvest_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        "atomic derivation lowering",
+        "derivation lowering: ambient rewrite harvest",
+    );
     // Atomic premise minimization can legitimately discard an execution
     // equality after the kernel has used it to resolve a named local to the
     // arithmetic term that a selected order rule proves. Certificate
