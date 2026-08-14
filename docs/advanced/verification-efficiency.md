@@ -110,6 +110,45 @@ These constraints are semantic-neutral. They must preserve independent kernel
 checking and must never turn an unproved, failed, or deadline-limited result
 into a cached success.
 
+## Indexed contradiction and premise search
+
+Derived contradiction checking and condition premise search follow one
+pattern: per-term facts fold into indexes once, and genuinely pairwise proof
+work runs only where a theory rule's own first-line requirements say a pair
+could relate.
+
+Context inconsistency labels the equality graph's connected components once
+per check and extends them with depth-bounded canonical endpoint forms:
+resolved loads, folded constants, sorted addends, collapsed single-addend
+sums, and canonical memories for unresolved loads. Each canonicalization step
+is justified by a kernel equality, so a strict order edge inside one class, or
+a reverse edge between two classes, is a contradiction found by map lookup.
+The remaining deep comparisons are bucketed by rule requirements — loads with
+loads, sums under equal folded constants and addend counts, conditionals with
+conditionals, folds with fold splits — and every performed comparison uses the
+unchanged proof-aware equality. Pin regressions fix each preserved reach:
+additive commutativity, load resolution, cross-snapshot load bridging, and
+graph-equal addends inside the add rule. Same-bucket contexts are still
+compared pairwise; that width is bounded by rule-relevant facts, not by the
+ambient context.
+
+Condition premise search tries single candidates, then candidate pairs that
+some derivation could connect: two facts sharing a bitvector variable
+(collected through load pointers and memories, so snapshot spellings still
+connect) or two facts each sharing one with the goal. A pair sharing neither
+is jointly satisfiable whenever each fact is, and a fact unsatisfiable alone
+is found by the single-candidate pass, so the skipped pairs hold no
+derivation. Wider premise sets come from one derivation over the complete
+candidate set minimized to its actual dependencies. Quantified matching
+remains a per-query linear scan over quantified facts; its curve guards
+against that scan acquiring a superlinear axis.
+
+The deterministic gates for these paths hold one fixed decision or derivation
+while growing unrelated context: exact contradiction, consistent order
+contexts, theory-capable order endpoints, fixed overflow decisions, quantified
+fact queries, long order paths, fixed loadability queries, and condition
+derivations.
+
 ## Checked execution reuse
 
 Proof replay and opaque-contract certification may share function-body work

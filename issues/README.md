@@ -115,10 +115,14 @@ documentation land.
 ## Verification performance burndown
 
 The governing invariant is [Verification Efficiency](../docs/advanced/verification-efficiency.md).
-Two demonstrated asymptotic violations remain, in dependency-aware order:
+One demonstrated asymptotic violation remains:
 
 1. [Replace pairwise resource-context work with indexed algebra](indexed-resource-algebra-avoids-pairwise-context-work.md).
-2. [Remove context-wide proof minimization and contradiction scans](proof-derivation-avoids-context-wide-scans.md).
+
+Context-wide proof derivation is closed: contradiction checking, order
+conflict detection, and condition premise search are indexed, with their
+design in the efficiency guide's "Indexed contradiction and premise search"
+section and deterministic curves plus conclusion pins in the default suite.
 
 The deterministic scaling gate is complete: every default curve records total
 cooperative work plus named operation/tactic work for actionable failures.
