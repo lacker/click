@@ -1236,6 +1236,53 @@ pub(in crate::kernel) fn resources_structurally_separate(
     }
 }
 
+fn memory_separate_facts_reenabled(facts: &[&CResourceFact]) -> Vec<Proposition> {
+    let mut by_block = BTreeMap::<PointerBlock, Vec<&CResource>>::new();
+    for resource in facts.iter().filter_map(|fact| fact.owned_resource()) {
+        let CResource::Memory(range) = resource else {
+            continue;
+        };
+        by_block
+            .entry(range.base().block.clone())
+            .or_default()
+            .push(resource);
+    }
+    let mut propositions = Vec::new();
+    for owned in by_block.values() {
+        let one_concrete_base = owned
+            .first()
+            .and_then(|resource| match resource {
+                CResource::Memory(range) => Some(range.base()),
+                _ => None,
+            })
+            .is_some_and(|base| {
+                owned.iter().all(|resource| match resource {
+                    CResource::Memory(range) => {
+                        range.base() == base
+                            && range.start().as_const().is_some()
+                            && range.end().as_const().is_some()
+                    }
+                    _ => false,
+                })
+            });
+        if one_concrete_base {
+            continue;
+        }
+        for i in 0..owned.len() {
+            for right in &owned[i + 1..] {
+                if resources_structurally_separate(owned[i], right) {
+                    continue;
+                }
+                propositions.push(Proposition::CResourceSeparate {
+                    left: owned[i].clone(),
+                    right: (*right).clone(),
+                });
+            }
+        }
+    }
+    propositions
+}
+
 impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
     fn family(&self) -> ResourceFamily {
         ResourceFamily::Memory
