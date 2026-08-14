@@ -1643,6 +1643,15 @@ pub struct PureFactContext {
     pub(super) memory_separation_facts: std::sync::Arc<
         BTreeMap<(PointerBlock, PointerBlock), Vec<(Proposition, CMemoryRange, CMemoryRange)>>,
     >,
+    /// Same-block separation candidates projected from the compact resource
+    /// compositions, keyed and maintained incrementally like
+    /// `memory_separation_facts`. Two owned facts of one valid composition
+    /// are separate by the composition law, so these entries carry the same
+    /// authority the formerly materialized pair propositions did, without
+    /// living in any ambient proposition set.
+    pub(super) composition_separation_facts: std::sync::Arc<
+        BTreeMap<(PointerBlock, PointerBlock), Vec<(Proposition, CMemoryRange, CMemoryRange)>>,
+    >,
     pub(super) content_fingerprint: u64,
     pub(super) defer_non_exact_loadability_obligations: bool,
     pub(super) defer_non_exact_condition_reasoning: bool,

@@ -492,7 +492,6 @@ impl PureFactContext {
             "range disjointness: indexed facts",
             || {
                 self.memory_separation_candidates(&left.block, &right.block)
-                    .iter()
                     .find_map(|(proposition, left_range, right_range)| {
                         crate::instrumentation::measure_operation(
                             "kernel",
@@ -569,7 +568,6 @@ impl PureFactContext {
         right: &Pointer,
     ) -> bool {
         self.memory_separation_candidates(&left.block, &right.block)
-            .iter()
             .any(|(_, left_range, right_range)| {
                 self.pointer_in_range_by_shallow_fact_graph(
                     left,
@@ -659,8 +657,8 @@ impl PureFactContext {
         // being accessed. Resolve those structurally before asking the
         // snapshot-aware containment prover, which may itself inspect memory
         // loads and is deliberately the more expensive second phase.
-        let candidates = self.memory_separation_candidates(&left.block, &right.block);
-        if candidates.iter().any(|(_, left_range, right_range)| {
+        let mut candidates = self.memory_separation_candidates(&left.block, &right.block);
+        if candidates.clone().any(|(_, left_range, right_range)| {
             #[cfg(test)]
             MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
             pointer_in_memory_range_shallow(left, left_range)
@@ -697,7 +695,7 @@ impl PureFactContext {
         if depth > crate::kernel::reasoning::MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT {
             return false;
         }
-        candidates.iter().any(|(_, left_range, right_range)| {
+        candidates.any(|(_, left_range, right_range)| {
             #[cfg(test)]
             MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
             pointer_in_memory_range_for_memory_resolution_with_depth(left, left_range, self, depth)
@@ -1049,6 +1047,13 @@ impl PureFactContext {
             return true;
         }
 
+        let separation_fact_entails = |fact_left: &CResource, fact_right: &CResource| {
+            crate::kernel::reasoning::consume_resource_prover_fuel()
+                && (self.proves_resource_contains_inner(fact_left, left)
+                    && self.proves_resource_contains_inner(fact_right, right)
+                    || self.proves_resource_contains_inner(fact_left, right)
+                        && self.proves_resource_contains_inner(fact_right, left))
+        };
         if self.prop_facts.iter().any(|proposition| {
             let Proposition::CResourceSeparate {
                 left: fact_left,
@@ -1057,12 +1062,26 @@ impl PureFactContext {
             else {
                 return false;
             };
-            crate::kernel::reasoning::consume_resource_prover_fuel()
-                && (self.proves_resource_contains_inner(fact_left, left)
-                    && self.proves_resource_contains_inner(fact_right, right)
-                    || self.proves_resource_contains_inner(fact_left, right)
-                        && self.proves_resource_contains_inner(fact_right, left))
+            separation_fact_entails(fact_left, fact_right)
         }) {
+            return true;
+        }
+        // The same candidates, projected from the compact compositions
+        // instead of materialized propositions; two owned facts of one valid
+        // composition are separate by the composition law.
+        if let (CResource::Memory(left_range), CResource::Memory(right_range)) = (left, right)
+            && self
+                .memory_separation_candidates(
+                    &left_range.base().block,
+                    &right_range.base().block,
+                )
+                .any(|(_, fact_left, fact_right)| {
+                    separation_fact_entails(
+                        &CResource::Memory(fact_left.clone()),
+                        &CResource::Memory(fact_right.clone()),
+                    )
+                })
+        {
             return true;
         }
 

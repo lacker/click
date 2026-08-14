@@ -1257,6 +1257,7 @@ impl PureFactContext {
     pub(super) fn clear_proposition_facts(&mut self) {
         self.prop_facts = std::sync::Arc::new(BTreeSet::new());
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
+        self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_shape_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.memory_separation_facts = std::sync::Arc::new(BTreeMap::new());
@@ -1420,20 +1421,44 @@ impl PureFactContext {
         }
     }
 
+    fn extend_composition_separation_facts(&mut self, resources: &ResourceContext) {
+        let entries = resources.same_block_separation_candidates();
+        if entries.is_empty() {
+            return;
+        }
+        let index = std::sync::Arc::make_mut(&mut self.composition_separation_facts);
+        for entry in entries {
+            let key = Self::memory_separation_key(&entry.1.base().block, &entry.2.base().block);
+            let bucket = index.entry(key).or_default();
+            if !bucket.iter().any(|existing| existing.0 == entry.0) {
+                bucket.push(entry);
+            }
+        }
+    }
+
     pub(super) fn memory_separation_candidates(
         &self,
         left: &PointerBlock,
         right: &PointerBlock,
-    ) -> &[(Proposition, CMemoryRange, CMemoryRange)] {
-        self.memory_separation_facts
-            .get(&Self::memory_separation_key(left, right))
+    ) -> impl Iterator<Item = &(Proposition, CMemoryRange, CMemoryRange)> + Clone {
+        let key = Self::memory_separation_key(left, right);
+        let direct = self
+            .memory_separation_facts
+            .get(&key)
             .map(Vec::as_slice)
-            .unwrap_or(&[])
+            .unwrap_or(&[]);
+        let projected = self
+            .composition_separation_facts
+            .get(&key)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        direct.iter().chain(projected.iter())
     }
 
     pub(super) fn insert_proposition_fact(&mut self, proposition: Proposition) {
         if let Proposition::CResourceComposition(resources) = proposition {
             if std::sync::Arc::make_mut(&mut self.resource_compositions).insert(resources.clone()) {
+                self.extend_composition_separation_facts(&resources);
                 self.content_fingerprint ^= Self::fingerprint(3, &resources);
             }
             return;
@@ -1511,7 +1536,7 @@ impl PureFactContext {
         left: &PointerBlock,
         right: &PointerBlock,
     ) -> usize {
-        self.memory_separation_candidates(left, right).len()
+        self.memory_separation_candidates(left, right).count()
     }
 
     #[cfg(test)]
@@ -1530,6 +1555,7 @@ impl PureFactContext {
     /// definition must not conceal.
     pub(crate) fn without_explicit_separation_facts(mut self) -> Self {
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
+        self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.retain_proposition_facts(|proposition| {
             !matches!(
                 proposition,
