@@ -106,6 +106,17 @@ criterion: the premise bridge must decide marker-differing spellings by
 bounded proof (frame the loaded pointer across the marker delta using the
 recorded effect summaries) instead of by spelling coincidence.
 
+Measured convergence (2026-08-14, prototype `debf29f2`): with the fix
+applied on the lazy-separation prototype, `bounded-pool`'s
+`pool_pipeline` premise replays and the function verifies in 1.1s — the
+marker union aligns the block sets of the pristine-jumped candidate and
+the live required spelling, so the snapshot comparison finally consumes
+the carriers' per-cell distinctness answers. The prototype's examples
+frontier moves to `pool_transfer_pipeline` tactic 3, a different failure
+class (`step` used an assumption-derived theorem premise without a
+replayable derivation). The prototype unit suite stays 964/964 under the
+fix.
+
 ## Acceptance criteria
 
 - The regression above is in `memory_dag_tests.rs` and passes.
