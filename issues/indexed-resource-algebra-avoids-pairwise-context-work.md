@@ -95,20 +95,27 @@ lookup returns to syntax.
 1. **Stratified derivation edges (termination invariant).** A snapshot's
    derivation edge must be described entirely in its *parent's* vocabulary:
    `havoc(M, R)` may spell `R` only with terms grounded at `M` or earlier,
-   and stores likewise. The current call-havoc recording violates this (it
-   spells the mutable ranges with loads out of the havoc snapshot itself),
-   which makes oriented rewriting cyclic — the traced divergence is exactly
-   that cycle. The executor can record pre-call spellings for free: it
-   evaluates the `mutable` clause against the pre-call state anyway. A
-   debug assertion should enforce the invariant on every new edge.
+   and stores likewise. Reading `prepare`/footprint lowering shows the
+   call-havoc recording already satisfies this — the mutable clause is
+   evaluated at the pre-call state (`functions.rs`, "verified call mutable
+   footprint lowering") — so this is an invariant to assert, not a bug to
+   fix. An earlier revision of this section wrongly claimed the recording
+   was self-referential; the traced queries' spellings mention the
+   *previous* call's havoc (the legitimate parent vocabulary), not their
+   own.
 2. **Canonicalize at term creation (bounded guards).** Orient all rewrites
    toward older snapshots. A term is *canonical* iff no oriented rule
-   applies whose guard is decidable by bounded indexed lookup (composition
-   witness, indexed facts, constant arithmetic — no recursive proving
-   inside guards). The executor canonicalizes loads when it creates them,
-   which is the one moment guards are fresh and cheap; cost is linear in
-   DAG height times an indexed lookup. Facts then enter the
-   `PureFactContext` already canonical, stored once.
+   applies whose guard is decidable by bounded indexed lookup — and the
+   guard set must include **ground equality facts**, not only frame rules.
+   The traced gap is exactly a ground-equality lowering: `buffer_push`'s
+   ranges are parent-spelled as `load(M_after_init, owner+8)`, a field
+   `buffer_init` wrote, so lowering to the function-entry vocabulary
+   (where the composition witness lives) is `buffer_init`'s recorded
+   ensures equality `owner->data == data`, not a frame proof. The executor
+   canonicalizes terms when it creates them — in particular the mutable
+   ranges at footprint lowering — which is the one moment the relevant
+   equalities are fresh; cost is DAG height times an indexed lookup. Facts
+   then enter the `PureFactContext` already canonical, stored once.
 3. **Explicit `rewrite` is the completeness escape hatch.** Equalities
    invisible to bounded guards are stated as proof steps, not chased by
    search. Search completeness remains a non-goal.
