@@ -187,13 +187,52 @@ the unchanged bounded-pool project both pass.
   (certificate construction's ambient rewrite harvest), fixed on master;
   see `atomic-derivation-returns-premises-not-steps.md`.
 
+## Canonicalization progress (2026-08-14, prototype `a97036e6`)
+
+The first slice is landed on the prototype and non-regressing (963/964):
+`PureFactContext::canonical_bitvector` (bounded ground-equality class walk
+with structural simplification joining members), `canonical_memory_range`,
+and canonical recording of verified-call mutable footprints. Post-call
+cell retention across `buffer_push`-shaped calls now succeeds without
+pair propositions — previously every non-local cell dropped, which was
+the executor-resolution gap commit `851fde96` predicted.
+
+Two hard-won rules, measured not theorized:
+
+- **Adopt a representative only when it strictly lowers the term** (fewer
+  memory loads, or a constant for a non-constant). An unrestricted
+  preference respelled loads through alternate snapshots and broke four
+  tests whose consumers re-derive recorded ranges and match them
+  structurally (`frontier_local_loop_frames_untouched_...` shows the
+  failure shape: "effect summary range ... is outside the mutable
+  footprint").
+- **Piecemeal canonicalization at extra sites moves mismatches around**:
+  canonicalizing resource-spec segment evaluation and adding a canonical
+  fallback inside `bitvector_terms_proven_equal_for_memory_resolution`
+  regressed the same tests without greening the target; both are
+  reverted. Creation-site coverage has to move outward in verified,
+  test-gated steps.
+
+The frontier test now fails only in the representation certifier's
+memory gate, and the shape has changed: both lineages materialize
+post-call cells, and the remaining divergence is inside two-lineage
+snapshot chain matching (`memories_equal_by_execution_provenance` /
+`memories_equal_by_matching_derivations`) — the desired and certified
+executions' chains carry cells whose values are spelled in different
+vocabularies (`load(entry)` vs the canonical constant), and the chain
+pairing compares many intermediate snapshot pairs, so per-pair cell
+mismatches are expected noise; the load-bearing failing pair is not yet
+isolated.
+
 ## Remaining to close, in order
 
-1. Implement the required design on the prototype, smallest sound piece
-   first: stratified call-havoc recording plus the edge assertion, then
-   canonicalize-at-creation where residue remains. Changed recordings mean
-   expansion/replay parity on the existing corpus is part of green, not a
-   follow-up.
+1. Isolate the load-bearing snapshot pair in the certifier's chain
+   matching for the frontier test (instrument the chain search itself,
+   not the per-cell comparison — per-cell failures on non-matching pairs
+   are noise), and decide whether the fix is canonicalizing cell values
+   at their creation sites or teaching the chain join to compare
+   canonical forms. Changed recordings mean expansion/replay parity on
+   the existing corpus is part of green, not a follow-up.
 2. A red deterministic curve: N symbolic same-block owned ranges through
    `observable_facts_assuming_valid` must emit no `CResourceSeparate`
    propositions and near-linear work (red on master today, green on the
