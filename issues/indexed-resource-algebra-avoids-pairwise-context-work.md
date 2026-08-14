@@ -189,6 +189,28 @@ identifying which planner certifies this goal when pairs are present and what
 premise shape it requires; the missing piece is that route's requirements,
 not premise availability, spellability, or prover strength.
 
+The pairs-present certification route for the failing `box_set` goal is now
+fully traced. The claim never reaches outcome-simp lowering, the grouped
+transition, or the exit-claim discharge: it closes during execution, through
+`check_function_claim` over `path.execution_facts()`, because the executor's
+automatic post-store fact transport placed
+`owner->data[old(owner->value)] == value` at the frontier. That transport's
+write-disjointness reasoning is the true pair consumer. Without pairs the
+transported fact never appears, the claim stays open to the outcome, and the
+fallback cascade has no vocabulary for an indexed-load store transport — the
+downstream symptom, not the cause.
+
+One wiring hypothesis is already falsified: extending the carrier fallback in
+`pointers_proven_disjoint_by_shallow_explicit_range` with the same
+fact-graph containment the pair-fed arm uses does not recover the transport,
+so the executor's store-transport disjointness runs through a different call
+one level deeper. The next session should probe which disjointness entry
+point the post-store transport machinery invokes for the surviving-fact
+decision and give that call the composition fallback with fact-graph-aware
+containment; the `box_set` goal needs `old(owner->value) == 0` to place the
+stored cell inside the owned `data[0..1]` range, so structural containment
+alone cannot serve it.
+
 Re-running that experiment against the current tree corrects the design in
 one important way: the kernel-side projection already exists.
 `compact_composition_projects_symbolic_separation_without_pair_facts` proves
