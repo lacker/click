@@ -1570,6 +1570,12 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                 &available,
                             )
                             .is_none()
+                            // The same fact reached through a different
+                            // program point spells its load atoms over a
+                            // different snapshot; decide the pair by the
+                            // snapshot bridge's framing proof rather than by
+                            // spelling coincidence.
+                            && !snapshot_bridged_fact_is_available(&unfolded_goal, &available, &[])
                         {
                             return Err(ClickError::new(format!(
                                 "`{claim_label}` {proof_name} proof {outer_tactic_index}: `assumption` failed: {}",
