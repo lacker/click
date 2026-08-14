@@ -75,24 +75,50 @@ diffing master against the prototype on this one test) established:
   proof-aware query false, and `range_proven_disjoint_from_pointer` now
   consults the composition's pointer projection at all.
 
-## The remaining design question
+## Required design (decided 2026-08-14)
 
-The pairs' effectiveness came from existing in one spelling per emission
-point — shallow matching then answers snapshot-crossing queries without
-recursive bridging. The compact carrier currently reaches each assumption
-set in at most one spelling. Two candidate designs, not yet decided:
+The pairs' accidental effectiveness came from re-stating each separation
+fact in every term vocabulary that ever existed, so syntactic lookup never
+had to prove cross-snapshot term equality. Re-storing facts per vocabulary
+is rejected (it is the original blowup at lower degree). The decided design
+attacks the term identity problem directly:
 
-- (a) Match queries against carrier entries per spelling the way the pair
-  scan did: ensure the carrier emitted by each context rebuild (the
-  post-call unfold, and whatever populates the certifier's premises)
-  reaches the same assumption sets the pairs reached, and compare why the
-  execution-time queries fail even with the havoc-spelled carrier present
-  — the shallow-match relation over carrier entries may be narrower than
-  the pair scan's four orientations.
-- (b) Record `CallHavoc` mutable ranges at call time in caller spellings
-  (entry spellings here), so the disjointness queries never need the
-  self-referential havoc spelling bridged at all. This changes recorded
-  derivations, so expansion/replay parity needs checking.
+**The underlying theory.** Snapshot-crossing term equality is a
+*conditional* rewrite system — `load(havoc(M, R), q) = load(M, q)` only
+under `disjoint(R, q)`, and likewise read-over-write — not a set of ground
+equalities. Deciding equality in such a system is search, and the
+memo/fuel/depth machinery around memory resolution is the cost of serving
+that search from inside cheap-looking query paths. The fix is to make a
+precise, bounded canonical form exist and to create terms in it, so fact
+lookup returns to syntax.
+
+1. **Stratified derivation edges (termination invariant).** A snapshot's
+   derivation edge must be described entirely in its *parent's* vocabulary:
+   `havoc(M, R)` may spell `R` only with terms grounded at `M` or earlier,
+   and stores likewise. The current call-havoc recording violates this (it
+   spells the mutable ranges with loads out of the havoc snapshot itself),
+   which makes oriented rewriting cyclic — the traced divergence is exactly
+   that cycle. The executor can record pre-call spellings for free: it
+   evaluates the `mutable` clause against the pre-call state anyway. A
+   debug assertion should enforce the invariant on every new edge.
+2. **Canonicalize at term creation (bounded guards).** Orient all rewrites
+   toward older snapshots. A term is *canonical* iff no oriented rule
+   applies whose guard is decidable by bounded indexed lookup (composition
+   witness, indexed facts, constant arithmetic — no recursive proving
+   inside guards). The executor canonicalizes loads when it creates them,
+   which is the one moment guards are fresh and cheap; cost is linear in
+   DAG height times an indexed lookup. Facts then enter the
+   `PureFactContext` already canonical, stored once.
+3. **Explicit `rewrite` is the completeness escape hatch.** Equalities
+   invisible to bounded guards are stated as proof steps, not chased by
+   search. Search completeness remains a non-goal.
+
+Long-run trajectory (for the efficiency guide at close-out, not this
+change): the memo/fuel resolution layer is a hand-rolled approximation of
+proof-producing congruence closure. If snapshot-equality issues keep
+recurring after canonicalization and systematic term interning, the
+principled replacement is a forkable, provenance-carrying e-graph fed by
+executor-discharged guard equalities — never by guard search.
 
 Two consumers are already converted and verified on the prototype:
 post-store certificate transport
@@ -120,8 +146,11 @@ modular-call snapshot path
 
 ## Remaining to close, in order
 
-1. Decide between designs (a) and (b) above and make the red test green on
-   the prototype without re-materializing pair propositions.
+1. Implement the required design on the prototype, smallest sound piece
+   first: stratified call-havoc recording plus the edge assertion, then
+   canonicalize-at-creation where residue remains. Changed recordings mean
+   expansion/replay parity on the existing corpus is part of green, not a
+   follow-up.
 2. A red deterministic curve: N symbolic same-block owned ranges through
    `observable_facts_assuming_valid` must emit no `CResourceSeparate`
    propositions and near-linear work (red on master today, green on the

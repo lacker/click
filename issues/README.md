@@ -27,7 +27,8 @@ when evidence exposes one.
 - [Replace pairwise resource-context work with indexed algebra](indexed-resource-algebra-avoids-pairwise-context-work.md):
   the last eager pair emission is deleted on a prototype branch; one test
   remains, its diverging query is traced to call-havoc load framing, and
-  the issue records the spelling-multiplicity design choice that closes it.
+  the decided design (stratified derivation edges plus canonical terms
+  with bounded guards) is recorded in the issue.
 - [Declared resources need symbolic quantities](symbolic-declared-resource-quantities.md):
   every `owns`/`consumes`/`produces` clause transfers exactly one unit, so
   runtime-sized capacity cannot become linear authority; bounded-pool is the
