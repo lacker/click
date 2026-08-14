@@ -2,6 +2,13 @@
 
 This page lists boundaries that agents should not silently assume away.
 
+## Surface Syntax Nesting Is Bounded
+
+Click accepts at most 16 simultaneously nested pairs of parentheses in a
+sidecar. Deeper input receives a source-positioned parser diagnostic before
+recursive descent begins. This bound covers grouped propositions, grouped
+contract expressions, calls, and the other parenthesized surface forms.
+
 ## C0 Is Small
 
 Click does not parse general C. See [c0-subset.md](c0-subset.md). Missing

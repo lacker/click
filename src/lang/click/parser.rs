@@ -4,6 +4,12 @@ use tokenizer::tokenize;
 
 use super::*;
 
+/// Click's recursive-descent proposition and contract-expression parsers use
+/// the native stack once per syntactically nested parenthesis. Keep the
+/// supported surface depth explicit and reject deeper input before recursive
+/// parsing begins.
+pub(super) const PARENTHESIS_NESTING_LIMIT: usize = 16;
+
 pub(super) fn parse(source: &str) -> Result<ClickFile, ClickError> {
     Parser::new(source)?.parse_file()
 }
@@ -123,6 +129,7 @@ impl Token {
 struct Parser {
     tokens: Vec<Token>,
     positions: Vec<SourcePosition>,
+    matching_parentheses: Vec<Option<usize>>,
     position: usize,
     struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
     current_struct_params: BTreeMap<String, String>,
@@ -203,9 +210,11 @@ impl Parser {
         struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
     ) -> Result<Self, ClickError> {
         let (tokens, positions) = tokenize(source)?;
+        let matching_parentheses = validate_parenthesis_nesting(&tokens, &positions)?;
         Ok(Self {
             tokens,
             positions,
+            matching_parentheses,
             position: 0,
             struct_layouts,
             current_struct_params: BTreeMap::new(),
@@ -1365,27 +1374,17 @@ impl Parser {
             });
         }
 
-        if self.peek() == Some(&Token::LParen) {
-            let start = self.position;
-            match self.parse_range_proposition_method() {
-                Ok(proposition) => return Ok(proposition),
-                Err(_) => {
-                    self.position = start;
-                }
-            }
+        if self.peek() == Some(&Token::LParen) && self.looks_like_range_proposition_method() {
+            return self.parse_range_proposition_method();
         }
 
-        if self.peek() == Some(&Token::LParen) {
-            let start = self.position;
+        if self.peek() == Some(&Token::LParen)
+            && !self.parenthesized_atom_continues_as_contract_expression()
+        {
             self.position += 1;
-            let grouped = self.parse_proposition().and_then(|proposition| {
-                self.expect(Token::RParen)?;
-                Ok(proposition)
-            });
-            if grouped.is_ok() {
-                return grouped;
-            }
-            self.position = start;
+            let proposition = self.parse_proposition()?;
+            self.expect(Token::RParen)?;
+            return Ok(proposition);
         }
 
         if self.peek_ident() == Some("at") && self.peek_next() == Some(&Token::LParen) {
@@ -3148,6 +3147,7 @@ impl Parser {
 
     fn next(&mut self) -> Option<Token> {
         let token = self.tokens.get(self.position).cloned()?;
+        crate::instrumentation::record_deterministic_work(1);
         self.position += 1;
         Some(token)
     }
@@ -3189,6 +3189,57 @@ impl Parser {
         false
     }
 
+    fn looks_like_range_proposition_method(&self) -> bool {
+        let Some(close) = self
+            .matching_parentheses
+            .get(self.position)
+            .copied()
+            .flatten()
+        else {
+            return false;
+        };
+        self.tokens.get(close + 1) == Some(&Token::Dot)
+            && matches!(
+                self.tokens.get(close + 2),
+                Some(Token::Ident(method)) if matches!(method.as_str(), "all" | "any")
+            )
+    }
+
+    fn parenthesized_atom_continues_as_contract_expression(&self) -> bool {
+        let Some(close) = self
+            .matching_parentheses
+            .get(self.position)
+            .copied()
+            .flatten()
+        else {
+            return false;
+        };
+        matches!(
+            self.tokens.get(close + 1),
+            Some(
+                Token::EqualEqual
+                    | Token::BangEqual
+                    | Token::LessThan
+                    | Token::LessEqual
+                    | Token::GreaterThan
+                    | Token::GreaterEqual
+                    | Token::Plus
+                    | Token::Minus
+                    | Token::Star
+                    | Token::Slash
+                    | Token::Percent
+                    | Token::ShiftLeft
+                    | Token::ShiftRight
+                    | Token::Amp
+                    | Token::Pipe
+                    | Token::Caret
+                    | Token::LBracket
+                    | Token::Arrow
+                    | Token::Dot
+            )
+        )
+    }
+
     /// The source position of the next unconsumed token, or of the last
     /// token when every token has been consumed.
     fn here(&self) -> Option<SourcePosition> {
@@ -3214,4 +3265,37 @@ impl Parser {
     fn error(&self, message: impl Into<String>) -> ClickError {
         self.error_at(self.here(), message)
     }
+}
+
+fn validate_parenthesis_nesting(
+    tokens: &[Token],
+    positions: &[SourcePosition],
+) -> Result<Vec<Option<usize>>, ClickError> {
+    let mut openings = Vec::new();
+    let mut matching = vec![None; tokens.len()];
+    for (index, token) in tokens.iter().enumerate() {
+        crate::instrumentation::record_deterministic_work(1);
+        match token {
+            Token::LParen => {
+                openings.push(index);
+                if openings.len() > PARENTHESIS_NESTING_LIMIT {
+                    let message = format!(
+                        "parenthesis nesting exceeds Click's supported depth of {PARENTHESIS_NESTING_LIMIT}"
+                    );
+                    return Err(match positions.get(index) {
+                        Some(position) => ClickError::new(format!("{position}: {message}")),
+                        None => ClickError::new(message),
+                    });
+                }
+            }
+            Token::RParen => {
+                if let Some(open) = openings.pop() {
+                    matching[open] = Some(index);
+                    matching[index] = Some(open);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(matching)
 }

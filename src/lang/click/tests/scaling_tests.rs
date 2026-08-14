@@ -228,6 +228,40 @@ fn resource_member_project(member_count: usize) -> (String, String) {
     (c_source, click_source)
 }
 
+pub(super) fn theorem_with_parenthesized_requirement(depth: usize) -> String {
+    let opening = "(".repeat(depth);
+    let closing = ")".repeat(depth);
+    format!(
+        "theorem nested_requirement(x: int32) {{\n    requires {opening}x + 1{closing} == x + 1;\n    ensures x == x by {{ assumption(); }}\n}}\n"
+    )
+}
+
+#[test]
+fn parenthesized_contract_expression_parsing_has_linear_deterministic_work() {
+    let samples = [2, 4, 8, 16]
+        .into_iter()
+        .map(|depth| {
+            let source = theorem_with_parenthesized_requirement(depth);
+            let (parsed, work) = crate::instrumentation::measure_deterministic_work(|| {
+                parser::parse_file_items(&source)
+            });
+            parsed.unwrap_or_else(|error| {
+                panic!(
+                    "depth {depth} parenthesized requirement failed: {}",
+                    error.message()
+                )
+            });
+            ScalingSample {
+                size: depth,
+                work,
+                named_work: BTreeMap::new(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling("parenthesized contract-expression parsing", &samples);
+}
+
 #[test]
 fn simple_unrelated_functions_have_a_deterministic_scaling_control() {
     let samples = [4, 8, 16, 32]

@@ -106,12 +106,6 @@ documentation land.
   a quarantined mdtest whose restricted simplification succeeds and then cannot
   be lowered. Regressed in `39e8af4c`.
 
-## Parser robustness
-
-- [Bound deeply parenthesized contract parsing](deep-parenthesized-contract-expression-overflows-parser-stack.md):
-  valid input must parse or receive a deterministic nesting diagnostic, never
-  overflow the native stack.
-
 ## Verification performance burndown
 
 The governing invariant is [Verification Efficiency](../docs/advanced/verification-efficiency.md).

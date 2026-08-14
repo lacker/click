@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn parser_accepts_its_supported_parenthesis_depth() {
+    let source = super::scaling_tests::theorem_with_parenthesized_requirement(
+        parser::PARENTHESIS_NESTING_LIMIT,
+    );
+    parser::parse_file_items(&source).expect("supported parenthesis depth should parse");
+}
+
+#[test]
+fn parser_rejects_excessive_parenthesis_depth_with_a_source_diagnostic() {
+    let source = super::scaling_tests::theorem_with_parenthesized_requirement(
+        parser::PARENTHESIS_NESTING_LIMIT + 1,
+    );
+    let error = parser::parse_file_items(&source)
+        .expect_err("excessive parenthesis depth should be rejected before recursive parsing");
+    assert!(
+        error
+            .message()
+            .contains("parenthesis nesting exceeds Click's supported depth of 16"),
+        "unexpected diagnostic: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn parser_preserves_mixed_grouped_proposition_and_contract_expression_syntax() {
+    let source = r#"
+        theorem mixed_parentheses(x: int32, y: int32) {
+            requires (x < y) and ((x + 1) == y);
+            ensures x == x by { assumption(); }
+        }
+    "#;
+    parser::parse_file_items(source)
+        .expect("mixed proposition and contract-expression parentheses should parse");
+}
+
+#[test]
 fn parses_expanded_typed_loads_and_old_loadability() {
     let source = r#"
         int32 example(int32 owner[], int32 data[]) {
