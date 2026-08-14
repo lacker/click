@@ -273,8 +273,12 @@ fn memories_equal_by_matching_derivations(
 ) -> bool {
     fn transparent_base(derivation: &CMemoryDerivation) -> Option<&SharedCMemory> {
         match derivation {
-            CMemoryDerivation::Store { base, pointer, .. }
-                if pointer.block.starts_with("local:") =>
+            CMemoryDerivation::Store {
+                base,
+                pointer,
+                value,
+            } if pointer.block.starts_with("local:")
+                || store_is_self_materialization(base, pointer, value) =>
             {
                 Some(base)
             }
@@ -284,6 +288,26 @@ fn memories_equal_by_matching_derivations(
             CMemoryDerivation::CellsForgotten { base } => Some(base),
             _ => None,
         }
+    }
+    /// A store whose value is the base memory's own load at the stored
+    /// pointer is a no-op: the produced memory denotes the same state as its
+    /// base, differing only in which cells are materialized. Proof replay
+    /// mints such edges when a tactic forces a symbolic load into a concrete
+    /// cell, and independent certification never does, so chain matching
+    /// must see through them. Purely structural — the load's memory operand
+    /// must be the base itself (by interned identity), no proving.
+    fn store_is_self_materialization(
+        base: &SharedCMemory,
+        pointer: &Pointer,
+        value: &CValue,
+    ) -> bool {
+        let (CValue::Int32(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
+        | CValue::UInt8(Bitvector32Term::MemoryLoad(load_memory, load_pointer))) = value
+        else {
+            return false;
+        };
+        load_pointer.as_ref() == pointer
+            && intern_c_memory_ref(load_memory).arena_id() == base.arena_id()
     }
     const DERIVATION_MATCH_LIMIT: usize = 64;
     if depth >= DERIVATION_MATCH_LIMIT {
