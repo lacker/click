@@ -211,6 +211,30 @@ containment; the `box_set` goal needs `old(owner->value) == 0` to place the
 stored cell inside the owned `data[0..1]` range, so structural containment
 alone cannot serve it.
 
+A working prototype of the final deletion now exists on the local branch
+`claude/lazy-separation-prototype` (commit ca2b1720). It deletes same-block
+pair emission and instead serves `memory_separation_candidates` from an
+incrementally maintained index projected from the compact compositions —
+entries identical to the former pair propositions, maintained like the
+existing separation-fact index, never materialized into ambient proposition
+sets. Under that prototype the owned-string frontier case — formerly the
+worst, falling into thirteen-plus seconds of smart search — verifies without
+pairs, and the focused projection regressions pass.
+
+Two frontier tests remain red on the prototype, with several explanations
+measured and eliminated rather than guessed: projected bucket sizes stay
+small, candidate multiplicity is not the cost, per-query prover fallthrough
+was repaired by chaining projected candidates into the separation prover's
+fact branch, and a per-query deep pointer projection plus memoization was
+built, measured too expensive, and removed. What remains is that
+`box_pipeline` exhausts its deterministic smart budget replaying a
+user-written rewrite script — the extra work's location is not yet
+attributed — and vector-storage representation certification still reports
+differing memory snapshots. The next session should diff deterministic work
+attribution for the box_pipeline replay between the prototype and master with
+the named-operation instrumentation, rather than trying further candidate
+plumbing; the infrastructure half of the deletion is done.
+
 Re-running that experiment against the current tree corrects the design in
 one important way: the kernel-side projection already exists.
 `compact_composition_projects_symbolic_separation_without_pair_facts` proves
