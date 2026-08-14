@@ -1571,6 +1571,22 @@ impl PureFactContext {
         if pointer_in_memory_range_shallow(pointer, range) {
             return false;
         }
+        if self.resource_compositions.iter().any(|resources| {
+            resources.proves_owned_range_separate_from_pointer_shallow(
+                range,
+                pointer,
+                |pointer, available| {
+                    self.pointer_in_range_by_shallow_fact_graph(
+                        pointer,
+                        available.base(),
+                        available.start(),
+                        available.end(),
+                    ) || self.pointer_directly_in_memory_range(pointer, available)
+                },
+            )
+        }) {
+            return true;
+        }
 
         if self.prop_facts.iter().any(|proposition| match proposition {
             Proposition::CMemoryDisjoint {

@@ -1,20 +1,34 @@
 use super::*;
 
 thread_local! {
-    static RESOURCE_COMPOSITION_QUERY_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static RESOURCE_COMPOSITION_QUERY_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
+
+/// Proof-aware composition queries may nest: bridging a query's snapshot
+/// spelling to a carrier entry can itself ask whether a pointer survived a
+/// call havoc, which is served by the same composition. A binary lock would
+/// force those inner queries to fail where the former materialized pairs
+/// answered them, so nesting is allowed to a small fixed depth; the
+/// memory-resolution fuel still bounds total work.
+const RESOURCE_COMPOSITION_QUERY_DEPTH_LIMIT: usize = 3;
 
 struct ResourceCompositionQueryGuard;
 
 impl ResourceCompositionQueryGuard {
     fn enter() -> Option<Self> {
-        RESOURCE_COMPOSITION_QUERY_ACTIVE.with(|active| (!active.replace(true)).then_some(Self))
+        RESOURCE_COMPOSITION_QUERY_DEPTH.with(|depth| {
+            if depth.get() >= RESOURCE_COMPOSITION_QUERY_DEPTH_LIMIT {
+                return None;
+            }
+            depth.set(depth.get() + 1);
+            Some(Self)
+        })
     }
 }
 
 impl Drop for ResourceCompositionQueryGuard {
     fn drop(&mut self) {
-        RESOURCE_COMPOSITION_QUERY_ACTIVE.with(|active| active.set(false));
+        RESOURCE_COMPOSITION_QUERY_DEPTH.with(|depth| depth.set(depth.get() - 1));
     }
 }
 
@@ -1340,8 +1354,8 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
         _assumptions: &PureFactContext,
     ) -> Vec<Proposition> {
         // Same-block separation is no longer materialized into ambient
-        // propositions; `Assumptions` projects the identical candidate set
-        // lazily from the retained compact composition when a separation
+        // propositions; `PureFactContext` projects the identical candidate
+        // set lazily from the retained compact composition when a separation
         // query for the block pair actually occurs.
         let _ = facts;
         Vec::new()
