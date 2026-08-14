@@ -15,15 +15,22 @@ pub(super) fn lower_surface_atomic_derivation(
 ) -> Result<(ClickProposition, Proof), ClickError> {
     let mut conclusion = match preferred_conclusion {
         Some(conclusion) => conclusion.clone(),
-        None => checked_surface_fact_at_point(
-            replay,
-            derivation.conclusion(),
-            available,
-            parameters,
-            arguments,
-            state,
-            predicate_environment,
-            click_function_environment,
+        None => crate::instrumentation::measure_operation(
+            "have",
+            "atomic derivation lowering",
+            "derivation lowering: conclusion spelling",
+            || {
+                checked_surface_fact_at_point(
+                    replay,
+                    derivation.conclusion(),
+                    available,
+                    parameters,
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                )
+            },
         )?,
     };
     if let Some(point) = anchor_point {
@@ -109,6 +116,11 @@ pub(super) fn lower_surface_atomic_derivation(
     }
     let mut premise_pairs = Vec::new();
     let mut unexpressed_premises = Vec::new();
+    let premise_spelling_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        "atomic derivation lowering",
+        "derivation lowering: premise spelling",
+    );
     for premise in derivation.context_premises() {
         match checked_surface_comparison_fact_at_point(
             replay,
@@ -131,6 +143,12 @@ pub(super) fn lower_surface_atomic_derivation(
             Err(error) => unexpressed_premises.push((premise, error)),
         }
     }
+    drop(premise_spelling_span);
+    let conclusion_lowering_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        "atomic derivation lowering",
+        "derivation lowering: conclusion lowering",
+    );
     let lowered_conclusion = lower_point_proposition(
         &conclusion,
         available,
@@ -149,6 +167,12 @@ pub(super) fn lower_surface_atomic_derivation(
     // snapshot equality to one term; direct surface facts retain the
     // loadability/effect context needed to lower ordinary memory expressions
     // without borrowing value aliases from proof search.
+    drop(conclusion_lowering_span);
+    let _normalization_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        "atomic derivation lowering",
+        "derivation lowering: context-free normalization check",
+    );
     let surface_normalizes_context_free = lower_point_proposition(
         &conclusion,
         &facts_for_direct_surface_lowering(available),
@@ -162,6 +186,7 @@ pub(super) fn lower_surface_atomic_derivation(
         click_function_environment,
     )
     .is_ok_and(|goal| normalizes_context_free(&goal));
+    drop(_normalization_span);
     let replay_kind = |pairs: &[(Proposition, ClickProposition)]| {
         let surface_premises = pairs
             .iter()
@@ -188,11 +213,18 @@ pub(super) fn lower_surface_atomic_derivation(
             })
             .collect::<Result<Vec<_>, _>>()
             .ok()?;
-        check_atomic_premise_derivation_goal(
-            &lowered_conclusion,
-            surface_premises,
-            &lowered_conclusion,
-            available,
+        crate::instrumentation::measure_operation(
+            "have",
+            "atomic derivation lowering",
+            "derivation lowering: replay derivation check",
+            || {
+                check_atomic_premise_derivation_goal(
+                    &lowered_conclusion,
+                    surface_premises,
+                    &lowered_conclusion,
+                    available,
+                )
+            },
         )
         .is_ok()
         .then_some(())
@@ -205,6 +237,11 @@ pub(super) fn lower_surface_atomic_derivation(
         // different snapshot at the replay point, so recover from the full
         // expressible context and minimize again in the representation that
         // will actually be checked.
+        let _recovery_span = crate::instrumentation::OperationTiming::new(
+            "have",
+            "atomic derivation lowering",
+            "derivation lowering: full-context surface recovery",
+        );
         for premise in available {
             if premise_pairs.iter().any(|(kernel, _)| kernel == premise) {
                 continue;
@@ -396,6 +433,11 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
     }
+    let _rewrites_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        "atomic derivation lowering",
+        "derivation lowering: equality rewrite planning",
+    );
     if let Some(tactics) = plan_explicit_equality_rewrites_then(
         &lowered_conclusion,
         &rewrite_pairs,
@@ -409,6 +451,12 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
     }
+    drop(_rewrites_span);
+    let _transport_span = crate::instrumentation::OperationTiming::new(
+        "have",
+        "atomic derivation lowering",
+        "derivation lowering: fact transport planning",
+    );
     let transport_recognition = assumptions_from_propositions(available);
     for (_, surface_source) in &premise_pairs {
         let source = replay
