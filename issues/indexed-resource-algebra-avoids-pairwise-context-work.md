@@ -228,12 +228,20 @@ was repaired by chaining projected candidates into the separation prover's
 fact branch, and a per-query deep pointer projection plus memoization was
 built, measured too expensive, and removed. What remains is that
 `box_pipeline` exhausts its deterministic smart budget replaying a
-user-written rewrite script — the extra work's location is not yet
-attributed — and vector-storage representation certification still reports
-differing memory snapshots. The next session should diff deterministic work
-attribution for the box_pipeline replay between the prototype and master with
-the named-operation instrumentation, rather than trying further candidate
-plumbing; the infrastructure half of the deletion is done.
+user-written rewrite script, and vector-storage representation certification
+still reports differing memory snapshots.
+
+Budget-exhaustion diagnostics now attribute their work, and bracketing with
+them reframes the box_pipeline blocker: the same `have` replay costs between
+1.0 and 1.9 million units on the current tree with pairs present — half to
+nearly all of its two-million smart budget — so the prototype's marginal
+per-statement index work tips an already-heavy tactic over the line rather
+than introducing new asymptotic cost. The attributed failure shows all but a
+thousand units inside one `grouped proof tactic replay` span with no finer
+spans beneath it. The productive order is therefore: first add named spans
+inside grouped proof replay and attribute the existing 1.9-million-unit cost
+on the current tree, fix that, and only then re-run the prototype, which
+will have budget headroom and one remaining representation question.
 
 Re-running that experiment against the current tree corrects the design in
 one important way: the kernel-side projection already exists.

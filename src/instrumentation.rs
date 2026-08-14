@@ -179,6 +179,10 @@ struct ActiveTactic {
     work_used: usize,
     work_limit: Option<usize>,
     work_exhausted: bool,
+    /// Deterministic work by named operation span, populated only while
+    /// operation measurement is enabled, so an exhausted budget can report
+    /// where its units went instead of only how many there were.
+    named_work: std::collections::BTreeMap<String, usize>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -383,6 +387,7 @@ fn consume_tactic_work(units: usize) -> bool {
                 current.event.clone(),
                 current.work_used,
                 current.work_limit?,
+                current.named_work.clone(),
             ));
         }
         current.work_used = current.work_used.saturating_add(units);
@@ -391,9 +396,14 @@ fn consume_tactic_work(units: usize) -> bool {
             return None;
         }
         current.work_exhausted = true;
-        Some((current.event.clone(), current.work_used, limit))
+        Some((
+            current.event.clone(),
+            current.work_used,
+            limit,
+            current.named_work.clone(),
+        ))
     });
-    let Some((tactic, used, limit)) = exhausted else {
+    let Some((tactic, used, limit, named_work)) = exhausted else {
         return true;
     };
     let first = PENDING_LIMIT.with(|pending| {
@@ -410,7 +420,8 @@ fn consume_tactic_work(units: usize) -> bool {
                     tactic.class,
                     tactic.statement_index,
                     tactic.source_index,
-                ) + tactic_limit_guidance(&tactic.class),
+                ) + &work_attribution_summary(&named_work, used)
+                    + tactic_limit_guidance(&tactic.class),
             });
             true
         }
@@ -423,6 +434,46 @@ fn consume_tactic_work(units: usize) -> bool {
         });
     }
     false
+}
+
+/// The top named-operation work consumers for an exhausted budget, or a
+/// pointer at how to collect them. Attribution exists only while operation
+/// measurement is enabled, so the unmeasured case says how to rerun rather
+/// than implying the units are untraceable. Spans still open when the budget
+/// dies report their work so far, since their completed attribution does not
+/// exist yet.
+fn work_attribution_summary(
+    named_work: &std::collections::BTreeMap<String, usize>,
+    work_used: usize,
+) -> String {
+    let open = OPEN_OPERATION_SPANS.with(|spans| {
+        spans
+            .borrow()
+            .iter()
+            .map(|(name, entry_work)| {
+                format!("`{name}` ({} units in)", work_used.saturating_sub(*entry_work))
+            })
+            .collect::<Vec<_>>()
+    });
+    if named_work.is_empty() && open.is_empty() {
+        return "\n  named-operation attribution was not collected; rerun under `click profile` or with CLICK_TIMINGS=1 to see where the units went".to_string();
+    }
+    let mut summary = String::new();
+    if !open.is_empty() {
+        summary.push_str(&format!("\n  open operation spans: {}", open.join(" > ")));
+    }
+    if !named_work.is_empty() {
+        let mut spans = named_work.iter().collect::<Vec<_>>();
+        spans.sort_by(|left, right| right.1.cmp(left.1).then_with(|| left.0.cmp(right.0)));
+        let listed = spans
+            .iter()
+            .take(5)
+            .map(|(name, work)| format!("{work} `{name}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        summary.push_str(&format!("\n  top completed operation work: {listed}"));
+    }
+    summary
 }
 
 /// Runs one native verifier operation and returns the cooperative work it
@@ -681,16 +732,58 @@ pub fn measure_operation<T>(
     }
     let started = TacticInstant::now();
     let counter = WorkCounterGuard::enter();
+    let name = name.into();
+    open_operation_span(&name);
     let result = operation();
+    close_operation_span();
     let work = counter.finish();
+    attribute_tactic_operation_work(&name, work);
     emit(VerificationEvent::OperationFinished {
         function: function.to_string(),
         claim: claim.to_string(),
-        name: name.into(),
+        name,
         elapsed: started.elapsed(),
         work,
     });
     result
+}
+
+/// Adds one finished operation span's work to the innermost active tactic's
+/// attribution map, so a later budget exhaustion can name its consumers.
+fn attribute_tactic_operation_work(name: &str, work: usize) {
+    if work == 0 {
+        return;
+    }
+    ACTIVE_TACTICS.with(|active| {
+        if let Some(current) = active.borrow_mut().last_mut() {
+            *current.named_work.entry(name.to_string()).or_default() += work;
+        }
+    });
+}
+
+thread_local! {
+    /// The stack of operation spans currently open, each with the innermost
+    /// tactic's work counter at entry. A budget exhausted mid-span reports
+    /// these with their work so far, since their completed attribution does
+    /// not exist yet.
+    static OPEN_OPERATION_SPANS: RefCell<Vec<(String, usize)>> = const { RefCell::new(Vec::new()) };
+}
+
+fn open_operation_span(name: &str) {
+    let entry_work = ACTIVE_TACTICS.with(|active| {
+        active
+            .borrow()
+            .last()
+            .map(|current| current.work_used)
+            .unwrap_or(0)
+    });
+    OPEN_OPERATION_SPANS.with(|spans| spans.borrow_mut().push((name.to_string(), entry_work)));
+}
+
+fn close_operation_span() {
+    OPEN_OPERATION_SPANS.with(|spans| {
+        spans.borrow_mut().pop();
+    });
 }
 
 /// RAII form of [`measure_operation`] for code whose control flow cannot be
@@ -704,10 +797,12 @@ impl OperationTiming {
     pub fn new(function: &str, claim: &str, name: impl Into<String>) -> Self {
         Self {
             measurement: operation_measurement_enabled().then(|| {
+                let name = name.into();
+                open_operation_span(&name);
                 (
                     function.to_string(),
                     claim.to_string(),
-                    name.into(),
+                    name,
                     TacticInstant::now(),
                     WorkCounterGuard::enter(),
                 )
@@ -721,7 +816,9 @@ impl Drop for OperationTiming {
         let Some((function, claim, name, started, counter)) = self.measurement.take() else {
             return;
         };
+        close_operation_span();
         let work = counter.finish();
+        attribute_tactic_operation_work(&name, work);
         emit(VerificationEvent::OperationFinished {
             function,
             claim,
@@ -780,6 +877,7 @@ pub fn emit(mut event: VerificationEvent) {
                     work_used: 0,
                     work_limit,
                     work_exhausted: false,
+                    named_work: std::collections::BTreeMap::new(),
                 });
             });
         }
@@ -1042,6 +1140,37 @@ mod tests {
                 "work exhaustion must not masquerade as a real-time deadline"
             );
         }
+    }
+
+    #[test]
+    fn exhausted_work_budget_names_its_operation_spans() {
+        let limits = TacticWorkLimits {
+            simple: 1000,
+            smart: 4,
+            control: 1000,
+        };
+        with_tactic_work_limits(limits, || {
+            let ((), _events) = collect(|| {
+                let tactic = tactic("smart", 0);
+                emit(VerificationEvent::TacticStarted(tactic.clone()));
+                measure_operation("kernel", "test", "completed probe span", || {
+                    assert!(!deadline_exceeded(), "the first unit should fit");
+                });
+                measure_operation("kernel", "test", "exhausting probe span", || {
+                    while !deadline_exceeded() {}
+                    let context = deadline_context();
+                    assert!(
+                        context.contains("exhausting probe span"),
+                        "the open span at exhaustion should be named: {context}"
+                    );
+                    assert!(
+                        context.contains("completed probe span"),
+                        "completed spans before exhaustion should be named: {context}"
+                    );
+                });
+                emit(VerificationEvent::TacticFailed(tactic));
+            });
+        });
     }
 
     #[test]
