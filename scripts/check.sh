@@ -10,6 +10,10 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# Formatting is part of the gate: the same command judges locally and in CI,
+# so drift cannot accumulate. Run `cargo fmt` to fix a failure.
+cargo fmt --check
+
 if command -v cargo-nextest >/dev/null 2>&1; then
     # Applies the per-test time budgets in `.config/nextest.toml`: prover
     # regressions usually manifest as hangs, which must fail fast.
