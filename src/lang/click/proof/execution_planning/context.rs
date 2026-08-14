@@ -425,6 +425,18 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
             exact_premises.push(obligation.proposition().clone());
         }
     }
+    // A definedness fact can select the safe evaluator path directly, so it
+    // appears as a path fact rather than an outstanding obligation. When the
+    // certificate already held that exact fact, record it as a consumed
+    // premise instead of treating the evaluator's identical output as newly
+    // discovered information.
+    for fact in &transition.path_facts {
+        if replay.simple_proof_builder.certificate_facts.contains(fact)
+            && !exact_premises.contains(fact)
+        {
+            exact_premises.push(fact.clone());
+        }
+    }
     let planned_transition = replay.planned_statement_transitions.len();
     let statement_operation = match loop_step_policy {
         LoopStepPolicy::EnterBody => ConstructionEvidence::CertifiedStatementStep {

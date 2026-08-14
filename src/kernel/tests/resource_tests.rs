@@ -366,6 +366,53 @@ fn declared_resources_normalize_and_consume_one_unit_at_a_time() {
 }
 
 #[test]
+fn symbolic_declared_resource_quantity_splits_without_materializing_units() {
+    let quantity = Bitvector32Term::var(Variable(700));
+    let resource = CResource::Token {
+        name: "permit".to_string(),
+        arguments: vec![int32(9)],
+    };
+    let symbolic = CResourceFact::own_quantity(resource.clone(), quantity.clone());
+    let unit = CResourceFact::own(resource.clone());
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::Bitvector32SignedGreaterEqual(
+            Box::new(quantity.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+
+    let remaining = ResourceContext::new()
+        .unchecked_with_fact(symbolic)
+        .without_fact(&unit, &assumptions)
+        .expect("one unit should split from a positive symbolic quantity");
+
+    assert_eq!(
+        remaining.facts(),
+        &[CResourceFact::own_quantity(
+            resource,
+            Bitvector32Term::subtract(quantity, Bitvector32Term::Constant(1)),
+        )]
+    );
+}
+
+#[test]
+fn zero_declared_resource_quantity_is_the_composition_identity() {
+    let zero = CResourceFact::own_quantity(
+        CResource::Token {
+            name: "permit".to_string(),
+            arguments: vec![int32(9)],
+        },
+        Bitvector32Term::Constant(0),
+    );
+    assert!(zero.core().is_none());
+    let context = ResourceContext::new()
+        .try_compose_with_fact(zero, &PureFactContext::new())
+        .expect("zero ownership should compose harmlessly");
+    assert!(context.is_empty());
+}
+
+#[test]
 fn declared_resource_quantities_are_part_of_context_equality() {
     let unit = CResourceFact::own_token("object_ref".to_string(), vec![int32(7)]);
     let one = ResourceContext::new()

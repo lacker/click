@@ -56,6 +56,12 @@ void object_release_nonfinal(struct object* obj) {
     mutable obj->refs;
 } by {
     open(object_ref(obj)) {
+        have 1 < obj->refs by simp;
+        have obj->refs - 1 >= 1 by {
+            apply(int32_above_one_predecessor_is_at_least_one(obj->refs)) using {
+                1 < obj->refs;
+            }
+        }
         execute();
         frame();
     }

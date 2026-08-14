@@ -23,8 +23,10 @@ pub(crate) fn take_checked_function_body_execution_count() -> usize {
 pub(in crate::kernel) mod contract_certification;
 pub use contract_certification::*;
 use contract_certification::{
-    c_function_contract_certification_assumptions, certification_proves_context_free_forall,
-    certification_proves_proposition, contract_resource_condition_cases,
+    c_function_contract_certification_assumptions,
+    certification_proves_condition_from_verified_pure_implication,
+    certification_proves_context_free_forall, certification_proves_proposition,
+    contract_resource_condition_cases,
     prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode,
     resources_certify_loadability,
 };
@@ -1770,7 +1772,46 @@ pub fn prove_checked_c_function_execution_with_environment(
         execution_semantics,
         mode,
         execution,
+        entry_derivations: Vec::new(),
+        entry_prerequisites: Vec::new(),
     }
+}
+
+/// Attaches kernel-issued entry-fact derivations to a checked execution.
+///
+/// The checked execution remains sealed: only derivations concluding in one
+/// of its exact assumptions are retained, and callers cannot manufacture a
+/// [`Theorem`]. Contract certification independently discharges every
+/// implication premise before using the artifact.
+pub fn checked_c_function_execution_with_entry_derivations(
+    mut checked: CCheckedFunctionExecution,
+    derivations: Vec<Theorem>,
+    prerequisites: Vec<Proposition>,
+) -> CCheckedFunctionExecution {
+    checked.entry_derivations = derivations
+        .into_iter()
+        .filter(|derivation| {
+            let mut body = derivation.proposition();
+            while let Proposition::Implies(_, next) = body {
+                body = next;
+            }
+            checked.assumptions.proves_exact(body)
+        })
+        .collect();
+    checked.entry_prerequisites = prerequisites
+        .into_iter()
+        .filter(|prerequisite| {
+            checked.assumptions.proves_exact(prerequisite)
+                && checked.entry_derivations.iter().any(|derivation| {
+                    let mut conclusion = derivation.proposition();
+                    while let Proposition::Implies(_, body) = conclusion {
+                        conclusion = body;
+                    }
+                    conclusion == prerequisite
+                })
+        })
+        .collect();
+    checked
 }
 
 /// Re-expresses a checked execution from a definitionally equal ghost-resource
@@ -1799,20 +1840,25 @@ fn checked_execution_at_definitionally_equal_entry_state(
     {
         return None;
     }
-    let checked_without_resource_difference = checked
-        .state
-        .clone()
-        .with_resource_context(state.resources().clone());
-    if checked_without_resource_difference != *state
-        || !crate::kernel::api::contract_certification::resource_contexts_definitionally_equal_with_definitions(
+    let mut checked_without_ghost_difference = checked.state.clone();
+    checked_without_ghost_difference.resources = state.resources.clone();
+    checked_without_ghost_difference.counted_populations = state.counted_populations.clone();
+    let concrete_matches = checked_without_ghost_difference == *state;
+    let resources_match = crate::kernel::api::contract_certification::resource_contexts_definitionally_equal_with_definitions(
             function.composite_resource_definitions(),
             checked.state.memory(),
             checked.state.resources(),
             state.memory(),
             state.resources(),
             assumptions,
-        )
-    {
+        );
+    let populations_match = counted_populations_definitionally_equal(
+        &checked.state,
+        state,
+        function.composite_resource_definitions(),
+        assumptions,
+    );
+    if !concrete_matches || !resources_match || !populations_match {
         return None;
     }
 
@@ -1873,6 +1919,64 @@ fn checked_execution_at_definitionally_equal_entry_state(
     Some(SymbolicCExecution { paths, limit: None })
 }
 
+fn counted_populations_definitionally_equal(
+    left: &CState,
+    right: &CState,
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+) -> bool {
+    let is_observable = |population: &CCountedPopulation| {
+        population.family_observation_marker
+            || definitions.iter().any(|definition| {
+                definition.name() == population.name && definition.is_counted_population()
+            })
+    };
+    let left_populations = left
+        .counted_populations
+        .iter()
+        .filter(|population| is_observable(population))
+        .collect::<Vec<_>>();
+    let right_populations = right
+        .counted_populations
+        .iter()
+        .filter(|population| is_observable(population))
+        .collect::<Vec<_>>();
+    if left_populations.len() != right_populations.len() {
+        return false;
+    }
+    let right_by_identity = right_populations
+        .into_iter()
+        .map(|population| {
+            (
+                (
+                    population.name.as_str(),
+                    population.arguments.as_slice(),
+                    population.family_observation_marker,
+                ),
+                &population.count,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    left_populations.into_iter().all(|population| {
+        let identity = (
+            population.name.as_str(),
+            population.arguments.as_slice(),
+            population.family_observation_marker,
+        );
+        right_by_identity.get(&identity).is_some_and(|right_count| {
+            let exact = population.count == **right_count;
+            let proved = assumptions.proves(&Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(population.count.clone()),
+                    Box::new((*right_count).clone()),
+                ),
+                true,
+            ));
+            exact || proved
+        })
+    })
+}
+
 /// Produces the only execution frontier accepted for opaque contract
 /// certification.
 ///
@@ -1913,6 +2017,36 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
     mode: CFunctionContractExecutionMode,
     checked_artifacts: &[CCheckedFunctionExecution],
 ) -> CFunctionContractExecution {
+    prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems(
+        state,
+        function,
+        arguments,
+        derived_entry_facts,
+        environment,
+        execution_semantics,
+        mode,
+        checked_artifacts,
+        &[],
+    )
+}
+
+/// Certifies an opaque contract with kernel-issued pure theorem authorities.
+#[allow(clippy::too_many_arguments)]
+pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems(
+    state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    derived_entry_facts: Vec<Proposition>,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    mode: CFunctionContractExecutionMode,
+    checked_artifacts: &[CCheckedFunctionExecution],
+    pure_theorems: &[CVerifiedPureTheorem],
+) -> CFunctionContractExecution {
+    let pure_theorem_facts = pure_theorems
+        .iter()
+        .map(|verified| verified.theorem.proposition().clone())
+        .collect::<Vec<_>>();
     let selection_assumptions =
         assumptions_with_propositions(&PureFactContext::new(), &derived_entry_facts);
     let Some(base_assumptions) = crate::instrumentation::measure_operation(
@@ -2184,6 +2318,45 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
             }
             entry_state.resources = entry_resources;
         }
+        // Explicit entry theorem applications can justify a selected
+        // evaluator prerequisite even when ghost-resource opening prevents
+        // reusing the checked execution's exact entry state. Admit only an
+        // exact selected fact, from an opaque kernel theorem attached to an
+        // otherwise matching checked execution, after every implication
+        // premise follows from the reconstructed contract context.
+        for checked in checked_artifacts {
+            if checked.function != function
+                || checked.arguments != arguments
+                || checked.environment != environment
+                || checked.execution_semantics != execution_semantics
+                || checked.mode != mode
+            {
+                continue;
+            }
+            // Replay attached kernel derivations in certificate order. A
+            // later explicit theorem application may use a fact established
+            // by an earlier one, but only selected evaluator prerequisites
+            // escape into the reconstructed execution context.
+            let mut derivation_assumptions = assumptions.clone();
+            for derivation in &checked.entry_derivations {
+                let mut body = derivation.proposition();
+                let mut premises_hold = true;
+                while let Proposition::Implies(premise, next) = body {
+                    if !certification_proves_proposition(&derivation_assumptions, premise) {
+                        premises_hold = false;
+                        break;
+                    }
+                    body = next;
+                }
+                if premises_hold {
+                    derivation_assumptions =
+                        derivation_assumptions.assume_proposition(body.clone());
+                    if checked.entry_prerequisites.contains(body) {
+                        assumptions = assumptions.assume_proposition(body.clone());
+                    }
+                }
+            }
+        }
         let matches_execution_metadata_except_state = |checked: &CCheckedFunctionExecution| {
             checked.function == function
                 && checked.arguments == arguments
@@ -2194,6 +2367,24 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
                 && checked.execution.limit().is_none()
                 && !checked.execution.paths().is_empty()
         };
+        let derivation_dischargeable = |derivation: &Theorem, conclusion: &Proposition| {
+            let mut body = derivation.proposition();
+            while let Proposition::Implies(premise, next) = body {
+                if !certification_proves_proposition(&assumptions, premise) {
+                    return false;
+                }
+                body = next;
+            }
+            body == conclusion
+        };
+        let checked_premise_is_authorized =
+            |checked: &CCheckedFunctionExecution, premise: &Proposition| {
+                assumptions.proves(premise)
+                    || checked
+                        .entry_derivations
+                        .iter()
+                        .any(|derivation| derivation_dischargeable(derivation, premise))
+            };
         let reusable = checked_artifacts.iter().find(|checked| {
             checked.state == state
                 && matches_execution_metadata_except_state(checked)
@@ -2201,7 +2392,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
                     .assumptions
                     .pure_facts()
                     .into_iter()
-                    .all(|premise| assumptions.proves(&premise))
+                    .all(|premise| checked_premise_is_authorized(checked, &premise))
         });
         let entry_resource_rebase_supported = !function
             .composite_resource_definitions()
@@ -2217,7 +2408,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
                             .assumptions
                             .pure_facts()
                             .into_iter()
-                            .all(|premise| assumptions.proves(&premise))
+                            .all(|premise| checked_premise_is_authorized(checked, &premise))
                     })
                     .and_then(|checked| {
                         crate::instrumentation::measure_operation(
@@ -2255,7 +2446,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
                                 .assumptions
                                 .pure_facts()
                                 .into_iter()
-                                .filter(|premise| !assumptions.proves(premise));
+                                .filter(|premise| !checked_premise_is_authorized(checked, premise));
                             let premise = unproved.next()?;
                             if unproved.next().is_some() {
                                 return None;
@@ -2303,7 +2494,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
         } else {
             "contract body symbolic execution"
         };
-        let execution = crate::instrumentation::measure_operation(
+        let mut execution = crate::instrumentation::measure_operation(
             function.name(),
             "contract certification",
             body_operation,
@@ -2342,6 +2533,29 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
                 }
             },
         );
+        for path in &mut execution.paths {
+            let mut certification_assumptions = path.assumptions.clone();
+            for obligation in &path.obligations {
+                let Proposition::ConditionIs(condition, value) = obligation.proposition() else {
+                    continue;
+                };
+                if certification_proves_proposition(
+                    &certification_assumptions,
+                    obligation.proposition(),
+                ) || pure_theorem_facts.iter().any(|fact| {
+                    certification_proves_condition_from_verified_pure_implication(
+                        &certification_assumptions,
+                        fact,
+                        condition,
+                        *value,
+                    )
+                }) {
+                    certification_assumptions = certification_assumptions
+                        .assume_proposition(obligation.proposition().clone());
+                }
+            }
+            path.assumptions = certification_assumptions;
+        }
         if crate::instrumentation::enabled()
             && execution.paths.is_empty()
             && execution.limit.is_none()
@@ -2951,6 +3165,353 @@ pub fn prove_int32_increment_below_max_is_defined(value: Bitvector32Term) -> The
     ))
 }
 
+/// Independently proves and universally closes a pure int32 implication.
+///
+/// Every free bitvector variable in the requirements and conclusion must be
+/// listed exactly once. This is the sole constructor for authority that lets
+/// a Click pure theorem participate in whole-contract certification.
+pub fn prove_universally_quantified_pure_implication(
+    requirements: Vec<Proposition>,
+    conclusion: Proposition,
+    variables: Vec<Variable>,
+) -> Option<CVerifiedPureTheorem> {
+    let declared = variables.iter().copied().collect::<BTreeSet<_>>();
+    if declared.len() != variables.len() {
+        return None;
+    }
+    let mut occurring = BTreeSet::new();
+    for proposition in requirements.iter().chain(std::iter::once(&conclusion)) {
+        collect_proposition_bitvector_variables(proposition, &mut occurring);
+    }
+    if occurring != declared {
+        return None;
+    }
+    let assumptions = assumptions_with_propositions(&PureFactContext::new(), &requirements);
+    if !assumptions.proves(&conclusion) {
+        return None;
+    }
+    let implication = requirements
+        .into_iter()
+        .rev()
+        .fold(conclusion, |body, requirement| {
+            Proposition::Implies(Box::new(requirement), Box::new(body))
+        });
+    let proposition =
+        variables
+            .into_iter()
+            .rev()
+            .fold(implication, |body, var| Proposition::ForAll {
+                var,
+                sort: Sort::CInt32,
+                body: Box::new(body),
+            });
+    Some(CVerifiedPureTheorem {
+        theorem: Theorem::new(proposition),
+    })
+}
+
+fn rewrite_int32_term_by_exact_equality(
+    term: &Bitvector32Term,
+    from: &Bitvector32Term,
+    to: &Bitvector32Term,
+) -> Bitvector32Term {
+    if term == from {
+        return to.clone();
+    }
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        (
+            rewrite_int32_term_by_exact_equality(left, from, to),
+            rewrite_int32_term_by_exact_equality(right, from, to),
+        )
+    };
+    match term {
+        Bitvector32Term::Add(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::add(left, right)
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::subtract(left, right)
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Multiply(Box::new(left), Box::new(right))
+        }
+        Bitvector32Term::Divide(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Divide(Box::new(left), Box::new(right))
+        }
+        Bitvector32Term::Remainder(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Remainder(Box::new(left), Box::new(right))
+        }
+        Bitvector32Term::ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::ShiftLeft(Box::new(left), Box::new(right))
+        }
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::ArithmeticShiftRight(Box::new(left), Box::new(right))
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::BitwiseAnd(Box::new(left), Box::new(right))
+        }
+        Bitvector32Term::BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::BitwiseOr(Box::new(left), Box::new(right))
+        }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::BitwiseXor(Box::new(left), Box::new(right))
+        }
+        Bitvector32Term::BitwiseNot(value) => Bitvector32Term::BitwiseNot(Box::new(
+            rewrite_int32_term_by_exact_equality(value, from, to),
+        )),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => Bitvector32Term::If {
+            condition: condition.clone(),
+            then_term: Box::new(rewrite_int32_term_by_exact_equality(then_term, from, to)),
+            else_term: Box::new(rewrite_int32_term_by_exact_equality(else_term, from, to)),
+        },
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            Bitvector32Term::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| rewrite_int32_term_by_exact_equality(argument, from, to))
+                    .collect(),
+            }
+        }
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Variable(_)
+        | Bitvector32Term::MemoryLoad(_, _)
+        | Bitvector32Term::RangeFold { .. } => term.clone(),
+    }
+}
+
+/// Independently checks an explicit sequence of int32 equality rewrites and
+/// context-free normalization before issuing whole-contract authority.
+///
+/// This is deliberately a certificate checker, not an algebraic search: each
+/// supplied equality must follow from the theorem requirements, must occur in
+/// the current equality goal, and is applied in the supplied orientation.
+pub fn prove_universally_quantified_pure_implication_by_int32_rewrites(
+    requirements: Vec<Proposition>,
+    conclusion: Proposition,
+    variables: Vec<Variable>,
+    rewrites: Vec<Proposition>,
+) -> Option<CVerifiedPureTheorem> {
+    let assumptions = assumptions_with_propositions(&PureFactContext::new(), &requirements);
+    let mut goal = conclusion.clone();
+    for rewrite in rewrites {
+        if !assumptions.proves(&rewrite) {
+            return None;
+        }
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(from, to), true) = rewrite
+        else {
+            return None;
+        };
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = goal
+        else {
+            return None;
+        };
+        let rewritten_left = rewrite_int32_term_by_exact_equality(&left, &from, &to);
+        let rewritten_right = rewrite_int32_term_by_exact_equality(&right, &from, &to);
+        if rewritten_left == *left && rewritten_right == *right {
+            return None;
+        }
+        goal = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(rewritten_left), Box::new(rewritten_right)),
+            true,
+        );
+    }
+    if !PureFactContext::new().proves(&goal) {
+        return None;
+    }
+    let declared = variables.iter().copied().collect::<BTreeSet<_>>();
+    if declared.len() != variables.len() {
+        return None;
+    }
+    let mut occurring = BTreeSet::new();
+    for proposition in requirements.iter().chain(std::iter::once(&conclusion)) {
+        collect_proposition_bitvector_variables(proposition, &mut occurring);
+    }
+    if occurring != declared {
+        return None;
+    }
+    let implication = requirements
+        .into_iter()
+        .rev()
+        .fold(conclusion, |body, requirement| {
+            Proposition::Implies(Box::new(requirement), Box::new(body))
+        });
+    let proposition =
+        variables
+            .into_iter()
+            .rev()
+            .fold(implication, |body, var| Proposition::ForAll {
+                var,
+                sort: Sort::CInt32,
+                body: Box::new(body),
+            });
+    Some(CVerifiedPureTheorem {
+        theorem: Theorem::new(proposition),
+    })
+}
+
+/// Adding one on the left of a signed int32 value below the maximum is
+/// defined.
+pub fn prove_int32_one_plus_below_max_is_defined(value: Bitvector32Term) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), Bitvector32Term::Constant(i32::MAX as u32)),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_add_overflows(Bitvector32Term::Constant(1), value),
+        false,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
+/// Adding one on the left strictly increases a signed int32 value below the
+/// maximum.
+pub fn prove_int32_one_plus_strictly_increases(value: Bitvector32Term) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), Bitvector32Term::Constant(i32::MAX as u32)),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            value.clone(),
+            Bitvector32Term::Add(Box::new(Bitvector32Term::Constant(1)), Box::new(value)),
+        ),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
+/// Adding a nonnegative signed int32 amount within the remaining positive
+/// headroom is defined.
+pub fn prove_int32_nonnegative_add_within_max_is_defined(
+    value: Bitvector32Term,
+    amount: Bitvector32Term,
+) -> Theorem {
+    let amount_is_nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), amount.clone()),
+        true,
+    );
+    let within_headroom = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            value.clone(),
+            Bitvector32Term::Subtract(
+                Box::new(Bitvector32Term::Constant(i32::MAX as u32)),
+                Box::new(amount.clone()),
+            ),
+        ),
+        true,
+    );
+    let conclusion =
+        Proposition::ConditionIs(ConditionTerm::signed_add_overflows(value, amount), false);
+    Theorem::new(Proposition::Implies(
+        Box::new(amount_is_nonnegative),
+        Box::new(Proposition::Implies(
+            Box::new(within_headroom),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
+/// Subtracting a nonnegative signed int32 amount no larger than the value is
+/// defined.
+pub fn prove_int32_nonnegative_subtract_within_value_is_defined(
+    value: Bitvector32Term,
+    amount: Bitvector32Term,
+) -> Theorem {
+    let amount_is_nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), amount.clone()),
+        true,
+    );
+    let amount_within_value = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(amount.clone(), value.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_subtract_overflows(value, amount),
+        false,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(amount_is_nonnegative),
+        Box::new(Proposition::Implies(
+            Box::new(amount_within_value),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
+/// A defined signed addition with a nonnegative right operand is at least its
+/// left operand.
+pub fn prove_int32_add_nonnegative_right_is_at_least_left(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+) -> Theorem {
+    let right_is_nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), right.clone()),
+        true,
+    );
+    let addition_is_defined = Proposition::ConditionIs(
+        ConditionTerm::signed_add_overflows(left.clone(), right.clone()),
+        false,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(left.clone(), Bitvector32Term::add(left, right)),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(right_is_nonnegative),
+        Box::new(Proposition::Implies(
+            Box::new(addition_is_defined),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
+/// A defined signed addition with a nonnegative left operand is at least its
+/// right operand.
+pub fn prove_int32_add_nonnegative_left_is_at_least_right(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+) -> Theorem {
+    let left_is_nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), left.clone()),
+        true,
+    );
+    let addition_is_defined = Proposition::ConditionIs(
+        ConditionTerm::signed_add_overflows(left.clone(), right.clone()),
+        false,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(right.clone(), Bitvector32Term::add(left, right)),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(left_is_nonnegative),
+        Box::new(Proposition::Implies(
+            Box::new(addition_is_defined),
+            Box::new(conclusion),
+        )),
+    ))
+}
+
 /// Decrementing a positive signed int32 value produces a nonnegative value.
 pub fn prove_int32_positive_predecessor_is_nonnegative(value: Bitvector32Term) -> Theorem {
     let premise = Proposition::ConditionIs(
@@ -2968,6 +3529,44 @@ pub fn prove_int32_positive_predecessor_is_nonnegative(value: Bitvector32Term) -
         Box::new(premise),
         Box::new(conclusion),
     ))
+}
+
+/// Decrementing a signed int32 value strictly above one leaves at least one.
+pub fn prove_int32_above_one_predecessor_is_at_least_one(value: Bitvector32Term) -> Theorem {
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(Bitvector32Term::Constant(1), value.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedGreaterEqual(
+            Box::new(Bitvector32Term::Subtract(
+                Box::new(value),
+                Box::new(Bitvector32Term::Constant(1)),
+            )),
+            Box::new(Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
+/// Sealed authority for the fixed predecessor bound used by independent
+/// contract certification. Unlike a bare [`Theorem`], callers cannot build
+/// this evidence from an untrusted proposition.
+pub fn certify_int32_above_one_predecessor_is_at_least_one() -> CVerifiedPureTheorem {
+    let variable = Variable(0);
+    let implication =
+        prove_int32_above_one_predecessor_is_at_least_one(Bitvector32Term::Variable(variable));
+    CVerifiedPureTheorem {
+        theorem: Theorem::new(Proposition::ForAll {
+            var: variable,
+            sort: Sort::CInt32,
+            body: Box::new(implication.proposition().clone()),
+        }),
+    }
 }
 
 /// Decrementing a nonnegative signed int32 value preserves a non-strict

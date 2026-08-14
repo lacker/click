@@ -426,6 +426,10 @@ pub(in crate::lang::click) fn apply_contract_lets_to_resource_clause(
     bindings: &[ContractLetBinding],
 ) -> Result<ResourceClause, String> {
     match resource {
+        ResourceClause::Quantified { quantity, resource } => Ok(ResourceClause::Quantified {
+            quantity: apply_contract_lets_to_expression(quantity, bindings)?,
+            resource: Box::new(apply_contract_lets_to_resource_clause(*resource, bindings)?),
+        }),
         ResourceClause::Read(segment) => Ok(ResourceClause::Read(apply_contract_lets_to_segment(
             segment, bindings,
         )?)),

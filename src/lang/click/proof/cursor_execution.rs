@@ -351,6 +351,7 @@ fn resource_is_direct_observed_core(
                 ))
             })?;
             let core = match child {
+                ResourceClause::Quantified { .. } => continue,
                 ResourceClause::Read(segment) | ResourceClause::Write(segment) => {
                     ResourceClause::Read(segment)
                 }
@@ -1151,6 +1152,42 @@ pub(super) fn predicate_call_source_site(surface: &ClickProposition) -> Option<P
     })
 }
 
+fn proposition_tree_contains(root: &Proposition, target: &Proposition) -> bool {
+    root == target
+        || match root {
+            Proposition::And(left, right) | Proposition::Or(left, right) => {
+                proposition_tree_contains(left, target) || proposition_tree_contains(right, target)
+            }
+            _ => false,
+        }
+}
+
+fn statement_expression_definedness(state: &CState, statement: &CStatement) -> Vec<Proposition> {
+    let mut expressions = Vec::new();
+    match statement {
+        CStatement::Assign { expression, .. } | CStatement::Return(expression) => {
+            expressions.push(expression)
+        }
+        CStatement::CallAssign { arguments, .. } | CStatement::Call { arguments, .. } => {
+            expressions.extend(arguments)
+        }
+        CStatement::HeapAllocate { bytes, .. } => expressions.push(bytes),
+        CStatement::HeapFree { pointer } => expressions.push(pointer),
+        CStatement::Assert { condition, .. }
+        | CStatement::If { condition, .. }
+        | CStatement::While { condition, .. } => expressions.push(condition),
+        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
+            expressions.push(pointer);
+            expressions.push(value);
+        }
+        CStatement::Skip | CStatement::Declare { .. } | CStatement::Seq(_, _) => {}
+    }
+    expressions
+        .into_iter()
+        .filter_map(|expression| c_expression_definedness_proposition(state, expression).ok())
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn execute_step_from_execution_point(
     replay: &mut TacticReplayState,
@@ -1469,6 +1506,26 @@ pub(super) fn execute_step_from_execution_point(
         .into_iter()
         .next()
         .expect("one statement transition was required");
+    let definedness = statement_expression_definedness(&current_state, &step_statement);
+    for derivation in &replay.function_entry_derivations {
+        let mut conclusion = derivation.proposition();
+        while let Proposition::Implies(_, body) = conclusion {
+            conclusion = body;
+        }
+        if definedness
+            .iter()
+            .any(|required| proposition_tree_contains(required, conclusion))
+            && exact_fact_is_available(conclusion, available_pure_facts)
+            && !replay.execution_start_facts.contains(conclusion)
+            && !replay
+                .function_entry_execution_prerequisites
+                .contains(conclusion)
+        {
+            replay
+                .function_entry_execution_prerequisites
+                .push(conclusion.clone());
+        }
+    }
     if matches!(loop_step_policy, LoopStepPolicy::ApplyVerifiedRule)
         && let Some(loop_index) = loop_index
         && matches!(transition.outcome, CStatementOutcome::Normal(_))

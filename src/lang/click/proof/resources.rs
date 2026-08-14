@@ -27,7 +27,7 @@ pub(super) fn materialize_counted_population_bodies(
     _click_function_environment: &ClickFunctionEnvironment,
     _claim_label: &str,
 ) -> Result<(CState, Vec<Proposition>), ClickError> {
-    let mut populations = Vec::<(String, Vec<CValue>, u32)>::new();
+    let mut populations = Vec::<(String, Vec<CValue>, Bitvector32Term)>::new();
     for fact in state.resources().facts() {
         let (name, arguments) = match fact.resource() {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -39,9 +39,10 @@ pub(super) fn materialize_counted_population_bodies(
             continue;
         }
         let quantity = fact
-            .owned_quantity()
-            .unwrap_or_else(|| u32::from(fact.is_view()));
-        if quantity == 0 {
+            .owned_quantity_term()
+            .cloned()
+            .unwrap_or_else(|| Bitvector32Term::Constant(u32::from(fact.is_view())));
+        if quantity == Bitvector32Term::Constant(0) {
             continue;
         }
         if let Some(existing) =
@@ -51,7 +52,7 @@ pub(super) fn materialize_counted_population_bodies(
                     existing_name == name && existing_arguments == arguments
                 })
         {
-            existing.2 = existing.2.saturating_add(quantity);
+            existing.2 = Bitvector32Term::add(existing.2.clone(), quantity);
         } else {
             populations.push((name.clone(), arguments.clone(), quantity));
         }
@@ -71,7 +72,10 @@ pub(super) fn materialize_counted_population_bodies(
         // ledger merely so `open`/`unfold` can expose its body. Counts are
         // materialized when the proof observes them, when the body relates C
         // state to the population, or when visible multiplicity matters.
-        if !observes_population && !tracks_population_in_body && visible_quantity == 1 {
+        if !observes_population
+            && !tracks_population_in_body
+            && visible_quantity == Bitvector32Term::Constant(1)
+        {
             continue;
         }
         let count = if observes_population {
@@ -79,13 +83,13 @@ pub(super) fn materialize_counted_population_bodies(
             next_variable = next_variable.saturating_add(1);
             count
         } else {
-            Bitvector32Term::Constant(visible_quantity)
+            visible_quantity.clone()
         };
         state = state.with_counted_population(&name, resource_arguments.clone(), count.clone());
         facts.push(Proposition::ConditionIs(
             ConditionTerm::Bitvector32SignedGreaterEqual(
                 Box::new(count.clone()),
-                Box::new(Bitvector32Term::Constant(visible_quantity)),
+                Box::new(visible_quantity),
             ),
             true,
         ));
@@ -235,7 +239,7 @@ pub(super) fn project_initial_composite_resource_cores(
         let viewed_contained_resources = contained_resources
             .facts()
             .iter()
-            .filter_map(CResourceFact::core)
+            .filter_map(|fact| fact.core_with_assumptions(&assumptions))
             .collect::<Vec<_>>();
         let resources = state
             .resources()
@@ -488,7 +492,9 @@ pub(super) fn observe_composite_resource(
     let viewed_contained_resources = contained_resources
         .facts()
         .iter()
-        .filter_map(CResourceFact::core)
+        .filter_map(|fact| {
+            fact.core_with_assumptions(&assumptions_from_propositions(available_pure_facts))
+        })
         .collect::<Vec<_>>();
     // Holding the folded composite certifies its instantiated body. Observation
     // only adds the body's duplicable cores, so it must not revalidate ownership.
@@ -632,6 +638,7 @@ fn record_observed_composite_surface_facts(
 
 fn resource_clause_subject(resource: &ResourceClause) -> ResourceSubject {
     match resource {
+        ResourceClause::Quantified { resource, .. } => resource_clause_subject(resource),
         ResourceClause::Read(segment) | ResourceClause::Write(segment) => {
             ResourceSubject::Memory(segment.clone())
         }
@@ -2155,6 +2162,10 @@ pub(super) fn instantiate_resource_clause(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ResourceClause, String> {
     match resource {
+        ResourceClause::Quantified { quantity, resource } => Ok(ResourceClause::Quantified {
+            quantity: substitute_contract_expression(quantity, substitutions)?,
+            resource: Box::new(instantiate_resource_clause(resource, substitutions)?),
+        }),
         ResourceClause::Read(segment) => Ok(ResourceClause::Read(instantiate_contract_segment(
             segment,
             substitutions,
@@ -2212,7 +2223,7 @@ fn materialize_composite_resource_cells(
     let Some((segment, range)) = (match resource_clause {
         ResourceClause::Read(segment) => lowered.memory_view_range().map(|range| (segment, range)),
         ResourceClause::Write(segment) => lowered.memory_own_range().map(|range| (segment, range)),
-        ResourceClause::Declared { .. } => None,
+        ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => None,
     }) else {
         return memory;
     };

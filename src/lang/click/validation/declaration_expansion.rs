@@ -448,6 +448,13 @@ fn expand_declared_resource_clause(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ResourceClause, ClickError> {
     match resource {
+        ResourceClause::Quantified { quantity, resource } => Ok(ResourceClause::Quantified {
+            quantity,
+            resource: Box::new(expand_declared_resource_clause(
+                *resource,
+                resource_definitions,
+            )?),
+        }),
         ResourceClause::Declared {
             access,
             kind: _,

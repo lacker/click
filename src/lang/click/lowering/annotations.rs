@@ -421,6 +421,16 @@ fn collect_owned_resource_memory_segments_inner(
     active_guard: Option<ClickProposition>,
 ) -> Result<(), ClickError> {
     match resource {
+        ResourceClause::Quantified { resource, .. } => {
+            collect_owned_resource_memory_segments_inner(
+                resource,
+                resource_environment,
+                lowerer,
+                output,
+                active_resources,
+                active_guard,
+            )
+        }
         ResourceClause::Read(_) => Ok(()),
         ResourceClause::Write(segment) => {
             let mut segment = CMemorySegment::new(

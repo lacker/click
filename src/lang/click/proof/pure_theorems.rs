@@ -415,6 +415,13 @@ fn verify_theorem_ensure(
             | "int32_not_lt_implies_ge"
             | "int32_strictly_positive_is_nonnegative"
             | "int32_increment_below_max_is_defined"
+            | "int32_one_plus_below_max_is_defined"
+            | "int32_one_plus_strictly_increases"
+            | "int32_nonnegative_add_within_max_is_defined"
+            | "int32_nonnegative_subtract_within_value_is_defined"
+            | "int32_add_nonnegative_right_is_at_least_left"
+            | "int32_add_nonnegative_left_is_at_least_right"
+            | "int32_above_one_predecessor_is_at_least_one"
             | "int32_positive_predecessor_is_nonnegative"
             | "int32_positive_predecessor_strictly_decreases"
             | "int32_nonnegative_predecessor_upper_bound"
@@ -519,6 +526,50 @@ fn verify_theorem_ensure(
             )
         },
     )?;
+    let kernel_variables = theorem
+        .parameters()
+        .iter()
+        .map(|parameter| match context.values.get(parameter.name()) {
+            Some(CValue::Int32(Bitvector32Term::Variable(variable))) => Some(*variable),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>();
+    let kernel_authority = kernel_variables.and_then(|variables| {
+        prove_universally_quantified_pure_implication(
+            context.requires.clone(),
+            goal.clone(),
+            variables.clone(),
+        )
+        .or_else(|| {
+            let steps = certificate.steps();
+            let (rewrite_steps, closer) = steps.split_at(steps.len().saturating_sub(1));
+            if !matches!(closer, [SimpleProofStep::Normalize]) {
+                return None;
+            }
+            let rewrites = rewrite_steps
+                .iter()
+                .map(|step| match step {
+                    SimpleProofStep::Rewrite(surface) => lower_pure_theorem_proposition(
+                        claim_label,
+                        surface,
+                        &context.values,
+                        &context.array_refs,
+                        &context.memory,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .ok(),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()?;
+            prove_universally_quantified_pure_implication_by_int32_rewrites(
+                context.requires.clone(),
+                goal.clone(),
+                variables,
+                rewrites,
+            )
+        })
+    });
     Ok(VerifiedPureTheorem {
         theorem_definition: theorem.clone(),
         ensure_index,
@@ -527,6 +578,7 @@ fn verify_theorem_ensure(
         proof: Some(certificate),
         requires: context.requires.clone(),
         conclusion: goal,
+        kernel_authority,
     })
 }
 
@@ -545,7 +597,11 @@ fn verify_kernel_standard_theorem_axiom(
         | "int32_increment_strict_greater_lower_bound"
         | "int32_increment_preserves_order" => (3, 2),
         "int32_successor_le_implies_lt" => (2, 2),
-        "int32_nonnegative_predecessor_upper_bound" => (2, 2),
+        "int32_nonnegative_predecessor_upper_bound"
+        | "int32_nonnegative_add_within_max_is_defined"
+        | "int32_nonnegative_subtract_within_value_is_defined"
+        | "int32_add_nonnegative_right_is_at_least_left"
+        | "int32_add_nonnegative_left_is_at_least_right" => (2, 2),
         "int32_le_antisymmetric" => (2, 2),
         "int32_le_and_not_lt_implies_eq"
         | "int32_le_and_neq_implies_lt"
@@ -556,6 +612,9 @@ fn verify_kernel_standard_theorem_axiom(
         "int32_positive_is_nonnegative"
         | "int32_strictly_positive_is_nonnegative"
         | "int32_increment_below_max_is_defined"
+        | "int32_one_plus_below_max_is_defined"
+        | "int32_one_plus_strictly_increases"
+        | "int32_above_one_predecessor_is_at_least_one"
         | "int32_positive_predecessor_is_nonnegative"
         | "int32_positive_predecessor_strictly_decreases" => (1, 1),
         "int32_le_lt_transitive"
@@ -633,6 +692,23 @@ fn verify_kernel_standard_theorem_axiom(
             prove_int32_strictly_positive_is_nonnegative(value)
         }
         "int32_increment_below_max_is_defined" => prove_int32_increment_below_max_is_defined(value),
+        "int32_one_plus_below_max_is_defined" => prove_int32_one_plus_below_max_is_defined(value),
+        "int32_one_plus_strictly_increases" => prove_int32_one_plus_strictly_increases(value),
+        "int32_nonnegative_add_within_max_is_defined" => {
+            prove_int32_nonnegative_add_within_max_is_defined(value, int32_parameter(1)?)
+        }
+        "int32_nonnegative_subtract_within_value_is_defined" => {
+            prove_int32_nonnegative_subtract_within_value_is_defined(value, int32_parameter(1)?)
+        }
+        "int32_add_nonnegative_right_is_at_least_left" => {
+            prove_int32_add_nonnegative_right_is_at_least_left(value, int32_parameter(1)?)
+        }
+        "int32_add_nonnegative_left_is_at_least_right" => {
+            prove_int32_add_nonnegative_left_is_at_least_right(value, int32_parameter(1)?)
+        }
+        "int32_above_one_predecessor_is_at_least_one" => {
+            prove_int32_above_one_predecessor_is_at_least_one(value)
+        }
         "int32_positive_predecessor_is_nonnegative" => {
             prove_int32_positive_predecessor_is_nonnegative(value)
         }
@@ -677,6 +753,12 @@ fn verify_kernel_standard_theorem_axiom(
             "`{claim_label}` declaration does not match its kernel axiom",
         )));
     }
+    let kernel_authority = match theorem.name() {
+        "int32_above_one_predecessor_is_at_least_one" => {
+            Some(certify_int32_above_one_predecessor_is_at_least_one())
+        }
+        _ => None,
+    };
     Ok(VerifiedPureTheorem {
         theorem_definition: theorem.clone(),
         ensure_index,
@@ -685,6 +767,7 @@ fn verify_kernel_standard_theorem_axiom(
         proof: None,
         requires: context.requires.clone(),
         conclusion: goal,
+        kernel_authority,
     })
 }
 

@@ -1597,7 +1597,7 @@ fn reject_composite_resource_cycles(definitions: &[ResourceDefinition]) -> Resul
                         ..
                     } => Some(name.clone()),
                     ResourceClause::Read(_) | ResourceClause::Write(_) => None,
-                    ResourceClause::Declared { .. } => None,
+                    ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => None,
                 })
                 .filter(|dependency| {
                     dependency != definition.name()

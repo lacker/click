@@ -573,10 +573,13 @@ pub(super) fn describe_resource_fact(
         ) => {
             let resource =
                 format_declared_resource(name, resource_arguments, parameters, arguments);
-            if quantity.get() == 1 {
+            if quantity.as_const() == Some(1) {
                 format!("owns {resource}")
             } else {
-                format!("owns {resource} (quantity {})", quantity.get())
+                format!(
+                    "owns {resource} (quantity {})",
+                    describe_bitvector_with_context(quantity, parameters, arguments)
+                )
             }
         }
         CResourceFact::View(

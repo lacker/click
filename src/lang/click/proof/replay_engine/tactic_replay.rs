@@ -500,6 +500,7 @@ fn replay_linear_tactics_without_frontier_loops(
         let tactic = &indexed_tactic.tactic;
         let deferred_post_execution = replay.ordered_finalization
             && replay.is_at_function_exit()
+            && replay.open_scopes == 0
             && tactic_is_deferred_post_execution(tactic);
         let deferred_region_simp = replay.region_proof && matches!(tactic, ProofTactic::Simp);
         let mut scope = Some(begin_tactic_surface_scope(&mut replay));
@@ -2179,6 +2180,27 @@ fn replay_linear_tactics_without_frontier_loops(
                     &replay.unfolded_predicates,
                     Some(&lowering_facts),
                 )?;
+                if replay
+                    .frontier
+                    .execution_start_state
+                    .as_ref()
+                    .is_none_or(|start| start == &state)
+                    && let Some(derivation) = kernel_standard_theorem_derivation_at_current_point(
+                        theorem_environment,
+                        application,
+                        parsed_function.parameters(),
+                        arguments,
+                        &pre_state,
+                        &state,
+                        &replay.program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                        &lowering_facts,
+                    )?
+                    && !replay.function_entry_derivations.contains(&derivation)
+                {
+                    replay.function_entry_derivations.push(derivation);
+                }
                 for fact in all_pure_facts {
                     if !applied.contains(&fact) {
                         applied.push(fact);
@@ -2383,6 +2405,41 @@ fn replay_linear_tactics_without_frontier_loops(
                         replay.simple_proof_builder.push_step(step.clone());
                     }
                 }
+                // `have ... by { apply(...) using { ... } }` replays its
+                // nested certificate on a clone, so carry the kernel-issued
+                // standard-theorem authority back to the enclosing entry
+                // replay explicitly. The proved fact itself is recorded only
+                // after the nested certificate has passed the gateway below.
+                if replay
+                    .frontier
+                    .execution_start_state
+                    .as_ref()
+                    .is_none_or(|start| start == &state)
+                    && let Proof::Script(have_tactics) = &have.proof
+                {
+                    for have_tactic in have_tactics {
+                        let ProofTactic::ApplyTheoremUsing { application, .. } = have_tactic else {
+                            continue;
+                        };
+                        if let Some(derivation) =
+                            kernel_standard_theorem_derivation_at_current_point(
+                                theorem_environment,
+                                application,
+                                parsed_function.parameters(),
+                                arguments,
+                                replay.old_reference_state(&state),
+                                &state,
+                                &replay.program_point_states,
+                                predicate_environment,
+                                click_function_environment,
+                                &have_facts,
+                            )?
+                            && !replay.function_entry_derivations.contains(&derivation)
+                        {
+                            replay.function_entry_derivations.push(derivation);
+                        }
+                    }
+                }
                 // Do not teach certificate replay the search-time lowering of
                 // this goal until the generated surface certificate has
                 // independently replayed. Otherwise a richer planner
@@ -2391,6 +2448,10 @@ fn replay_linear_tactics_without_frontier_loops(
                 replay
                     .surface_propositions
                     .record_lowering(&have.proposition, &fact)?;
+                replay
+                    .simple_proof_builder
+                    .certificate_facts
+                    .insert(fact.clone());
                 if !requirement_pure_facts.contains(&fact) {
                     requirement_pure_facts.push(fact.clone());
                     assumptions = assumptions.assume_proposition(fact);

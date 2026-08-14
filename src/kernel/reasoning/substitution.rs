@@ -1198,7 +1198,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource(
     match resource {
         CResourceFact::Own(resource, quantity) => CResourceFact::Own(
             substitute_bitvector_variable_in_c_resource(resource, from, to),
-            *quantity,
+            Box::new(substitute_bitvector_variable(quantity, from, to)),
         ),
         CResourceFact::View(resource) => CResourceFact::View(
             substitute_bitvector_variable_in_c_resource(resource, from, to),
@@ -1315,6 +1315,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
     to: &Bitvector32Term,
 ) -> CResourceSpec {
     match resource {
+        CResourceSpec::Quantified { quantity, resource } => CResourceSpec::Quantified {
+            quantity: substitute_bitvector_variable_in_c_expression(quantity, from, to),
+            resource: Box::new(substitute_bitvector_variable_in_resource_spec(
+                resource, from, to,
+            )),
+        },
         CResourceSpec::Read(segment) => CResourceSpec::Read(CMemorySegment {
             base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),

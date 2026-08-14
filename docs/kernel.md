@@ -51,7 +51,14 @@ axioms, even when Rust names them `prove_*`.
 `prove_int32_not_lt_implies_ge`,
 `prove_int32_strictly_positive_is_nonnegative`,
 `prove_int32_increment_below_max_is_defined`,
-`prove_int32_positive_predecessor_is_nonnegative`, and
+`prove_int32_one_plus_below_max_is_defined`,
+`prove_int32_one_plus_strictly_increases`,
+`prove_int32_nonnegative_add_within_max_is_defined`,
+`prove_int32_nonnegative_subtract_within_value_is_defined`,
+`prove_int32_add_nonnegative_right_is_at_least_left`,
+`prove_int32_add_nonnegative_left_is_at_least_right`,
+`prove_int32_above_one_predecessor_is_at_least_one`,
+`prove_int32_positive_predecessor_is_nonnegative`,
 `prove_int32_positive_predecessor_strictly_decreases`,
 `prove_int32_le_lt_transitive`, `prove_int32_le_transitive`,
 `prove_int32_lt_le_transitive`,
@@ -61,9 +68,9 @@ axioms, even when Rust names them `prove_*`.
 `prove_int32_le_implies_reversed_ge`, and
 `prove_int32_le_and_not_lt_implies_eq` and
 `prove_int32_ge_and_not_gt_implies_eq` are kernel axioms exposed as named standard
-theorems. They construct only the fixed signed-increment, successor-order,
-positive-to-nonnegative, and order-transitivity implications documented in
-the standard library.
+theorems. They construct only the fixed signed-increment, checked arithmetic,
+predecessor-bound, successor-order, positive-to-nonnegative, and
+order-transitivity implications documented in the standard library.
 Standard-library verification checks each parsed declaration against its exact
 proposition before theorem application becomes available; expanded user proofs
 then use the ordinary simple `apply(...) using { ... }` certificate.

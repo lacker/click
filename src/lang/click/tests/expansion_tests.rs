@@ -3375,6 +3375,61 @@ fn source_expander_replaces_and_replays_contextual_frame() {
 }
 
 #[test]
+fn selected_post_execution_frame_stays_inside_open_scope() {
+    let c_source = r#"
+            int32 increment_counted(int32 p[]) {
+                p[0] = p[0] + 1;
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            resource counted(p: int32*) {
+                owns p[0..1];
+                fact p[0] == count(counted(p));
+            }
+
+            verifying "increment_counted.c";
+
+            int32 increment_counted(int32 p[]) {
+                owns counted(p);
+                produces counted(p);
+                mutable p[0..1];
+            } by {
+                open(counted(p)) {
+                    execute();
+                    frame();
+                }
+                simp();
+            }
+        "#;
+    let offset = click_source
+        .find("frame();")
+        .expect("proof should contain the selected frame");
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("increment_counted.c", c_source)],
+        line,
+        column,
+    )
+    .expect("selected frame inside an open scope should expand");
+    assert!(!expanded.contains("frame();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("increment_counted.c", c_source)])
+        .expect("expanded frame must replay before the open scope closes");
+}
+
+#[test]
 fn source_expander_shares_path_independent_frame_across_c_branches() {
     let c_source = r#"
             int32 write_by_flag(int32 p[], int32 flag) {

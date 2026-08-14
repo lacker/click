@@ -576,6 +576,136 @@ fn int32_increment_below_max_is_defined_axiom_has_the_exact_implication() {
 }
 
 #[test]
+fn int32_one_plus_strictly_increases_axiom_has_the_exact_implication() {
+    let value = Bitvector32Term::Variable(Variable(90_124));
+    let theorem = prove_int32_one_plus_strictly_increases(value.clone());
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), Bitvector32Term::Constant(i32::MAX as u32)),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            value.clone(),
+            Bitvector32Term::Add(Box::new(Bitvector32Term::Constant(1)), Box::new(value)),
+        ),
+        true,
+    );
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(Box::new(premise), Box::new(conclusion))
+    );
+}
+
+#[test]
+fn pure_theorem_rewrite_certificate_issues_closed_authority() {
+    let value_var = Variable(90_130);
+    let left_var = Variable(90_131);
+    let amount_var = Variable(90_132);
+    let value = Bitvector32Term::Variable(value_var);
+    let left = Bitvector32Term::Variable(left_var);
+    let amount = Bitvector32Term::Variable(amount_var);
+    let sum = Bitvector32Term::Add(Box::new(left.clone()), Box::new(amount.clone()));
+    let equality = Proposition::ConditionIs(ConditionTerm::equal(value.clone(), sum.clone()), true);
+    let requirements = vec![
+        Proposition::And(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_add_overflows(left.clone(), amount.clone()),
+                false,
+            )),
+            Box::new(equality.clone()),
+        ),
+        Proposition::ConditionIs(
+            ConditionTerm::signed_subtract_overflows(value.clone(), amount.clone()),
+            false,
+        ),
+    ];
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::Subtract(Box::new(value), Box::new(amount)),
+            left,
+        ),
+        true,
+    );
+
+    let authority = prove_universally_quantified_pure_implication_by_int32_rewrites(
+        requirements,
+        conclusion,
+        vec![value_var, left_var, amount_var],
+        vec![equality],
+    );
+
+    assert!(authority.is_some());
+}
+
+#[test]
+fn pure_theorem_rewrite_certificate_rejects_unavailable_equality() {
+    let value_var = Variable(90_140);
+    let left_var = Variable(90_141);
+    let amount_var = Variable(90_142);
+    let value = Bitvector32Term::Variable(value_var);
+    let left = Bitvector32Term::Variable(left_var);
+    let amount = Bitvector32Term::Variable(amount_var);
+    let equality = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            value.clone(),
+            Bitvector32Term::Add(Box::new(left.clone()), Box::new(amount.clone())),
+        ),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::Subtract(Box::new(value), Box::new(amount)),
+            left,
+        ),
+        true,
+    );
+
+    let authority = prove_universally_quantified_pure_implication_by_int32_rewrites(
+        Vec::new(),
+        conclusion,
+        vec![value_var, left_var, amount_var],
+        vec![equality],
+    );
+
+    assert!(authority.is_none());
+}
+
+#[test]
+fn int32_nonnegative_add_within_max_is_defined_axiom_has_the_exact_implication() {
+    let value = Bitvector32Term::Variable(Variable(90_025));
+    let amount = Bitvector32Term::Variable(Variable(90_026));
+    let theorem = prove_int32_nonnegative_add_within_max_is_defined(value.clone(), amount.clone());
+    let nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), amount.clone()),
+        true,
+    );
+    let within_headroom = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            value.clone(),
+            Bitvector32Term::Subtract(
+                Box::new(Bitvector32Term::Constant(i32::MAX as u32)),
+                Box::new(amount.clone()),
+            ),
+        ),
+        true,
+    );
+    let defined =
+        Proposition::ConditionIs(ConditionTerm::signed_add_overflows(value, amount), false);
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(nonnegative),
+            Box::new(Proposition::Implies(
+                Box::new(within_headroom),
+                Box::new(defined),
+            )),
+        )
+    );
+}
+
+#[test]
 fn int32_positive_predecessor_strictly_decreases_axiom_has_the_exact_implication() {
     let value = Bitvector32Term::Variable(Variable(90_026));
     let theorem = prove_int32_positive_predecessor_strictly_decreases(value.clone());

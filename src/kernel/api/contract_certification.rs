@@ -2317,6 +2317,124 @@ pub(super) fn certification_proves_proposition(
     }
 }
 
+fn match_quantified_int32_term(
+    pattern: &Bitvector32Term,
+    target: &Bitvector32Term,
+    binders: &BTreeSet<Variable>,
+    substitutions: &mut BTreeMap<Variable, Bitvector32Term>,
+) -> bool {
+    if let Bitvector32Term::Variable(variable) = pattern
+        && binders.contains(variable)
+    {
+        return match substitutions.get(variable) {
+            Some(existing) => existing == target,
+            None => {
+                substitutions.insert(*variable, target.clone());
+                true
+            }
+        };
+    }
+    let binary = |pattern_left: &Bitvector32Term,
+                  pattern_right: &Bitvector32Term,
+                  target_left: &Bitvector32Term,
+                  target_right: &Bitvector32Term,
+                  substitutions: &mut BTreeMap<Variable, Bitvector32Term>| {
+        match_quantified_int32_term(pattern_left, target_left, binders, substitutions)
+            && match_quantified_int32_term(pattern_right, target_right, binders, substitutions)
+    };
+    match (pattern, target) {
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => left == right,
+        (Bitvector32Term::Variable(left), Bitvector32Term::Variable(right)) => left == right,
+        (Bitvector32Term::Add(pl, pr), Bitvector32Term::Add(tl, tr))
+        | (Bitvector32Term::Subtract(pl, pr), Bitvector32Term::Subtract(tl, tr))
+        | (Bitvector32Term::Multiply(pl, pr), Bitvector32Term::Multiply(tl, tr))
+        | (Bitvector32Term::Divide(pl, pr), Bitvector32Term::Divide(tl, tr))
+        | (Bitvector32Term::Remainder(pl, pr), Bitvector32Term::Remainder(tl, tr))
+        | (Bitvector32Term::ShiftLeft(pl, pr), Bitvector32Term::ShiftLeft(tl, tr))
+        | (
+            Bitvector32Term::ArithmeticShiftRight(pl, pr),
+            Bitvector32Term::ArithmeticShiftRight(tl, tr),
+        )
+        | (Bitvector32Term::BitwiseAnd(pl, pr), Bitvector32Term::BitwiseAnd(tl, tr))
+        | (Bitvector32Term::BitwiseOr(pl, pr), Bitvector32Term::BitwiseOr(tl, tr))
+        | (Bitvector32Term::BitwiseXor(pl, pr), Bitvector32Term::BitwiseXor(tl, tr)) => {
+            binary(pl, pr, tl, tr, substitutions)
+        }
+        (Bitvector32Term::BitwiseNot(pattern), Bitvector32Term::BitwiseNot(target)) => {
+            match_quantified_int32_term(pattern, target, binders, substitutions)
+        }
+        _ => pattern == target,
+    }
+}
+
+/// Instantiates every binder in one closed theorem from its condition
+/// conclusion. Matching is a single structural pass; premises are then
+/// certified normally under the resulting exact substitution.
+pub(super) fn certification_proves_condition_from_verified_pure_implication(
+    assumptions: &PureFactContext,
+    fact: &Proposition,
+    target: &ConditionTerm,
+    target_value: bool,
+) -> bool {
+    let mut binder_order = Vec::new();
+    let mut body = fact;
+    while let Proposition::ForAll {
+        var, body: inner, ..
+    } = body
+    {
+        binder_order.push(*var);
+        body = inner;
+    }
+    if binder_order.is_empty() {
+        return false;
+    }
+    let mut premises = Vec::new();
+    while let Proposition::Implies(premise, rest) = body {
+        premises.push(premise.as_ref().clone());
+        body = rest;
+    }
+    let Proposition::ConditionIs(pattern, pattern_value) = body else {
+        return false;
+    };
+    if *pattern_value != target_value {
+        return false;
+    }
+    let binders = binder_order.iter().copied().collect::<BTreeSet<_>>();
+    let mut substitutions = BTreeMap::new();
+    let matched = match (pattern, target) {
+        (
+            ConditionTerm::Bitvector32Equal(pattern_left, pattern_right),
+            ConditionTerm::Bitvector32Equal(target_left, target_right),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedGreaterEqual(pattern_left, pattern_right),
+            ConditionTerm::Bitvector32SignedGreaterEqual(target_left, target_right),
+        ) => {
+            match_quantified_int32_term(pattern_left, target_left, &binders, &mut substitutions)
+                && match_quantified_int32_term(
+                    pattern_right,
+                    target_right,
+                    &binders,
+                    &mut substitutions,
+                )
+        }
+        _ => false,
+    };
+    if !matched || substitutions.len() != binders.len() {
+        return false;
+    }
+    premises.into_iter().all(|mut premise| {
+        for variable in &binder_order {
+            premise = substitute_bitvector_variable_in_proposition(
+                &premise,
+                *variable,
+                &substitutions[variable],
+            );
+        }
+        certification_proves_proposition(assumptions, &premise)
+    })
+}
+
 /// Reuses a closed quantified fact only after the kernel has proved it from
 /// previously proved closed quantified facts. Contract certification sees
 /// the same ordered global theorem facts once per function; this cache keeps

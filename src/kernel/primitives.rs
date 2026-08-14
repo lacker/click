@@ -7,7 +7,6 @@ use super::reasoning::{
     resource_context_has_read, signed_bitvector_constant, signed_i64_bitvector_constant,
 };
 use std::collections::{BTreeMap, BTreeSet};
-use std::num::NonZeroU32;
 
 mod contracts;
 mod memory_state;
@@ -1284,7 +1283,7 @@ impl PartialOrd for ResourceContext {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResourceFact {
-    Own(CResource, NonZeroU32),
+    Own(CResource, Box<Bitvector32Term>),
     View(CResource),
 }
 
@@ -1396,6 +1395,10 @@ pub enum CResourceAccessMode {
 pub enum CResourceSpec {
     Read(CMemorySegment),
     Write(CMemorySegment),
+    Quantified {
+        quantity: CExpression,
+        resource: Box<CResourceSpec>,
+    },
     Composite {
         access: CResourceAccessMode,
         name: String,
@@ -1558,6 +1561,14 @@ pub enum Proposition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Theorem {
     pub(super) proposition: std::sync::Arc<Proposition>,
+}
+
+/// Kernel-issued authority for a closed pure theorem that may be used during
+/// whole-contract certification. The private field prevents the Click layer
+/// from promoting an arbitrary proposition or unrelated theorem object.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CVerifiedPureTheorem {
+    pub(super) theorem: Theorem,
 }
 
 /// A proof tree produced by contextual proposition reasoning.
@@ -1744,6 +1755,12 @@ pub struct CCheckedFunctionExecution {
     pub(super) execution_semantics: CExecutionSemantics,
     pub(super) mode: CFunctionContractExecutionMode,
     pub(super) execution: SymbolicCExecution,
+    /// Kernel-issued implications whose conclusions were added to the exact
+    /// entry assumptions by an explicit proof certificate.
+    pub(super) entry_derivations: Vec<Theorem>,
+    /// Exact proof-selected evaluator prerequisites justified by
+    /// `entry_derivations`.
+    pub(super) entry_prerequisites: Vec<Proposition>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -77,10 +77,66 @@ theorem int32_increment_below_max_is_defined(value: int32) {
     ensures defined(value + 1);
 }
 
+theorem int32_one_plus_below_max_is_defined(value: int32) {
+    requires value < 2147483647;
+
+    ensures defined(1 + value);
+}
+
+theorem int32_one_plus_strictly_increases(value: int32) {
+    requires value < 2147483647;
+
+    ensures value < 1 + value;
+}
+
+theorem int32_nonnegative_add_within_max_is_defined(value: int32, amount: int32) {
+    requires 0 <= amount;
+    requires value <= 2147483647 - amount;
+
+    ensures defined(value + amount);
+}
+
+theorem int32_nonnegative_subtract_within_value_is_defined(value: int32, amount: int32) {
+    requires 0 <= amount;
+    requires amount <= value;
+
+    ensures defined(value - amount);
+}
+
+theorem int32_subtract_equal_sum_right_cancels(value: int32, left: int32, amount: int32) {
+    requires defined(left + amount) and value == left + amount;
+    requires defined(value - amount);
+
+    ensures value - amount == left by {
+        rewrite(value == left + amount);
+        simp();
+    }
+}
+
+theorem int32_add_nonnegative_right_is_at_least_left(left: int32, right: int32) {
+    requires 0 <= right;
+    requires defined(left + right);
+
+    ensures left <= left + right;
+}
+
+theorem int32_add_nonnegative_left_is_at_least_right(left: int32, right: int32) {
+    requires 0 <= left;
+    requires defined(left + right);
+
+    ensures right <= left + right;
+}
+
 theorem int32_positive_predecessor_is_nonnegative(value: int32) {
     requires 0 < value;
 
     ensures 0 <= value - 1;
+}
+
+theorem int32_above_one_predecessor_is_at_least_one(value: int32) {
+    requires 1 < value;
+
+    ensures value - 1 >= 1;
 }
 
 theorem int32_positive_predecessor_strictly_decreases(value: int32) {

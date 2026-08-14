@@ -655,6 +655,12 @@ impl ResourceContext {
     }
 
     pub fn satisfies_fact(&self, fact: &CResourceFact, assumptions: &PureFactContext) -> bool {
+        if fact
+            .owned_quantity_term()
+            .is_some_and(|quantity| resource_quantity_is_zero(quantity, assumptions))
+        {
+            return true;
+        }
         if self.index().exact.contains_key(fact) {
             return true;
         }
@@ -662,7 +668,17 @@ impl ResourceContext {
         // view. The resource-key index already erases access mode and owned
         // quantity, so answer this common core-projection query without
         // entering proof-aware memory/snapshot entailment.
-        if fact.is_view() && self.index().by_resource.contains_key(fact.resource()) {
+        if fact.is_view()
+            && self
+                .index()
+                .by_resource
+                .get(fact.resource())
+                .is_some_and(|positions| {
+                    positions.iter().any(|position| {
+                        resource_fact_entails(&self.facts[*position], fact, assumptions)
+                    })
+                })
+        {
             return true;
         }
         if crate::instrumentation::measure_operation(
@@ -814,6 +830,12 @@ impl ResourceContext {
         fact: &CResourceFact,
         assumptions: &PureFactContext,
     ) -> bool {
+        if fact
+            .owned_quantity_term()
+            .is_some_and(|quantity| resource_quantity_is_zero(quantity, assumptions))
+        {
+            return true;
+        }
         let algebra = resource_family_algebra(fact.family());
         let mut candidates = self
             .index()
@@ -878,9 +900,19 @@ impl ResourceContext {
     }
 
     pub(in crate::kernel) fn normalized(mut self, assumptions: &PureFactContext) -> Self {
-        let mut slots = self.facts.iter().cloned().map(Some).collect::<Vec<_>>();
+        let retained = self
+            .facts
+            .iter()
+            .filter(|fact| {
+                !fact
+                    .owned_quantity_term()
+                    .is_some_and(|quantity| quantity.as_const() == Some(0))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut slots = retained.iter().cloned().map(Some).collect::<Vec<_>>();
         let mut index = ResourceNormalizationIndex::default();
-        for (position, fact) in self.facts.iter().enumerate() {
+        for (position, fact) in retained.iter().enumerate() {
             index.insert(position, fact);
         }
         let mut i = 0;
@@ -1136,15 +1168,58 @@ fn exact_resource_fact_entails(
             CResourceFact::Own(available, available_quantity),
             CResourceFact::Own(required, required_quantity),
         ) => {
-            available_quantity >= required_quantity
+            resource_quantity_at_least(available_quantity, required_quantity, assumptions)
                 && exact_resources_proven_equal(available, required, assumptions)
         }
-        (
-            CResourceFact::Own(available, _) | CResourceFact::View(available),
-            CResourceFact::View(required),
-        ) => exact_resources_proven_equal(available, required, assumptions),
+        (CResourceFact::Own(available, available_quantity), CResourceFact::View(required)) => {
+            resource_quantity_is_positive(available_quantity, assumptions)
+                && exact_resources_proven_equal(available, required, assumptions)
+        }
+        (CResourceFact::View(available), CResourceFact::View(required)) => {
+            exact_resources_proven_equal(available, required, assumptions)
+        }
         _ => false,
     }
+}
+
+fn resource_quantity_at_least(
+    available: &Bitvector32Term,
+    required: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    available == required
+        || assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(available.clone()),
+                Box::new(required.clone()),
+            ),
+            true,
+        ))
+}
+
+fn resource_quantity_is_positive(
+    quantity: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    quantity.as_const().is_some_and(|value| value > 0)
+        || assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterThan(
+                Box::new(quantity.clone()),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        ))
+}
+
+fn resource_quantity_is_zero(quantity: &Bitvector32Term, assumptions: &PureFactContext) -> bool {
+    quantity.as_const() == Some(0)
+        || assumptions.proves_exact(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(quantity.clone()),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        ))
 }
 
 fn consume_exact_resource_fact(
@@ -1164,13 +1239,22 @@ fn consume_exact_resource_fact(
         let CResourceFact::Own(_, required_quantity) = required else {
             unreachable!("checked above")
         };
-        let residual = available_quantity.get() - required_quantity.get();
-        ResourceFactConsumption::Replace(
-            NonZeroU32::new(residual)
-                .map(|quantity| CResourceFact::Own(available.clone(), quantity))
-                .into_iter()
-                .collect(),
-        )
+        let residual = Bitvector32Term::subtract(
+            available_quantity.as_ref().clone(),
+            required_quantity.as_ref().clone(),
+        );
+        let residual_is_zero = assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(residual.clone()),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        ));
+        ResourceFactConsumption::Replace(if residual_is_zero {
+            Vec::new()
+        } else {
+            vec![CResourceFact::own_quantity(available.clone(), residual)]
+        })
     })
 }
 
@@ -1184,7 +1268,7 @@ fn combine_exact_resource_facts(
         | (CResourceFact::View(right), CResourceFact::Own(left, quantity))
             if exact_resources_proven_equal(left, right, assumptions) =>
         {
-            Some(CResourceFact::Own(left.clone(), *quantity))
+            Some(CResourceFact::Own(left.clone(), quantity.clone()))
         }
         (CResourceFact::View(left), CResourceFact::View(right))
             if exact_resources_proven_equal(left, right, assumptions) =>
@@ -1197,9 +1281,13 @@ fn combine_exact_resource_facts(
 
 fn access_mode_core(resource: &CResourceFact) -> Option<CResourceFact> {
     match resource {
-        CResourceFact::Own(resource, _) | CResourceFact::View(resource) => {
+        CResourceFact::Own(resource, quantity)
+            if quantity.as_const().is_some_and(|value| value > 0) =>
+        {
             Some(CResourceFact::View(resource.clone()))
         }
+        CResourceFact::Own(_, _) => None,
+        CResourceFact::View(resource) => Some(CResourceFact::View(resource.clone())),
     }
 }
 
@@ -1406,11 +1494,15 @@ macro_rules! impl_exact_resource_algebra {
                     (
                         CResourceFact::Own(left, left_quantity),
                         CResourceFact::Own(right, right_quantity),
-                    ) if exact_resources_proven_equal(left, right, assumptions) => left_quantity
-                        .get()
-                        .checked_add(right_quantity.get())
-                        .and_then(NonZeroU32::new)
-                        .map(|quantity| CResourceFact::Own(left.clone(), quantity)),
+                    ) if exact_resources_proven_equal(left, right, assumptions) => {
+                        Some(CResourceFact::Own(
+                            left.clone(),
+                            Box::new(Bitvector32Term::add(
+                                left_quantity.as_ref().clone(),
+                                right_quantity.as_ref().clone(),
+                            )),
+                        ))
+                    }
                     _ => combine_exact_resource_facts(left, right, assumptions),
                 }
             }
@@ -1861,7 +1953,11 @@ impl CResourceFact {
     }
 
     pub fn own(resource: CResource) -> Self {
-        Self::Own(resource, NonZeroU32::MIN)
+        Self::Own(resource, Box::new(Bitvector32Term::Constant(1)))
+    }
+
+    pub fn own_quantity(resource: CResource, quantity: Bitvector32Term) -> Self {
+        Self::Own(resource, Box::new(quantity))
     }
 
     pub fn own_allocation(base: Pointer, bytes: impl Into<Bitvector32Term>) -> Self {
@@ -1942,6 +2038,25 @@ impl CResourceFact {
         resource_family_algebra(self.family()).core(self)
     }
 
+    pub fn core_with_assumptions(&self, assumptions: &PureFactContext) -> Option<Self> {
+        match self {
+            Self::Own(resource, quantity)
+                if quantity.as_const().is_some_and(|value| value > 0)
+                    || assumptions.proves(&Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32SignedGreaterThan(
+                            Box::new(quantity.as_ref().clone()),
+                            Box::new(Bitvector32Term::Constant(0)),
+                        ),
+                        true,
+                    )) =>
+            {
+                Some(Self::View(resource.clone()))
+            }
+            Self::Own(_, _) => None,
+            Self::View(resource) => Some(Self::View(resource.clone())),
+        }
+    }
+
     pub fn memory_own_range(&self) -> Option<&CMemoryRange> {
         match self {
             Self::Own(CResource::Memory(range), _) => Some(range),
@@ -1979,7 +2094,14 @@ impl CResourceFact {
 
     pub fn owned_quantity(&self) -> Option<u32> {
         match self {
-            Self::Own(_, quantity) => Some(quantity.get()),
+            Self::Own(_, quantity) => quantity.as_const(),
+            Self::View(_) => None,
+        }
+    }
+
+    pub fn owned_quantity_term(&self) -> Option<&Bitvector32Term> {
+        match self {
+            Self::Own(_, quantity) => Some(quantity.as_ref()),
             Self::View(_) => None,
         }
     }

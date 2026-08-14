@@ -3,8 +3,9 @@
 Click combines repeated equal declared resources into a concrete quantity, but
 every `owns`, `consumes`, and `produces` clause still transfers exactly one
 unit. A contract cannot create, retain, or consume a runtime-sized number of
-units without spelling one clause per unit. This prevents capacity and permit
-APIs from making their runtime bounds into linear authority.
+units without spelling one clause per unit. This prevents counted-resource
+APIs from expressing bulk operations whose logical population changes by a
+runtime amount.
 
 The bounded-pool example is the motivating case. Unused capacity should be an
 abstract resource:
@@ -13,19 +14,31 @@ abstract resource:
 abstract resource pool_slot(pool: struct pool*);
 ```
 
-Initialization should produce `capacity` slots, checkout should exchange one
-slot for one checked-out object, return should perform the inverse exchange,
-and destruction should gather the runtime-sized remainder. The existing C
-already implements those state transitions; no C rewrite is required.
+The initial implementation uses refcount as the smaller first regression. Its
+`object_ref(obj)` resource already relates a logical population to concrete C
+state:
+
+```click
+resource object_ref(obj: struct object*) {
+    contains allocation(obj, sizeof(struct object));
+    owns object(obj);
+    fact obj->refs == count(object_ref(obj));
+}
+```
+
+Bulk retain should increment `obj->refs` by `amount` and produce `amount`
+additional logical references. Bulk nonfinal release should consume `amount`
+references while preserving the final owned unit. This exercises symbolic
+quantity behavior without introducing a separate source of ghost authority.
 
 ## Surface design
 
 Owned declared-resource clauses accept an `int32` coefficient:
 
 ```click
-produces capacity of pool_slot(pool);
-consumes amount of permit(owner);
-owns retained of token(key);
+produces amount of object_ref(obj);
+consumes amount of object_ref(obj);
+owns retained of object_ref(obj);
 ```
 
 An omitted coefficient remains exactly one. `views` does not accept a
@@ -91,19 +104,19 @@ the arithmetic expression size.
 ## Staged implementation
 
 The first green slice supports symbolic quantities on user-declared abstract
-resources. It establishes the general syntax, coefficient representation, zero
-identity, splitting/rejoining algebra, contract obligations, diagnostics, and
-certification path. It explicitly rejects quantified memory, allocation, and
-composite resources with a focused diagnostic.
+resources and on the nonrecursive population-wide resource exercised by the
+refcount example. It establishes the general syntax, coefficient
+representation, zero identity, splitting/rejoining algebra, contract
+obligations, diagnostics, and certification path. Quantified memory and
+allocation resources remain explicitly rejected.
 
-The representation and syntax must nevertheless be general to declared
-resources; the token slice must not encode quantity as a token-only special
-case. A later slice enables declared resources with population-wide bodies.
-For those resources, the shared body is active exactly when the total
-coefficient is positive. A zero-to-positive transition activates it once, and
-a positive-to-zero transition finalizes it once. If the current facts cannot
-decide which transition occurred, Click must request a proof split or exact
-zero/nonzero fact rather than retaining stale body authority or guessing.
+The representation and syntax are general to declared resources rather than a
+token-only special case. For resources with population-wide bodies, the
+shared body is active exactly when the total coefficient is positive. A
+zero-to-positive transition activates it once, and a positive-to-zero
+transition finalizes it once. If the current facts cannot decide which
+transition occurred, Click requests an explicit positivity obligation rather
+than retaining stale body authority or guessing.
 
 Recursive composite quantities require the same population rule and are not a
 separate per-unit unfolding mechanism. They remain rejected until the
@@ -158,8 +171,8 @@ object ownership, transfer behavior, and complete lifecycle.
   the resource identity.
 - No quantity operation performs work proportional to the coefficient's
   runtime value.
-- The abstract-resource slice rejects unsupported composite and lifetime cases
-  rather than silently applying incomplete semantics.
+- Quantified memory and allocation resources are rejected rather than silently
+  applying ordinary declared-resource arithmetic to lifetime authority.
 - The bounded-pool slot model verifies unchanged C, including zero capacity,
   ordinary checkout/return, transfer, and destruction.
 - Missing arithmetic evidence produces a concise quantity-specific diagnostic,
@@ -176,3 +189,16 @@ unchanged bounded-pool project are both green on the merged prototype, so
 the additional carrier a symbolic quantity introduces no longer breaks
 exact-premise replay. This feature can resume.
 
+## First green implementation (2026-08-15)
+
+Symbolic coefficients now cross parsing, lowering, substitution, resource
+algebra, opaque calls, exact contract certification, replay, and diagnostics.
+The refcount example verifies bulk retain and bulk nonfinal release, and its 29
+smart sites all pass expansion audit. A separate abstract-resource regression
+passes a symbolic quantity through an opaque call and then consumes it without
+minting authority. `./scripts/check.sh` is green.
+
+The issue remains open for the bounded-pool regression, explicit deterministic
+work comparison across constant and symbolic coefficient sizes, and any
+additional restriction or certification needed before claiming recursive
+composite quantities.

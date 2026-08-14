@@ -1044,6 +1044,12 @@ pub(super) fn finish_ordered_proof_replay(
         let mut certification_facts = replay.execution_start_facts.clone();
         certification_facts.extend(
             replay
+                .function_entry_execution_prerequisites
+                .iter()
+                .cloned(),
+        );
+        certification_facts.extend(
+            replay
                 .case_assumptions
                 .iter()
                 .filter(|case| case.at_function_entry)
@@ -1125,6 +1131,11 @@ pub(super) fn finish_ordered_proof_replay(
                     execution
                 }
             },
+        );
+        let certified_execution = checked_c_function_execution_with_entry_derivations(
+            certified_execution,
+            replay.function_entry_derivations.clone(),
+            replay.function_entry_execution_prerequisites.clone(),
         );
         if let Some(limit) = certified_execution.limit() {
             if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {

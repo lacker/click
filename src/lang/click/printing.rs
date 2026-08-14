@@ -487,6 +487,11 @@ fn format_resource_call(resource: &ResourceClause) -> String {
 
 fn format_resource_target(resource: &ResourceClause) -> String {
     match resource {
+        ResourceClause::Quantified { quantity, resource } => format!(
+            "{} of {}",
+            describe_contract_expression(quantity),
+            format_resource_target(resource)
+        ),
         ResourceClause::Read(segment) | ResourceClause::Write(segment) => {
             describe_contract_segment(segment)
         }
@@ -496,6 +501,7 @@ fn format_resource_target(resource: &ResourceClause) -> String {
 
 fn resource_access(resource: &ResourceClause) -> ResourceAccessMode {
     match resource {
+        ResourceClause::Quantified { resource, .. } => resource_access(resource),
         ResourceClause::Read(_) => ResourceAccessMode::View,
         ResourceClause::Write(_) => ResourceAccessMode::Own,
         ResourceClause::Declared { access, .. } => *access,

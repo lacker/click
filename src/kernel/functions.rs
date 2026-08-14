@@ -812,7 +812,6 @@ fn execute_verified_function_rule(
         let mut transition_state = post_state
             .clone()
             .with_resource_context(transfer.callee_resources.clone());
-        let mut population_obligations = Vec::new();
         let population_timing = crate::instrumentation::OperationTiming::new(
             function.name(),
             "verified function rule application",
@@ -824,7 +823,6 @@ fn execute_verified_function_rule(
             function,
             &arguments_path.values,
             &effective_assumptions,
-            &mut population_obligations,
             true,
             true,
             budget,
@@ -841,7 +839,11 @@ fn execute_verified_function_rule(
         };
         drop(population_timing);
         post_state.counted_populations = transition_state.counted_populations;
-        for obligation in population_obligations {
+        for obligation in &population_transition.postcondition_obligations {
+            // The kernel issues `CVerifiedFunctionRule` only after exact
+            // contract certification has discharged these postconditions.
+            // Applying that rule instantiates certified consequences; it
+            // must not turn them back into caller prerequisites.
             facts.push(ExecutionPureFact::certified(
                 obligation.proposition().clone(),
             ));
@@ -1577,7 +1579,7 @@ fn evaluate_function_return_resources(
             expanded_ensured_resources
                 .facts()
                 .iter()
-                .filter_map(CResourceFact::core)
+                .filter_map(|fact| fact.core_with_assumptions(assumptions))
                 .filter(|core| !return_resources.satisfies_fact(core, assumptions))
                 .collect::<Vec<_>>()
         },
@@ -1595,8 +1597,8 @@ fn counted_population_quantities(
     tracked_state: &CState,
     assumptions: &PureFactContext,
     track_ordinary_populations: bool,
-) -> BTreeMap<(String, Vec<CValue>), u32> {
-    let mut quantities = BTreeMap::new();
+) -> BTreeMap<(String, Vec<CValue>), Bitvector32Term> {
+    let mut quantities = BTreeMap::<(String, Vec<CValue>), Bitvector32Term>::new();
     for fact in resources.facts() {
         let (name, arguments) = match fact.resource() {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -1622,14 +1624,15 @@ fn counted_population_quantities(
         if !has_declared_body && !population_is_observed {
             continue;
         }
-        let quantity = fact.owned_quantity().unwrap_or(0);
-        if quantity == 0 {
+        let Some(quantity) = fact.owned_quantity_term() else {
             continue;
-        }
-        let total = quantities
+        };
+        quantities
             .entry((name.clone(), arguments.clone()))
-            .or_insert(0u32);
-        *total = total.saturating_add(quantity);
+            .and_modify(|total| {
+                *total = Bitvector32Term::add(total.clone(), quantity.clone());
+            })
+            .or_insert_with(|| quantity.clone());
     }
     quantities
 }
@@ -1648,6 +1651,43 @@ fn definition_has_population_wide_body(
                 .all(resource_spec_has_snapshot_independent_footprint))
 }
 
+fn population_quantity_is_zero(quantity: &Bitvector32Term, assumptions: &PureFactContext) -> bool {
+    quantity == &Bitvector32Term::Constant(0)
+        || assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(quantity.clone()),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        ))
+}
+
+fn population_quantity_is_positive(
+    quantity: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    quantity.as_const().is_some_and(|value| value > 0)
+        || assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterThan(
+                Box::new(quantity.clone()),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        ))
+}
+
+fn population_quantities_are_equal(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    left == right
+        || assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(left.clone()), Box::new(right.clone())),
+            true,
+        ))
+}
+
 fn resource_spec_has_snapshot_independent_footprint(resource: &CResourceSpec) -> bool {
     match resource {
         CResourceSpec::Read(segment) | CResourceSpec::Write(segment) => {
@@ -1658,6 +1698,10 @@ fn resource_spec_has_snapshot_independent_footprint(resource: &CResourceSpec) ->
         }
         CResourceSpec::Composite { arguments, .. } | CResourceSpec::Token { arguments, .. } => {
             arguments.iter().all(c_expression_is_snapshot_independent)
+        }
+        CResourceSpec::Quantified { quantity, resource } => {
+            c_expression_is_snapshot_independent(quantity)
+                && resource_spec_has_snapshot_independent_footprint(resource)
         }
     }
 }
@@ -1701,17 +1745,21 @@ struct CCountedPopulationTransition {
     activated_body_resources: Vec<CResourceFact>,
     finalized_body_resources: Vec<CResourceFact>,
     population_facts: Vec<Proposition>,
+    postcondition_obligations: Vec<ProofObligation>,
 }
 
 fn apply_counted_population_transition_resources(
     mut resources: ResourceContext,
     transition: &CCountedPopulationTransition,
-    _assumptions: &PureFactContext,
+    assumptions: &PureFactContext,
 ) -> Result<ResourceContext, CRuntimeError> {
     for resource in &transition.finalized_body_resources {
-        for representation in [Some(resource.clone()), resource.core()]
-            .into_iter()
-            .flatten()
+        for representation in [
+            Some(resource.clone()),
+            resource.core_with_assumptions(assumptions),
+        ]
+        .into_iter()
+        .flatten()
         {
             while resources.facts().contains(&representation) {
                 resources = resources
@@ -1746,7 +1794,6 @@ fn apply_counted_population_transitions(
     function: &CFunction,
     argument_values: &[CValue],
     assumptions: &PureFactContext,
-    obligations: &mut Vec<ProofObligation>,
     reestablish_invariants: bool,
     track_ordinary_populations: bool,
     budget: &mut ExecutionBudget,
@@ -1816,15 +1863,15 @@ fn apply_counted_population_transitions(
                 });
         let required_quantity = required_quantities
             .get(&(name.clone(), arguments.clone()))
-            .copied()
-            .unwrap_or(0);
+            .cloned()
+            .unwrap_or(Bitvector32Term::Constant(0));
         let ensured_quantity = ensured_quantities
             .get(&(name.clone(), arguments.clone()))
-            .copied()
-            .unwrap_or(0);
-        if required_quantity == ensured_quantity {
+            .cloned()
+            .unwrap_or(Bitvector32Term::Constant(0));
+        if population_quantities_are_equal(&required_quantity, &ensured_quantity, assumptions) {
             let refreshes_ordinary_population = track_ordinary_populations
-                && required_quantity > 0
+                && population_quantity_is_positive(&required_quantity, assumptions)
                 && caller_state.counted_population(&name, &arguments).is_some()
                 && population_body_definition
                     .is_some_and(|definition| !definition.is_counted_population());
@@ -1871,73 +1918,76 @@ fn apply_counted_population_transitions(
             if caller_state.counted_population(&name, &arguments).is_none() {
                 let visible_count = caller_quantities
                     .get(&(name.clone(), arguments.clone()))
-                    .copied()
+                    .cloned()
                     .unwrap_or(required_quantity);
-                if visible_count > 0 {
-                    *post_state = post_state.clone().with_counted_population(
-                        name,
-                        arguments,
-                        Bitvector32Term::Constant(visible_count),
-                    );
+                if population_quantity_is_positive(&visible_count, assumptions) {
+                    *post_state =
+                        post_state
+                            .clone()
+                            .with_counted_population(name, arguments, visible_count);
                 }
             }
             continue;
         }
-        let consumes_entire_population = ensured_quantity == 0
-            && caller_state
-                .counted_population(&name, &arguments)
-                .is_some_and(|old_count| {
-                    assumptions.proves(&Proposition::ConditionIs(
-                        ConditionTerm::Bitvector32Equal(
-                            Box::new(old_count.clone()),
-                            Box::new(Bitvector32Term::Constant(required_quantity)),
-                        ),
-                        true,
-                    ))
-                });
-        let new_count =
-            if let Some(old_count) = caller_state.counted_population(&name, &arguments).cloned() {
-                if ensured_quantity >= required_quantity {
-                    Bitvector32Term::add(
-                        old_count,
-                        Bitvector32Term::Constant(ensured_quantity - required_quantity),
-                    )
+        let consumes_entire_population =
+            population_quantity_is_zero(&ensured_quantity, assumptions)
+                && caller_state
+                    .counted_population(&name, &arguments)
+                    .is_some_and(|old_count| {
+                        population_quantities_are_equal(old_count, &required_quantity, assumptions)
+                    });
+        let tracked_prior = caller_state.counted_population(&name, &arguments).cloned();
+        let visible_prior = caller_quantities
+            .get(&(name.clone(), arguments.clone()))
+            .cloned();
+        let new_count = if let Some((required, ensured)) = required_quantity
+            .as_const()
+            .zip(ensured_quantity.as_const())
+        {
+            let prior = tracked_prior.clone().or_else(|| visible_prior.clone());
+            if let Some(prior) = prior {
+                if ensured >= required {
+                    Bitvector32Term::add(prior, Bitvector32Term::Constant(ensured - required))
                 } else {
-                    Bitvector32Term::subtract(
-                        old_count,
-                        Bitvector32Term::Constant(required_quantity - ensured_quantity),
-                    )
+                    Bitvector32Term::subtract(prior, Bitvector32Term::Constant(required - ensured))
                 }
-            } else if let Some(visible_count) = caller_quantities
-                .get(&(name.clone(), arguments.clone()))
-                .copied()
-            {
-                if ensured_quantity >= required_quantity {
-                    Bitvector32Term::add(
-                        Bitvector32Term::Constant(visible_count),
-                        Bitvector32Term::Constant(ensured_quantity - required_quantity),
-                    )
-                } else {
-                    Bitvector32Term::subtract(
-                        Bitvector32Term::Constant(visible_count),
-                        Bitvector32Term::Constant(required_quantity - ensured_quantity),
-                    )
-                }
-            } else if required_quantity > 0 {
-                Bitvector32Term::Constant(ensured_quantity)
-            } else if ensured_quantity > 0 {
-                Bitvector32Term::Constant(ensured_quantity)
+            } else if required > 0 || ensured > 0 {
+                Bitvector32Term::Constant(ensured)
             } else {
                 return Ok(Err(CRuntimeError::FunctionContract(format!(
                     "counted population `{name}` is not initialized"
                 ))));
+            }
+        } else {
+            let prior_count = match tracked_prior.or(visible_prior) {
+                Some(prior_count) => prior_count,
+                None if population_quantity_is_zero(&required_quantity, assumptions) => {
+                    Bitvector32Term::Constant(0)
+                }
+                None => {
+                    return Ok(Err(CRuntimeError::FunctionContract(format!(
+                        "counted population `{name}` is not initialized"
+                    ))));
+                }
             };
+            // Replacing the entire visible population is the common symbolic
+            // contract case. Preserve the ensured quantity directly instead
+            // of asking later checks to rediscover cancellation.
+            if population_quantities_are_equal(&prior_count, &required_quantity, assumptions) {
+                ensured_quantity.clone()
+            } else {
+                Bitvector32Term::add(
+                    Bitvector32Term::subtract(prior_count, required_quantity.clone()),
+                    ensured_quantity.clone(),
+                )
+            }
+        };
         let population_was_initialized =
             caller_state.counted_population(&name, &arguments).is_some()
                 || caller_quantities
                     .get(&(name.clone(), arguments.clone()))
-                    .is_some_and(|quantity| *quantity > 0)
-                || required_quantity > 0;
+                    .is_some_and(|quantity| population_quantity_is_positive(quantity, assumptions))
+                || population_quantity_is_positive(&required_quantity, assumptions);
         let zero = Proposition::ConditionIs(
             ConditionTerm::Bitvector32Equal(
                 Box::new(new_count.clone()),
@@ -2014,8 +2064,8 @@ fn apply_counted_population_transitions(
             // entry count >= required units, then both sides change by the
             // same net contract quantity. Only a population with no locally
             // returned unit needs an explicit proof that unseen units remain.
-            if ensured_quantity == 0 {
-                obligations.push(
+            if population_quantity_is_zero(&ensured_quantity, assumptions) {
+                transition.postcondition_obligations.push(
                     ProofObligation::verification_condition(Proposition::ConditionIs(
                         ConditionTerm::Bitvector32SignedGreaterThan(
                             Box::new(new_count),
@@ -2030,13 +2080,29 @@ fn apply_counted_population_transitions(
                 // count and returned quantity change by the same contract
                 // delta. A returned unit therefore witnesses nonemptiness
                 // without another arithmetic proof obligation.
-                transition_guaranteed_facts.push(Proposition::ConditionIs(
+                let guaranteed = Proposition::ConditionIs(
                     ConditionTerm::Bitvector32SignedGreaterEqual(
                         Box::new(new_count.clone()),
-                        Box::new(Bitvector32Term::Constant(1)),
+                        Box::new(ensured_quantity.clone()),
                     ),
                     true,
-                ));
+                );
+                if let (Some(new_count), Some(ensured_count)) =
+                    (new_count.as_const(), ensured_quantity.as_const())
+                    && (new_count as i32) < (ensured_count as i32)
+                {
+                    return Ok(Err(CRuntimeError::FunctionContract(format!(
+                        "invalid counted population transition for `{name}`: post-count {new_count} is below returned quantity {ensured_count}"
+                    ))));
+                }
+                if assumptions.proves(&guaranteed) {
+                    transition_guaranteed_facts.push(guaranteed);
+                } else {
+                    transition.postcondition_obligations.push(
+                        ProofObligation::verification_condition(guaranteed)
+                            .with_context("returned resource quantity fits post-population"),
+                    );
+                }
             }
         }
     }
@@ -2050,24 +2116,37 @@ fn apply_counted_population_transitions(
     // a body fact relating that count to C memory is therefore a genuine
     // verification condition, not an automatically assumed consequence.
     let post_contract_state = with_contract_argument_views(post_state, function, argument_values);
-    let active_populations = post_contract_state
-        .counted_populations()
-        .filter_map(|population| {
-            function
-                .composite_resource_definitions()
-                .iter()
-                .any(|definition| {
-                    definition.name() == population.name
-                        && definition_has_population_wide_body(definition, true)
-                })
-                .then(|| {
-                    CResourceFact::own(CResource::Composite {
-                        name: population.name.clone(),
-                        arguments: population.arguments.clone(),
-                    })
-                })
-        })
-        .collect::<Vec<_>>();
+    let mut active_populations = Vec::new();
+    for population in post_contract_state.counted_populations() {
+        if population_quantity_is_zero(&population.count, assumptions) {
+            continue;
+        }
+        if !population_quantity_is_positive(&population.count, assumptions) {
+            transition.postcondition_obligations.push(
+                ProofObligation::verification_condition(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedGreaterThan(
+                        Box::new(population.count.clone()),
+                        Box::new(Bitvector32Term::Constant(0)),
+                    ),
+                    true,
+                ))
+                .with_context("resource population body is active"),
+            );
+        }
+        if function
+            .composite_resource_definitions()
+            .iter()
+            .any(|definition| {
+                definition.name() == population.name
+                    && definition_has_population_wide_body(definition, true)
+            })
+        {
+            active_populations.push(CResourceFact::own(CResource::Composite {
+                name: population.name.clone(),
+                arguments: population.arguments.clone(),
+            }));
+        }
+    }
     let active_populations = ResourceContext::new().unchecked_with_facts(active_populations);
     let Some(population_facts) = evaluate_resource_population_fact_propositions(
         &active_populations,
@@ -2081,10 +2160,21 @@ fn apply_counted_population_transitions(
         )));
     };
     for proposition in population_facts {
+        if let Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right),
+            true,
+        ) = &proposition
+            && let (Some(left), Some(right)) = (left.as_const(), right.as_const())
+            && (left as i32) < (right as i32)
+        {
+            return Ok(Err(CRuntimeError::FunctionContract(format!(
+                "invalid population fact: post-count {left} is below visible quantity {right}"
+            ))));
+        }
         transition.population_facts.push(proposition.clone());
         if !assumptions.proves(&proposition) && !transition_guaranteed_facts.contains(&proposition)
         {
-            obligations.push(
+            transition.postcondition_obligations.push(
                 ProofObligation::verification_condition(proposition)
                     .with_context("resource population invariant"),
             );
@@ -2572,7 +2662,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
     assumptions: &PureFactContext,
     include_ordinary: bool,
 ) -> Option<Vec<Proposition>> {
-    let mut populations = BTreeMap::<(String, Vec<CValue>), u32>::new();
+    let mut populations = BTreeMap::<(String, Vec<CValue>), Bitvector32Term>::new();
     for fact in context.facts() {
         let (name, arguments) = match fact.resource() {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -2580,11 +2670,15 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             }
             CResource::Memory(_) => continue,
         };
-        let quantity = fact.owned_quantity().unwrap_or(0);
-        let entry = populations
+        let Some(quantity) = fact.owned_quantity_term() else {
+            continue;
+        };
+        populations
             .entry((name.clone(), arguments.clone()))
-            .or_default();
-        *entry = entry.saturating_add(quantity);
+            .and_modify(|total| {
+                *total = Bitvector32Term::add(total.clone(), quantity.clone());
+            })
+            .or_insert_with(|| quantity.clone());
     }
     let mut propositions = Vec::new();
     for ((name, arguments), visible_quantity) in populations {
@@ -2598,13 +2692,11 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             return None;
         }
         let population_count = state.counted_population(&name, &arguments);
-        if visible_quantity > 0
-            && let Some(population_count) = population_count
-        {
+        if let Some(population_count) = population_count {
             propositions.push(Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedGreaterEqual(
                     Box::new(population_count.clone()),
-                    Box::new(Bitvector32Term::Constant(visible_quantity)),
+                    Box::new(visible_quantity),
                 ),
                 true,
             ));
@@ -3234,6 +3326,61 @@ pub(super) fn evaluate_function_resource_spec(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
     match resource {
+        CResourceSpec::Quantified { quantity, resource } => {
+            let (access, name) = match resource.as_ref() {
+                CResourceSpec::Composite { access, name, .. }
+                | CResourceSpec::Token { access, name, .. } => (access, name),
+                _ => {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        "symbolic quantities require a user-declared resource".to_string(),
+                    )));
+                }
+            };
+            if *access != CResourceAccessMode::Own
+                || name == CResourceFact::ALLOCATION_RESOURCE_NAME
+            {
+                return Ok(Err(CRuntimeError::FunctionContract(
+                    "symbolic quantities require owned user-declared resources".to_string(),
+                )));
+            }
+            let quantity = match evaluate_loop_effect_segment_value(
+                state,
+                quantity,
+                assumptions,
+                "declared resource quantity",
+                budget,
+            )? {
+                Ok(CValue::Int32(quantity)) => quantity,
+                Ok(_) | Err(_) => {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        "declared resource quantity must evaluate to int32".to_string(),
+                    )));
+                }
+            };
+            let nonnegative = Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedGreaterEqual(
+                    Box::new(quantity.clone()),
+                    Box::new(Bitvector32Term::Constant(0)),
+                ),
+                true,
+            );
+            if !assumptions.proves(&nonnegative) {
+                return Ok(Err(CRuntimeError::FunctionContract(
+                    "declared resource quantity is not proved nonnegative".to_string(),
+                )));
+            }
+            let inner = match evaluate_function_resource_spec(state, resource, assumptions, budget)?
+            {
+                Ok(inner) => inner,
+                Err(error) => return Ok(Err(error)),
+            };
+            let CResourceFact::Own(inner, _) = inner else {
+                return Ok(Err(CRuntimeError::FunctionContract(
+                    "declared resource quantity did not lower to owned authority".to_string(),
+                )));
+            };
+            Ok(Ok(CResourceFact::own_quantity(inner, quantity)))
+        }
         CResourceSpec::Read(segment) => {
             let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
                 Ok(segment) => segment,
@@ -3573,19 +3720,20 @@ fn function_outcome_from_body_with_population_transition(
             .locals
             .set_typed("result".to_string(), value.clone(), function.return_type());
     }
-    if let Err(error) = apply_counted_population_transitions(
+    let population_transition = match apply_counted_population_transitions(
         caller_state,
         &mut state,
         function,
         argument_values,
         assumptions,
-        &mut obligations,
         true,
         false,
         budget,
     )? {
-        return Ok((CFunctionOutcome::RuntimeError(error), obligations));
-    }
+        Ok(transition) => transition,
+        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
+    };
+    obligations.extend(population_transition.postcondition_obligations);
     Ok(function_outcome_from_body(
         caller_state,
         function,
@@ -3646,7 +3794,6 @@ fn function_outcome_from_body_with_resource_transfer(
                 function,
                 argument_values,
                 assumptions,
-                &mut obligations,
                 reestablish_population_invariants,
                 false,
                 budget,
@@ -3656,6 +3803,12 @@ fn function_outcome_from_body_with_resource_transfer(
         Ok(transition) => transition,
         Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
     };
+    obligations.extend(
+        population_transition
+            .postcondition_obligations
+            .iter()
+            .cloned(),
+    );
     let caller_resources_after_requirements = match crate::instrumentation::measure_operation(
         function.name(),
         "contract resource transition",

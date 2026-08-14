@@ -607,6 +607,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
         resource_environment,
         mut function_environment,
         theorem_certification_facts,
+        theorem_certification_authorities,
         theorem_environment,
     ) = {
         let _timing = VerificationTimingPhase::new("environment");
@@ -668,6 +669,8 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
         // universally-quantified facts, so kernel contract certification can
         // discharge obligations the surface proof established by `apply`.
         let mut theorem_certification_facts = BTreeMap::<String, Vec<Proposition>>::new();
+        let mut theorem_certification_authorities =
+            BTreeMap::<String, Vec<CVerifiedPureTheorem>>::new();
         for theorem in verified_theorems.iter().filter(|theorem| {
             theorem
                 .theorem_definition
@@ -696,6 +699,12 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                 .entry(theorem.theorem_definition.name().to_string())
                 .or_default()
                 .push(fact);
+            if let Some(authority) = &theorem.kernel_authority {
+                theorem_certification_authorities
+                    .entry(theorem.theorem_definition.name().to_string())
+                    .or_default()
+                    .push(authority.clone());
+            }
         }
         let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
         check_verification_deadline()?;
@@ -705,6 +714,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
             resource_environment,
             function_environment,
             theorem_certification_facts,
+            theorem_certification_authorities,
             theorem_environment,
         )
     };
@@ -898,9 +908,13 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                 collect_applied_theorems(tactics, &mut certification_theorems);
             }
         }
+        let mut certification_pure_theorems = Vec::new();
         for theorem_name in certification_theorems {
             if let Some(facts) = theorem_certification_facts.get(&theorem_name) {
                 certification_facts.extend(facts.iter().cloned());
+            }
+            if let Some(authorities) = theorem_certification_authorities.get(&theorem_name) {
+                certification_pure_theorems.extend(authorities.iter().cloned());
             }
         }
         // A sized array parameter spelling (`int32 p[2]`) declares its span
@@ -962,7 +976,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                             .iter()
                             .map(|verified| verified.checked_execution.clone())
                             .collect::<Vec<_>>();
-                        prove_c_function_contract_execution_paths_with_checked_artifacts(
+                        prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems(
                             certification_state,
                             contract_function.clone(),
                             certification_arguments,
@@ -982,6 +996,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                             },
                             contract_execution_mode,
                             &checked_artifacts,
+                            &certification_pure_theorems,
                         )
                     },
                 )
@@ -1747,6 +1762,13 @@ pub(in crate::lang::click) fn substitute_resource_clause_for_summary(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ResourceClause, String> {
     match resource {
+        ResourceClause::Quantified { quantity, resource } => Ok(ResourceClause::Quantified {
+            quantity: substitute_contract_expression(quantity, substitutions)?,
+            resource: Box::new(substitute_resource_clause_for_summary(
+                resource,
+                substitutions,
+            )?),
+        }),
         ResourceClause::Read(segment) => Ok(ResourceClause::Read(substitute_contract_segment(
             segment,
             substitutions,
@@ -1799,6 +1821,10 @@ pub(in crate::lang::click) fn resource_clause_to_resource_spec(
     resource: &ResourceClause,
 ) -> Result<CResourceSpec, ClickError> {
     match resource {
+        ResourceClause::Quantified { quantity, resource } => Ok(CResourceSpec::Quantified {
+            quantity: resource_argument_to_c_expression(quantity)?,
+            resource: Box::new(resource_clause_to_resource_spec(resource)?),
+        }),
         ResourceClause::Read(segment) => Ok(CResourceSpec::Read(CMemorySegment::new(
             segment.base.clone(),
             segment.start.clone(),

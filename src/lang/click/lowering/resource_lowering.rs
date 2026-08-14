@@ -416,6 +416,29 @@ fn lower_resource_clause_with_values(
     result: Option<&CValue>,
 ) -> Result<CResourceFact, ClickError> {
     match resource {
+        ResourceClause::Quantified { quantity, resource } => {
+            let quantity = resource_argument_to_c_expression(quantity)?;
+            let assumptions = PureFactContext::new();
+            let quantity =
+                evaluate_c_contract_expression(values, state, result, &assumptions, &quantity)
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "could not lower declared resource quantity: {message}"
+                        ))
+                    })?;
+            let CValue::Int32(quantity) = quantity else {
+                return Err(ClickError::new(
+                    "declared resource quantity must evaluate to int32",
+                ));
+            };
+            let lowered = lower_resource_clause_with_values(resource, values, state, result)?;
+            let CResourceFact::Own(resource, _) = lowered else {
+                return Err(ClickError::new(
+                    "declared resource quantity requires owned authority",
+                ));
+            };
+            Ok(CResourceFact::own_quantity(resource, quantity))
+        }
         ResourceClause::Read(segment) => {
             let range = lower_resource_segment_with_values("read", segment, values, state, result)?;
             Ok(CResourceFact::view_memory(range))
@@ -639,7 +662,7 @@ pub(in crate::lang::click) fn resource_clause_loadable_prop(
                 .expect("owned memory clause should lower to owned memory");
             (segment, range.clone())
         }
-        ResourceClause::Declared { .. } => return Ok(None),
+        ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => return Ok(None),
     };
     let element_width = contract_segment_element_width(parameters, segment);
     Ok(Some(memory_range_loadable_prop(
@@ -713,7 +736,7 @@ pub(in crate::lang::click) fn concrete_access_resource_block(
 ) -> Result<Option<(String, ConcreteMemoryRangeSeed)>, ClickError> {
     let segment = match resource {
         ResourceClause::Read(segment) | ResourceClause::Write(segment) => segment,
-        ResourceClause::Declared { .. } => return Ok(None),
+        ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => return Ok(None),
     };
     let state = CState::new();
     let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment) else {

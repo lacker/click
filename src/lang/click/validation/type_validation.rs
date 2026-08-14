@@ -272,6 +272,11 @@ pub(super) fn reject_duplicate_owned_declared_resource_clauses<'a>(
 
 pub(in crate::lang::click) fn describe_resource_clause(resource: &ResourceClause) -> String {
     match resource {
+        ResourceClause::Quantified { quantity, resource } => format!(
+            "{} of {}",
+            describe_contract_expression(quantity),
+            describe_resource_clause(resource)
+        ),
         ResourceClause::Read(segment) => format!(
             "views {}[{}..{}]",
             describe_c_expression(&segment.base),
@@ -665,6 +670,36 @@ pub(super) fn validate_resource_clause(
 ) -> Result<(), ClickError> {
     match resource {
         ResourceClause::Read(_) | ResourceClause::Write(_) => Ok(()),
+        ResourceClause::Quantified { quantity, resource } => {
+            validate_contract_expression_calls(quantity, click_functions, context)?;
+            let actual =
+                infer_contract_expression_type(quantity, variables, click_function_types, context)?;
+            if actual != Some(C0Type::Int32) {
+                return Err(ClickError::new(format!(
+                    "declared resource quantity must have type int32 in {context}"
+                )));
+            }
+            if !matches!(
+                resource.as_ref(),
+                ResourceClause::Declared {
+                    access: ResourceAccessMode::Own,
+                    name,
+                    ..
+                } if name != CResourceFact::ALLOCATION_RESOURCE_NAME
+            ) {
+                return Err(ClickError::new(format!(
+                    "symbolic quantities require an owned user-declared resource in {context}"
+                )));
+            }
+            validate_resource_clause(
+                resource,
+                resources,
+                click_functions,
+                click_function_types,
+                variables,
+                context,
+            )
+        }
         ResourceClause::Declared {
             name,
             arguments,

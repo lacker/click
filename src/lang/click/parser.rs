@@ -544,7 +544,7 @@ impl Parser {
                 }
                 Some("owns") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
+                    let resource = self.parse_owned_resource_target()?;
                     let proof = self.parse_proof_clause_or_default()?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -579,7 +579,7 @@ impl Parser {
                 }
                 Some("consumes") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
+                    let resource = self.parse_owned_resource_target()?;
                     self.expect(Token::Semicolon)?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -591,7 +591,7 @@ impl Parser {
                 }
                 Some("produces") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
+                    let resource = self.parse_owned_resource_target()?;
                     let proof = self.parse_proof_clause_or_default()?;
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
@@ -726,7 +726,7 @@ impl Parser {
                 }
                 Some("owns") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
+                    let resource = self.parse_owned_resource_target()?;
                     let proof = self.parse_proof_clause_or_default()?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -761,7 +761,7 @@ impl Parser {
                 }
                 Some("consumes") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
+                    let resource = self.parse_owned_resource_target()?;
                     self.expect(Token::Semicolon)?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -773,7 +773,7 @@ impl Parser {
                 }
                 Some("produces") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
+                    let resource = self.parse_owned_resource_target()?;
                     let proof = self.parse_proof_clause_or_default()?;
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
@@ -1143,6 +1143,22 @@ impl Parser {
             ResourceAccessMode::Own => ResourceClause::Write(segment),
             ResourceAccessMode::View => ResourceClause::Read(segment),
         })
+    }
+
+    fn parse_owned_resource_target(&mut self) -> Result<ResourceClause, ClickError> {
+        let start = self.position;
+        if let Ok(quantity) = self.parse_contract_expression()
+            && self.peek_ident() == Some("of")
+        {
+            self.position += 1;
+            let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
+            return Ok(ResourceClause::Quantified {
+                quantity,
+                resource: Box::new(resource),
+            });
+        }
+        self.position = start;
+        self.parse_resource_target(ResourceAccessMode::Own)
     }
 
     fn parse_region_proof_items(&mut self) -> Result<Vec<StructuralItem>, ClickError> {

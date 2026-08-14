@@ -32,6 +32,49 @@ fn defined_fact_makes_simple_statement_step_explicit() {
 }
 
 #[test]
+fn explicit_nonnegative_add_definedness_certifies_the_whole_contract() {
+    let c_source = r#"
+            int32 add_nonnegative(int32 value, int32 amount) {
+                return value + amount;
+            }
+        "#;
+    let click_source = r#"
+            verifying "add_nonnegative.c";
+
+            int32 add_nonnegative(int32 value, int32 amount) {
+                requires 0 <= amount;
+                requires value <= 2147483647 - amount;
+                ensures result == value + amount;
+            } by {
+                have defined(value + amount) by {
+                    apply(int32_nonnegative_add_within_max_is_defined(value, amount)) using {
+                        0 <= amount;
+                        value <= 2147483647 - amount;
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("add_nonnegative.c", c_source)])
+        .expect("the final contract gate should reuse the explicitly certified safe addition");
+
+    let without_definedness = click_source.replace(
+        "                have defined(value + amount) by {\n                    apply(int32_nonnegative_add_within_max_is_defined(value, amount)) using {\n                        0 <= amount;\n                        value <= 2147483647 - amount;\n                    }\n                }\n",
+        "",
+    );
+    let error = verify_c0_sources(&without_definedness, &[("add_nonnegative.c", c_source)])
+        .expect_err("a simple statement step must not rediscover the omitted overflow proof");
+    assert!(
+        error.message().contains("signed overflow")
+            || error.message().contains("missing exact prerequisite"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn apply_using_replays_only_with_its_explicit_premises() {
     let c_source = r#"
             int32 increment(int32 x) {

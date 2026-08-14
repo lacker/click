@@ -48,6 +48,123 @@ pub(in crate::lang::click::proof) fn apply_theorem_at_current_point(
     Ok(available)
 }
 
+/// Returns the kernel authority for a standard theorem application whose
+/// exact instantiated implication may be needed by whole-function
+/// certification. Surface replay still checks the application separately;
+/// this carries only the fixed kernel axiom, never a searched conclusion.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_at_current_point(
+    theorem_environment: &TheoremEnvironment,
+    application: &TheoremApplication,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    lowering_facts: &[Proposition],
+) -> Result<Option<Theorem>, ClickError> {
+    if !matches!(
+        application.name.as_str(),
+        "int32_nonnegative_add_within_max_is_defined"
+            | "int32_nonnegative_subtract_within_value_is_defined"
+            | "int32_one_plus_below_max_is_defined"
+            | "int32_one_plus_strictly_increases"
+            | "int32_lt_implies_le"
+            | "int32_lt_le_transitive"
+    ) {
+        return Ok(None);
+    }
+    let theorem = theorem_environment
+        .get(&application.name)
+        .ok_or_else(|| ClickError::new(format!("unknown theorem `{}`", application.name)))?;
+    let parameter_values = parameter_values(parameters, arguments)?;
+    let array_refs = array_refs_for_parameters(parameters, &parameter_values, state.memory());
+    let (parameter_values, array_refs) =
+        contract_environment_at_state(&parameter_values, &array_refs, state);
+    let context = TheoremApplicationContext {
+        values: &parameter_values,
+        array_refs: &array_refs,
+        pre_state,
+        post_state: state,
+        result: None,
+        program_point_states,
+    };
+    let assumptions = assumptions_from_propositions(lowering_facts);
+    let (values, _) = theorem_application_bindings(
+        theorem,
+        application,
+        &context,
+        &assumptions,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(ClickError::new)?;
+    let terms = theorem
+        .parameters()
+        .iter()
+        .map(|parameter| match values.get(parameter.name()) {
+            Some(CValue::Int32(term)) => Ok(term.clone()),
+            _ => Err(ClickError::new(format!(
+                "kernel theorem parameter `{}` did not lower to int32",
+                parameter.name()
+            ))),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(match application.name.as_str() {
+        "int32_lt_le_transitive" => {
+            let [left, middle, right] = terms.as_slice() else {
+                return Err(ClickError::new(
+                    "standard ordering theorem has the wrong arity",
+                ));
+            };
+            prove_int32_lt_le_transitive(left.clone(), middle.clone(), right.clone())
+        }
+        "int32_lt_implies_le" => {
+            let [left, right] = terms.as_slice() else {
+                return Err(ClickError::new(
+                    "standard ordering theorem has the wrong arity",
+                ));
+            };
+            prove_int32_lt_implies_le(left.clone(), right.clone())
+        }
+        "int32_one_plus_below_max_is_defined" => {
+            let [value] = terms.as_slice() else {
+                return Err(ClickError::new(
+                    "standard definedness theorem has the wrong arity",
+                ));
+            };
+            prove_int32_one_plus_below_max_is_defined(value.clone())
+        }
+        "int32_one_plus_strictly_increases" => {
+            let [value] = terms.as_slice() else {
+                return Err(ClickError::new(
+                    "standard ordering theorem has the wrong arity",
+                ));
+            };
+            prove_int32_one_plus_strictly_increases(value.clone())
+        }
+        "int32_nonnegative_add_within_max_is_defined" => {
+            let [value, amount] = terms.as_slice() else {
+                return Err(ClickError::new(
+                    "standard definedness theorem has the wrong arity",
+                ));
+            };
+            prove_int32_nonnegative_add_within_max_is_defined(value.clone(), amount.clone())
+        }
+        "int32_nonnegative_subtract_within_value_is_defined" => {
+            let [value, amount] = terms.as_slice() else {
+                return Err(ClickError::new(
+                    "standard definedness theorem has the wrong arity",
+                ));
+            };
+            prove_int32_nonnegative_subtract_within_value_is_defined(value.clone(), amount.clone())
+        }
+        _ => unreachable!("filtered above"),
+    }))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn lower_theorem_application_requirements(
     theorem_environment: &TheoremEnvironment,
