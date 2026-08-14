@@ -597,7 +597,7 @@ fn certify_c_function_execution_path_resource_representation_uncached(
         "resource representation",
         "resource representation: memory",
         || {
-            crate::instrumentation::measure_operation(
+            let definitional = crate::instrumentation::measure_operation(
                 function.name(),
                 "resource representation",
                 "resource representation: memory definitional",
@@ -608,7 +608,8 @@ fn certify_c_function_execution_path_resource_representation_uncached(
                         &assumptions,
                     )
                 },
-            ) || {
+            );
+            definitional || {
                 // Execution provenance couples deterministic store chains and two
                 // alpha-renamed encodings of the same bounded call havoc.
                 crate::instrumentation::measure_operation(

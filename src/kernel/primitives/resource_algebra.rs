@@ -258,6 +258,40 @@ impl ResourceContext {
     /// containment relation. The context contributes only indexed candidates,
     /// so callers can recognize shallow equality spellings without expanding
     /// all owned pairs.
+    /// Range projection using a caller-supplied proof-aware containment
+    /// relation: two distinct owned facts of one valid composition are
+    /// separate by the composition law, so a range each of them provably
+    /// contains inherits that separation. This is the on-demand form of the
+    /// former materialized pair facts for range queries; the context
+    /// contributes only indexed candidates, and the caller decides
+    /// containment.
+    pub(in crate::kernel) fn proves_owned_memory_ranges_separate_by(
+        &self,
+        left: &CMemoryRange,
+        right: &CMemoryRange,
+        contains: impl Fn(&CMemoryRange, &CMemoryRange) -> bool,
+    ) -> bool {
+        let Some(_guard) = ResourceCompositionQueryGuard::enter() else {
+            return false;
+        };
+        if left.base().block != right.base().block {
+            return false;
+        }
+        let Some(positions) = self.index().memory_by_block.get(&left.base().block) else {
+            return false;
+        };
+        let containing = |child: &CMemoryRange| {
+            positions.iter().copied().find(|position| {
+                self.facts[*position]
+                    .memory_own_range()
+                    .is_some_and(|available| contains(child, available))
+            })
+        };
+        containing(left)
+            .zip(containing(right))
+            .is_some_and(|(left_position, right_position)| left_position != right_position)
+    }
+
     pub(in crate::kernel) fn proves_owned_pointers_separate_by(
         &self,
         left: &Pointer,
