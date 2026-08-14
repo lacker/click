@@ -213,33 +213,47 @@ Two hard-won rules, measured not theorized:
   reverted. Creation-site coverage has to move outward in verified,
   test-gated steps.
 
-The frontier test now fails only in the representation certifier's
-memory gate, and the shape has changed: both lineages materialize
-post-call cells, and the remaining divergence is inside two-lineage
-snapshot chain matching (`memories_equal_by_execution_provenance` /
-`memories_equal_by_matching_derivations`) — the desired and certified
-executions' chains carry cells whose values are spelled in different
-vocabularies (`load(entry)` vs the canonical constant), and the chain
-pairing compares many intermediate snapshot pairs, so per-pair cell
-mismatches are expected noise; the load-bearing failing pair is not yet
-isolated.
+## Frontier test green (2026-08-14, prototype `f0e1497b`)
+
+Chain matching is resolved. Instrumenting the chain search itself (not
+the per-cell comparison) found the divergence at depth 1 in one line:
+the desired lineage's final memory ends in a **Store edge over the call
+havoc** — proof replay materializes a symbolic load into a concrete cell
+by storing the loaded value back — while independent certification never
+mints such an edge, so the arm match failed (`call-havoc` vs `store`)
+and the store-chain fallback had zero certified stores to work with. A
+store whose value is the base memory's own load at the stored pointer
+(checked by interned identity, no proving) is a no-op, and derivation
+matching now sees through it like the other transparent edges.
+
+With that, `execute_until_expands_vector_storage_call_postconditions`
+passes and the **full unit suite is 964/964 on the prototype** for the
+first time.
 
 ## Remaining to close, in order
 
-1. Isolate the load-bearing snapshot pair in the certifier's chain
-   matching for the frontier test (instrument the chain search itself,
-   not the per-cell comparison — per-cell failures on non-matching pairs
-   are noise), and decide whether the fix is canonicalizing cell values
-   at their creation sites or teaching the chain join to compare
-   canonical forms. Changed recordings mean expansion/replay parity on
-   the existing corpus is part of green, not a follow-up.
+1. The examples fixture gate: `bounded-pool`'s `pool_pipeline.contract`
+   `step()` at statement 4 exhausts its 500,000-unit simple budget under
+   the prototype (also at the pre-canonicalization prototype base, so
+   none of the landed slices caused it). This is the same failure the
+   monotonicity blocker below records from the symbolic-quantities side.
+   Attribution: ~370k units in `snapshot comparison: general alias` →
+   `general alias: range`, with `range disjointness: derived separation`
+   at ~247k and `indexed candidate`/`indexed facts` at ~184k each.
+   Measured and eliminated: memoizing
+   `pointers_proven_disjoint_by_range` by (fact-set fingerprint, pointer
+   pair) changed nothing — the queries are not identical repeats (the
+   fact set evolves between them); the cost is ~40 individually
+   expensive queries (~6k units each), so the fix must reduce per-query
+   work or stop the exact-premise replay path from running general-alias
+   comparison per cell at all.
 2. A red deterministic curve: N symbolic same-block owned ranges through
    `observable_facts_assuming_valid` must emit no `CResourceSeparate`
    propositions and near-linear work (red on master today, green on the
    prototype).
-3. Full gate on the merged prototype; the three frontier tests are the
-   sensitive ones, but the fixture gates never ran to completion under the
-   prototype.
+3. Full gate on the merged prototype; the unit suite is green (964/964)
+   and the mdtests fixture gate needs a completed run once bounded-pool
+   passes.
 4. Close-out per `README.md`: durable design into the efficiency guide's
    lazy-separation material, delete this file, and update the burndown —
    which then records zero demonstrated asymptotic violations.
