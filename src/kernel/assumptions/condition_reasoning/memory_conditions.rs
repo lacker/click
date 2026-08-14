@@ -125,9 +125,14 @@ impl PureFactContext {
                 after,
                 mutable_ranges,
             } => {
+                // Endpoint matching filters candidate effect facts inside a
+                // prop-facts scan, so it must stay bounded: the general
+                // composition-backed alias search per differing cell per
+                // candidate dominated a simple step's budget on bounded-pool
+                // (370k of 500k units).
                 let endpoint_matches = |expected: &CMemory, actual: &CMemory| {
                     memory_matches_effect_summary_endpoint(expected, actual, pointer)
-                        || memories_match_for_pointer_load_under_assumptions(
+                        || memories_match_for_pointer_load_bounded_alias(
                             expected, actual, pointer, self,
                         )
                 };
@@ -141,9 +146,10 @@ impl PureFactContext {
                 allocation_base,
                 bytes,
             } => {
+                // Bounded for the same reason as the effect-summary arm.
                 let endpoint_matches = |expected: &CMemory, actual: &CMemory| {
                     memory_matches_effect_summary_endpoint(expected, actual, pointer)
-                        || memories_match_for_pointer_load_under_assumptions(
+                        || memories_match_for_pointer_load_bounded_alias(
                             expected, actual, pointer, self,
                         )
                 };

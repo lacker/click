@@ -393,23 +393,21 @@ fn c_memory_load_is_unchanged_unmemoized(
         return true;
     }
     // Small field-update snapshots usually differ at only one or two cells.
-    // Compare those directly before paying for a derivation-DAG walk; large
-    // snapshots retain the DAG-first order so they do not scan a broad cell
-    // set unless the named history cannot answer.
+    // Compare those directly before paying for a derivation-DAG walk — but
+    // with the bounded, memoized alias check only. The general alias check
+    // consults the composition-backed separation provers, whose per-query
+    // cost scales with the carrier count; running it per differing cell
+    // before the bounded DAG walk turned this "fast path" into the dominant
+    // cost of a simple step (measured at 370k of a 500k budget on
+    // bounded-pool). The full comparison still runs after the DAG walk, so
+    // nothing provable is lost — only reordered behind the bounded answers.
     let small_snapshot_pair = before.cells.len() <= 8 && after.cells.len() <= 8;
     if small_snapshot_pair
         && crate::instrumentation::measure_operation(
             "kernel",
             "resource context equality",
             "framed load: small snapshot comparison",
-            || {
-                memories_match_for_pointer_load_under_assumptions(
-                    before,
-                    after,
-                    pointer,
-                    assumptions,
-                )
-            },
+            || memories_match_for_pointer_load_bounded_alias(before, after, pointer, assumptions),
         )
     {
         return true;
@@ -437,9 +435,7 @@ fn c_memory_load_is_unchanged_unmemoized(
     if crate::instrumentation::deadline_exceeded() {
         return false;
     }
-    if !small_snapshot_pair
-        && memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions)
-    {
+    if memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions) {
         return true;
     }
     // Predicate framing is deliberately bounded: use exact certified writes

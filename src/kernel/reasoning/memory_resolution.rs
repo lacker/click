@@ -1183,6 +1183,69 @@ fn materialized_cell_source<'a>(cell_pointer: &Pointer, value: &'a CValue) -> Op
     }
 }
 
+/// The bounded-alias-only form of
+/// [`memories_match_for_pointer_load_under_assumptions`]: every differing
+/// cell must be provably distinct from the load through the memoized
+/// resolution check alone. Used as a pre-pass before the derivation-DAG
+/// walk, where paying the general composition-backed alias search per cell
+/// would dominate a simple step's budget; a miss here is not a negative
+/// answer, because the full comparison still runs later in the same query.
+pub(in crate::kernel) fn memories_match_for_pointer_load_bounded_alias(
+    left: &CMemory,
+    right: &CMemory,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> bool {
+    if memories_match_for_pointer_load(left, right, pointer) {
+        return true;
+    }
+    if pointer.block.starts_with("local:") {
+        return false;
+    }
+    if !left
+        .blocks
+        .iter()
+        .filter(|(block, _)| !block.starts_with("local:"))
+        .eq(right
+            .blocks
+            .iter()
+            .filter(|(block, _)| !block.starts_with("local:")))
+    {
+        return false;
+    }
+    left.differing_cell_pointers(right)
+        .into_iter()
+        .filter(|cell_pointer| !cell_pointer.block.starts_with("local:"))
+        .all(|cell_pointer| {
+            let value = left
+                .cells
+                .get(&cell_pointer)
+                .or_else(|| right.cells.get(&cell_pointer));
+            // A cell present on one side only, at the loaded pointer itself,
+            // whose value is that side's own materialization of the load
+            // (`load(source, p)` with `source` matching the other side at
+            // `p`) denotes the same loaded value: materialization changes
+            // which cells are concrete, not what the load means.
+            if cell_pointer == *pointer {
+                return value
+                    .and_then(|value| materialized_cell_source(&cell_pointer, value))
+                    .is_some_and(|source| {
+                        memories_match_for_pointer_load(source, left, pointer)
+                            || memories_match_for_pointer_load(source, right, pointer)
+                            || crate::kernel::api::c_memories_canonically_equal(source, left)
+                            || crate::kernel::api::c_memories_canonically_equal(source, right)
+                    });
+            }
+            value.is_some_and(|value| {
+                cell_disjoint_from_load_by_constant_offset(&cell_pointer, value, pointer)
+            }) || pointers_proven_distinct_for_memory_resolution(
+                &cell_pointer,
+                pointer,
+                assumptions,
+            )
+        })
+}
+
 pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
     left: &CMemory,
     right: &CMemory,
