@@ -174,6 +174,21 @@ projection shared by certificate planning and representation replay; widening
 snapshot-aware pointer search globally was measured, crossed the deterministic
 smart-work budget, and was rejected.
 
+A further instrumented pass eliminates two more candidate explanations and
+narrows the certificate question to routing. At the failing `box_set`
+post-execution goal `owner->data[old(owner->value)] == value`, the planning
+`available` set does carry the compact composition (so assumptions built from
+it can project separations), and every selected premise — including both
+resource-declared separations — passes `pure_fact_is_replay_available`. The
+failure is that the last-resort named-rule cascade in post-execution
+simplification cannot spell an indexed-load store transport from those
+premises. With pair emission enabled the same goal never reaches that cascade
+at all: some earlier certification route consumes an emitted pair and
+succeeds before the fallback runs. Closing the frontier therefore starts by
+identifying which planner certifies this goal when pairs are present and what
+premise shape it requires; the missing piece is that route's requirements,
+not premise availability, spellability, or prover strength.
+
 Re-running that experiment against the current tree corrects the design in
 one important way: the kernel-side projection already exists.
 `compact_composition_projects_symbolic_separation_without_pair_facts` proves
