@@ -561,7 +561,10 @@ fn condition_derivation_scales_near_linearly_with_unrelated_conditions() {
                 ConditionTerm::Bitvector32SignedLessThan(Box::new(y), Box::new(z.clone())),
                 true,
             ));
-            let goal = Proposition::ConditionIs(ConditionTerm::Bitvector32SignedLessThan(Box::new(x), Box::new(z)), true);
+            let goal = Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(Box::new(x), Box::new(z)),
+                true,
+            );
             let (derivation, work) = crate::instrumentation::measure_deterministic_work(|| {
                 search_condition_derivation(&goal, &available)
             });

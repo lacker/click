@@ -3035,9 +3035,8 @@ fn quantified_fact_query_scales_near_linearly_with_unrelated_quantified_facts() 
                 base: data.offset_by_int32_elements(Bitvector32Term::Variable(target_index)),
                 bytes: Bitvector32Term::Constant(4),
             };
-            let (proved, work) = crate::instrumentation::measure_deterministic_work(|| {
-                assumptions.proves(&target)
-            });
+            let (proved, work) =
+                crate::instrumentation::measure_deterministic_work(|| assumptions.proves(&target));
             assert!(proved, "the guarded quantified fact certifies the load");
             (size, work)
         })
@@ -3137,10 +3136,7 @@ fn derived_order_contradiction_resolves_load_endpoints() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let memory = CMemory::new().store(cell.clone(), int32(Bitvector32Term::Constant(7)));
-    let load = Bitvector32Term::MemoryLoad(
-        crate::kernel::intern_c_memory(memory),
-        Box::new(cell),
-    );
+    let load = Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(memory), Box::new(cell));
     let assumptions = Assumptions::new().assume_condition(
         ConditionTerm::signed_less_than(load, Bitvector32Term::Constant(7)),
         true,

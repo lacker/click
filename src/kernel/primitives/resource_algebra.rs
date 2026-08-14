@@ -272,26 +272,29 @@ impl ResourceContext {
         right: &PointerOffsetTerm,
         contains: impl Fn(&Pointer, &CMemoryRange) -> bool,
     ) -> bool {
-        self.index().memory_by_block.iter().any(|(block, positions)| {
-            let containing = |offset: &PointerOffsetTerm| {
-                positions.iter().copied().find(|position| {
-                    self.facts[*position]
-                        .memory_own_range()
-                        .is_some_and(|range| {
-                            contains(
-                                &Pointer {
-                                    block: block.clone(),
-                                    offset: offset.clone(),
-                                },
-                                range,
-                            )
-                        })
-                })
-            };
-            containing(left)
-                .zip(containing(right))
-                .is_some_and(|(left, right)| left != right)
-        })
+        self.index()
+            .memory_by_block
+            .iter()
+            .any(|(block, positions)| {
+                let containing = |offset: &PointerOffsetTerm| {
+                    positions.iter().copied().find(|position| {
+                        self.facts[*position]
+                            .memory_own_range()
+                            .is_some_and(|range| {
+                                contains(
+                                    &Pointer {
+                                        block: block.clone(),
+                                        offset: offset.clone(),
+                                    },
+                                    range,
+                                )
+                            })
+                    })
+                };
+                containing(left)
+                    .zip(containing(right))
+                    .is_some_and(|(left, right)| left != right)
+            })
     }
 
     fn direct_match_candidate_positions(&self, fact: &CResourceFact) -> Option<&Vec<usize>> {

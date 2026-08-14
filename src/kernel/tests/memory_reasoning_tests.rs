@@ -2479,10 +2479,7 @@ fn memory_resolution_uses_compact_resource_composition_with_shallow_equalities()
         &query_right,
         &assumptions,
     ));
-    assert!(assumptions.ranges_directly_disjoint_from_pointer(
-        &[left_range],
-        &query_right,
-    ));
+    assert!(assumptions.ranges_directly_disjoint_from_pointer(&[left_range], &query_right,));
 }
 
 /// The on-demand form of the former materialized separation pairs: with only

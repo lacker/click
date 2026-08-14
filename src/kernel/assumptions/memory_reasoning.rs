@@ -593,9 +593,10 @@ impl Assumptions {
                     right_range.end(),
                 )
             })
-            || self.resource_compositions.iter().any(|resources| {
-                resources.proves_owned_pointers_separate_shallow(left, right)
-            })
+            || self
+                .resource_compositions
+                .iter()
+                .any(|resources| resources.proves_owned_pointers_separate_shallow(left, right))
     }
 
     pub(in crate::kernel) fn pointer_in_range_by_shallow_fact_graph(
@@ -669,9 +670,11 @@ impl Assumptions {
         }) {
             return true;
         }
-        if self.resource_compositions.iter().any(|resources| {
-            resources.proves_owned_pointers_separate_shallow(left, right)
-        }) {
+        if self
+            .resource_compositions
+            .iter()
+            .any(|resources| resources.proves_owned_pointers_separate_shallow(left, right))
+        {
             return true;
         }
         if self.resource_compositions.iter().any(|resources| {
@@ -733,9 +736,11 @@ impl Assumptions {
         right: &CMemoryRange,
         depth: usize,
     ) -> bool {
-        if self.resource_compositions.iter().any(|resources| {
-            resources.proves_owned_memory_ranges_separate_shallow(left, right)
-        }) {
+        if self
+            .resource_compositions
+            .iter()
+            .any(|resources| resources.proves_owned_memory_ranges_separate_shallow(left, right))
+        {
             return true;
         }
         // Prefer certificates where one queried range is structurally inside
@@ -1061,9 +1066,11 @@ impl Assumptions {
             return true;
         }
 
-        if self.resource_compositions.iter().any(|resources| {
-            resources.proves_owned_resources_separate(left, right, self)
-        }) {
+        if self
+            .resource_compositions
+            .iter()
+            .any(|resources| resources.proves_owned_resources_separate(left, right, self))
+        {
             return true;
         }
 

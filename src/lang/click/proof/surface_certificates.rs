@@ -349,7 +349,8 @@ pub(super) fn lower_surface_atomic_derivation(
     // below never runs. Attributed measurement showed that harvest spelling
     // every ambient equality cost ninety-seven percent of one certificate
     // construction before this ordering.
-    if let Some(tactics) = plan_explicit_equality_rewrites(&lowered_conclusion, &rewrite_pairs, available)
+    if let Some(tactics) =
+        plan_explicit_equality_rewrites(&lowered_conclusion, &rewrite_pairs, available)
     {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
@@ -420,8 +421,7 @@ pub(super) fn lower_surface_atomic_derivation(
         &lowered_conclusion,
         &conclusion,
         &premise_pairs,
-    )
-    {
+    ) {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "increment transport produced a non-simple atomic derivation: {error:?}"
@@ -1976,7 +1976,8 @@ fn increment_lower_bound_transport_matches_source_anchored_constant() {
     ];
 
     assert!(
-        plan_explicit_increment_lower_bound_transport(&kernel_goal, &goal, &premise_pairs).is_some(),
+        plan_explicit_increment_lower_bound_transport(&kernel_goal, &goal, &premise_pairs)
+            .is_some(),
         "source-site annotation on the constant must not hide the increment certificate"
     );
 }

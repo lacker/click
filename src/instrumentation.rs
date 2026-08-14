@@ -451,7 +451,10 @@ fn work_attribution_summary(
             .borrow()
             .iter()
             .map(|(name, entry_work)| {
-                format!("`{name}` ({} units in)", work_used.saturating_sub(*entry_work))
+                format!(
+                    "`{name}` ({} units in)",
+                    work_used.saturating_sub(*entry_work)
+                )
             })
             .collect::<Vec<_>>()
     });

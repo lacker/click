@@ -783,9 +783,7 @@ pub(in crate::lang::click) fn search_condition_derivation(
     }
     for (first, second) in candidate_pairs {
         check_condition_search_budget(proposition, candidates.len())?;
-        if let Some(derivation) =
-            derive(&[candidates[first].clone(), candidates[second].clone()])
-        {
+        if let Some(derivation) = derive(&[candidates[first].clone(), candidates[second].clone()]) {
             check_condition_search_budget(proposition, candidates.len())?;
             return Ok(Some(derivation));
         }

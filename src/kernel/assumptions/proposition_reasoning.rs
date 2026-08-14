@@ -2359,8 +2359,16 @@ impl Assumptions {
                     else_term,
                 } => Bitvector32Term::If {
                     condition: condition.clone(),
-                    then_term: Box::new(canonical_order_endpoint(assumptions, then_term, depth - 1)),
-                    else_term: Box::new(canonical_order_endpoint(assumptions, else_term, depth - 1)),
+                    then_term: Box::new(canonical_order_endpoint(
+                        assumptions,
+                        then_term,
+                        depth - 1,
+                    )),
+                    else_term: Box::new(canonical_order_endpoint(
+                        assumptions,
+                        else_term,
+                        depth - 1,
+                    )),
                 },
                 _ => term.clone(),
             }
@@ -2534,12 +2542,7 @@ impl Assumptions {
                 registered.insert(term.clone(), canonical_component);
                 if order_endpoint_is_theory_sensitive(term, equality_index) {
                     let mut keys = BTreeSet::new();
-                    residue_bucket_keys(
-                        self,
-                        term,
-                        CANONICAL_ORDER_ENDPOINT_DEPTH,
-                        &mut keys,
-                    );
+                    residue_bucket_keys(self, term, CANONICAL_ORDER_ENDPOINT_DEPTH, &mut keys);
                     sensitive_keys.insert(term.clone(), keys);
                 }
             }
@@ -2589,7 +2592,8 @@ impl Assumptions {
         // of every other fact. Every comparison still uses the unchanged
         // `terms_equal` authority.
         let keys_of = |term: &Bitvector32Term| sensitive_keys.get(term);
-        let buckets_intersect = |left: &BTreeSet<ResidueBucket>, right: &BTreeSet<ResidueBucket>| {
+        let buckets_intersect = |left: &BTreeSet<ResidueBucket>,
+                                 right: &BTreeSet<ResidueBucket>| {
             left.intersection(right).next().is_some()
         };
         let deep_equal = |left: &Bitvector32Term, right: &Bitvector32Term| {
@@ -2831,7 +2835,7 @@ impl Assumptions {
                 };
                 holds(first, left) && holds(second, right)
                     || holds(first, right) && holds(second, left)
-                })
+            })
         });
         ALIAS_GUARD_REFUTATION_ACTIVE.with(|active| active.set(false));
         refuted
