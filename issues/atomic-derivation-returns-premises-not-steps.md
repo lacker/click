@@ -47,6 +47,20 @@ the closed context-wide-derivation issue, whose required design said
 rediscover a small premise set through deletion" — a criterion previously
 verified only at the kernel layer.
 
+## Where the code lives
+
+- `SimpEvidence` and `plan_simp_certificate`: `src/lang/click/checking/simp.rs`.
+- The lossy consumer: `lower_surface_atomic_derivation` in
+  `src/lang/click/proof/surface_certificates.rs` — premise spelling, the
+  deletion-minimization loop, the ambient rewrite harvest, and the named-rule
+  cascade are all in its body, each under a `derivation lowering:` span.
+- The landed relief ordering sits immediately before the harvest in the same
+  function.
+- To measure: run the failing shape under `CLICK_TIMINGS=1` with a lowered
+  smart budget in `TacticWorkLimits::default()` (`src/instrumentation.rs`);
+  the budget-exhaustion message prints the open-span stack and top completed
+  spans.
+
 ## Regression design
 
 Hold one fixed derivation of each kind — a two-premise order chain, an

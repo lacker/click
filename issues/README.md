@@ -28,6 +28,9 @@ when evidence exposes one.
   the last eager pair emission is deleted on a prototype branch; one test
   remains, with the divergence narrowed to independent certification's
   replay and the next trace recorded in the issue.
+- [Repository formatting is not gated](repository-formatting-is-not-gated.md):
+  `cargo fmt --check` is red and not part of the gate; one coordinated
+  format commit plus a check.sh step closes it.
 - [Declared resources need symbolic quantities](symbolic-declared-resource-quantities.md):
   every `owns`/`consumes`/`produces` clause transfers exactly one unit, so
   runtime-sized capacity cannot become linear authority; bounded-pool is the
