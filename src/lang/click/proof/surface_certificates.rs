@@ -360,8 +360,11 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, Proof::Script(tactics)));
     }
-    if let Some(tactics) =
-        plan_explicit_increment_lower_bound_transport(&conclusion, &premise_pairs)
+    if let Some(tactics) = plan_explicit_increment_lower_bound_transport(
+        &lowered_conclusion,
+        &conclusion,
+        &premise_pairs,
+    )
     {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
@@ -1379,7 +1382,7 @@ pub(super) fn lower_outcome_simp_tactics(
         return Ok(tactics);
     }
     if let Some(tactics) =
-        plan_explicit_increment_lower_bound_transport(surface_goal, &premise_pairs)
+        plan_explicit_increment_lower_bound_transport(goal, surface_goal, &premise_pairs)
     {
         SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
@@ -1755,6 +1758,7 @@ fn collect_surface_conjunct_pairs(
 }
 
 fn plan_explicit_increment_lower_bound_transport(
+    goal: &Proposition,
     surface_goal: &ClickProposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
@@ -1763,7 +1767,20 @@ fn plan_explicit_increment_lower_bound_transport(
     // spelling. Keep those two proof steps explicit: the arithmetic theorem
     // does not itself know about stores or snapshot drift, and `transport
     // using` is the simple rule that crosses them.
-    let (goal_lower, _) = surface_nonstrict_parts(surface_goal)?;
+    // Greater-equal surface goals have their own direct named rule later in
+    // certificate planning; preserve that smaller certificate instead of
+    // rewriting their orientation through this transport path.
+    if matches!(
+        surface_goal,
+        ClickProposition::Comparison {
+            operator: ComparisonOperator::GreaterEqual,
+            ..
+        }
+    ) {
+        return None;
+    }
+    let normalized_goal = normalize_direct_atomic_memory_loads(goal);
+    let (goal_lower, _) = signed_nonstrict_parts(&normalized_goal)?;
     let normalized_pairs = premise_pairs
         .iter()
         .map(|(kernel, surface)| {
@@ -1774,15 +1791,15 @@ fn plan_explicit_increment_lower_bound_transport(
         })
         .collect::<Vec<_>>();
     for (lower_kernel, lower_surface) in &normalized_pairs {
-        let Some((_, base)) = signed_nonstrict_parts(lower_kernel) else {
+        let Some((lower, base)) = signed_nonstrict_parts(lower_kernel) else {
             continue;
         };
+        if lower != goal_lower {
+            continue;
+        }
         let Some((surface_lower, surface_base)) = surface_nonstrict_parts(lower_surface) else {
             continue;
         };
-        if surface_lower != goal_lower {
-            continue;
-        }
         for (upper_kernel, upper_surface) in &normalized_pairs {
             let Some((upper_base, _)) = signed_strict_parts(upper_kernel) else {
                 continue;
@@ -1828,6 +1845,73 @@ fn plan_explicit_increment_lower_bound_transport(
         }
     }
     None
+}
+
+#[cfg(test)]
+#[test]
+fn increment_lower_bound_transport_matches_source_anchored_constant() {
+    let selector = VisitSelector::ProgramPoint(ProgramPointRef {
+        region: CodeRegionRef::Statement(5),
+        kind: ProgramPointKind::Entry,
+    });
+    let at = |expression| ContractExpression::At {
+        selector: selector.clone(),
+        expression: Box::new(expression),
+    };
+    let zero = ContractExpression::CFragment(CExpression::Value(int32(0)));
+    let index = ContractExpression::CFragment(CExpression::Variable("index".into()));
+    let capacity = ContractExpression::CFragment(CExpression::Variable("capacity".into()));
+    let goal = ClickProposition::Comparison {
+        left: zero.clone(),
+        operator: ComparisonOperator::LessEqual,
+        right: ContractExpression::CFragment(CExpression::Variable("stored_length".into())),
+    };
+    let index_term = Bitvector32Term::Variable(Variable(1));
+    let capacity_term = Bitvector32Term::Variable(Variable(2));
+    let kernel_goal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessEqual(
+            Box::new(Bitvector32Term::Constant(0)),
+            Box::new(Bitvector32Term::Variable(Variable(3))),
+        ),
+        true,
+    );
+    let premise_pairs = vec![
+        (
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(
+                    Box::new(Bitvector32Term::Constant(0)),
+                    Box::new(index_term.clone()),
+                ),
+                true,
+            ),
+            ClickProposition::Comparison {
+                left: at(zero),
+                operator: ComparisonOperator::LessEqual,
+                right: at(index),
+            },
+        ),
+        (
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(
+                    Box::new(index_term),
+                    Box::new(capacity_term),
+                ),
+                true,
+            ),
+            ClickProposition::Comparison {
+                left: at(ContractExpression::CFragment(CExpression::Variable(
+                    "index".into(),
+                ))),
+                operator: ComparisonOperator::LessThan,
+                right: at(capacity),
+            },
+        ),
+    ];
+
+    assert!(
+        plan_explicit_increment_lower_bound_transport(&kernel_goal, &goal, &premise_pairs).is_some(),
+        "source-site annotation on the constant must not hide the increment certificate"
+    );
 }
 
 fn contract_expression_for_instantiation_value(

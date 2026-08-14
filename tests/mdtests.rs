@@ -17,11 +17,7 @@ const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
 /// green gate. Run one with `MDTEST_FILTER=<name>`, or all of them with
 /// `CLICK_RUN_QUARANTINED=1`. Each entry names the reason; remove entries as
 /// they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[(
-    "field_derived_precise_effect_after_metadata_write.md",
-    "post-execution `simp` proves `0 <= owner->len` with no simple certificate; \
-     see issues/post-execution-simp-lacks-simple-certificate.md",
-)];
+const QUARANTINED: &[(&str, &str)] = &[];
 
 #[test]
 fn mdtests() {
