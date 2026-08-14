@@ -249,22 +249,41 @@ first time.
    pair) changed nothing — the queries are not identical repeats.
 
    What remains is functional: the second `open`'s `step() using`
-   premise `0 <= pool->checked_out` does not replay. The traced state:
-   `snapshot_blind_candidates` normalizes all six candidate facts to the
-   pristine spelling `load(empty-memory, p)` while the required side
-   keeps a memory with a cross-object materialized cell
-   (`first->value == 11`, unstrippable by the assumption-free
-   canonicalizer because all external objects share one block). On
-   master the same bridge succeeds — branch tracing shows
-   `memory_loads_proven_equal` wins overwhelmingly through
-   `resolve_memory_load_term` (resolving the load to a materialized
-   cell value) plus 18 DAG-walk successes; on the prototype the same
-   sites show zero DAG successes and fewer resolutions, and the
-   resolve branch short-circuits (resolved-but-unequal returns false
-   without trying the DAG). Next: premise-context-aware tracing of the
-   one `memory_loads_proven_equal` call behind the failing premise —
-   global branch traces are too noisy (1,252 expected resolve-unequal
-   misses from candidate scanning drown the one load-bearing failure).
+   premise `0 <= pool->checked_out` does not replay. Premise-scoped
+   tracing (a thread-local flag set around exactly the failing
+   `snapshot_bridge_proves` call, with per-branch logging inside
+   `memory_loads_proven_equal`) isolated the one load-bearing failure:
+
+   - The failing bridge has six candidates, all normalized to the
+     pristine spelling `load(empty-memory, p)`; the required side is
+     `load(M_current, p)` with materialized cross-object cells. For
+     every candidate, every branch fails: no transport, resolution
+     returns `None` on **both** sides, pointers equal, no syntactic
+     match, DAG walk false, snapshot comparison false (block sets
+     differ: pristine `{}` against three havoc markers).
+   - Resolution's `None` is not a prover gap: with the carriers, the
+     bounded distinctness classification of every other cell succeeds
+     (zero unclassified-cell traces). It returns `None` because the
+     prototype's `M_current` has **no materialized cell at
+     `checked_out`** and external memory is not concretely loadable.
+     On master the same comparator wins through `resolve` — master's
+     memory carries a materialized cell at the pointer, minted earlier
+     in execution when the executor could resolve the load with pairs
+     (exactly `851fde96`'s "stored resolved forms when pairs were
+     present").
+   - The DAG walk can never serve this query as spelled: the pristine
+     candidate memory is a canonicalization artifact, not an ancestor
+     snapshot, so no derivation path reaches it.
+
+   Next: on master, find the site that first mints the `checked_out`
+   cell in this lineage (instrument `CMemory::store` for that pointer
+   with a backtrace, as the unfold-pair emission was found), then give
+   the prototype the same materialization through a bounded query. The
+   general lesson matches the canonicalization design: facts recorded
+   against spec-pristine memories are timeless by construction, and the
+   executor's cell materialization is what reconnects them to concrete
+   lineages — materialization must not silently depend on which
+   separation representation is loaded.
 2. A red deterministic curve: N symbolic same-block owned ranges through
    `observable_facts_assuming_valid` must emit no `CResourceSeparate`
    propositions and near-linear work (red on master today, green on the
