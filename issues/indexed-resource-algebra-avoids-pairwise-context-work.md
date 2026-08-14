@@ -231,8 +231,21 @@ built, measured too expensive, and removed. What remains is that
 user-written rewrite script, and vector-storage representation certification
 still reports differing memory snapshots.
 
+The box_pipeline blocker is resolved. Certificate-construction attribution
+traced its cost to the ambient rewrite harvest, and the landed
+premise-pairs-first ordering collapsed that tactic from over two million
+units to under one hundred thousand (see
+atomic-derivation-returns-premises-not-steps.md for the underlying design
+gap). On the rebased prototype branch
+`claude/lazy-separation-prototype-rebased`, two of the three frontier tests
+now verify without pair facts; only vector-storage representation
+certification remains, failing as before with "memory snapshots differ,
+missing owns nonempty_buffer(owner)". The final investigation is why folding
+a composite body loses snapshot evidence without materialized pairs — the
+one consumer whose failure was never budget-related.
+
 Budget-exhaustion diagnostics now attribute their work, and bracketing with
-them reframes the box_pipeline blocker: the same `have` replay costs between
+them reframed the box_pipeline blocker before its resolution: the same `have` replay costs between
 1.0 and 1.9 million units on the current tree with pairs present — half to
 nearly all of its two-million smart budget — so the prototype's marginal
 per-statement index work tips an already-heavy tactic over the line rather
