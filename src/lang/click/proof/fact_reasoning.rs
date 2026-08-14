@@ -738,17 +738,79 @@ pub(in crate::lang::click) fn search_condition_derivation(
         }
         check_condition_search_budget(proposition, candidates.len())?;
     }
-    for (left_index, left) in candidates.iter().enumerate() {
-        for right in &candidates[left_index + 1..] {
-            check_condition_search_budget(proposition, candidates.len())?;
-            if let Some(derivation) = derive(&[(*left).clone(), (*right).clone()]) {
-                check_condition_search_budget(proposition, candidates.len())?;
-                return Ok(Some(derivation));
-            }
-            check_condition_search_budget(proposition, candidates.len())?;
+    // Two-premise derivations keep the former pair enumeration — same
+    // ordering, same two-fact contexts — but only over pairs some derivation
+    // could connect: two facts sharing a bitvector variable, or two facts
+    // each sharing one with the goal. A candidate pair sharing neither is
+    // jointly satisfiable whenever each fact is (their variables are
+    // disjoint), and a fact unsatisfiable alone was already found by the
+    // single-candidate pass, so skipping the pair cannot lose a derivation.
+    // The former enumeration reran the prover once per ambient pair, which is
+    // quadratic in unrelated conditions.
+    let goal_variables = crate::kernel::condition_fact_variables(proposition);
+    let candidate_variables = candidates
+        .iter()
+        .map(|fact| crate::kernel::condition_fact_variables(fact))
+        .collect::<Vec<_>>();
+    let mut variable_buckets = BTreeMap::<Variable, Vec<usize>>::new();
+    let mut goal_connected = Vec::new();
+    for (index, variables) in candidate_variables.iter().enumerate() {
+        crate::instrumentation::record_deterministic_work(1);
+        if variables
+            .iter()
+            .any(|variable| goal_variables.contains(variable))
+        {
+            goal_connected.push(index);
+        }
+        for variable in variables {
+            variable_buckets.entry(*variable).or_default().push(index);
         }
     }
-    Ok(None)
+    let mut candidate_pairs = BTreeSet::new();
+    for bucket in variable_buckets.values() {
+        for (position, first) in bucket.iter().enumerate() {
+            for second in &bucket[position + 1..] {
+                crate::instrumentation::record_deterministic_work(1);
+                candidate_pairs.insert((*first.min(second), *first.max(second)));
+            }
+        }
+    }
+    for (position, first) in goal_connected.iter().enumerate() {
+        for second in &goal_connected[position + 1..] {
+            crate::instrumentation::record_deterministic_work(1);
+            candidate_pairs.insert((*first.min(second), *first.max(second)));
+        }
+    }
+    for (first, second) in candidate_pairs {
+        check_condition_search_budget(proposition, candidates.len())?;
+        if let Some(derivation) =
+            derive(&[candidates[first].clone(), candidates[second].clone()])
+        {
+            check_condition_search_budget(proposition, candidates.len())?;
+            return Ok(Some(derivation));
+        }
+        check_condition_search_budget(proposition, candidates.len())?;
+    }
+    // Derivations needing three or more premises come from one derivation
+    // over the complete candidate set, minimized to its actual dependencies —
+    // the same shape `minimal_proposition_derivation` uses for every other
+    // goal. The empty-context guard keeps a context-free tautology from
+    // acquiring a derivation here, since this search's contract is premises
+    // drawn from the candidate facts.
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    check_condition_search_budget(proposition, candidates.len())?;
+    let complete = candidates
+        .iter()
+        .map(|fact| (*fact).clone())
+        .collect::<Vec<_>>();
+    let Some(initial) = derive(&complete) else {
+        check_condition_search_budget(proposition, candidates.len())?;
+        return Ok(None);
+    };
+    check_condition_search_budget(proposition, candidates.len())?;
+    Ok(Some(minimize_derivation_premises(initial, derive)?))
 }
 
 pub(super) fn exact_facts_directly_conflict(left: &Proposition, right: &Proposition) -> bool {

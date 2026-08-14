@@ -496,6 +496,59 @@ fn composite_definition_members_scale_near_linearly() {
     assert_near_linear_scaling("composite definition members", &samples);
 }
 
+/// The issue-named condition-derivation curve: one two-premise order
+/// derivation while unrelated condition facts grow. The premise search must
+/// not rerun the prover once per candidate pair.
+#[test]
+fn condition_derivation_scales_near_linearly_with_unrelated_conditions() {
+    use crate::kernel::{Bitvector32Term, ConditionTerm, Proposition, Variable};
+
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let x = Bitvector32Term::Variable(Variable(430_000));
+            let y = Bitvector32Term::Variable(Variable(430_001));
+            let z = Bitvector32Term::Variable(Variable(430_002));
+            let mut available = Vec::new();
+            for index in 0..size {
+                available.push(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(
+                        Box::new(Bitvector32Term::Variable(Variable(431_000 + index as u64))),
+                        Box::new(Bitvector32Term::Constant(1_000 + index as u32)),
+                    ),
+                    true,
+                ));
+            }
+            available.push(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(Box::new(x.clone()), Box::new(y.clone())),
+                true,
+            ));
+            available.push(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(Box::new(y), Box::new(z.clone())),
+                true,
+            ));
+            let goal = Proposition::ConditionIs(ConditionTerm::Bitvector32SignedLessThan(Box::new(x), Box::new(z)), true);
+            let (derivation, work) = crate::instrumentation::measure_deterministic_work(|| {
+                search_condition_derivation(&goal, &available)
+            });
+            let derivation = derivation
+                .unwrap_or_else(|error| panic!("size {size} search failed: {}", error.message()))
+                .expect("the chained order facts derive the goal");
+            assert!(
+                !derivation.context_premises().is_empty(),
+                "the derivation should name its premises"
+            );
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "condition derivation search is superlinear: {samples:?}"
+        );
+    }
+}
+
 #[test]
 fn scaling_assertion_rejects_a_quadratic_curve() {
     let quadratic = [16, 32, 64, 128]

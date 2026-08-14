@@ -28,6 +28,20 @@ pub use primitives::*;
 pub(crate) use reasoning::memory_effect_write_pointers;
 pub use termination::c_verified_function_termination_rules;
 
+/// The bitvector variables one condition fact mentions, including those
+/// inside load pointers and memories. Facts sharing none of these cannot
+/// constrain each other or a goal that mentions none of them, which premise
+/// search uses to skip candidate pairs no derivation could connect.
+pub(crate) fn condition_fact_variables(
+    proposition: &primitives::Proposition,
+) -> std::collections::BTreeSet<primitives::Variable> {
+    let mut variables = std::collections::BTreeSet::new();
+    if let primitives::Proposition::ConditionIs(condition, _) = proposition {
+        reasoning::collect_condition_bitvector_variables(condition, &mut variables);
+    }
+    variables
+}
+
 mod prelude {
     pub(super) use super::api::*;
     pub(super) use super::eval::*;

@@ -2884,6 +2884,208 @@ fn derived_order_contradiction_uses_theory_equal_endpoints() {
     );
 }
 
+/// The issue-named fixed-arithmetic curve: one overflow decision whose
+/// operands have exact bounds, while unrelated order facts grow. The interval
+/// index answers from exact endpoint bounds, so the decision must not rescan
+/// the growing context.
+#[test]
+fn fixed_overflow_decision_scales_near_linearly_with_unrelated_order_facts() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let x = Bitvector32Term::Variable(Variable(94_001));
+            let y = Bitvector32Term::Variable(Variable(94_002));
+            let mut assumptions = Assumptions::new();
+            for index in 0..size {
+                assumptions = assumptions.assume_condition(
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Variable(Variable(94_100 + index as u64)),
+                        Bitvector32Term::Constant(1_000),
+                    ),
+                    true,
+                );
+            }
+            for term in [x.clone(), y.clone()] {
+                assumptions = assumptions
+                    .assume_condition(
+                        ConditionTerm::signed_greater_equal(
+                            term.clone(),
+                            Bitvector32Term::Constant(0),
+                        ),
+                        true,
+                    )
+                    .assume_condition(
+                        ConditionTerm::signed_less_equal(term, Bitvector32Term::Constant(1_000)),
+                        true,
+                    );
+            }
+            let (decision, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions.decide(&ConditionTerm::signed_add_overflows(x, y))
+            });
+            assert_eq!(decision, Some(false));
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "fixed overflow decision is superlinear: {samples:?}"
+        );
+    }
+}
+
+/// The issue-named quantified-match curve: one query answered by
+/// instantiating one guarded quantified fact, while unrelated quantified
+/// facts about other memory blocks grow.
+#[test]
+fn quantified_fact_query_scales_near_linearly_with_unrelated_quantified_facts() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let memory = CMemory::new();
+            let data = Pointer {
+                block: "quantified-data".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let fact_index = Variable(94_500);
+            let target_index = Variable(94_501);
+            let length = Bitvector32Term::Variable(Variable(94_502));
+            let guarded_fact = forall_int32(
+                fact_index,
+                Proposition::Implies(
+                    Box::new(Proposition::And(
+                        Box::new(Proposition::ConditionIs(
+                            ConditionTerm::signed_less_equal(
+                                Bitvector32Term::Constant(0),
+                                Bitvector32Term::Variable(fact_index),
+                            ),
+                            true,
+                        )),
+                        Box::new(Proposition::ConditionIs(
+                            ConditionTerm::signed_less_than(
+                                Bitvector32Term::Variable(fact_index),
+                                length.clone(),
+                            ),
+                            true,
+                        )),
+                    )),
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::equal(
+                            Bitvector32Term::MemoryLoad(
+                                crate::kernel::intern_c_memory_ref(&memory),
+                                Box::new(data.offset_by_int32_elements(Bitvector32Term::Variable(
+                                    fact_index,
+                                ))),
+                            ),
+                            Bitvector32Term::Constant(7),
+                        ),
+                        true,
+                    )),
+                ),
+            );
+            let mut assumptions = Assumptions::new().assume_proposition(guarded_fact);
+            for index in 0..size {
+                let unrelated_index = Variable(95_000 + index as u64 * 2);
+                let unrelated = Pointer {
+                    block: format!("quantified-unrelated-{index}").into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                };
+                assumptions = assumptions.assume_proposition(forall_int32(
+                    unrelated_index,
+                    Proposition::Implies(
+                        Box::new(Proposition::ConditionIs(
+                            ConditionTerm::signed_less_equal(
+                                Bitvector32Term::Constant(0),
+                                Bitvector32Term::Variable(unrelated_index),
+                            ),
+                            true,
+                        )),
+                        Box::new(Proposition::ConditionIs(
+                            ConditionTerm::equal(
+                                Bitvector32Term::MemoryLoad(
+                                    crate::kernel::intern_c_memory_ref(&memory),
+                                    Box::new(unrelated.offset_by_int32_elements(
+                                        Bitvector32Term::Variable(unrelated_index),
+                                    )),
+                                ),
+                                Bitvector32Term::Constant(9),
+                            ),
+                            true,
+                        )),
+                    ),
+                ));
+            }
+            assumptions = assumptions
+                .assume_condition(
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Variable(target_index),
+                    ),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(target_index),
+                        length,
+                    ),
+                    true,
+                );
+            let target = Proposition::CMemoryLoadable {
+                memory: memory.clone(),
+                base: data.offset_by_int32_elements(Bitvector32Term::Variable(target_index)),
+                bytes: Bitvector32Term::Constant(4),
+            };
+            let (proved, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions.proves(&target)
+            });
+            assert!(proved, "the guarded quantified fact certifies the load");
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "quantified fact query is superlinear: {samples:?}"
+        );
+    }
+}
+
+/// The issue-named long-order-path curve: deciding `first < last` across a
+/// chain of strict order facts must cost work proportional to the returned
+/// path, not path length times ambient fact count.
+#[test]
+fn long_order_path_decision_scales_near_linearly_with_path_length() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let mut assumptions = Assumptions::new();
+            for index in 0..size {
+                assumptions = assumptions.assume_condition(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(Variable(96_000 + index as u64)),
+                        Bitvector32Term::Variable(Variable(96_001 + index as u64)),
+                    ),
+                    true,
+                );
+            }
+            let (decision, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions.decide(&ConditionTerm::signed_less_than(
+                    Bitvector32Term::Variable(Variable(96_000)),
+                    Bitvector32Term::Variable(Variable(96_000 + size as u64)),
+                ))
+            });
+            assert_eq!(decision, Some(true), "the chain proves its endpoints");
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "long order path decision is superlinear: {samples:?}"
+        );
+    }
+}
+
 /// The dominant real shape of the order-conflict residue: loads compared
 /// against constants. An owned-vector profile showed 13,343 of 20,777 deep
 /// comparisons were Load~Const with zero successes. A consistent context of
