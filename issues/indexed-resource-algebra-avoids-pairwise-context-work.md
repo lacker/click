@@ -275,15 +275,52 @@ first time.
      candidate memory is a canonicalization artifact, not an ancestor
      snapshot, so no derivation path reaches it.
 
-   Next: on master, find the site that first mints the `checked_out`
-   cell in this lineage (instrument `CMemory::store` for that pointer
-   with a backtrace, as the unfold-pair emission was found), then give
-   the prototype the same materialization through a bounded query. The
-   general lesson matches the canonicalization design: facts recorded
-   against spec-pristine memories are timeless by construction, and the
-   executor's cell materialization is what reconnects them to concrete
-   lineages — materialization must not silently depend on which
-   separation representation is loaded.
+   The mint hunt closed the question, and the earlier framing was wrong
+   in one respect: master does not serve this premise by resolution
+   either. Claim-scoped tracing at the `step() using` premise check
+   (`pool_pipeline.contract` tactic 6) shows:
+
+   - On master the premise matches an available fact **byte-exactly**
+     (fact and premise both spell 1,056 characters, identical) — the
+     `unfold(valid_pool)` fact and the premise lowering coincide. On
+     the prototype the same fact spells 1,325 characters: its memory
+     operand retains a materialization cell for `first` (value
+     `load(pristine, first)`) that the premise's memory holds as
+     `Constant(11)` post-store, so exact matching fails and the bridge
+     must decide the pair.
+   - Inside the failing bridge, the carriers do their job completely:
+     **every differing cell is proven distinct from the loaded pointer**
+     (`distinct=true` for `first` and `second` against `pool`). The
+     comparison never uses those answers, because the candidate's
+     normalized memory is fully pristine (`blocks=[]`, `cells=0` — the
+     assumption-free canonicalizer strips materialization-valued cells
+     and, with them, all havoc markers) while the required side keeps
+     three havoc markers and two concrete-valued cells, and
+     `memories_match_for_pointer_load_under_assumptions` **rejects on
+     its block-set equality prefilter** before the per-cell loop runs.
+   - The carriers are present in the bridge's assumption context (the
+     `CResourceComposition` propositions ride `all_pure_facts`), so
+     this is not a carrier-propagation gap.
+
+   So the whole functional failure reduces to: exact-match identity of
+   recorded facts and lowered premises depends on the materialized-cell
+   content of their memory operands, which the pairs-vs-carriers switch
+   perturbs in both directions; and the bridge that should absorb the
+   difference is vetoed by a syntactic block-set filter whose job
+   (havoc markers must not be laundered) is legitimate but whose
+   placement is coarser than needed. The candidate fix, which is the
+   canonicalization design applied here: an assumption-backed canonical
+   form for load atoms at fact recording and premise lowering — strip
+   cells the bounded provers show distinct from the loaded pointer,
+   which collapses both sides to the same spelling whenever their
+   difference is materialization noise. The havoc-marker soundness
+   question (the pristine canonical form conflates havoc history; the
+   existing exact-match transport already relies on this being benign
+   between havoc-free points, per the `with_block` soundness-trap
+   comment) must be settled in that design before implementation —
+   understand why byte-exact matching of pristine-canonical spellings
+   across the unfold-to-step gap is sound on master today, and give the
+   assumption-backed form the same boundary.
 2. A red deterministic curve: N symbolic same-block owned ranges through
    `observable_facts_assuming_valid` must emit no `CResourceSeparate`
    propositions and near-linear work (red on master today, green on the
