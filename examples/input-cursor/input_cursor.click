@@ -325,7 +325,12 @@ int32 input_cursor_shared_pipeline(
     }
     have right->pos == 0 by simp;
     have right->data == data by simp;
-    have left->data == data by simp;
+    have left->data == data by {
+        transport(at(statement(4).entry, left->data) == data, left->data == data) using {
+            at(statement(4).entry, left->data) == data;
+        }
+        assumption();
+    }
     step() using {
         at(statement(4).entry, 1) <= at(statement(4).entry, length);
         at(statement(3).entry, separate(memory(object(left)), memory(data[0..length])));
@@ -334,7 +339,6 @@ int32 input_cursor_shared_pipeline(
         at(statement(3).entry, loadable(old(right[0..4])));
         at(statement(3).entry, loadable(old(data[0..length])));
         at(statement(4).entry, 0) <= at(statement(4).entry, length);
-        at(statement(4).entry, separate(memory(left[0..4]), memory(right[0..4])));
         at(statement(4).entry, ignored) == at(statement(4).entry, 0);
         at(statement(4).entry, separate(memory(object(right)), memory(left->data[0..left->len])));
         old(left->len) == at(statement(4).entry, length);
@@ -361,12 +365,33 @@ int32 input_cursor_shared_pipeline(
     transport(at(statement(5).entry, right->len) == length, right->len == length) using {
         at(statement(5).entry, right->len) == length;
     }
-    transport(at(statement(5).entry, left->len) == length, left->len == length) using {
-        at(statement(5).entry, left->len) == length;
+    transport(at(statement(4).entry, left->len) == length, left->len == length) using {
+        at(statement(4).entry, left->len) == length;
     }
-    have right->pos < right->len by simp;
-    have right->pos == 0 by simp;
-    have right->data == data by simp;
+    have right->pos == 0 by {
+        transport(at(statement(5).entry, right->pos) == 0, right->pos == 0) using {
+            at(statement(5).entry, right->pos) == 0;
+        }
+        assumption();
+    }
+    have 0 < right->len by {
+        simp() using {
+            right->len == length;
+            1 <= length;
+        }
+    }
+    have right->pos < right->len by {
+        simp() using {
+            right->pos == 0;
+            0 < right->len;
+        }
+    }
+    have right->data == data by {
+        transport(at(statement(5).entry, right->data) == data, right->data == data) using {
+            at(statement(5).entry, right->data) == data;
+        }
+        assumption();
+    }
     have at(statement(5).entry, left->pos) == 0 by simp;
     have left->pos == at(statement(5).entry, left->pos) + 1 by simp;
     apply(incremented_zero_is_one(
@@ -384,7 +409,6 @@ int32 input_cursor_shared_pipeline(
         at(statement(3).entry, loadable(old(right[0..4])));
         at(statement(3).entry, loadable(old(data[0..length])));
         at(statement(5).entry, 0) <= at(statement(5).entry, length);
-        at(statement(4).entry, separate(memory(left[0..4]), memory(right[0..4])));
         at(statement(4).entry, ignored) == at(statement(4).entry, 0);
         at(statement(4).entry, separate(memory(object(right)), memory(left->data[0..left->len])));
         old(left->len) == at(statement(5).entry, length);
