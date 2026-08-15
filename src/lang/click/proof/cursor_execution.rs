@@ -1596,31 +1596,31 @@ pub(super) fn execute_step_from_execution_point(
             construction,
         );
         restore_construction_point_view(replay, restore);
-        // A direct memory-snapshot transport needs no surface `transport`
-        // tactic, but its target still needs a stable source spelling for a
-        // later simple step. Record that spelling at this statement's exit;
-        // otherwise exact evaluator guards such as `defined(x + 1)` become
-        // anonymous after an unrelated local-memory change.
-        let exit_point = ProgramPointRef {
-            region: CodeRegionRef::Statement(statement_index),
-            kind: ProgramPointKind::Exit,
-        };
-        for transport in transition
-            .fact_transports
-            .iter()
-            .filter(|transport| !transport.statement_local)
-        {
-            let surfaces = replay
+    }
+    // A direct memory-snapshot transport needs no surface `transport`
+    // tactic, but its target still needs a stable source spelling for a
+    // later simple step. Record that spelling during both planning and
+    // explicit certificate replay; otherwise replay immediately forgets
+    // evaluator guards such as `defined(x + 1)` that planning retained.
+    let exit_point = ProgramPointRef {
+        region: CodeRegionRef::Statement(statement_index),
+        kind: ProgramPointKind::Exit,
+    };
+    for transport in transition
+        .fact_transports
+        .iter()
+        .filter(|transport| !transport.statement_local)
+    {
+        let surfaces = replay
+            .surface_propositions
+            .surfaces(&transport.source)
+            .cloned()
+            .collect::<Vec<_>>();
+        for surface in surfaces {
+            let exit_surface = surface_with_source_site(&surface, &exit_point)?;
+            replay
                 .surface_propositions
-                .surfaces(&transport.source)
-                .cloned()
-                .collect::<Vec<_>>();
-            for surface in surfaces {
-                let exit_surface = surface_with_source_site(&surface, &exit_point)?;
-                replay
-                    .surface_propositions
-                    .record_lowering(&exit_surface, &transport.target)?;
-            }
+                .record_lowering(&exit_surface, &transport.target)?;
         }
     }
     // Preserve a surface name for each store while its exact source statement

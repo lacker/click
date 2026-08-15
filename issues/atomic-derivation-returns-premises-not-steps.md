@@ -105,3 +105,22 @@ the derivation records premises instead of typed steps; with steps, the
 certificate transcribes instead of re-searching. De-quarantine the
 mdtest when this issue closes.
 
+### Progress (2026-08-15)
+
+The `addition overflow is false` premise already has the public spelling
+`defined(owner->len + 1)`. The certificate path now retains that exact
+parameter-only recorded spelling, explicit `step() using` replay accepts the
+still-available certified fact instead of re-evaluating it against a folded
+later heap, and direct snapshot transports preserve its surface name during
+both planning and explicit replay. The focused
+`defined_expression_snapshot_transport.md` regression pins this behavior.
+
+That advances the reproduction past the unexpressed premise. It now fails
+with every selected premise spelled but the flat premise set unable to replay
+the pointer-offset equality. The equality was decided by following the
+kernel's embedded memory-derivation DAG across snapshots; conservative
+context collection includes several transported identity facts whose reused
+surface spellings lower to reflexive truth rather than the distinct DAG edges
+the decision traversed. Closing this issue therefore still requires a typed
+memory-derivation-path step (along with the order/equality/overflow steps
+above), rather than more ambient premise recovery.

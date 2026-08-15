@@ -121,6 +121,10 @@ pub(super) fn lower_surface_atomic_derivation(
         "atomic derivation lowering",
         "derivation lowering: premise spelling",
     );
+    let parameter_names = parameters
+        .iter()
+        .map(syntax::C0Parameter::name)
+        .collect::<BTreeSet<_>>();
     for premise in derivation.context_premises() {
         match checked_surface_comparison_fact_at_point(
             replay,
@@ -135,6 +139,29 @@ pub(super) fn lower_surface_atomic_derivation(
         ) {
             Ok(surface) => {
                 let surface = match anchor_point {
+                    // Requirement-definedness facts are recorded when the
+                    // function context is built. Re-elaborating their
+                    // parameter-only expression after resources have been
+                    // folded can produce `false`, even though the exact
+                    // certified entry fact and its spelling remain
+                    // available. Keep that stable spelling so fresh replay
+                    // resolves the same recorded fact instead of evaluating
+                    // it against the later heap.
+                    Some(_)
+                        if matches!(
+                            &surface,
+                            ClickProposition::Defined { expression }
+                                if !contract_expression_mentions_c_local(
+                                    expression,
+                                    &parameter_names,
+                                )
+                        ) && replay
+                            .surface_propositions
+                            .available_kernel(&surface, available)
+                            == Some(&premise) =>
+                    {
+                        surface
+                    }
                     Some(point) => surface_with_source_site(&surface, point)?,
                     None => surface,
                 };
@@ -5945,7 +5972,7 @@ pub(super) fn lower_surface_candidate_at_point(
     .map_err(ClickError::new)
 }
 
-fn contract_expression_mentions_c_local(
+pub(super) fn contract_expression_mentions_c_local(
     expression: &ContractExpression,
     parameter_names: &BTreeSet<&str>,
 ) -> bool {

@@ -1115,6 +1115,19 @@ fn replay_linear_tactics_without_frontier_loops(
                             ) || materialization_equivalent_available_fact(current, &all_pure_facts)
                                 .is_some()
                         });
+                    let parameter_names = parsed_function
+                        .parameters()
+                        .iter()
+                        .map(syntax::C0Parameter::name)
+                        .collect::<BTreeSet<_>>();
+                    let stable_recorded_definedness = matches!(
+                        surface_premise,
+                        ClickProposition::Defined { expression }
+                            if !super::super::surface_certificates::contract_expression_mentions_c_local(
+                                expression,
+                                &parameter_names,
+                            )
+                    );
                     // Prefer an explicit program-point lowering when it names
                     // an exact available fact. Fall back to the checked cache
                     // when a partial expansion has not replayed that point, or
@@ -1141,7 +1154,8 @@ fn replay_linear_tactics_without_frontier_loops(
                             _ => recorded.expect("checked recorded truth").clone(),
                         }
                     } else if (proposition_contains_at_expression(surface_premise)
-                        || proposition_contains_old_expression(surface_premise))
+                        || proposition_contains_old_expression(surface_premise)
+                        || stable_recorded_definedness)
                         && let Some(recorded) = recorded
                     {
                         recorded.clone()

@@ -282,6 +282,26 @@ pub(super) fn checked_surface_comparison_fact_at_point(
         .surface_propositions
         .surfaces(kernel)
         .collect::<Vec<_>>();
+    let parameter_names = parameters
+        .iter()
+        .map(syntax::C0Parameter::name)
+        .collect::<BTreeSet<_>>();
+    for surface in &recorded_surfaces {
+        if matches!(
+            surface,
+            ClickProposition::Defined { expression }
+                if !super::surface_certificates::contract_expression_mentions_c_local(
+                    expression,
+                    &parameter_names,
+                )
+        ) && replay
+            .surface_propositions
+            .available_kernel(surface, available)
+            == Some(kernel)
+        {
+            return Ok((*surface).clone());
+        }
+    }
     for surface in recorded_surfaces.into_iter().rev() {
         if (proposition_contains_at_expression(surface)
             || proposition_contains_old_expression(surface))
