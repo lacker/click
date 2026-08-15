@@ -3093,3 +3093,83 @@ fn assumptions_reject_forall_based_on_a_shadowed_prefix_index() {
 
     assert!(!PureFactContext::new().proves(&proposition));
 }
+
+#[test]
+fn added_composition_carrier_keeps_snapshot_premise_work_bounded() {
+    // The lazy-separation monotonicity requirement: adding a valid compact
+    // composition carrier must not break, or meaningfully slow, an already
+    // provable snapshot premise. Pinned by the bounded-pool regression where
+    // a fifth carrier turned an exact-premise replay into context-wide
+    // repeated range derivation.
+    let target = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let neighbor = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(4),
+    };
+    let before = CMemory::new().with_block("arena", 64);
+    let after = before.clone().store(neighbor, int32(7));
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(after),
+                Box::new(target.clone()),
+            ),
+        ),
+        true,
+    );
+    let recorded = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(before), Box::new(target)),
+        ),
+        true,
+    );
+    let carrier = |index: u64| {
+        let base = Pointer {
+            block: PointerBlock::Concrete(format!("carrier-{index}").into()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let split = Bitvector32Term::Variable(Variable(95_000 + index));
+        let end = Bitvector32Term::Variable(Variable(95_100 + index));
+        Proposition::CResourceComposition(
+            ResourceContext::new()
+                .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+                    base.clone(),
+                    Bitvector32Term::Constant(0),
+                    split.clone(),
+                )))
+                .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+                    base, split, end,
+                ))),
+        )
+    };
+    let context_with = |carriers: u64| {
+        let mut assumptions = PureFactContext::new().assume_proposition(recorded.clone());
+        for index in 0..carriers {
+            assumptions = assumptions.assume_proposition(carrier(index));
+        }
+        assumptions
+    };
+    let four = context_with(4);
+    let (proved_four, work_four) =
+        crate::instrumentation::measure_deterministic_work(|| four.proves(&premise));
+    assert!(
+        proved_four,
+        "the framed premise should prove with four carriers"
+    );
+    let five = context_with(5);
+    let (proved_five, work_five) =
+        crate::instrumentation::measure_deterministic_work(|| five.proves(&premise));
+    assert!(
+        proved_five,
+        "adding an unrelated valid carrier must keep the premise provable"
+    );
+    assert!(
+        work_five <= work_four.saturating_mul(2).max(64),
+        "an added carrier multiplied premise work: {work_four} -> {work_five}"
+    );
+}

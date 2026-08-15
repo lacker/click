@@ -167,3 +167,12 @@ object ownership, transfer behavior, and complete lifecycle.
 - Generated simple certificates replay, and `click verify`, `click expand`,
   `click audit`, and contract certification agree on every regression.
 - `./scripts/check.sh` is green.
+
+## Unblocked (2026-08-14)
+
+The lazy-separation issue closed: the monotonicity regression it demanded
+(`added_composition_carrier_keeps_snapshot_premise_work_bounded`) and the
+unchanged bounded-pool project are both green on the merged prototype, so
+the additional carrier a symbolic quantity introduces no longer breaks
+exact-premise replay. This feature can resume.
+

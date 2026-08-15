@@ -24,11 +24,6 @@ when evidence exposes one.
   smart search discards how it proved its goal, so certificate construction
   re-searches; measured at 97 percent of one tactic's budget before the
   landed relief ordering.
-- [Replace pairwise resource-context work with indexed algebra](indexed-resource-algebra-avoids-pairwise-context-work.md):
-  the last eager pair emission is deleted on a prototype branch; one test
-  remains, its diverging query is traced to call-havoc load framing, and
-  the decided design (stratified derivation edges plus canonical terms
-  with bounded guards) is recorded in the issue.
 - [Push contract path dropped by laundered inconsistency](push-contract-path-dropped-by-laundered-inconsistency.md):
   the exit drain's "sibling certifies this path" skip silently dropped the
   `grown == 1` path of `allocated_vector_push.contract` on master, hidden

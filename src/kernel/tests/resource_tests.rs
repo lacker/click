@@ -760,3 +760,53 @@ fn checked_resource_composition_rejects_invalid_state_before_normalizing() {
         }
     );
 }
+
+#[test]
+fn symbolic_same_block_ranges_emit_no_pairs_with_near_linear_work() {
+    // The lazy-separation acceptance curve: N symbolic same-block owned
+    // ranges expose one compact composition authority and zero pairwise
+    // CResourceSeparate propositions, in work near-linear in N.
+    let samples = [8, 16, 32, 64]
+        .into_iter()
+        .map(|size| {
+            let base = Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let endpoints = (0..=size)
+                .map(|index| Bitvector32Term::Variable(Variable(94_000 + index as u64)))
+                .collect::<Vec<_>>();
+            let context = ResourceContext::new().unchecked_with_facts((0..size).map(|index| {
+                CResourceFact::own_memory(CMemoryRange::new(
+                    base.clone(),
+                    endpoints[index].clone(),
+                    endpoints[index + 1].clone(),
+                ))
+            }));
+            let (facts, work) = crate::instrumentation::measure_deterministic_work(|| {
+                context.observable_facts_assuming_valid(&PureFactContext::new())
+            });
+            let pair_count = facts
+                .iter()
+                .filter(|fact| matches!(fact, Proposition::CResourceSeparate { .. }))
+                .count();
+            assert_eq!(
+                pair_count, 0,
+                "symbolic same-block ranges must not materialize pairwise separations"
+            );
+            assert!(
+                facts
+                    .iter()
+                    .any(|fact| matches!(fact, Proposition::CResourceComposition(_))),
+                "multi-owner contexts should expose one compact authority"
+            );
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3),
+            "observable fact projection is superlinear: {samples:?}"
+        );
+    }
+}

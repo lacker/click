@@ -110,6 +110,49 @@ These constraints are semantic-neutral. They must preserve independent kernel
 checking and must never turn an unproved, failed, or deadline-limited result
 into a cached success.
 
+## Lazy separation and compact composition carriers
+
+Resource contexts never materialize pairwise `CResourceSeparate`
+propositions. A multi-owner context exposes one compact
+`CResourceComposition` carrier, and separation queries — range and pointer
+disjointness, subrange inheritance — are answered from the carrier's
+projection with indexed per-query work
+(`symbolic_same_block_ranges_emit_no_pairs_with_near_linear_work` pins the
+projection curve). Consumers that need a separation *proposition* — a
+certificate premise, a have-proof `assumption` goal — ask the prover, which
+serves it from the carrier on demand; the proposition is materialized only
+at that ask, never into ambient fact sets. Adding a valid carrier must be
+monotone for already-provable snapshot premises
+(`added_composition_carrier_keeps_snapshot_premise_work_bounded`).
+
+The pairs' accidental effectiveness came from restating each fact in every
+term vocabulary that ever existed, so lookup never proved cross-snapshot
+equality. The replacement attacks term identity directly:
+
+- **Stratified derivation edges.** A snapshot's derivation is described in
+  its parent's vocabulary; call-havoc footprints are canonicalized at
+  recording so later frame queries match entry-vocabulary facts
+  syntactically.
+- **Canonicalize at creation, bounded guards.** Terms adopt a ground-equality
+  representative only when it strictly lowers the term (fewer memory loads,
+  or a constant for a non-constant). Same-shape respellings are rejected —
+  consumers that structurally re-derive recorded ranges must keep seeing the
+  original vocabulary.
+- **Bridge at the availability boundary.** A fact and a premise that spell
+  one condition over different snapshots are decided by the snapshot bridge
+  (candidates only from available facts, both normalized and original
+  spellings tried), never by re-storing per-vocabulary copies.
+- **Write-set fingerprints.** Call-havoc markers carry a spelling-invariant
+  fingerprint of their write set in the marker block size, so
+  alpha-colliding claims whose same-named havocs wrote different shapes stay
+  content-distinct in the interning arena; the residual same-shape collision
+  and the claim-scoped salt design are recorded in the issue tracker's
+  history.
+- **Explicit `rewrite` stays the completeness escape hatch**, and the
+  long-run trajectory for recurring snapshot-equality gaps is a forkable,
+  provenance-carrying e-graph fed by executor-discharged guard equalities —
+  never by guard search.
+
 ## Indexed contradiction and premise search
 
 Derived contradiction checking and condition premise search follow one
