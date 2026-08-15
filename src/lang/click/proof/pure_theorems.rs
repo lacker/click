@@ -1923,9 +1923,11 @@ fn prove_pure_theorem_tactics(
                 .map_err(|message| {
                     ClickError::new(format!("`extract` failed for `{claim_label}`: {message}"))
                 })?;
-                if !exact_proper_conjunct_is_available(&proposition, &available) {
+                if !exact_proper_conjunct_is_available(&proposition, &available)
+                    && !discharged_implication_consequent_is_available(&proposition, &available)
+                {
                     return Err(ClickError::new(format!(
-                        "`extract` failed for `{claim_label}`: proposition is not a proper conjunct of an exact available fact: {}",
+                        "`extract` failed for `{claim_label}`: proposition is not a proper conjunct of an exact available fact or a discharged implication consequent: {}",
                         describe_pure_fact(&proposition, &[], &[])
                     )));
                 }

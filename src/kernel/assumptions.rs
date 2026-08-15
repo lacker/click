@@ -686,6 +686,80 @@ impl Drop for ConditionDecisionGuard {
     }
 }
 
+/// Pointer-offset equality up to exact materialization: two spellings of one
+/// offset whose embedded loads resolve, cell by known cell, to the same
+/// innermost term. Deterministic and assumption-free; never equates loads
+/// across an unresolved havoc.
+pub(in crate::kernel) fn pointer_offsets_equal_after_exact_materialization(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left, right) {
+        (
+            PointerOffsetTerm::Int32Scaled {
+                value: left_value,
+                byte_width: left_width,
+            },
+            PointerOffsetTerm::Int32Scaled {
+                value: right_value,
+                byte_width: right_width,
+            },
+        ) => {
+            left_width == right_width
+                && (bitvector_terms_equal_after_exact_materialization(left_value, right_value)
+                    || loads_equal_by_bounded_snapshot_match(left_value, right_value))
+        }
+        (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
+            (pointer_offsets_equal_after_exact_materialization(left_a, right_a)
+                && pointer_offsets_equal_after_exact_materialization(left_b, right_b))
+                || (pointer_offsets_equal_after_exact_materialization(left_a, right_b)
+                    && pointer_offsets_equal_after_exact_materialization(left_b, right_a))
+        }
+        _ => false,
+    }
+}
+
+/// Two irreducible loads of the same cell whose memory spellings differ only
+/// by materialization drift: chase each load to its fixed point, then let the
+/// bounded snapshot matcher decide the memory pair at that one cell. Havoc
+/// markers must match on both sides, so this never equates loads across an
+/// unresolved havoc. Assumption-free.
+fn loads_equal_by_bounded_snapshot_match(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    fn chase(term: &Bitvector32Term) -> Bitvector32Term {
+        let mut current = term.clone();
+        for _ in 0..64 {
+            let Bitvector32Term::MemoryLoad(memory, pointer) = &current else {
+                break;
+            };
+            let Some(CValue::Int32(value)) = memory.known_value(pointer) else {
+                break;
+            };
+            if value == current {
+                break;
+            }
+            current = value;
+        }
+        current
+    }
+    let (
+        Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+        Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+    ) = (&chase(left), &chase(right))
+    else {
+        return false;
+    };
+    left_pointer == right_pointer
+        && crate::kernel::reasoning::memories_match_for_pointer_load_under_assumptions(
+            left_memory,
+            right_memory,
+            left_pointer,
+            &PureFactContext::new(),
+        )
+}
+
 fn bitvector_terms_equal_after_exact_materialization(
     left: &Bitvector32Term,
     right: &Bitvector32Term,

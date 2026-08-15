@@ -37,6 +37,25 @@ pub fn uint8(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::UInt8(bits.into())
 }
 
+/// True when `pointer` addresses within a live heap allocation of `memory`,
+/// matching allocation keys either structurally or up to exact
+/// materialization of the loads embedded in the key and pointer spellings.
+/// Deterministic and assumption-free; never matches across an unresolved
+/// havoc.
+pub(crate) fn c_memory_holds_live_heap_allocation_at(
+    memory: &super::CMemory,
+    pointer: &Pointer,
+) -> bool {
+    memory.is_live_heap_address(pointer)
+        || memory.heap_live_allocation_bases().any(|base| {
+            base.block == pointer.block
+                && super::assumptions::pointer_offsets_equal_after_exact_materialization(
+                    &base.offset,
+                    &pointer.offset,
+                )
+        })
+}
+
 pub(crate) fn c_pointers_proven_equal_for_memory_resolution(
     left: &Pointer,
     right: &Pointer,

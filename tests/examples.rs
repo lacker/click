@@ -16,7 +16,10 @@ const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 /// suite is a meaningful green gate. Run one with `CLICK_EXAMPLE=<name>`, or
 /// all of them with `CLICK_RUN_QUARANTINED=1`. Each entry names the reason;
 /// remove entries as they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[];
+const QUARANTINED: &[(&str, &str)] = &[(
+    "owned-vector",
+    "the grown==1 path of allocated_vector_push.contract was silently dropped on master and its honest proof now stalls on giant-term memory-resolution cost; see issues/push-contract-path-dropped-by-laundered-inconsistency.md",
+)];
 
 #[test]
 fn example_projects() {

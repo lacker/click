@@ -715,6 +715,11 @@ pub(super) fn plan_restricted_simp_goal(
                 available == normalized || condition_polarity_equivalent(&available, &normalized)
             })
         })
+            // A premise spelled at a different program point carries other
+            // snapshots in its load atoms; the snapshot bridge decides the
+            // pair from the certified frame, with candidates drawn only from
+            // the available facts.
+            || snapshot_bridged_fact_is_available(part, available, &[])
     };
     if let Some(missing) = premises.iter().find(|premise| {
         let mut parts = Vec::new();

@@ -543,6 +543,24 @@ fn certify_c_function_execution_path_resource_representation_uncached(
             .filter(|fact| fact.is_certified())
             .map(|fact| fact.proposition().clone()),
     );
+    // A conditional call ensure whose antecedent this path establishes is
+    // direct reconciliation evidence: discharge each implication premise once
+    // (walking chained implications) and add the reached consequents. Work is
+    // linear in the premise list times implication depth; antecedents are
+    // decided against the same premises, never searched project-wide.
+    let discharge_context = assumptions_with_propositions(&path.assumptions, &premises);
+    let mut discharged = Vec::new();
+    for premise in &premises {
+        let mut current = premise;
+        while let Proposition::Implies(antecedent, consequent) = current {
+            if !discharge_context.proves(antecedent.as_ref()) {
+                break;
+            }
+            discharged.push(consequent.as_ref().clone());
+            current = consequent;
+        }
+    }
+    premises.extend(discharged);
     let preliminary_assumptions = assumptions_with_propositions(&path.assumptions, &premises);
     let observable_resource_facts = return_state
         .resources()

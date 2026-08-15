@@ -152,5 +152,25 @@ int32 ring_buffer_pipeline(
         contains(linear_ring(owner), memory(owner->data));
         contains(linear_ring(owner), owned_ring_storage(owner->data));
     }
-    simp();
+    have result == replacement by {
+        assumption();
+    }
+    have owner->head == old(owner->head) by {
+        assumption();
+    }
+    have owner->tail == 4 by {
+        assumption();
+    }
+    have owner->data == old(owner->data) by {
+        assumption();
+    }
+    have owner->data[0] == replacement by {
+        assumption();
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }

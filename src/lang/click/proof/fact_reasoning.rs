@@ -38,10 +38,108 @@ pub(super) fn snapshot_bridged_fact_is_available(
 ) -> bool {
     let Some((required_condition, candidates)) = snapshot_blind_candidates(required, available)
     else {
-        return false;
+        // Compound propositions (an implication ensure, a conjunction) have
+        // no single condition to normalize, but their leaves can still be
+        // two spellings of one fact across snapshots. A cheap snapshot-blind
+        // structural filter picks candidates first, so the assumption context
+        // and the kernel bridge are built only when a same-shape fact exists.
+        if matches!(required, Proposition::ConditionIs(_, _)) {
+            return false;
+        }
+        let candidates = available
+            .iter()
+            .filter(|fact| compound_propositions_match_ignoring_memories(fact, required))
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return false;
+        }
+        let assumptions = framing.iter().fold(
+            assumptions_from_propositions(available),
+            |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
+        );
+        return candidates
+            .iter()
+            .any(|fact| propositions_equal_modulo_proven_snapshots(fact, required, &assumptions));
     };
     let assumptions = assumptions_from_propositions(available);
     snapshot_bridge_proves(&required_condition, &candidates, assumptions, framing)
+}
+
+/// Snapshot-blind structural pre-filter for the compound bridge: identical
+/// connective skeletons whose condition leaves match ignoring memory
+/// operands. Decides nothing — it only gates the expensive proof.
+fn compound_propositions_match_ignoring_memories(left: &Proposition, right: &Proposition) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left, right) {
+        (
+            Proposition::ConditionIs(left_condition, left_value),
+            Proposition::ConditionIs(right_condition, right_value),
+        ) => {
+            left_value == right_value
+                && conditions_equal_ignoring_memories(
+                    &normalize_condition_modulo_memories(left_condition),
+                    &normalize_condition_modulo_memories(right_condition),
+                )
+        }
+        (Proposition::Implies(left_a, left_b), Proposition::Implies(right_a, right_b))
+        | (Proposition::And(left_a, left_b), Proposition::And(right_a, right_b))
+        | (Proposition::Or(left_a, left_b), Proposition::Or(right_a, right_b)) => {
+            compound_propositions_match_ignoring_memories(left_a, right_a)
+                && compound_propositions_match_ignoring_memories(left_b, right_b)
+        }
+        (Proposition::Not(left_body), Proposition::Not(right_body)) => {
+            compound_propositions_match_ignoring_memories(left_body, right_body)
+        }
+        _ => false,
+    }
+}
+
+/// Structural proposition equality whose condition leaves are decided by the
+/// kernel's snapshot bridge: two spellings of one compound fact whose load
+/// atoms carry different certified snapshots. Structure must match exactly,
+/// so this never accepts a weaker or stronger proposition.
+fn propositions_equal_modulo_proven_snapshots(
+    left: &Proposition,
+    right: &Proposition,
+    assumptions: &PureFactContext,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left, right) {
+        (
+            Proposition::ConditionIs(left_condition, left_value),
+            Proposition::ConditionIs(right_condition, right_value),
+        ) => {
+            left_value == right_value
+                && assumptions.conditions_equal_modulo_proven_snapshots(
+                    &normalize_condition_modulo_memories(left_condition),
+                    &normalize_condition_modulo_memories(right_condition),
+                )
+        }
+        (Proposition::Implies(left_a, left_b), Proposition::Implies(right_a, right_b)) => {
+            propositions_equal_modulo_proven_snapshots(left_a, right_a, assumptions)
+                && propositions_equal_modulo_proven_snapshots(left_b, right_b, assumptions)
+        }
+        (Proposition::And(left_a, left_b), Proposition::And(right_a, right_b))
+        | (Proposition::Or(left_a, left_b), Proposition::Or(right_a, right_b)) => {
+            propositions_equal_modulo_proven_snapshots(left_a, right_a, assumptions)
+                && propositions_equal_modulo_proven_snapshots(left_b, right_b, assumptions)
+        }
+        (Proposition::Not(left_body), Proposition::Not(right_body)) => {
+            propositions_equal_modulo_proven_snapshots(left_body, right_body, assumptions)
+        }
+        _ => false,
+    }
+}
+
+fn normalize_condition_modulo_memories(condition: &ConditionTerm) -> ConditionTerm {
+    match normalize_direct_atomic_memory_loads(&Proposition::ConditionIs(condition.clone(), true)) {
+        Proposition::ConditionIs(normalized, _) => normalized,
+        _ => condition.clone(),
+    }
 }
 
 /// `snapshot_bridged_fact_is_available` where the caller already holds the
@@ -206,6 +304,45 @@ pub(super) fn exact_proper_conjunct_is_available(
 ) -> bool {
     available.iter().any(|fact| {
         matches!(fact, Proposition::And(_, _)) && exact_fact_contains_conjunct(fact, required)
+    })
+}
+
+/// Modus ponens as a bounded structural rule for the simple `extract` tactic:
+/// `required` is a consequent reached by walking an available (possibly
+/// chained) implication whose antecedents are each themselves available
+/// facts. Antecedents and the consequent match exactly, up to condition
+/// polarity, or by the snapshot bridge — never by derivation. Work is linear
+/// in the available facts times the implication depth; nothing is searched.
+pub(super) fn discharged_implication_consequent_is_available(
+    required: &Proposition,
+    available: &[Proposition],
+) -> bool {
+    if !available
+        .iter()
+        .any(|fact| matches!(fact, Proposition::Implies(_, _)))
+    {
+        return false;
+    }
+    let assumptions = assumptions_from_propositions(available);
+    let fact_available = |needed: &Proposition| {
+        pure_fact_is_replay_available(needed, available)
+            || available.iter().any(|fact| {
+                condition_polarity_equivalent(fact, needed)
+                    || propositions_equal_modulo_proven_snapshots(fact, needed, &assumptions)
+            })
+    };
+    available.iter().any(|fact| {
+        let mut current = fact;
+        while let Proposition::Implies(antecedent, consequent) = current {
+            if !fact_available(antecedent) {
+                return false;
+            }
+            if propositions_equal_modulo_proven_snapshots(consequent, required, &assumptions) {
+                return true;
+            }
+            current = consequent;
+        }
+        false
     })
 }
 

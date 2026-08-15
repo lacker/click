@@ -54,6 +54,21 @@ edge: walks cross `Store` only under proven pointer-distinctness,
 `CallHavoc` only under proven range-disjointness, and **never** cross
 `LoopHavoc` — loop havoc has no write set to be disjoint from.
 
+The same identity governs load canonicalization. The
+materialization-source jump in `canonical_memory_for_pointer_load`
+(replacing a memory whose same-block cells are all materialization
+cells with their common source) re-adds the original memory's
+`havoc:`/`call-havoc:` marker blocks after the jump: the surviving
+cells witness only that *they* are unchanged since the source, never
+that the loaded pointer is. Dropping the markers let a load be treated
+as unchanged across a havoc that listed its own pointer as mutable;
+`sibling_materialization_cells_must_not_launder_a_havoc`
+(`src/kernel/tests/memory_dag_tests.rs`) pins the fix. Spellings that
+legitimately differ only by marker-preserving materialization are
+reconciled by the bounded per-cell matcher
+(`memories_match_for_pointer_load_under_assumptions`), which requires
+equal marker sets before comparing cells.
+
 Flag: `CLICK_DISABLE_MEMORY_DAG` skips every recording and every DAG
 arm, restoring the pre-arc path exactly. Default on; the A/B handle.
 

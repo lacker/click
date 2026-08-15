@@ -2507,6 +2507,7 @@ pub(super) fn plan_explicit_named_signed_rule(
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
     plan_explicit_implies_refuted_antecedent(goal, premise_pairs)
+        .or_else(|| plan_explicit_discharged_implication_consequent(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_strictly_increases(goal, premise_pairs))
         .or_else(|| plan_explicit_successor_le_implies_lt(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_preserves_order(goal, premise_pairs))
@@ -3007,6 +3008,42 @@ fn plan_explicit_implies_refuted_antecedent(
             return Some(tactics);
         }
         current = consequent;
+    }
+    None
+}
+
+/// Modus ponens over a listed implication premise: walk a (possibly chained)
+/// implication whose antecedents are each listed premises, and close the goal
+/// when a consequent along the walk is the goal. The emitted `extract` names
+/// the consequent's surface spelling, so replay re-checks the same bounded
+/// rule; `assumption` then closes the goal from the extracted fact.
+fn plan_explicit_discharged_implication_consequent(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let antecedent_listed = |antecedent: &Proposition| {
+        premise_pairs.iter().any(|(kernel, _)| {
+            kernel == antecedent || condition_polarity_equivalent(kernel, antecedent)
+        })
+    };
+    for (kernel, surface) in premise_pairs {
+        let mut current = (kernel, surface);
+        while let (
+            Proposition::Implies(antecedent, consequent),
+            ClickProposition::Implies(_, surface_consequent),
+        ) = (current.0, current.1)
+        {
+            if !antecedent_listed(antecedent) {
+                break;
+            }
+            if consequent.as_ref() == goal || condition_polarity_equivalent(consequent, goal) {
+                return Some(vec![
+                    ProofTactic::Extract(surface_consequent.as_ref().clone()),
+                    ProofTactic::Assumption,
+                ]);
+            }
+            current = (consequent, surface_consequent);
+        }
     }
     None
 }

@@ -272,6 +272,10 @@ impl CMemory {
             .any(|base| heap_allocation_may_contain_pointer(base, pointer))
     }
 
+    pub(in crate::kernel) fn heap_live_allocation_bases(&self) -> impl Iterator<Item = &Pointer> {
+        self.heap.live_allocations.keys()
+    }
+
     pub(in crate::kernel) fn is_uninitialized_heap_address(&self, pointer: &Pointer) -> bool {
         self.heap
             .uninitialized_allocations

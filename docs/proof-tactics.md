@@ -72,7 +72,7 @@ remains migration compatibility and should not be used in new proofs.
 | `simp()` | smart | Simplify the current proposition goal. It never executes C. |
 | `simp() using { P; ... }` | smart | Search for a proof using exactly the listed proposition facts. Expansion either emits named simple steps or reports the missing simple proof rule. |
 | `assumption()` | simple | Close the goal from an exact available fact. |
-| `extract(P)` | simple | Add `P` when it is a proper conjunct of an exact available conjunction. |
+| `extract(P)` | simple | Add `P` when it is a proper conjunct of an exact available conjunction, or the consequent of an available (possibly chained) implication whose antecedents are each available facts — modus ponens as a bounded structural rule, never a search. |
 | `normalize()` | simple | Close a context-free normalization goal. |
 | `rewrite(P)` | simple | Rewrite the current proposition, including memory-resource ranges, with an exact available equality. |
 | `intro()` | simple | Introduce an implication antecedent, negated proposition, or universal binder; an introduced binder is available by its Click name to following tactics. |

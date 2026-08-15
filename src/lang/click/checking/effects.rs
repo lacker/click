@@ -198,13 +198,27 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
     for range in effect_facts
         .iter()
         .filter_map(|fact| match fact.proposition() {
-            Proposition::CMemoryEffectSummary { mutable_ranges, .. } => {
-                Some(mutable_ranges.as_slice())
-            }
+            Proposition::CMemoryEffectSummary {
+                before,
+                mutable_ranges,
+                ..
+            } => Some(mutable_ranges.iter().map(move |range| (before, range))),
             _ => None,
         })
         .flatten()
-        .filter(|range| is_preexisting_effect_pointer(range.base(), pre_state))
+        .filter(|(before, range)| {
+            is_preexisting_effect_pointer(range.base(), pre_state)
+                // Same fresh-allocation exemption as the footprint proof:
+                // a range keyed to an allocation the summary's own entry
+                // memory holds live, with no matching allocation at function
+                // entry, is not governed by the entry footprint.
+                && !(crate::kernel::c_memory_holds_live_heap_allocation_at(before, range.base())
+                    && !crate::kernel::c_memory_holds_live_heap_allocation_at(
+                        pre_state.memory(),
+                        range.base(),
+                    ))
+        })
+        .map(|(_, range)| range)
     {
         check_effect_planning_deadline()?;
         if segments
@@ -372,13 +386,32 @@ fn prove_mutation_footprint_with_policy(
     let effect_summary_ranges = effect_facts
         .iter()
         .filter_map(|fact| match fact.proposition() {
-            Proposition::CMemoryEffectSummary { mutable_ranges, .. } => {
-                Some(mutable_ranges.as_slice())
-            }
+            Proposition::CMemoryEffectSummary {
+                before,
+                mutable_ranges,
+                ..
+            } => Some(mutable_ranges.iter().map(move |range| (before, range))),
             _ => None,
         })
         .flatten()
-        .filter(|range| is_preexisting_effect_pointer(range.base(), pre_state));
+        .filter(|(before, range)| {
+            is_preexisting_effect_pointer(range.base(), pre_state)
+                // A range keyed to a heap allocation the summary's own entry
+                // memory holds live, with no matching live allocation at
+                // function entry, writes memory the caller could not have
+                // held when the footprint was declared (a callee reallocated
+                // it mid-execution); the entry footprint does not govern it.
+                // Spellings are kernel-minted, so an entry allocation always
+                // matches its own entry key up to exact materialization.
+                && !(crate::kernel::c_memory_holds_live_heap_allocation_at(
+                    before,
+                    range.base(),
+                ) && !crate::kernel::c_memory_holds_live_heap_allocation_at(
+                    pre_state.memory(),
+                    range.base(),
+                ))
+        })
+        .map(|(_, range)| range);
 
     for range in effect_summary_ranges {
         if !segments.iter().any(|segment| match policy {

@@ -1955,12 +1955,30 @@ pub(super) fn lower_smart_simp_suffix_have(
         return None;
     };
     let (last, prefix) = tactics.split_last()?;
-    if !matches!(last, ProofTactic::Simp) {
-        return None;
+    let mut closers = vec![vec![ProofTactic::Assumption], vec![ProofTactic::Normalize]];
+    match last {
+        ProofTactic::Simp => {}
+        // A restricted `simp() using` that eliminated a listed implication
+        // lowers to the explicit bounded rule: `extract` the discharged
+        // consequent, then close by `assumption`. Candidates are validated
+        // below by full replay, so an unhelpful premise shape is only skipped.
+        ProofTactic::SimpUsing(simp) => {
+            for premise in &simp.premises {
+                let mut current = premise;
+                while let ClickProposition::Implies(_, consequent) = current {
+                    closers.push(vec![
+                        ProofTactic::Extract(consequent.as_ref().clone()),
+                        ProofTactic::Assumption,
+                    ]);
+                    current = consequent;
+                }
+            }
+        }
+        _ => return None,
     }
-    for closer in [ProofTactic::Assumption, ProofTactic::Normalize] {
+    for closer in closers {
         let mut candidate_tactics = prefix.to_vec();
-        candidate_tactics.push(closer);
+        candidate_tactics.extend(closer);
         let candidate = ProofHave {
             proposition: have.proposition.clone(),
             proof: Proof::Script(candidate_tactics),
@@ -2488,6 +2506,23 @@ pub(super) fn surface_smart_have_certificate(
             .expect("restricted premises were resolved above");
         for ((_, surface), (_, spelling)) in pairs.iter().zip(resolved) {
             if !matches!(spelling, PremiseSpelling::SnapshotBridged) {
+                continue;
+            }
+            // Only tactics that demand the premise as an exact replay-time
+            // fact need the spelling materialized. `extract` and
+            // `assumption` replay decide a bridged spelling with the same
+            // snapshot bridge that certified the premise, so a bridged
+            // premise consumed only by them needs no transport.
+            let consumed_exactly = explicit.iter().any(|tactic| match tactic {
+                ProofTactic::Rewrite(equality) => {
+                    equality == surface
+                        || reverse_surface_equality(surface)
+                            .is_some_and(|reverse| &reverse == equality)
+                }
+                ProofTactic::Contradiction(fact) => fact == surface,
+                _ => false,
+            });
+            if !consumed_exactly {
                 continue;
             }
             let Some(source) = reflexive_snapshot_transport_source(surface) else {

@@ -206,7 +206,9 @@ fn lower_point_proposition_with_memory_resolution(
     )
 }
 
-fn reverse_surface_equality(proposition: &ClickProposition) -> Option<ClickProposition> {
+pub(in crate::lang::click::proof) fn reverse_surface_equality(
+    proposition: &ClickProposition,
+) -> Option<ClickProposition> {
     let ClickProposition::Comparison {
         left,
         operator: ComparisonOperator::Equal,
@@ -1333,9 +1335,11 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         "`{claim_label}` {proof_name} proof {outer_tactic_index}: `extract` could not lower proposition: {message}"
                     ))
                 })?;
-                if !exact_proper_conjunct_is_available(&proposition, &available) {
+                if !exact_proper_conjunct_is_available(&proposition, &available)
+                    && !discharged_implication_consequent_is_available(&proposition, &available)
+                {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: `extract` proposition is not a proper conjunct of an exact available fact: {}",
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: `extract` proposition is not a proper conjunct of an exact available fact or a discharged implication consequent: {}",
                         describe_pure_fact(&proposition, parameters, arguments)
                     )));
                 }
