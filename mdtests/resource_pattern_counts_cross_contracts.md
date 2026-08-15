@@ -36,7 +36,7 @@ void pool_roundtrip(struct pool* pool, int32 object) {
 ```
 
 ```click
-resource available(object: int32);
+abstract resource available(object: int32);
 resource pool_object(pool: struct pool*, object: int32) {
     contains available(object);
 }

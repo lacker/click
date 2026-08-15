@@ -39,8 +39,14 @@ exclusive lifetime obligation, and it can be discharged only by the trusted
 heap-free transition. It deliberately grants no memory access; an owning
 wrapper normally contains both allocation authority and `object(base)`.
 
-Bodyless declarations are token resources. Declarations with a body are
-composite resources:
+Abstract declarations use the token representation. Ordinary resource
+declarations require a body and use the composite representation:
+
+```click
+abstract resource open_fd(fd: int32);
+```
+
+For example, a composite resource is declared as:
 
 ```click
 resource owner_buffer(owner: struct owner*) {
@@ -377,7 +383,7 @@ repeated loads, but it does not allow stores.
 
 ## Declared Resource And Population Rules
 
-Bodyless resources are exact-match owned capabilities:
+Abstract resources are exact-match owned capabilities:
 
 - exact-match entailment only,
 - equal owned units normalize to a quantity,

@@ -3,7 +3,7 @@
 This checks that theorem proof scripts cannot manipulate the resource context.
 
 ```click
-resource token(x: int32);
+abstract resource token(x: int32);
 
 theorem fold_tactic_is_not_pure(x: int32) {
     ensures x == x by {

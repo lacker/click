@@ -10,7 +10,7 @@ int32 inspect_server(int32 fd, int32 state[]) {
 ```
 
 ```click
-resource socket_open(fd: int32);
+abstract resource socket_open(fd: int32);
 
 resource live_server(fd: int32, state: int32*) {
     contains socket_open(fd);

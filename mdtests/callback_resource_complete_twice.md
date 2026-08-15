@@ -20,7 +20,7 @@ int32 complete_twice(int32 cb) {
 ```
 
 ```click
-resource can_complete(cb: int32);
+abstract resource can_complete(cb: int32);
 
 verifying "complete.c";
 verifying "complete_twice.c";

@@ -216,7 +216,9 @@ fn resource_member_project(member_count: usize) -> (String, String) {
     let c_source = "int32 preserve_bundle(int32 p[]) { return 0; }\n".to_string();
     let mut click_source = String::new();
     for index in 0..member_count {
-        click_source.push_str(&format!("resource member_{index}(value: int32);\n"));
+        click_source.push_str(&format!(
+            "abstract resource member_{index}(value: int32);\n"
+        ));
     }
     click_source.push_str("\nresource bundle(p: int32*) {\n");
     for index in 0..member_count {

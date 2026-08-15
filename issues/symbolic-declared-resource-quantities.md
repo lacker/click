@@ -6,11 +6,11 @@ unit. A contract cannot create, retain, or consume a runtime-sized number of
 units without spelling one clause per unit. This prevents capacity and permit
 APIs from making their runtime bounds into linear authority.
 
-The bounded-pool example is the motivating case. Unused capacity should be a
-bodyless token:
+The bounded-pool example is the motivating case. Unused capacity should be an
+abstract resource:
 
 ```click
-resource pool_slot(pool: struct pool*);
+abstract resource pool_slot(pool: struct pool*);
 ```
 
 Initialization should produce `capacity` slots, checkout should exchange one
@@ -90,8 +90,8 @@ the arithmetic expression size.
 
 ## Staged implementation
 
-The first green slice supports symbolic quantities on user-declared bodyless
-tokens. It establishes the general syntax, coefficient representation, zero
+The first green slice supports symbolic quantities on user-declared abstract
+resources. It establishes the general syntax, coefficient representation, zero
 identity, splitting/rejoining algebra, contract obligations, diagnostics, and
 certification path. It explicitly rejects quantified memory, allocation, and
 composite resources with a focused diagnostic.
@@ -158,7 +158,7 @@ object ownership, transfer behavior, and complete lifecycle.
   the resource identity.
 - No quantity operation performs work proportional to the coefficient's
   runtime value.
-- The bodyless-token slice rejects unsupported composite and lifetime cases
+- The abstract-resource slice rejects unsupported composite and lifetime cases
   rather than silently applying incomplete semantics.
 - The bounded-pool slot model verifies unchanged C, including zero capacity,
   ordinary checkout/return, transfer, and destruction.

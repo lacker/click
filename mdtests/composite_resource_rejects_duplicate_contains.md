@@ -10,7 +10,7 @@ int32 zero(int32 fd) {
 ```
 
 ```click
-resource socket_open(fd: int32);
+abstract resource socket_open(fd: int32);
 
 resource bad_bundle(fd: int32) {
     contains socket_open(fd);

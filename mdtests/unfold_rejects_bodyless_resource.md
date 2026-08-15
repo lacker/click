@@ -1,7 +1,7 @@
-# `unfold` rejects a resource without a body
+# `unfold` rejects an abstract resource
 
 The resource laws (`unfold`, `fold`, `observe`) read the named resource's body.
-Composite resources may provide one. A bodyless declared resource has none, so
+Composite resources provide one. An abstract resource has none, so
 naming one must be reported before any law is applied.
 
 ```c filename=use_token.c
@@ -11,7 +11,7 @@ int32 use_token(int32 fd) {
 ```
 
 ```click
-resource socket_open(fd: int32);
+abstract resource socket_open(fd: int32);
 
 verifying "use_token.c";
 

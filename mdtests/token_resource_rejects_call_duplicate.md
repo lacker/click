@@ -19,7 +19,7 @@ int32 call_same(int32 cb) {
 ```
 
 ```click
-resource can_complete(cb: int32);
+abstract resource can_complete(cb: int32);
 
 verifying "consume_two.c";
 verifying "call_same.c";

@@ -1,4 +1,4 @@
-resource allocation(base: int32*, bytes: int32);
+abstract resource allocation(base: int32*, bytes: int32);
 
 theorem int32_increment_upper_bound(value: int32, upper: int32) {
     requires value < upper;

@@ -4,7 +4,7 @@
 explicit resource verb.
 
 ```click
-resource open_fd(fd: int32);
+abstract resource open_fd(fd: int32);
 
 verifying "identity.c";
 

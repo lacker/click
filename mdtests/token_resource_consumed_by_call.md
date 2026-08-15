@@ -26,7 +26,7 @@ int32 borrow_after_close(int32 fd) {
 ```
 
 ```click
-resource open_fd(fd: int32);
+abstract resource open_fd(fd: int32);
 
 verifying "borrow_fd.c";
 verifying "close_fd.c";

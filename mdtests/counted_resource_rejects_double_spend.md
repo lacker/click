@@ -18,7 +18,7 @@ int32 spend_ref_twice(int32 object) {
 ```
 
 ```click
-resource object_ref(object: int32);
+abstract resource object_ref(object: int32);
 
 verifying "spend_ref.c";
 verifying "spend_ref_twice.c";

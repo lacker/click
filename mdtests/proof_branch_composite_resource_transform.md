@@ -30,9 +30,9 @@ int32 select_ready(int32 key, int32 choose_left) {
 ```
 
 ```click
-resource left_path(key: int32);
-resource right_path(key: int32);
-resource ready_permit(key: int32);
+abstract resource left_path(key: int32);
+abstract resource right_path(key: int32);
+abstract resource ready_permit(key: int32);
 
 resource ready_bundle(key: int32) {
     contains ready_permit(key);

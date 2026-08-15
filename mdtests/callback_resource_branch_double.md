@@ -24,7 +24,7 @@ int32 complete_maybe_twice(int32 cb, int32 failed) {
 ```
 
 ```click
-resource can_complete(cb: int32);
+abstract resource can_complete(cb: int32);
 
 verifying "complete.c";
 verifying "complete_maybe_twice.c";

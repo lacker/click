@@ -196,12 +196,12 @@ snapshot is not visible at an opaque call site. Calling such a function reports
 that its contract cannot be exposed opaquely rather than reporting a dependency
 ordering error.
 
-## Token Resources
+## Abstract Resources
 
-You can declare an exact-match resource:
+You can declare an exact-match abstract resource:
 
 ```click
-resource open_fd(fd: int32);
+abstract resource open_fd(fd: int32);
 ```
 
 Then a contract can require and return instances of that resource:
@@ -212,15 +212,17 @@ int32 borrow_fd(int32 fd) {
 }
 ```
 
-A token resource is transferred by function calls. If a callee `owns
+An abstract resource is transferred by function calls. If a callee `owns
 open_fd(fd)`, the caller gets the token back. If the callee `consumes
 open_fd(fd)`, the caller loses the token.
 
-Token resources currently have exact-match behavior only. They do not split,
+Abstract resources currently have exact-match behavior only. They do not split,
 rejoin, imply other resources, authorize C statements, or define custom algebra
 rules. Resource arguments currently support current-state C expressions such as
 parameters, constants, arithmetic, pointer expressions, and indexes. Arguments
-are checked against the types declared in the resource definition.
+are checked against the types declared in the resource definition. They have no
+local `fold` or construction rule: a contract may assume, transfer, return, or
+consume an abstract unit, but verified code cannot establish its first unit.
 
 Equal declared resources accumulate as an exact quantity. Duplicate clauses
 such as two `consumes open_fd(fd);` entries require two units, and a call cannot
@@ -232,7 +234,7 @@ Every declared resource can have several independently consumable units with
 the same arguments:
 
 ```click
-resource object_ref(object: struct object*);
+abstract resource object_ref(object: struct object*);
 ```
 
 Click stores equal owned units as one canonical fact with a quantity. A
@@ -253,7 +255,7 @@ Inside `count(...)`, `_` is a wildcard over one resource argument. For example,
 A function spec may exist only to consume a resource:
 
 ```click
-resource can_complete(cb: int32);
+abstract resource can_complete(cb: int32);
 
 int32 complete(int32 cb) {
     consumes can_complete(cb);
@@ -529,7 +531,7 @@ Implemented today:
 - viewed and owned elements over memory ranges,
 - an internal memory resource family boundary for entailment, consumption,
   access authorization, splitting, and joining,
-- exact-match token resources declared with `resource name(...)`,
+- exact-match abstract resources declared with `abstract resource name(...)`,
 - exact-match declared resources with canonical owned quantities,
   unit-by-unit contract transfer, exact and wildcard population counts, and
   scoped access to shared population bodies,

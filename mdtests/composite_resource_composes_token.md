@@ -1,6 +1,6 @@
-# composite resource composes token resources
+# composite resource composes abstract resources
 
-This checks that a composite resource can bundle another token resource with
+This checks that a composite resource can bundle an abstract resource with
 memory permission and a fact.
 
 ```c filename=init_server.c
@@ -21,7 +21,7 @@ int32 use_server(int32 fd, int32 state[]) {
 ```
 
 ```click
-resource socket_open(fd: int32);
+abstract resource socket_open(fd: int32);
 
 resource live_server(fd: int32, state: int32*) {
     contains socket_open(fd);

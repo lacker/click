@@ -10,7 +10,7 @@ int32 use_once(int32 cb) {
 ```
 
 ```click
-resource can_complete(cb: int32);
+abstract resource can_complete(cb: int32);
 
 verifying "use_once.c";
 

@@ -244,8 +244,10 @@ impl Parser {
                 click_function_definitions.push(self.parse_click_function_definition()?);
             } else if self.peek_ident() == Some("theorem") {
                 theorem_definitions.push(self.parse_theorem_definition()?);
+            } else if self.peek_ident() == Some("abstract") {
+                resource_definitions.push(self.parse_resource_definition(true)?);
             } else if self.peek_ident() == Some("resource") {
-                resource_definitions.push(self.parse_resource_definition()?);
+                resource_definitions.push(self.parse_resource_definition(false)?);
             } else if self.peek_ident() == Some("counted") {
                 return Err(self
                     .error("`counted resource` has been removed; declare an ordinary `resource`"));
@@ -327,7 +329,13 @@ impl Parser {
         })
     }
 
-    fn parse_resource_definition(&mut self) -> Result<ResourceDefinition, ClickError> {
+    fn parse_resource_definition(
+        &mut self,
+        is_abstract: bool,
+    ) -> Result<ResourceDefinition, ClickError> {
+        if is_abstract {
+            self.expect_ident_spelling("abstract")?;
+        }
         self.expect_ident_spelling("resource")?;
         let name = self.expect_ident("resource name")?;
         self.expect(Token::LParen)?;
@@ -338,18 +346,23 @@ impl Parser {
             parsed_parameters.struct_params,
         );
         let composite_body = match self.peek() {
-            Some(Token::Semicolon) => {
+            Some(Token::Semicolon) if is_abstract => {
                 self.position += 1;
                 None
             }
-            Some(Token::LBrace) => Some(self.parse_composite_resource_body()?),
+            Some(Token::Semicolon) => {
+                return Err(self
+                    .error("a resource without a body must be declared with `abstract resource`"));
+            }
+            Some(Token::LBrace) if !is_abstract => Some(self.parse_composite_resource_body()?),
+            Some(Token::LBrace) => {
+                return Err(self.error("an `abstract resource` cannot have a body"));
+            }
             Some(token) => {
-                return Err(self.error(format!(
-                    "expected `;` or composite resource body, got {token:?}"
-                )));
+                return Err(self.error(format!("expected resource body, got {token:?}")));
             }
             None => {
-                return Err(self.error("expected `;` or composite resource body, got end of input"));
+                return Err(self.error("expected resource body, got end of input"));
             }
         };
         self.current_struct_params = previous_struct_params;

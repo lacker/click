@@ -260,7 +260,7 @@ fn parses_proof_tactic_script() {
 #[test]
 fn parses_composite_resource_definition() {
     let source = r#"
-            resource socket_open(fd: int32);
+            abstract resource socket_open(fd: int32);
 
             resource uncalled(flag: int32*) {
                 contains socket_open(7);
@@ -365,7 +365,7 @@ fn parses_resource_observe_unfold_and_fold_tactics() {
 #[test]
 fn parses_resource_verb_function_clauses() {
     let source = r#"
-            resource socket_open(fd: int32);
+            abstract resource socket_open(fd: int32);
 
             verifying "identity.c";
 

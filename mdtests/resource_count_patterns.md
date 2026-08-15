@@ -10,7 +10,7 @@ int32 inspect_counts(int32 pool, int32 first, int32 second, int32 other_pool) {
 ```
 
 ```click
-resource checked_out(pool: int32, object: int32);
+abstract resource checked_out(pool: int32, object: int32);
 
 verifying "resource_count_patterns.c";
 

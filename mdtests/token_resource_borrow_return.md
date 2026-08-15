@@ -21,7 +21,7 @@ int32 borrow_fd_twice(int32 fd) {
 ```
 
 ```click
-resource open_fd(fd: int32);
+abstract resource open_fd(fd: int32);
 
 verifying "borrow_fd.c";
 verifying "borrow_fd_twice.c";

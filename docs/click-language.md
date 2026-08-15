@@ -446,18 +446,19 @@ The family defines how resources entail, split, rejoin, transfer, and consume
 each other. This keeps the user-facing memory syntax concrete while sharing the
 same context machinery with non-memory resources.
 
-Click also supports exact-match declared resources:
+Click also supports exact-match abstract resources:
 
 ```click
-resource open_fd(fd: int32);
+abstract resource open_fd(fd: int32);
 ```
 
-After declaration, `owns open_fd(fd)`, `views open_fd(fd)`, `consumes
-open_fd(fd)`, and `produces open_fd(fd)` use the same resource context.
-Arguments are type checked. Repeated equal owned units form a quantity; a
-requirement for two units cannot be satisfied by one.
+An abstract resource has no locally visible body and must use the explicit
+`abstract resource` spelling. After declaration, `owns open_fd(fd)`,
+`views open_fd(fd)`, `consumes open_fd(fd)`, and `produces open_fd(fd)` use the
+same resource context. Arguments are type checked. Repeated equal owned units
+form a quantity; a requirement for two units cannot be satisfied by one.
 
-A declared resource may have a body shared by all equal units:
+An ordinary resource declaration requires a body shared by all equal units:
 
 ```click
 resource object_ref(obj: struct object*) {
@@ -468,7 +469,7 @@ resource object_ref(obj: struct object*) {
 
 Repeated owned clauses denote a quantity rather than a duplicate-ownership
 error. Each `owns`, `consumes`, or `produces` clause still transfers one unit.
-The optional body belongs to the population as a whole, not once per unit.
+The body belongs to the population as a whole, not once per unit.
 `count(object_ref(obj))` is an `int32` expression naming the population size.
 The example above therefore says that all references together own the object
 and that its stored count equals their logical total. A wildcard argument sums
@@ -505,7 +506,7 @@ contract.
 Composite resources are declared resources with a body:
 
 ```click
-resource socket_open(fd: int32);
+abstract resource socket_open(fd: int32);
 
 resource uncalled(flag: int32*) {
     contains socket_open(7);

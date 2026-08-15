@@ -25,7 +25,7 @@ int32 complete_on_each_path(int32 cb, int32 failed) {
 ```
 
 ```click
-resource can_complete(cb: int32);
+abstract resource can_complete(cb: int32);
 
 verifying "complete.c";
 verifying "complete_on_each_path.c";
