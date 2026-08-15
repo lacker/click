@@ -563,6 +563,39 @@ pub(super) fn check_atomic_premise_derivation_goal(
     if premise_only_derivation.is_some() {
         return Ok(());
     }
+    // Overflow side-conditions are execution-certified facts with no Surface
+    // Click spelling, so a certificate can never list them; replay consumes
+    // them from the ambient record, and this check may too. Only that shape
+    // widens the premise set — evidence for everything else stays listed.
+    let ambient_overflow_facts = available
+        .iter()
+        .filter(|fact| {
+            matches!(
+                fact,
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedAddOverflows(_, _)
+                        | ConditionTerm::Bitvector32SignedSubtractOverflows(_, _)
+                        | ConditionTerm::Bitvector32SignedMultiplyOverflows(_, _)
+                        | ConditionTerm::Bitvector32SignedDivideOverflows(_, _)
+                        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, _),
+                    false,
+                )
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if !ambient_overflow_facts.is_empty() {
+        let mut widened = premises.clone();
+        widened.extend(ambient_overflow_facts);
+        let widened_assumptions = assumptions_from_propositions(&widened);
+        if widened_assumptions
+            .derive_atomic_proposition(target)
+            .or_else(|| widened_assumptions.derive_simp_atomic_proposition(target))
+            .is_some()
+        {
+            return Ok(());
+        }
+    }
     let explicit_assumptions = assumptions_from_propositions(available);
     let explicit_terms_equal = |left: &Bitvector32Term, right: &Bitvector32Term| {
         left == right

@@ -269,6 +269,30 @@ pub(super) fn lower_surface_atomic_derivation(
                 }
             }
         }
+        // A recovered spelling can reference a C local that has left scope
+        // by the outcome point; such a pair would fail certificate replay's
+        // own premise lowering, so it is dropped rather than listed. The
+        // derivation check below still validates that the surviving
+        // premises suffice.
+        premise_pairs.retain(|(_, surface)| {
+            replay
+                .surface_propositions
+                .available_kernel(surface, available)
+                .is_some()
+                || lower_point_proposition(
+                    surface,
+                    available,
+                    parameters,
+                    arguments,
+                    replay.old_reference_state(state),
+                    state,
+                    None,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .is_ok()
+        });
         if replay_kind(&premise_pairs).is_none() {
             return Err(ClickError::new(format!(
                 "surface premises do not replay the atomic derivation of {}\nunexpressed derivation premises: {}",

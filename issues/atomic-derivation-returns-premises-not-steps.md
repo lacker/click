@@ -88,3 +88,20 @@ message is the diagnostic of record for any regression.
   still replays and audits.
 - The relief ordering (premise pairs before harvest) becomes dead code and
   is removed with the harvest.
+
+## New reproduction (2026-08-14, lazy-separation prototype)
+
+`mdtests/field_derived_precise_effect_after_metadata_write.md` is
+quarantined against this issue. `buffer_push_preserves_first`'s smart
+`frame()` finds its plan, but lowering the contextual frame certificate
+re-searches for surface premises and fails twice over: an
+execution-certified `addition overflow is false` fact has no Surface
+Click spelling (widening the atomic check with ambient overflow facts
+landed but is not sufficient alone), and a recovered spelling references
+the C local `ignored` after it leaves scope (unlowerable pairs are now
+dropped rather than fatal, which advances the failure to a missing
+int32-equality premise). Every layer of this dance exists only because
+the derivation records premises instead of typed steps; with steps, the
+certificate transcribes instead of re-searching. De-quarantine the
+mdtest when this issue closes.
+
