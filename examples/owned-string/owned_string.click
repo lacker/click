@@ -149,7 +149,11 @@ int32 owned_string_init(
         memory(object(owner)),
         memory(owner->data[0..owner->cap])
     ) by {
-        simp();
+        simp() using {
+            separate(memory(object(owner)), memory(data[0..capacity]));
+            owner->data == data;
+            owner->cap == capacity;
+        }
     }
     fold(owned_string(owner));
     frame();

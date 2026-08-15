@@ -633,9 +633,6 @@ int32 owned_segmented_buffer_pipeline(
         loadable(old(object(owner)));
         loadable(old(first_data[0..first_len]));
         loadable(old(second_data[0..second_len]));
-        separate(memory(owner[0..6]), memory(first_data[0..first_len]));
-        separate(memory(owner[0..6]), memory(second_data[0..second_len]));
-        separate(memory(first_data[0..first_len]), memory(second_data[0..second_len]));
         ignored == first_len;
         owner->first_len == first_len;
         owner->second_len == second_len;
@@ -768,9 +765,6 @@ int32 owned_segmented_buffer_pipeline(
         owner->second_data[0] == second_value;
         at(statement(3).entry, loadable(old(first_data[0..first_len])));
         at(statement(3).entry, loadable(old(second_data[0..second_len])));
-        at(statement(3).entry, separate(memory(owner[0..6]), memory(first_data[0..first_len])));
-        at(statement(3).entry, separate(memory(owner[0..6]), memory(second_data[0..second_len])));
-        at(statement(3).entry, separate(memory(first_data[0..first_len]), memory(second_data[0..second_len])));
         at(statement(3).entry, ignored) == at(statement(3).entry, first_len);
         at(statement(4).entry, owner->first_len) == at(statement(3).entry, owner->first_len);
         at(statement(4).entry, owner->second_len) == at(statement(3).entry, owner->second_len);

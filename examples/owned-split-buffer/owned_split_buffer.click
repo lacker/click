@@ -187,13 +187,11 @@ int32 owned_split_buffer_pipeline(
         2 <= length;
         loadable(old(object(owner)));
         loadable(old(data[0..length]));
-        separate(memory(owner[0..4]), memory(data[0..length]));
     }
     step() using {
         2 <= length;
         loadable(old(object(owner)));
         loadable(old(data[0..length]));
-        separate(memory(owner[0..4]), memory(data[0..length]));
         ignored == 1;
         owner->split == 1;
         owner->len == length;
@@ -235,8 +233,10 @@ int32 owned_split_buffer_pipeline(
         }
     }
     have 1 < owner->len by {
-        rewrite(owner->len == length);
-        assumption();
+        simp() using {
+            1 < length;
+            owner->len == length;
+        }
     }
     step() using {
         1 < owner->len;
@@ -249,7 +249,6 @@ int32 owned_split_buffer_pipeline(
         loadable(old(object(owner)));
         owner->split == owner->split;
         owner->len == owner->len;
-        separate(memory(object(owner)), memory(data[0..length]));
     }
     transport(at(statement(4).entry, owner->data) == data, owner->data == data) using {
         at(statement(4).entry, owner->data) == data;
@@ -258,7 +257,6 @@ int32 owned_split_buffer_pipeline(
     transport(at(statement(4).entry, 1) < at(statement(4).entry, owner->len), 1 < owner->len) using {
         at(statement(4).entry, 1) < at(statement(4).entry, owner->len);
         owner->data == data;
-        separate(memory(object(owner)), memory(data[0..length]));
         2 <= length;
     }
     have data[0] == left_value by {
@@ -270,9 +268,17 @@ int32 owned_split_buffer_pipeline(
             owner->data == data;
         }
     }
-    have owner->split < owner->len by {
-        rewrite(owner->split == 1);
+    have owner->split == 1 by {
+        transport(at(statement(3).entry, owner->split) == 1, owner->split == 1) using {
+            at(statement(3).entry, owner->split) == 1;
+        }
         assumption();
+    }
+    have owner->split < owner->len by {
+        simp() using {
+            owner->split == 1;
+            1 < owner->len;
+        }
     }
     step() using {
         owner->split < owner->len;
@@ -282,7 +288,6 @@ int32 owned_split_buffer_pipeline(
         owner->data == data;
         data[0] == left_value;
         data[1] == right_value;
-        separate(memory(object(owner)), memory(data[0..length]));
     }
     have owner->data == data by {
         simp() using {
@@ -350,7 +355,6 @@ int32 owned_split_buffer_pipeline(
         at(statement(5).entry, owner->split) == 1;
         at(statement(5).exit, owner->split) == (at(statement(5).entry, owner->split) + 1);
         at(statement(5).entry, 2) <= at(statement(5).entry, length);
-        at(statement(5).entry, separate(memory(object(owner)), memory(data[0..length])));
         ignored == at(statement(5).entry, (owner->split + 1));
         owner->len == at(statement(5).entry, owner->len);
         owner->data == at(statement(5).entry, owner->data);

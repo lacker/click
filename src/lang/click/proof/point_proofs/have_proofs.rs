@@ -1580,6 +1580,14 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             // snapshot bridge's framing proof rather than by
                             // spelling coincidence.
                             && !snapshot_bridged_fact_is_available(&unfolded_goal, &available, &[])
+                            // A separation goal is served by the compact
+                            // carrier projection, not by a materialized pair
+                            // proposition; ask the prover directly.
+                            && !(matches!(
+                                unfolded_goal,
+                                Proposition::CResourceSeparate { .. }
+                            ) && assumptions_from_propositions(&available)
+                                .proves(&unfolded_goal))
                         {
                             return Err(ClickError::new(format!(
                                 "`{claim_label}` {proof_name} proof {outer_tactic_index}: `assumption` failed: {}",

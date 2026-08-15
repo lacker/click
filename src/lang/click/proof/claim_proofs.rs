@@ -2119,7 +2119,20 @@ pub(super) fn finish_ordered_proof_replay(
                                                     &kernel,
                                                     &certificate_available,
                                                     &[],
-                                                ))
+                                                )
+                                                    // A separation premise is
+                                                    // served by the compact
+                                                    // carrier projection, not
+                                                    // by a materialized pair
+                                                    // proposition; ask the
+                                                    // prover directly.
+                                                    || matches!(
+                                                        kernel,
+                                                        Proposition::CResourceSeparate { .. }
+                                                    ) && assumptions_from_propositions(
+                                                        &certificate_available,
+                                                    )
+                                                    .proves(&kernel))
                                                 .then_some((kernel, surface.clone()))
                                                 .ok_or_else(|| {
                                                     format!(

@@ -1177,6 +1177,20 @@ fn select_outcome_simp_certificate(
             let mut spelled_premises: Vec<ClickProposition> = Vec::new();
             let mut kernel_premises: Vec<Proposition> = Vec::new();
             let mut complete = true;
+            // A spelling that lowers to a snapshot-variant of the required
+            // premise still replays: the closing self-check below validates
+            // the actual lowered premises, so a bridged match can only fail
+            // closed, never accept a wrong certificate.
+            let bridged_match_assumptions = assumptions_from_propositions(&certified_context);
+            let bridged_match = |lowered: &Proposition, required: &Proposition| {
+                propositions_match_up_to_canonical_loads(lowered, required)
+                    || snapshot_bridged_fact_is_available_under(
+                        required,
+                        std::slice::from_ref(lowered),
+                        &bridged_match_assumptions,
+                        &[],
+                    )
+            };
             'premises: for required in derivation.context_premises() {
                 check_verification_deadline()?;
                 // A recorded spelling is only usable if it still lowers at
@@ -1185,7 +1199,7 @@ fn select_outcome_simp_certificate(
                 // scope; the replay map then cannot rescue that dead name.
                 if let Ok(surface) = replay.surface_propositions.surface(&required)
                     && let Ok(lowered) = check(surface)
-                    && propositions_match_up_to_canonical_loads(&lowered, &required)
+                    && bridged_match(&lowered, &required)
                 {
                     if !kernel_premises.contains(&lowered) {
                         kernel_premises.push(lowered);
@@ -1215,8 +1229,7 @@ fn select_outcome_simp_certificate(
                     // load spelling only recognizes candidates; the replay
                     // below must derive from this exact lowered proposition.
                     let lowered = check(&surface).ok()?;
-                    propositions_match_up_to_canonical_loads(&lowered, &required)
-                        .then_some((surface, lowered))
+                    bridged_match(&lowered, &required).then_some((surface, lowered))
                 }) {
                     if !kernel_premises.contains(&lowered) {
                         kernel_premises.push(lowered);
@@ -1241,7 +1254,7 @@ fn select_outcome_simp_certificate(
                         proposition: Box::new(core),
                     };
                     if let Ok(lowered) = check(&surface)
-                        && (propositions_match_up_to_canonical_loads(&lowered, &required)
+                        && (bridged_match(&lowered, &required)
                             // A quantified fact re-lowers with fresh binder
                             // variables; recognize it up to per-level binder
                             // renaming like the ambient premise pairing does.

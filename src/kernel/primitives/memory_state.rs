@@ -446,8 +446,27 @@ impl CMemory {
         // is fixed-key and the ranges are replay-stable.
         let write_set_fingerprint = {
             use std::hash::{Hash, Hasher};
+            // The fingerprint must identify the write set across the replay
+            // and the independent certification, which spell one call's
+            // ranges over different snapshot variants — so it hashes only
+            // spelling-invariant structure: the range count, each base
+            // block, and constant endpoints. That is enough to separate
+            // alpha-colliding call sequences whose havocs wrote different
+            // shapes; the full claim-scoped salt design is recorded in the
+            // issue for the residual same-shape collisions.
+            let mut shape = mutable_ranges
+                .iter()
+                .map(|range| {
+                    (
+                        format!("{:?}", range.base().block),
+                        range.start().as_const(),
+                        range.end().as_const(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            shape.sort();
             let mut hasher = std::hash::DefaultHasher::new();
-            format!("{mutable_ranges:?}").hash(&mut hasher);
+            shape.hash(&mut hasher);
             (hasher.finish() as u32) | 1
         };
         std::sync::Arc::make_mut(&mut self.blocks).insert(
