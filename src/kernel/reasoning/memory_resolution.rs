@@ -915,15 +915,32 @@ pub(in crate::kernel) fn pointer_offsets_with_common_base_proven_distinct(
     right: &Pointer,
     assumptions: &PureFactContext,
 ) -> bool {
-    if left.block != right.block {
+    let Some(condition) = pointer_offsets_with_common_base_distinctness_condition(left, right)
+    else {
         return false;
+    };
+    assumptions.decide(&condition) == Some(false)
+}
+
+/// The exact scalar equality whose falsity proves two same-block pointers
+/// with one structurally shared additive base are distinct.
+///
+/// Keeping this cancellation witness separate lets a proof-producing caller
+/// retain the selected local obligation instead of repeating the alias
+/// search when it later validates a memory-DAG edge.
+pub(in crate::kernel) fn pointer_offsets_with_common_base_distinctness_condition(
+    left: &Pointer,
+    right: &Pointer,
+) -> Option<ConditionTerm> {
+    if left.block != right.block {
+        return None;
     }
     let (
         PointerOffsetTerm::Add(left_base, left_index),
         PointerOffsetTerm::Add(right_base, right_index),
     ) = (&left.offset, &right.offset)
     else {
-        return false;
+        return None;
     };
     // Cancel a structurally identical additive base before comparing indices.
     // This also avoids expanding memory-derived bases during alias checks.
@@ -939,15 +956,15 @@ pub(in crate::kernel) fn pointer_offsets_with_common_base_proven_distinct(
         None
     };
     let Some((left_index, right_index)) = index_pair else {
-        return false;
+        return None;
     };
     let (Some(left_index), Some(right_index)) = (
         int32_element_index_from_offset(left_index),
         int32_element_index_from_offset(right_index),
     ) else {
-        return false;
+        return None;
     };
-    assumptions.decide(&ConditionTerm::equal(left_index, right_index)) == Some(false)
+    Some(ConditionTerm::equal(left_index, right_index))
 }
 
 pub(in crate::kernel) fn pointers_proven_equal(

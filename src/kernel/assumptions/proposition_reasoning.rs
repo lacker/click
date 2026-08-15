@@ -329,17 +329,19 @@ impl PureFactContext {
         if !consume_simp_reasoning_fuel() {
             return None;
         }
-        self.atomic_derivation_premises(proposition, for_simp)
-            .map(|(premises, premises_id)| {
+        self.atomic_derivation_premises(proposition, for_simp).map(
+            |(premises, premises_id, evidence)| {
                 proposition_derivation(
                     proposition,
                     PropositionDerivationRule::ContextualAtomic {
                         premises,
                         premises_id,
                         for_simp,
+                        evidence,
                     },
                 )
-            })
+            },
+        )
     }
 
     /// Select the range fact that justified a memory-access consequence.
@@ -352,13 +354,13 @@ impl PureFactContext {
         &self,
         proposition: &Proposition,
         for_simp: bool,
-    ) -> Option<(PureFactContext, u64)> {
+    ) -> Option<(PureFactContext, u64, AtomicPropositionDerivationEvidence)> {
         if self.proves_exact(proposition) {
             let exact = PureFactContext::new().assume_proposition(proposition.clone());
-            let (proved, premises_id) =
+            let (evidence, premises_id) =
                 exact.proves_atomic_for_derivation_with_id(proposition, for_simp);
-            if proved {
-                return Some((exact, premises_id));
+            if let Some(evidence) = evidence {
+                return Some((exact, premises_id, evidence));
             }
         }
         let condition_goal = match proposition {
@@ -367,9 +369,9 @@ impl PureFactContext {
             _ => false,
         };
         if atomic_premise_minimization_disabled() {
-            let (proved, premises_id) =
+            let (evidence, premises_id) =
                 self.proves_atomic_for_derivation_with_id(proposition, for_simp);
-            return proved.then(|| (self.clone(), premises_id));
+            return evidence.map(|evidence| (self.clone(), premises_id, evidence));
         }
         if condition_goal {
             // Keep the connected condition component. Order/equality
@@ -409,10 +411,10 @@ impl PureFactContext {
             candidate.rebuild_signed_order_bounds();
             candidate.rebuild_memory_load_condition_facts();
             candidate.recompute_content_fingerprint();
-            let (proved, premises_id) =
+            let (evidence, premises_id) =
                 candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
-            if proved {
-                return Some((candidate, premises_id));
+            if let Some(evidence) = evidence {
+                return Some((candidate, premises_id, evidence));
             }
         }
 
@@ -448,10 +450,10 @@ impl PureFactContext {
             for premise in premises {
                 candidate.insert_proposition_fact(premise);
             }
-            let (proved, premises_id) =
+            let (evidence, premises_id) =
                 candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
-            if proved {
-                return Some((candidate, premises_id));
+            if let Some(evidence) = evidence {
+                return Some((candidate, premises_id, evidence));
             }
         }
         if candidates.len() > 1 {
@@ -462,10 +464,10 @@ impl PureFactContext {
                 let mut candidate = self.clone();
                 candidate.clear_proposition_facts();
                 candidate.insert_proposition_fact(selected.clone());
-                let (proved, premises_id) =
+                let (evidence, premises_id) =
                     candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
-                if proved {
-                    return Some((candidate, premises_id));
+                if let Some(evidence) = evidence {
+                    return Some((candidate, premises_id, evidence));
                 }
             }
             if matches!(proposition, Proposition::CMemoryLoadable { .. }) {
@@ -478,18 +480,18 @@ impl PureFactContext {
                         candidate.clear_proposition_facts();
                         candidate.insert_proposition_fact(candidates[first].clone());
                         candidate.insert_proposition_fact(candidates[second].clone());
-                        let (proved, premises_id) =
+                        let (evidence, premises_id) =
                             candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
-                        if proved {
-                            return Some((candidate, premises_id));
+                        if let Some(evidence) = evidence {
+                            return Some((candidate, premises_id, evidence));
                         }
                     }
                 }
             }
         }
-        let (proved, premises_id) =
+        let (evidence, premises_id) =
             self.proves_atomic_for_derivation_with_id(proposition, for_simp);
-        proved.then(|| (self.clone(), premises_id))
+        evidence.map(|evidence| (self.clone(), premises_id, evidence))
     }
 
     fn derive_proposition_using(
@@ -527,10 +529,13 @@ impl PureFactContext {
                     .derive_proposition_using(inner, for_simp)
                     .map(|proof| PropositionDerivationRule::DoubleNegation(Box::new(proof))),
                 _ => self.atomic_derivation_premises(proposition, for_simp).map(
-                    |(premises, premises_id)| PropositionDerivationRule::ContextualAtomic {
-                        premises,
-                        premises_id,
-                        for_simp,
+                    |(premises, premises_id, evidence)| {
+                        PropositionDerivationRule::ContextualAtomic {
+                            premises,
+                            premises_id,
+                            for_simp,
+                            evidence,
+                        }
                     },
                 ),
             },
@@ -569,19 +574,23 @@ impl PureFactContext {
                     .or_else(|| self.derive_finite_forall(proposition, for_simp))
                     .or_else(|| {
                         self.atomic_derivation_premises(proposition, for_simp).map(
-                            |(premises, premises_id)| PropositionDerivationRule::ContextualAtomic {
-                                premises,
-                                premises_id,
-                                for_simp,
+                            |(premises, premises_id, evidence)| {
+                                PropositionDerivationRule::ContextualAtomic {
+                                    premises,
+                                    premises_id,
+                                    for_simp,
+                                    evidence,
+                                }
                             },
                         )
                     })
             }
             _ => self.atomic_derivation_premises(proposition, for_simp).map(
-                |(premises, premises_id)| PropositionDerivationRule::ContextualAtomic {
+                |(premises, premises_id, evidence)| PropositionDerivationRule::ContextualAtomic {
                     premises,
                     premises_id,
                     for_simp,
+                    evidence,
                 },
             ),
         };
@@ -934,13 +943,14 @@ impl PureFactContext {
     fn proves_atomic_for_derivation(&self, proposition: &Proposition, for_simp: bool) -> bool {
         self.proves_atomic_for_derivation_with_id(proposition, for_simp)
             .0
+            .is_some()
     }
 
     fn proves_atomic_for_derivation_with_id(
         &self,
         proposition: &Proposition,
         for_simp: bool,
-    ) -> (bool, u64) {
+    ) -> (Option<AtomicPropositionDerivationEvidence>, u64) {
         let id_scope = PureFactContextIdScope::enter(self);
         let premises_id = id_scope.id;
         if !decide_memo_disabled()
@@ -948,30 +958,41 @@ impl PureFactContext {
                 memo.borrow()
                     .get(&(premises_id, for_simp))
                     .and_then(|entries| entries.get(proposition))
-                    .copied()
+                    .cloned()
             })
         {
             return (result, premises_id);
         }
         let truncations_before = SEARCH_TRUNCATIONS.with(Cell::get);
-        let result = if for_simp {
-            match proposition {
-                Proposition::ConditionIs(condition, value) => {
-                    self.decide_condition_for_simp(condition) == Some(*value)
-                }
-                Proposition::Not(body) => match body.as_ref() {
-                    Proposition::ConditionIs(condition, value) => {
-                        self.decide_condition_for_simp(condition) == Some(!*value)
-                    }
-                    _ => self.prop_facts.contains(proposition),
-                },
-                _ => self.proves_atomic_without_search(proposition),
+        let memory_evidence = match proposition {
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
+                crate::kernel::api::atomic_memory_load_equality_evidence(left, right, self)
+                    .filter(AtomicMemoryLoadEqualityEvidence::is_fully_typed)
+                    .map(AtomicPropositionDerivationEvidence::MemoryDag)
             }
-        } else {
-            self.proves_atomic_without_search(proposition)
+            _ => None,
         };
+        let result = memory_evidence.or_else(|| {
+            let proved = if for_simp {
+                match proposition {
+                    Proposition::ConditionIs(condition, value) => {
+                        self.decide_condition_for_simp(condition) == Some(*value)
+                    }
+                    Proposition::Not(body) => match body.as_ref() {
+                        Proposition::ConditionIs(condition, value) => {
+                            self.decide_condition_for_simp(condition) == Some(!*value)
+                        }
+                        _ => self.prop_facts.contains(proposition),
+                    },
+                    _ => self.proves_atomic_without_search(proposition),
+                }
+            } else {
+                self.proves_atomic_without_search(proposition)
+            };
+            proved.then_some(AtomicPropositionDerivationEvidence::Legacy)
+        });
         if !decide_memo_disabled()
-            && (result || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before)
+            && (result.is_some() || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before)
         {
             ATOMIC_DERIVATION_MEMO.with(|memo| {
                 let mut memo = memo.borrow_mut();
@@ -982,7 +1003,7 @@ impl PureFactContext {
                 if entries.len() >= DECIDE_MEMO_LIMIT {
                     entries.clear();
                 }
-                entries.insert(proposition.clone(), result);
+                entries.insert(proposition.clone(), result.clone());
             });
         }
         (result, premises_id)
@@ -993,16 +1014,20 @@ impl PureFactContext {
         proposition: &Proposition,
         for_simp: bool,
         premises_id: u64,
+        evidence: &AtomicPropositionDerivationEvidence,
     ) -> bool {
+        if let AtomicPropositionDerivationEvidence::MemoryDag(evidence) = evidence {
+            return evidence.replays(proposition, self);
+        }
         if !decide_memo_disabled()
             && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {
                 memo.borrow()
                     .get(&(premises_id, for_simp))
                     .and_then(|entries| entries.get(proposition))
-                    .copied()
+                    .cloned()
             })
         {
-            return result;
+            return result.is_some();
         }
         self.proves_atomic_for_derivation(proposition, for_simp)
     }

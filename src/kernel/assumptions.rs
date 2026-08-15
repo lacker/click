@@ -458,7 +458,10 @@ thread_local! {
         std::collections::HashMap<(u64, Bitvector32Term), (i64, i64)>,
     > = RefCell::new(std::collections::HashMap::new());
     static ATOMIC_DERIVATION_MEMO: RefCell<
-        std::collections::HashMap<(u64, bool), std::collections::HashMap<Proposition, bool>>,
+        std::collections::HashMap<
+            (u64, bool),
+            std::collections::HashMap<Proposition, Option<AtomicPropositionDerivationEvidence>>,
+        >,
     > = RefCell::new(std::collections::HashMap::new());
 }
 
@@ -1956,9 +1959,15 @@ impl PropositionDerivation {
                 premises,
                 premises_id,
                 for_simp,
+                evidence,
             } => {
                 (id_scope.id == *premises_id || available.includes(premises))
-                    && premises.replays_atomic_derivation(&self.conclusion, *for_simp, *premises_id)
+                    && premises.replays_atomic_derivation(
+                        &self.conclusion,
+                        *for_simp,
+                        *premises_id,
+                        evidence,
+                    )
             }
             PropositionDerivationRule::Explosion { premises } => {
                 available.includes(premises) && premises.is_inconsistent()

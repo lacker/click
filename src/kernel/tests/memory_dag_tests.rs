@@ -63,6 +63,134 @@ fn a_store_records_the_edge_from_the_snapshot_it_wrote() {
 }
 
 #[test]
+fn retained_store_hops_carry_locally_replayable_distinctness_proofs() {
+    if skip_without_memory_dag() {
+        return;
+    }
+    let base = CMemory::new().with_block("arg-memory", 32);
+    let root = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(100))),
+            byte_width: 4,
+        },
+    };
+
+    let constant_write = root.offset_by_int32_elements(Bitvector32Term::Constant(1));
+    let constant_read = root.offset_by_int32_elements(Bitvector32Term::Constant(2));
+    let after_constant = base
+        .clone()
+        .store(constant_write, CValue::Int32(Bitvector32Term::Constant(7)));
+    let constant_evidence = memory_load_equality_evidence_at(
+        &crate::kernel::intern_c_memory_ref(&after_constant),
+        &crate::kernel::intern_c_memory_ref(&base),
+        &constant_read,
+        &PureFactContext::new(),
+    )
+    .expect("unequal constant indices retain a store-hop proof");
+    let constant_hop = &retained_memory_dag_path(&constant_evidence.left)[0];
+    assert!(
+        matches!(
+            constant_hop.justification,
+            MemoryDagHopJustification::StoreCommonBaseUnequalConstants { .. }
+        ),
+        "unexpected retained reason: {:?}",
+        constant_hop.justification
+    );
+    assert!(constant_hop.justification.replays(
+        constant_hop.derivation.as_ref(),
+        &constant_read,
+        &PureFactContext::new(),
+    ));
+    let constant_left = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&after_constant),
+        Box::new(constant_read.clone()),
+    );
+    let constant_right = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&base),
+        Box::new(constant_read.clone()),
+    );
+    let constant_atomic = atomic_memory_load_equality_evidence(
+        &constant_left,
+        &constant_right,
+        &PureFactContext::new(),
+    )
+    .expect("the atomic query retains the same typed walk");
+    assert!(constant_atomic.replays(
+        &Proposition::ConditionIs(ConditionTerm::equal(constant_left, constant_right), true,),
+        &PureFactContext::new(),
+    ));
+
+    let write_index = Bitvector32Term::Variable(Variable(101));
+    let read_index = Bitvector32Term::Variable(Variable(102));
+    let symbolic_write = root.offset_by_int32_elements(write_index.clone());
+    let symbolic_read = root.offset_by_int32_elements(read_index.clone());
+    let inequality = ConditionTerm::equal(write_index, read_index);
+    let assumptions = PureFactContext::new().assume_condition(inequality.clone(), false);
+    let after_symbolic = base.store(symbolic_write, CValue::Int32(Bitvector32Term::Constant(9)));
+    let symbolic_evidence = memory_load_equality_evidence_at(
+        &crate::kernel::intern_c_memory_ref(&after_symbolic),
+        &crate::kernel::intern_c_memory_ref(&CMemory::new().with_block("arg-memory", 32)),
+        &symbolic_read,
+        &assumptions,
+    )
+    .expect("an exact index inequality retains its named premise");
+    let symbolic_hop = &retained_memory_dag_path(&symbolic_evidence.left)[0];
+    assert_eq!(
+        symbolic_hop.justification,
+        MemoryDagHopJustification::StoreCommonBaseExactInequality {
+            condition: inequality,
+        }
+    );
+    assert!(symbolic_hop.justification.replays(
+        symbolic_hop.derivation.as_ref(),
+        &symbolic_read,
+        &assumptions,
+    ));
+    assert!(
+        !symbolic_hop.justification.replays(
+            symbolic_hop.derivation.as_ref(),
+            &symbolic_read,
+            &PureFactContext::new(),
+        ),
+        "the retained exact premise must still be present during replay"
+    );
+    let symbolic_left = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&after_symbolic),
+        Box::new(symbolic_read.clone()),
+    );
+    let symbolic_right = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&CMemory::new().with_block("arg-memory", 32)),
+        Box::new(symbolic_read),
+    );
+    let symbolic_atomic =
+        atomic_memory_load_equality_evidence(&symbolic_left, &symbolic_right, &assumptions)
+            .expect("the atomic query retains the exact inequality proof");
+    let symbolic_goal =
+        Proposition::ConditionIs(ConditionTerm::equal(symbolic_left, symbolic_right), true);
+    assert!(symbolic_atomic.replays(&symbolic_goal, &assumptions));
+    assert!(
+        !symbolic_atomic.replays(&symbolic_goal, &PureFactContext::new()),
+        "atomic replay cannot borrow the missing exact inequality"
+    );
+    let derivation = assumptions
+        .derive_atomic_proposition(&symbolic_goal)
+        .expect("atomic search returns the retained typed memory proof");
+    assert!(matches!(
+        &derivation.rule,
+        PropositionDerivationRule::ContextualAtomic {
+            evidence: AtomicPropositionDerivationEvidence::MemoryDag(_),
+            ..
+        }
+    ));
+    assert!(derivation.replay(&assumptions));
+    assert!(
+        !derivation.replay(&PureFactContext::new()),
+        "the proof object still checks its exact premise context"
+    );
+}
+
+#[test]
 fn derivation_bases_are_strictly_older_so_the_dag_cannot_cycle() {
     if skip_without_memory_dag() {
         return;

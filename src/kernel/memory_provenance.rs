@@ -733,6 +733,92 @@ pub(super) enum MemoryDagCell {
 pub(super) struct MemoryDagHop {
     pub(super) derived: SharedCMemory,
     pub(super) derivation: std::sync::Arc<CMemoryDerivation>,
+    pub(super) justification: MemoryDagHopJustification,
+}
+
+/// Why one exact memory-DAG edge was known not to affect the queried cell.
+///
+/// The first variants are complete local proof steps: they can be checked
+/// from the edge, query pointer, and exact named premise without invoking an
+/// alias or range solver. `AssumptionDependent` keeps the decision kind for
+/// existing boolean consumers but deliberately is not a replayable proof;
+/// those branches must gain typed child derivations before an atomic
+/// certificate may consume the path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum MemoryDagHopJustification {
+    StoreDistinctBlocks,
+    StoreCommonBaseUnequalConstants { condition: ConditionTerm },
+    StoreCommonBaseExactInequality { condition: ConditionTerm },
+    IntrinsicNoWrite,
+    AllocationOfOtherBlock,
+    HeapFreeOfDistinctBlock,
+    AssumptionDependent(MemoryDagAssumptionKind),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum MemoryDagAssumptionKind {
+    StoreCommonBaseDistinctness,
+    StoreExplicitRange,
+    StoreGeneralDistinctness,
+    HeapFreeGeneralDistinctness,
+    HeapFreeResourceSeparation,
+    CallHavocRangeSeparation,
+}
+
+impl MemoryDagHopJustification {
+    fn is_typed(&self) -> bool {
+        !matches!(self, Self::AssumptionDependent(_))
+    }
+
+    /// Check one completed local edge proof without asking a general solver
+    /// to rediscover it. Returns false for the not-yet-typed branches.
+    pub(super) fn replays(
+        &self,
+        derivation: &CMemoryDerivation,
+        pointer: &Pointer,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        match self {
+            Self::StoreDistinctBlocks => matches!(
+                derivation,
+                CMemoryDerivation::Store { pointer: write, .. }
+                    if write.blocks_proven_distinct(pointer)
+            ),
+            Self::StoreCommonBaseUnequalConstants { condition } => {
+                let CMemoryDerivation::Store { pointer: write, .. } = derivation else {
+                    return false;
+                };
+                pointer_offsets_with_common_base_distinctness_condition(write, pointer)
+                    == Some(condition.clone())
+                    && condition == &ConditionTerm::Constant(false)
+            }
+            Self::StoreCommonBaseExactInequality { condition } => {
+                let CMemoryDerivation::Store { pointer: write, .. } = derivation else {
+                    return false;
+                };
+                pointer_offsets_with_common_base_distinctness_condition(write, pointer)
+                    == Some(condition.clone())
+                    && assumptions.exact_condition_value(condition) == Some(false)
+            }
+            Self::IntrinsicNoWrite => matches!(
+                derivation,
+                CMemoryDerivation::BlockDeclared { .. }
+                    | CMemoryDerivation::HeapAllocationPending { .. }
+                    | CMemoryDerivation::CellsForgotten { .. }
+            ),
+            Self::AllocationOfOtherBlock => matches!(
+                derivation,
+                CMemoryDerivation::HeapAllocated { block, .. } if pointer.block != *block
+            ),
+            Self::HeapFreeOfDistinctBlock => matches!(
+                derivation,
+                CMemoryDerivation::HeapFreed {
+                    allocation_base, ..
+                } if allocation_base.blocks_proven_distinct(pointer)
+            ),
+            Self::AssumptionDependent(_) => false,
+        }
+    }
 }
 
 impl MemoryDagCell {
@@ -747,6 +833,38 @@ impl MemoryDagCell {
         match self {
             Self::Stored { value, .. } => Some(value.clone()),
             Self::Unwritten { node, .. } => node.known_value(pointer),
+        }
+    }
+
+    fn replays_walk_from(
+        &self,
+        memory: &SharedCMemory,
+        pointer: &Pointer,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        let path = match self {
+            Self::Stored { path, .. } | Self::Unwritten { path, .. } => path,
+        };
+        let mut current = memory.clone();
+        for hop in path {
+            if hop.derived != current
+                || current.derivation().as_ref() != Some(&hop.derivation)
+                || !hop
+                    .justification
+                    .replays(hop.derivation.as_ref(), pointer, assumptions)
+            {
+                return false;
+            }
+            current = hop.derivation.base().clone();
+        }
+        &current == self.node()
+    }
+
+    fn has_only_typed_hops(&self) -> bool {
+        match self {
+            Self::Stored { path, .. } | Self::Unwritten { path, .. } => {
+                path.iter().all(|hop| hop.justification.is_typed())
+            }
         }
     }
 }
@@ -772,6 +890,52 @@ pub(super) enum AtomicMemoryLoadEqualityEvidence {
     SameCell(MemoryDagLoadEqualityEvidence),
     LeftResolvesToRight { left: MemoryDagCell },
     RightResolvesToLeft { right: MemoryDagCell },
+}
+
+impl AtomicMemoryLoadEqualityEvidence {
+    /// Whether this evidence uses only rule families whose local structural
+    /// checker is implemented. This inspects the already-built object; it
+    /// does not walk the memory DAG or consult assumptions again.
+    pub(super) fn is_fully_typed(&self) -> bool {
+        matches!(
+            self,
+            Self::SameCell(MemoryDagLoadEqualityEvidence {
+                left,
+                right,
+                reason: MemoryDagLoadEqualityReason::CommonSource,
+            }) if left.has_only_typed_hops() && right.has_only_typed_hops()
+        )
+    }
+
+    /// Check the currently completed typed subset of retained DAG equality
+    /// evidence. Unsupported terminal-value and assumption-dependent edge
+    /// proofs return false instead of invoking a solver.
+    pub(super) fn replays(&self, proposition: &Proposition, assumptions: &PureFactContext) -> bool {
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+            proposition
+        else {
+            return false;
+        };
+        let Self::SameCell(MemoryDagLoadEqualityEvidence {
+            left: left_evidence,
+            right: right_evidence,
+            reason: MemoryDagLoadEqualityReason::CommonSource,
+        }) = self
+        else {
+            return false;
+        };
+        let (
+            Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+            Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+        ) = (left.as_ref(), right.as_ref())
+        else {
+            return false;
+        };
+        left_pointer == right_pointer
+            && left_evidence.node() == right_evidence.node()
+            && left_evidence.replays_walk_from(left_memory, left_pointer, assumptions)
+            && right_evidence.replays_walk_from(right_memory, right_pointer, assumptions)
+    }
 }
 
 // The hop predicates reach `decide` and the range-disjointness provers,
@@ -857,7 +1021,7 @@ fn memory_dag_cell_source(
                 path,
             };
         };
-        match derivation.as_ref() {
+        let justification = match derivation.as_ref() {
             CMemoryDerivation::Store {
                 pointer: write,
                 value,
@@ -891,27 +1055,49 @@ fn memory_dag_cell_source(
                 // budget so this advisory walk can never drain the
                 // enclosing query's fuel — fuel-coupled spellings elsewhere
                 // must replay byte-for-byte.
-                if !(write.blocks_proven_distinct(pointer)
-                    || pointer_offsets_with_common_base_proven_distinct(
-                        write,
-                        pointer,
-                        assumptions,
-                    )
-                    || EXPLICIT_DAG_REPLAY.with(std::cell::Cell::get)
-                        && assumptions
-                            .pointers_proven_disjoint_by_shallow_explicit_range(write, pointer)
-                    || extended_dag_bridging_active()
-                        && super::reasoning::with_isolated_memory_resolution_fuel(
-                            MEMORY_DAG_HOP_DISTINCTNESS_FUEL,
-                            || {
-                                pointers_proven_distinct_for_memory_resolution(
-                                    write,
-                                    pointer,
-                                    assumptions,
-                                )
-                            },
-                        ))
+                if write.blocks_proven_distinct(pointer) {
+                    MemoryDagHopJustification::StoreDistinctBlocks
+                } else if pointer_offsets_with_common_base_proven_distinct(
+                    write,
+                    pointer,
+                    assumptions,
+                ) {
+                    let condition =
+                        pointer_offsets_with_common_base_distinctness_condition(write, pointer)
+                            .expect("a successful common-base check has a cancellation condition");
+                    let unequal_constants = condition == ConditionTerm::Constant(false);
+                    if unequal_constants {
+                        MemoryDagHopJustification::StoreCommonBaseUnequalConstants { condition }
+                    } else if assumptions.exact_condition_value(&condition) == Some(false) {
+                        MemoryDagHopJustification::StoreCommonBaseExactInequality { condition }
+                    } else {
+                        MemoryDagHopJustification::AssumptionDependent(
+                            MemoryDagAssumptionKind::StoreCommonBaseDistinctness,
+                        )
+                    }
+                } else if EXPLICIT_DAG_REPLAY.with(std::cell::Cell::get)
+                    && assumptions
+                        .pointers_proven_disjoint_by_shallow_explicit_range(write, pointer)
                 {
+                    MemoryDagHopJustification::AssumptionDependent(
+                        MemoryDagAssumptionKind::StoreExplicitRange,
+                    )
+                } else if extended_dag_bridging_active()
+                    && super::reasoning::with_isolated_memory_resolution_fuel(
+                        MEMORY_DAG_HOP_DISTINCTNESS_FUEL,
+                        || {
+                            pointers_proven_distinct_for_memory_resolution(
+                                write,
+                                pointer,
+                                assumptions,
+                            )
+                        },
+                    )
+                {
+                    MemoryDagHopJustification::AssumptionDependent(
+                        MemoryDagAssumptionKind::StoreGeneralDistinctness,
+                    )
+                } else {
                     return MemoryDagCell::Unwritten {
                         node: current,
                         path,
@@ -931,6 +1117,7 @@ fn memory_dag_cell_source(
                         path,
                     };
                 }
+                MemoryDagHopJustification::IntrinsicNoWrite
             }
             CMemoryDerivation::HeapAllocated { block, .. } => {
                 if pointer.block == *block || !extended_dag_bridging_active() {
@@ -939,26 +1126,39 @@ fn memory_dag_cell_source(
                         path,
                     };
                 }
+                MemoryDagHopJustification::AllocationOfOtherBlock
             }
             CMemoryDerivation::HeapFreed {
                 allocation_base,
                 bytes,
                 ..
             } => {
-                if !extended_dag_bridging_active()
-                    || !(allocation_base.blocks_proven_distinct(pointer)
-                        || pointers_proven_distinct_for_memory_resolution(
-                            allocation_base,
-                            pointer,
-                            assumptions,
-                        )
-                        || heap_allocation_proven_separate_from_pointer(
-                            allocation_base,
-                            bytes,
-                            pointer,
-                            assumptions,
-                        ))
-                {
+                if !extended_dag_bridging_active() {
+                    return MemoryDagCell::Unwritten {
+                        node: current,
+                        path,
+                    };
+                }
+                if allocation_base.blocks_proven_distinct(pointer) {
+                    MemoryDagHopJustification::HeapFreeOfDistinctBlock
+                } else if pointers_proven_distinct_for_memory_resolution(
+                    allocation_base,
+                    pointer,
+                    assumptions,
+                ) {
+                    MemoryDagHopJustification::AssumptionDependent(
+                        MemoryDagAssumptionKind::HeapFreeGeneralDistinctness,
+                    )
+                } else if heap_allocation_proven_separate_from_pointer(
+                    allocation_base,
+                    bytes,
+                    pointer,
+                    assumptions,
+                ) {
+                    MemoryDagHopJustification::AssumptionDependent(
+                        MemoryDagAssumptionKind::HeapFreeResourceSeparation,
+                    )
+                } else {
                     return MemoryDagCell::Unwritten {
                         node: current,
                         path,
@@ -972,6 +1172,9 @@ fn memory_dag_cell_source(
                         path,
                     };
                 }
+                MemoryDagHopJustification::AssumptionDependent(
+                    MemoryDagAssumptionKind::CallHavocRangeSeparation,
+                )
             }
             // Loop havoc may write anything the body can reach.
             CMemoryDerivation::LoopHavoc { .. } => {
@@ -980,10 +1183,11 @@ fn memory_dag_cell_source(
                     path,
                 };
             }
-        }
+        };
         path.push(MemoryDagHop {
             derived: current.clone(),
             derivation: derivation.clone(),
+            justification,
         });
         current = derivation.base().clone();
     }
