@@ -421,6 +421,21 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
         })
         .expect("a positive memo hit returns the retained evidence");
         assert_eq!(cached, first);
+        assert!(first.is_fully_typed());
+        let goal =
+            Proposition::ConditionIs(ConditionTerm::equal(load_in(&left), load_in(&right)), true);
+        assert!(first.replays(&goal, &PureFactContext::new()));
+        let derivation =
+            with_extended_dag_bridging(|| PureFactContext::new().derive_atomic_proposition(&goal))
+                .expect("call-havoc range evidence flows out of the original decision");
+        assert!(matches!(
+            &derivation.rule,
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::MemoryDag(_),
+                ..
+            }
+        ));
+        assert!(derivation.replay(&PureFactContext::new()));
     }
 
     // Soundness, and so asserted in both modes: an intervening loop havoc has
@@ -431,6 +446,81 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
     assert!(
         !PureFactContext::new().memory_loads_proven_equal(&load_in(&left), &load_in(&havoced)),
         "loop havoc must stop the cell lookup"
+    );
+}
+
+#[test]
+fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
+    if skip_without_memory_dag() {
+        return;
+    }
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(201))),
+            byte_width: 4,
+        },
+    };
+    let data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(202))),
+            byte_width: 4,
+        },
+    };
+    let len = Bitvector32Term::Variable(Variable(203));
+    let separation = Proposition::CResourceSeparate {
+        left: CResource::Memory(memory_range(owner.clone(), 0, 4)),
+        right: CResource::Memory(memory_range(data.clone(), 0, 16)),
+    };
+    let lower_bound = ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), len.clone());
+    let assumptions = PureFactContext::new()
+        .assume_proposition(separation.clone())
+        .assume_condition(lower_bound.clone(), true);
+    let mutable_ranges = vec![
+        memory_range(owner, 0, 1),
+        memory_range(data.offset_by_int32_elements(len), 0, 2),
+    ];
+    let base = CMemory::new().with_block("arg-memory", 64);
+    let called = base
+        .clone()
+        .with_call_memory_havoc(Variable(204), &mutable_ranges, &assumptions);
+    let load = |memory: &CMemory| {
+        Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(memory),
+            Box::new(data.clone()),
+        )
+    };
+    let evidence = with_extended_dag_bridging(|| {
+        atomic_memory_load_equality_evidence(&load(&called), &load(&base), &assumptions)
+    })
+    .expect("the framed load retains its call-havoc path");
+    let AtomicMemoryLoadEqualityEvidence::SameCell(equality) = &evidence else {
+        panic!("expected a common-cell proof");
+    };
+    let hop = &retained_memory_dag_path(&equality.left)[0];
+    let MemoryDagHopJustification::CallHavocRanges { ranges } = &hop.justification else {
+        panic!(
+            "expected typed call-havoc ranges, got {:?}",
+            hop.justification
+        );
+    };
+    assert_eq!(
+        ranges,
+        &vec![
+            RangeDisjointFromPointerEvidence::ExactSeparationFact(separation),
+            RangeDisjointFromPointerEvidence::ForwardOffset {
+                offset: Bitvector32Term::Variable(Variable(203)),
+                positive: PositiveTermEvidence::OneLowerBound(lower_bound),
+            },
+        ]
+    );
+    assert!(evidence.is_fully_typed());
+    let goal = Proposition::ConditionIs(ConditionTerm::equal(load(&called), load(&base)), true);
+    assert!(evidence.replays(&goal, &assumptions));
+    assert!(
+        !evidence.replays(&goal, &PureFactContext::new()),
+        "neither separation nor positivity may be borrowed from ambient search"
     );
 }
 

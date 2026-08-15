@@ -747,11 +747,18 @@ pub(super) struct MemoryDagHop {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum MemoryDagHopJustification {
     StoreDistinctBlocks,
-    StoreCommonBaseUnequalConstants { condition: ConditionTerm },
-    StoreCommonBaseExactInequality { condition: ConditionTerm },
+    StoreCommonBaseUnequalConstants {
+        condition: ConditionTerm,
+    },
+    StoreCommonBaseExactInequality {
+        condition: ConditionTerm,
+    },
     IntrinsicNoWrite,
     AllocationOfOtherBlock,
     HeapFreeOfDistinctBlock,
+    CallHavocRanges {
+        ranges: Vec<RangeDisjointFromPointerEvidence>,
+    },
     AssumptionDependent(MemoryDagAssumptionKind),
 }
 
@@ -763,6 +770,28 @@ pub(super) enum MemoryDagAssumptionKind {
     HeapFreeGeneralDistinctness,
     HeapFreeResourceSeparation,
     CallHavocRangeSeparation,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum RangeDisjointFromPointerEvidence {
+    DistinctBlocks,
+    ExactSeparationFact(Proposition),
+    DirectConstantOutside {
+        index: i64,
+        start: i64,
+        end: i64,
+    },
+    ForwardOffset {
+        offset: Bitvector32Term,
+        positive: PositiveTermEvidence,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum PositiveTermEvidence {
+    Constant,
+    ExactCondition(ConditionTerm),
+    OneLowerBound(ConditionTerm),
 }
 
 impl MemoryDagHopJustification {
@@ -816,7 +845,79 @@ impl MemoryDagHopJustification {
                     allocation_base, ..
                 } if allocation_base.blocks_proven_distinct(pointer)
             ),
+            Self::CallHavocRanges { ranges } => {
+                let CMemoryDerivation::CallHavoc { mutable_ranges, .. } = derivation else {
+                    return false;
+                };
+                ranges.len() == mutable_ranges.len()
+                    && ranges
+                        .iter()
+                        .zip(mutable_ranges)
+                        .all(|(evidence, range)| evidence.replays(range, pointer, assumptions))
+            }
             Self::AssumptionDependent(_) => false,
+        }
+    }
+}
+
+impl PositiveTermEvidence {
+    fn for_term(term: &Bitvector32Term, assumptions: &PureFactContext) -> Option<Self> {
+        if signed_bitvector_constant(term).is_some_and(|value| value > 0) {
+            return Some(Self::Constant);
+        }
+        let exact = ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), term.clone());
+        if assumptions.exact_condition_value(&exact) == Some(true) {
+            return Some(Self::ExactCondition(exact));
+        }
+        let lower_bound =
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), term.clone());
+        (assumptions.exact_condition_value(&lower_bound) == Some(true))
+            .then_some(Self::OneLowerBound(lower_bound))
+    }
+
+    fn replays(&self, term: &Bitvector32Term, assumptions: &PureFactContext) -> bool {
+        match self {
+            Self::Constant => signed_bitvector_constant(term).is_some_and(|value| value > 0),
+            Self::ExactCondition(condition) => {
+                condition
+                    == &ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), term.clone())
+                    && assumptions.exact_condition_value(condition) == Some(true)
+            }
+            Self::OneLowerBound(condition) => {
+                condition
+                    == &ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), term.clone())
+                    && assumptions.exact_condition_value(condition) == Some(true)
+            }
+        }
+    }
+}
+
+impl RangeDisjointFromPointerEvidence {
+    fn replays(
+        &self,
+        range: &CMemoryRange,
+        pointer: &Pointer,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        match self {
+            Self::DistinctBlocks => range.base.blocks_proven_distinct(pointer),
+            Self::ExactSeparationFact(fact) => {
+                assumptions.prop_facts.contains(fact)
+                    && exact_separation_fact_covers_range_and_pointer(fact, range, pointer)
+            }
+            Self::DirectConstantOutside { index, start, end } => {
+                direct_constant_element_index(pointer, range.base()) == Some(*index)
+                    && signed_bitvector_constant(range.start()) == Some(*start)
+                    && signed_bitvector_constant(range.end()) == Some(*end)
+                    && (index < start || end <= index)
+            }
+            Self::ForwardOffset { offset, positive } => {
+                forward_range_offset_from_pointer(range, pointer) == Some(offset.clone())
+                    && positive.replays(
+                        &Bitvector32Term::add(offset.clone(), range.start.clone()),
+                        assumptions,
+                    )
+            }
         }
     }
 }
@@ -1006,6 +1107,101 @@ pub(super) fn with_extended_dag_bridging<T>(body: impl FnOnce() -> T) -> T {
     result
 }
 
+fn exact_separation_fact_covers_range_and_pointer(
+    fact: &Proposition,
+    range: &CMemoryRange,
+    pointer: &Pointer,
+) -> bool {
+    let (left, right) = match fact {
+        Proposition::CMemoryDisjoint {
+            left_base,
+            left_start,
+            left_end,
+            right_base,
+            right_start,
+            right_end,
+        } => (
+            CMemoryRange::new(left_base.clone(), left_start.clone(), left_end.clone()),
+            CMemoryRange::new(right_base.clone(), right_start.clone(), right_end.clone()),
+        ),
+        Proposition::CResourceSeparate {
+            left: CResource::Memory(left),
+            right: CResource::Memory(right),
+        } => (left.clone(), right.clone()),
+        _ => return false,
+    };
+    super::assumptions::memory_range_shallowly_contained(range, &left)
+        && super::assumptions::pointer_in_memory_range_shallow(pointer, &right)
+        || super::assumptions::memory_range_shallowly_contained(range, &right)
+            && super::assumptions::pointer_in_memory_range_shallow(pointer, &left)
+}
+
+fn forward_range_offset_from_pointer(
+    range: &CMemoryRange,
+    pointer: &Pointer,
+) -> Option<Bitvector32Term> {
+    if range.base.block != pointer.block {
+        return None;
+    }
+    let PointerOffsetTerm::Add(left, right) = &range.base.offset else {
+        return None;
+    };
+    if pointer.offset == **left {
+        int32_element_index_from_offset(right)
+    } else if pointer.offset == **right {
+        int32_element_index_from_offset(left)
+    } else {
+        None
+    }
+}
+
+fn direct_constant_element_index(pointer: &Pointer, base: &Pointer) -> Option<i64> {
+    let bytes = signed_bitvector_constant(&pointer_byte_offset_from_base(pointer, base)?)?;
+    (bytes % 4 == 0).then_some(bytes / 4)
+}
+
+fn typed_range_disjoint_from_pointer_evidence(
+    range: &CMemoryRange,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> Option<RangeDisjointFromPointerEvidence> {
+    if range.base.blocks_proven_distinct(pointer) {
+        return Some(RangeDisjointFromPointerEvidence::DistinctBlocks);
+    }
+    if let Some(fact) = assumptions
+        .prop_facts
+        .iter()
+        .find(|fact| exact_separation_fact_covers_range_and_pointer(fact, range, pointer))
+    {
+        return Some(RangeDisjointFromPointerEvidence::ExactSeparationFact(
+            fact.clone(),
+        ));
+    }
+    if let (Some(index), Some(start), Some(end)) = (
+        direct_constant_element_index(pointer, range.base()),
+        signed_bitvector_constant(range.start()),
+        signed_bitvector_constant(range.end()),
+    ) && (index < start || end <= index)
+    {
+        return Some(RangeDisjointFromPointerEvidence::DirectConstantOutside { index, start, end });
+    }
+    let offset = forward_range_offset_from_pointer(range, pointer)?;
+    let range_start = Bitvector32Term::add(offset.clone(), range.start.clone());
+    let positive = PositiveTermEvidence::for_term(&range_start, assumptions)?;
+    Some(RangeDisjointFromPointerEvidence::ForwardOffset { offset, positive })
+}
+
+fn typed_ranges_disjoint_from_pointer_evidence(
+    ranges: &[CMemoryRange],
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> Option<Vec<RangeDisjointFromPointerEvidence>> {
+    ranges
+        .iter()
+        .map(|range| typed_range_disjoint_from_pointer_evidence(range, pointer, assumptions))
+        .collect()
+}
+
 fn memory_dag_cell_source(
     memory: &SharedCMemory,
     pointer: &Pointer,
@@ -1166,15 +1362,22 @@ fn memory_dag_cell_source(
                 }
             }
             CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
-                if !assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer) {
+                if let Some(ranges) = typed_ranges_disjoint_from_pointer_evidence(
+                    mutable_ranges,
+                    pointer,
+                    assumptions,
+                ) {
+                    MemoryDagHopJustification::CallHavocRanges { ranges }
+                } else if assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer) {
+                    MemoryDagHopJustification::AssumptionDependent(
+                        MemoryDagAssumptionKind::CallHavocRangeSeparation,
+                    )
+                } else {
                     return MemoryDagCell::Unwritten {
                         node: current,
                         path,
                     };
                 }
-                MemoryDagHopJustification::AssumptionDependent(
-                    MemoryDagAssumptionKind::CallHavocRangeSeparation,
-                )
             }
             // Loop havoc may write anything the body can reach.
             CMemoryDerivation::LoopHavoc { .. } => {
