@@ -434,8 +434,26 @@ impl CMemory {
             pointer.block.starts_with("local:")
                 || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
         });
-        std::sync::Arc::make_mut(&mut self.blocks)
-            .insert(format!("call-havoc:{}", variable.0).into(), CBlock::new(0));
+        // The marker size fingerprints the write set. Marker names restart
+        // per claim verification, so two claims' snapshots can be
+        // alpha-identical while their same-named havocs wrote different
+        // ranges; content-addressed interning would then merge them and
+        // first-wins derivation recording would let one world's edges answer
+        // the other's load queries. Folding the ranges into the marker's
+        // otherwise-unused size keeps such snapshots content-distinct, while
+        // havocs with equal parents and equal write sets — genuinely
+        // indistinguishable — still share a node. Deterministic: the hasher
+        // is fixed-key and the ranges are replay-stable.
+        let write_set_fingerprint = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::hash::DefaultHasher::new();
+            format!("{mutable_ranges:?}").hash(&mut hasher);
+            (hasher.finish() as u32) | 1
+        };
+        std::sync::Arc::make_mut(&mut self.blocks).insert(
+            format!("call-havoc:{}", variable.0).into(),
+            CBlock::new(write_set_fingerprint),
+        );
         if let Some(base) = base {
             record_c_memory_derivation(
                 &self,

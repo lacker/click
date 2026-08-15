@@ -2103,21 +2103,30 @@ pub(super) fn finish_ordered_proof_replay(
                                                 )
                                             })
                                             .and_then(|kernel| {
-                                                certificate_available
-                                                    .iter()
-                                                    .any(|available| {
-                                                        available == &kernel
-                                                            || condition_polarity_equivalent(
-                                                                available, &kernel,
-                                                            )
-                                                    })
-                                                    .then_some((kernel, surface.clone()))
-                                                    .ok_or_else(|| {
-                                                        format!(
-                                                            "post-execution `simp() using` premise is not in the certified proof context: {}",
-                                                            describe_click_proposition(surface)
+                                                // A premise spelled at another
+                                                // program point carries other
+                                                // snapshots in its load atoms;
+                                                // the snapshot bridge decides
+                                                // the pair with candidates
+                                                // drawn only from the
+                                                // certified context.
+                                                (certificate_available.iter().any(|available| {
+                                                    available == &kernel
+                                                        || condition_polarity_equivalent(
+                                                            available, &kernel,
                                                         )
-                                                    })
+                                                }) || snapshot_bridged_fact_is_available(
+                                                    &kernel,
+                                                    &certificate_available,
+                                                    &[],
+                                                ))
+                                                .then_some((kernel, surface.clone()))
+                                                .ok_or_else(|| {
+                                                    format!(
+                                                        "post-execution `simp() using` premise is not in the certified proof context: {}",
+                                                        describe_click_proposition(surface)
+                                                    )
+                                                })
                                             })
                                         })
                                         .collect::<Result<Vec<_>, String>>()

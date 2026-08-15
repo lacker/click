@@ -339,5 +339,30 @@ void pool_transfer_pipeline(
     step();
     step();
     frame();
-    simp();
+    have source->checked_out == 0 by {
+        simp() using {
+            at(statement(1).entry, source->checked_out) == 0;
+            at(statement(2).exit, source->checked_out) == (at(statement(2).entry, source->checked_out) + 1);
+            source->checked_out == (at(statement(3).entry, source->checked_out) - 1);
+        }
+    }
+    have source->capacity == 1 by {
+        assumption();
+    }
+    have destination->checked_out == 1 by {
+        simp() using {
+            at(statement(2).entry, destination->checked_out) == 0;
+            destination->checked_out == (at(statement(3).entry, destination->checked_out) + 1);
+        }
+    }
+    have destination->capacity == 1 by {
+        assumption();
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }
