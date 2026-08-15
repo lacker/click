@@ -1,5 +1,11 @@
 use super::*;
 
+fn retained_memory_dag_path(cell: &MemoryDagCell) -> &[MemoryDagHop] {
+    match cell {
+        MemoryDagCell::Stored { path, .. } | MemoryDagCell::Unwritten { path, .. } => path,
+    }
+}
+
 #[test]
 fn reinterning_retained_memory_uses_shallow_component_identity() {
     let samples = [16, 32, 64, 128]
@@ -242,6 +248,52 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
         !skip_without_memory_dag(),
         "the common-ancestor lookup is exactly what the DAG adds here"
     );
+    if !skip_without_memory_dag() {
+        let evidence = memory_load_equality_evidence_at(
+            &crate::kernel::intern_c_memory_ref(&left),
+            &crate::kernel::intern_c_memory_ref(&right),
+            &read,
+            &PureFactContext::new(),
+        )
+        .expect("a successful equality decision retains both traversed walks");
+        assert_eq!(evidence.reason, MemoryDagLoadEqualityReason::CommonSource);
+        assert_eq!(retained_memory_dag_path(&evidence.left).len(), 1);
+        assert_eq!(retained_memory_dag_path(&evidence.right).len(), 1);
+        assert_eq!(
+            retained_memory_dag_path(&evidence.left)[0].derived.as_ref(),
+            &left,
+            "the left proof names the exact derived snapshot"
+        );
+        assert_eq!(
+            retained_memory_dag_path(&evidence.right)[0]
+                .derived
+                .as_ref(),
+            &right,
+            "the right proof names the exact derived snapshot"
+        );
+        assert_eq!(
+            evidence.left.node(),
+            evidence.right.node(),
+            "both retained walks end at their common source"
+        );
+        let first = with_extended_dag_bridging(|| {
+            atomic_memory_load_equality_evidence(
+                &load_in(&left),
+                &load_in(&right),
+                &PureFactContext::new(),
+            )
+        })
+        .expect("the atomic decision returns retained evidence");
+        let cached = with_extended_dag_bridging(|| {
+            atomic_memory_load_equality_evidence(
+                &load_in(&left),
+                &load_in(&right),
+                &PureFactContext::new(),
+            )
+        })
+        .expect("a positive memo hit returns the retained evidence");
+        assert_eq!(cached, first);
+    }
 
     // Soundness, and so asserted in both modes: an intervening loop havoc has
     // no write set, so no walk may resolve through one.

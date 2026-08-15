@@ -710,18 +710,35 @@ fn memory_derivations_reach(
 pub(super) enum MemoryDagCell {
     /// `node`'s derivation is a `Store` whose pointer is provably the loaded
     /// one, so the load reads `value`.
-    Stored { node: SharedCMemory, value: CValue },
+    Stored {
+        node: SharedCMemory,
+        value: CValue,
+        path: Vec<MemoryDagHop>,
+    },
     /// The walk reached `node` without crossing any edge that could have
     /// written the cell, and stopped: `node` carries no derivation, its
     /// derivation is undecidable against this pointer, or the hop cap ran
     /// out. The load therefore reads whatever `node` holds at the pointer.
-    Unwritten { node: SharedCMemory },
+    Unwritten {
+        node: SharedCMemory,
+        path: Vec<MemoryDagHop>,
+    },
+}
+
+/// One exact edge traversed while resolving a cell through the named memory
+/// DAG. Retaining the edge is only the first half of a proof object: callers
+/// that expose this walk as a certificate must additionally retain the typed
+/// derivation that justified crossing assumption-dependent edges.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct MemoryDagHop {
+    pub(super) derived: SharedCMemory,
+    pub(super) derivation: std::sync::Arc<CMemoryDerivation>,
 }
 
 impl MemoryDagCell {
-    fn node(&self) -> &SharedCMemory {
+    pub(super) fn node(&self) -> &SharedCMemory {
         match self {
-            Self::Stored { node, .. } | Self::Unwritten { node } => node,
+            Self::Stored { node, .. } | Self::Unwritten { node, .. } => node,
         }
     }
 
@@ -729,9 +746,32 @@ impl MemoryDagCell {
     fn resolved_value(&self, pointer: &Pointer) -> Option<CValue> {
         match self {
             Self::Stored { value, .. } => Some(value.clone()),
-            Self::Unwritten { node } => node.known_value(pointer),
+            Self::Unwritten { node, .. } => node.known_value(pointer),
         }
     }
+}
+
+/// The exact successful result of resolving two loads through the memory
+/// DAG. This is retained decision evidence, not yet a complete certificate:
+/// each assumption-dependent hop still needs its own typed justification.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct MemoryDagLoadEqualityEvidence {
+    pub(super) left: MemoryDagCell,
+    pub(super) right: MemoryDagCell,
+    pub(super) reason: MemoryDagLoadEqualityReason,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum MemoryDagLoadEqualityReason {
+    CommonSource,
+    EqualResolvedValue(CValue),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum AtomicMemoryLoadEqualityEvidence {
+    SameCell(MemoryDagLoadEqualityEvidence),
+    LeftResolvesToRight { left: MemoryDagCell },
+    RightResolvesToLeft { right: MemoryDagCell },
 }
 
 // The hop predicates reach `decide` and the range-disjointness provers,
@@ -809,9 +849,13 @@ fn memory_dag_cell_source(
 ) -> MemoryDagCell {
     const MEMORY_DAG_CELL_HOP_LIMIT: usize = 64;
     let mut current = memory.clone();
+    let mut path = Vec::new();
     for _ in 0..MEMORY_DAG_CELL_HOP_LIMIT {
         let Some(derivation) = current.derivation() else {
-            return MemoryDagCell::Unwritten { node: current };
+            return MemoryDagCell::Unwritten {
+                node: current,
+                path,
+            };
         };
         match derivation.as_ref() {
             CMemoryDerivation::Store {
@@ -836,6 +880,7 @@ fn memory_dag_cell_source(
                     return MemoryDagCell::Stored {
                         node: current,
                         value: value.clone(),
+                        path,
                     };
                 }
                 // The recorded-range fallback covers writes into a
@@ -867,7 +912,10 @@ fn memory_dag_cell_source(
                             },
                         ))
                 {
-                    return MemoryDagCell::Unwritten { node: current };
+                    return MemoryDagCell::Unwritten {
+                        node: current,
+                        path,
+                    };
                 }
             }
             // Declaring a block or forgetting cached cells writes nothing,
@@ -878,12 +926,18 @@ fn memory_dag_cell_source(
             | CMemoryDerivation::HeapAllocationPending { .. }
             | CMemoryDerivation::CellsForgotten { .. } => {
                 if !extended_dag_bridging_active() {
-                    return MemoryDagCell::Unwritten { node: current };
+                    return MemoryDagCell::Unwritten {
+                        node: current,
+                        path,
+                    };
                 }
             }
             CMemoryDerivation::HeapAllocated { block, .. } => {
                 if pointer.block == *block || !extended_dag_bridging_active() {
-                    return MemoryDagCell::Unwritten { node: current };
+                    return MemoryDagCell::Unwritten {
+                        node: current,
+                        path,
+                    };
                 }
             }
             CMemoryDerivation::HeapFreed {
@@ -905,22 +959,38 @@ fn memory_dag_cell_source(
                             assumptions,
                         ))
                 {
-                    return MemoryDagCell::Unwritten { node: current };
+                    return MemoryDagCell::Unwritten {
+                        node: current,
+                        path,
+                    };
                 }
             }
             CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
                 if !assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer) {
-                    return MemoryDagCell::Unwritten { node: current };
+                    return MemoryDagCell::Unwritten {
+                        node: current,
+                        path,
+                    };
                 }
             }
             // Loop havoc may write anything the body can reach.
             CMemoryDerivation::LoopHavoc { .. } => {
-                return MemoryDagCell::Unwritten { node: current };
+                return MemoryDagCell::Unwritten {
+                    node: current,
+                    path,
+                };
             }
         }
+        path.push(MemoryDagHop {
+            derived: current.clone(),
+            derivation: derivation.clone(),
+        });
         current = derivation.base().clone();
     }
-    MemoryDagCell::Unwritten { node: current }
+    MemoryDagCell::Unwritten {
+        node: current,
+        path,
+    }
 }
 
 pub(super) fn heap_allocation_proven_separate_from_pointer(
@@ -971,11 +1041,31 @@ pub(super) fn loads_equal_along_memory_derivations_at(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> bool {
+    memory_load_equality_evidence_at(left_memory, right_memory, pointer, assumptions).is_some()
+}
+
+/// Evidence-producing form of [`loads_equal_along_memory_derivations_at`].
+/// Successful certificate-producing callers must retain this value rather
+/// than calling the boolean adapter and later searching for the walk again.
+pub(super) fn memory_load_equality_evidence_at(
+    left_memory: &SharedCMemory,
+    right_memory: &SharedCMemory,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> Option<MemoryDagLoadEqualityEvidence> {
     if memory_dag_disabled() {
-        return false;
+        return None;
     }
     if left_memory == right_memory {
-        return true;
+        let cell = MemoryDagCell::Unwritten {
+            node: left_memory.clone(),
+            path: Vec::new(),
+        };
+        return Some(MemoryDagLoadEqualityEvidence {
+            left: cell.clone(),
+            right: cell,
+            reason: MemoryDagLoadEqualityReason::CommonSource,
+        });
     }
     let Some((left, right)) = with_cell_lookup_depth(|| {
         (
@@ -983,14 +1073,24 @@ pub(super) fn loads_equal_along_memory_derivations_at(
             memory_dag_cell_source(right_memory, pointer, assumptions),
         )
     }) else {
-        return false;
+        return None;
     };
     if left.node() == right.node() {
-        return true;
+        return Some(MemoryDagLoadEqualityEvidence {
+            left,
+            right,
+            reason: MemoryDagLoadEqualityReason::CommonSource,
+        });
     }
     match (left.resolved_value(pointer), right.resolved_value(pointer)) {
-        (Some(left), Some(right)) => left == right,
-        _ => false,
+        (Some(left_value), Some(right_value)) if left_value == right_value => {
+            Some(MemoryDagLoadEqualityEvidence {
+                left,
+                right,
+                reason: MemoryDagLoadEqualityReason::EqualResolvedValue(left_value),
+            })
+        }
+        _ => None,
     }
 }
 
@@ -1020,31 +1120,40 @@ pub(super) fn atomic_loads_equal_along_memory_derivations(
     right: &Bitvector32Term,
     assumptions: &PureFactContext,
 ) -> bool {
+    atomic_memory_load_equality_evidence(left, right, assumptions).is_some()
+}
+
+/// Evidence-producing form of
+/// [`atomic_loads_equal_along_memory_derivations`]. Positive memo entries
+/// retain this evidence instead of caching only the boolean answer.
+pub(super) fn atomic_memory_load_equality_evidence(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> Option<AtomicMemoryLoadEqualityEvidence> {
     let (
         Bitvector32Term::MemoryLoad(left_memory, left_pointer),
         Bitvector32Term::MemoryLoad(right_memory, right_pointer),
     ) = (left, right)
     else {
-        return false;
+        return None;
     };
     if left_pointer != right_pointer {
-        return false;
+        return None;
     }
     if memory_dag_disabled() {
-        return false;
-    }
-    if left_memory == right_memory {
-        return true;
+        return None;
     }
     if !extended_dag_bridging_active() {
         // Pre-arc behavior outside the loadable prover: node-identity
         // comparison only, no memo, no value pinning.
-        return loads_equal_along_memory_derivations_at(
+        return memory_load_equality_evidence_at(
             left_memory,
             right_memory,
             left_pointer,
             assumptions,
-        );
+        )
+        .map(AtomicMemoryLoadEqualityEvidence::SameCell);
     }
     // The same (snapshot, snapshot, pointer) triple is asked thousands of
     // times per proof. A proven equality stays true as new first-wins DAG
@@ -1064,9 +1173,10 @@ pub(super) fn atomic_loads_equal_along_memory_derivations(
             pointer: left_pointer.as_ref().clone(),
         });
     if let Some(key) = &memo_key
-        && DAG_LOAD_EQUALITY_POSITIVE_MEMO.with(|memo| memo.borrow().contains(key))
+        && let Some(evidence) =
+            DAG_LOAD_EQUALITY_POSITIVE_MEMO.with(|memo| memo.borrow().get(key).cloned())
     {
-        return true;
+        return Some(evidence);
     }
     let derivation_generation = c_memory_derivation_generation();
     if let Some(key) = &memo_key
@@ -1075,33 +1185,44 @@ pub(super) fn atomic_loads_equal_along_memory_derivations(
                 .contains(&(derivation_generation, key.clone()))
         })
     {
-        return false;
+        return None;
     }
-    let result = loads_equal_along_memory_derivations_at(
-        left_memory,
-        right_memory,
-        left_pointer,
-        assumptions,
-    ) || with_cell_lookup_depth(|| {
-        let left_cell = memory_dag_cell_source(left_memory, left_pointer, assumptions);
-        let right_cell = memory_dag_cell_source(right_memory, right_pointer, assumptions);
-        matches!(
-            left_cell.resolved_value(left_pointer),
-            Some(CValue::Int32(value)) if &value == right
-        ) || matches!(
-            right_cell.resolved_value(right_pointer),
-            Some(CValue::Int32(value)) if &value == left
-        )
-    })
-    .unwrap_or(false);
+    let result =
+        memory_load_equality_evidence_at(left_memory, right_memory, left_pointer, assumptions)
+            .map(AtomicMemoryLoadEqualityEvidence::SameCell)
+            .or_else(|| {
+                with_cell_lookup_depth(|| {
+                    let left_cell = memory_dag_cell_source(left_memory, left_pointer, assumptions);
+                    let right_cell =
+                        memory_dag_cell_source(right_memory, right_pointer, assumptions);
+                    if matches!(
+                        left_cell.resolved_value(left_pointer),
+                        Some(CValue::Int32(value)) if &value == right
+                    ) {
+                        Some(AtomicMemoryLoadEqualityEvidence::LeftResolvesToRight {
+                            left: left_cell,
+                        })
+                    } else if matches!(
+                        right_cell.resolved_value(right_pointer),
+                        Some(CValue::Int32(value)) if &value == left
+                    ) {
+                        Some(AtomicMemoryLoadEqualityEvidence::RightResolvesToLeft {
+                            right: right_cell,
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .flatten()
+            });
     if let Some(key) = memo_key {
-        if result {
+        if let Some(evidence) = &result {
             DAG_LOAD_EQUALITY_POSITIVE_MEMO.with(|memo| {
                 let mut memo = memo.borrow_mut();
                 if memo.len() >= DAG_LOAD_EQUALITY_MEMO_LIMIT {
                     memo.clear();
                 }
-                memo.insert(key);
+                memo.insert(key, evidence.clone());
             });
         } else {
             DAG_LOAD_EQUALITY_NEGATIVE_MEMO.with(|memo| {
@@ -1161,8 +1282,8 @@ struct DagLoadEqualityMemoKey {
 
 thread_local! {
     static DAG_LOAD_EQUALITY_POSITIVE_MEMO: std::cell::RefCell<
-        std::collections::HashSet<DagLoadEqualityMemoKey>,
-    > = std::cell::RefCell::new(std::collections::HashSet::new());
+        std::collections::HashMap<DagLoadEqualityMemoKey, AtomicMemoryLoadEqualityEvidence>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
     static DAG_LOAD_EQUALITY_NEGATIVE_MEMO: std::cell::RefCell<
         std::collections::HashSet<(u64, DagLoadEqualityMemoKey)>,
     > = std::cell::RefCell::new(std::collections::HashSet::new());
