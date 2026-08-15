@@ -230,6 +230,44 @@ With that, `execute_until_expands_vector_storage_call_postconditions`
 passes and the **full unit suite is 964/964 on the prototype** for the
 first time.
 
+## Frontier after the 2026-08-14 master rebase (prototype on 56706c0b)
+
+The rebase absorbed the havoc-marker fix and the honest-proof machinery;
+`pool_pipeline`'s `0 <= pool->checked_out` premise (item 1 below) now
+replays — the landed bounded matcher and premise bridges were exactly its
+prescribed fix. The unit suite passes and the frontier is
+`pool_transfer_pipeline.contract` tactic 3: the re-established population
+invariant (an `And` theorem premise spelled at the post-`pool_checkout`
+snapshot) has no replayable derivation. Traced end to end:
+
+- The premise's conjuncts (e.g. `0 <= load(M_3havocs, dest+0)`) are
+  skeleton-identical to ambient facts spelled at the post-`pool_init`
+  snapshot; only the memory operand differs. The snapshot bridge fails
+  because `c_memory_load_is_unchanged`'s derivation walk cannot connect
+  the two spellings.
+- Two walk gaps found and fixed on the prototype: (a) the load evaluator
+  reduced memories by dropping alias-distinct cells without recording the
+  reduction, so walks dead-ended at unrecorded variants — it now records
+  the existing `CellsForgotten` edge; (b) the replay and the independent
+  kernel certification build *parallel derivation chains* for one
+  execution, so the target is a sibling spelling, never the same interned
+  object — the walk now tests each hop against the target with the
+  bounded pointer-load matcher (havoc marker sets must agree), and the
+  intra-arena id-ordering early exit is gone because it only bounds
+  object reachability, not sibling matching.
+- With both fixes the walk descends the full replay chain, crossing the
+  source-range havocs (verified against the recorded mutable ranges —
+  dest-range havocs and the dest store are correctly refused). The one
+  remaining gap: at the marker-equal hop the two spellings differ by a
+  single cell **at the loaded pointer itself** — a materialization cell
+  valued `load(pristine, dest+0)` on the walk side, absent on the target
+  side — and the bounded matcher refuses a differing cell at the loaded
+  pointer. Whether that cell is a legitimate materialization (transparent
+  by definition) or a stale spelling minted before `pool_init(dest)`'s
+  store must be answered by inspecting its minting site before the
+  matcher learns to see through it; a wrong answer here would launder the
+  init store.
+
 ## Remaining to close, in order
 
 1. The examples fixture gate. The 500,000-unit budget exhaustion is

@@ -585,13 +585,27 @@ fn memory_derivations_reach(
         if current == *target {
             return true;
         }
-        // Ids strictly decrease along `base`, so within one arena an id at
-        // or below the target's cannot reach it and the walk can stop early.
-        let (current_arena, current_id) = current.arena_id();
-        let (target_arena, target_id) = target.arena_id();
-        if current_arena == target_arena && current_id <= target_id {
-            return false;
+        // The replay and the independent kernel certification build parallel
+        // derivation chains for one execution, so the target is often a
+        // sibling spelling of a snapshot on this chain rather than the same
+        // interned object. Decide that pair with the bounded pointer-load
+        // matcher — havoc marker sets must agree, so this never crosses a
+        // mutation event the edge rules would have refused.
+        if memories_match_for_pointer_load(current.memory(), target.memory(), pointer)
+            || memories_match_for_pointer_load_bounded_alias(
+                current.memory(),
+                target.memory(),
+                pointer,
+                assumptions,
+            )
+        {
+            return true;
         }
+
+        // Ids strictly decrease along `base`, so an id at or below the
+        // target's can no longer reach the target *object* — but a sibling
+        // spelling of the target on this chain can still match below that
+        // point, so the walk continues under its hop cap instead of exiting.
         let Some(derivation) = current.derivation() else {
             return false;
         };
@@ -2563,3 +2577,4 @@ pub(crate) fn c_condition_fact_with_canonical_loads(fact: &Proposition) -> Propo
         None => fact.clone(),
     }
 }
+

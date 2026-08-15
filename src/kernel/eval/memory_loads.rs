@@ -215,9 +215,21 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }
 
     let mut memory = memory.clone();
+    let reduction_base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&memory));
+    let cells_before_reduction = memory.cells.len();
     std::sync::Arc::make_mut(&mut memory.cells).retain(|stored_pointer, _| {
         !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
     });
+    // The reduced memory is embedded in the returned symbolic value, so it
+    // becomes a snapshot spelling other queries must relate back to its
+    // source. Dropping cells provably distinct from the loaded pointer is a
+    // no-op for every load, which is exactly the `CellsForgotten` edge;
+    // without it the derivation walk dead-ends at this variant.
+    if let Some(base) = reduction_base
+        && memory.cells.len() != cells_before_reduction
+    {
+        record_c_memory_derivation(&memory, CMemoryDerivation::CellsForgotten { base });
+    }
 
     if let Some(value) = memory.known_value(&pointer) {
         if let Some(value) = symbolic_pointer_value_from_int_cell(&pointer, &value, value_type) {

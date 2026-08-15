@@ -857,6 +857,10 @@ impl SharedCMemory {
     pub(crate) fn arena_id(&self) -> (u32, u32) {
         (self.arena, self.id)
     }
+
+    pub(crate) fn memory(&self) -> &CMemory {
+        &self.memory
+    }
 }
 
 impl PartialEq for SharedCMemory {
