@@ -149,5 +149,21 @@ int32 detachable_buffer_pipeline(
 } by {
     execute();
     frame();
-    simp();
+    have result == replacement by {
+        assumption();
+    }
+    have owner->len == length by {
+        assumption();
+    }
+    have owner->data == data by {
+        assumption();
+    }
+    have data[0] == replacement by {
+        assumption();
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }

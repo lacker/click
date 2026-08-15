@@ -36,7 +36,7 @@ pub(super) fn snapshot_bridged_fact_is_available(
     available: &[Proposition],
     framing: &[ExecutionPureFact],
 ) -> bool {
-    let Some((required_condition, candidates)) = snapshot_blind_candidates(required, available)
+    let Some((required_spellings, candidates)) = snapshot_blind_candidates(required, available)
     else {
         // Compound propositions (an implication ensure, a conjunction) have
         // no single condition to normalize, but their leaves can still be
@@ -62,7 +62,7 @@ pub(super) fn snapshot_bridged_fact_is_available(
             .any(|fact| propositions_equal_modulo_proven_snapshots(fact, required, &assumptions));
     };
     let assumptions = assumptions_from_propositions(available);
-    snapshot_bridge_proves(&required_condition, &candidates, assumptions, framing)
+    snapshot_bridge_proves(&required_spellings, &candidates, assumptions, framing)
 }
 
 /// Snapshot-blind structural pre-filter for the compound bridge: identical
@@ -154,12 +154,12 @@ pub(super) fn snapshot_bridged_fact_is_available_under(
     assumptions: &PureFactContext,
     framing: &[ExecutionPureFact],
 ) -> bool {
-    let Some((required_condition, candidates)) = snapshot_blind_candidates(required, available)
+    let Some((required_spellings, candidates)) = snapshot_blind_candidates(required, available)
     else {
         return false;
     };
     snapshot_bridge_proves(
-        &required_condition,
+        &required_spellings,
         &candidates,
         assumptions.clone(),
         framing,
@@ -172,11 +172,20 @@ pub(super) fn snapshot_bridged_fact_is_available_under(
 fn snapshot_blind_candidates(
     required: &Proposition,
     available: &[Proposition],
-) -> Option<(ConditionTerm, Vec<ConditionTerm>)> {
+) -> Option<(Vec<ConditionTerm>, Vec<ConditionTerm>)> {
     let normalized_required = normalize_direct_atomic_memory_loads(required);
     let Proposition::ConditionIs(required_condition, required_value) = normalized_required else {
         return None;
     };
+    // Normalization resolves direct load atoms through materialized cells,
+    // which can rewrite a spelling the kernel comparator's certified-store
+    // reasoning needed; keep both required spellings and try each.
+    let mut required_spellings = vec![required_condition];
+    if let Proposition::ConditionIs(original_condition, _) = required
+        && !required_spellings.contains(original_condition)
+    {
+        required_spellings.push(original_condition.clone());
+    }
     let mut candidates = Vec::new();
     for fact in available {
         let mut conjuncts = Vec::new();
@@ -190,16 +199,24 @@ fn snapshot_blind_candidates(
             else {
                 continue;
             };
-            if conditions_equal_ignoring_memories(&condition, &required_condition) {
-                candidates.push(condition);
+            if conditions_equal_ignoring_memories(&condition, &required_spellings[0]) {
+                if let Proposition::ConditionIs(original_condition, _) = conjunct
+                    && original_condition != &condition
+                    && !candidates.contains(original_condition)
+                {
+                    candidates.push(original_condition.clone());
+                }
+                if !candidates.contains(&condition) {
+                    candidates.push(condition);
+                }
             }
         }
     }
-    (!candidates.is_empty()).then_some((required_condition, candidates))
+    (!candidates.is_empty()).then_some((required_spellings, candidates))
 }
 
 fn snapshot_bridge_proves(
-    required_condition: &ConditionTerm,
+    required_spellings: &[ConditionTerm],
     candidates: &[ConditionTerm],
     assumptions: PureFactContext,
     framing: &[ExecutionPureFact],
@@ -208,7 +225,9 @@ fn snapshot_bridge_proves(
         assumptions.assume_proposition(fact.proposition().clone())
     });
     candidates.iter().any(|candidate| {
-        assumptions.conditions_equal_modulo_proven_snapshots(candidate, required_condition)
+        required_spellings.iter().any(|required| {
+            assumptions.conditions_equal_modulo_proven_snapshots(candidate, required)
+        })
     })
 }
 
