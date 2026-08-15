@@ -2577,4 +2577,3 @@ pub(crate) fn c_condition_fact_with_canonical_loads(fact: &Proposition) -> Propo
         None => fact.clone(),
     }
 }
-

@@ -268,6 +268,40 @@ snapshot) has no replayable derivation. Traced end to end:
   matcher learns to see through it; a wrong answer here would launder the
   init store.
 
+## Deeper trace: the premise state is wrong before the bridge runs (2026-08-14 late)
+
+Chain-dumping the failing tactic's `CStatementVerifies` state settled where
+the mismatch is minted, and it is upstream of every bridge:
+
+- The replay state presented for `pool_transfer_pipeline`'s transfer
+  statement has a memory whose own content asserts
+  `destination->checked_out = load(entry, destination->checked_out)` — a
+  pristine materialization cell that survived `pool_init(destination)`.
+  The recorded footprints are all correct (traced: every `pool_init`
+  evaluation at a one-marker entry records `v100001` ranges; canonical
+  footprint recording changes nothing, `changed=false` on every range),
+  so the wrong cell is not a footprint or canonicalization bug: the
+  replay-side state construction for the second call kept a cell the
+  call's havoc should have dropped. Where that state is built is the next
+  question; `851fde96`'s "stored resolved forms when pairs were present"
+  is the suspect family.
+- Because the laundered content is alpha-identical to
+  `pool_pipeline`'s honest post-`return` state (same fresh-variable and
+  marker numbering across function verifications, and the object arg
+  really is untouched there), the content-addressed arena interns them as
+  one node, and first-wins derivation recording gives it
+  `pool_pipeline`'s three source-ranged edges. Memory terms are
+  self-contained, so the foreign edges are still true *of the content* —
+  the conflation is not itself unsound, but it makes diagnosis
+  treacherous and it means an alpha-collision can hand a wrong replay
+  state a plausible-looking history. A regression should pin that two
+  functions with alpha-identical states cannot exchange derivations in a
+  way that changes any verdict.
+- The two DAG-walk gaps fixed this session (unrecorded `CellsForgotten`
+  reductions; sibling-chain matching with the bounded matcher, replacing
+  the intra-arena id-ordering early exit) are correct and stay, but they
+  cannot close the frontier while the replay state itself is laundered.
+
 ## Remaining to close, in order
 
 1. The examples fixture gate. The 500,000-unit budget exhaustion is
