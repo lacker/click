@@ -397,6 +397,69 @@ fn symbolic_declared_resource_quantity_splits_without_materializing_units() {
 }
 
 #[test]
+fn declared_resource_quantity_work_ignores_the_numeric_coefficient() {
+    let resource = CResource::Token {
+        name: "permit".to_string(),
+        arguments: vec![int32(9)],
+    };
+    let symbolic_quantity = Bitvector32Term::var(Variable(701));
+
+    let samples = [
+        ("one", Bitvector32Term::Constant(1)),
+        ("two", Bitvector32Term::Constant(2)),
+        ("ten", Bitvector32Term::Constant(10)),
+        ("one hundred", Bitvector32Term::Constant(100)),
+        ("one thousand", Bitvector32Term::Constant(1_000)),
+        ("symbolic", symbolic_quantity.clone()),
+    ]
+    .into_iter()
+    .map(|(label, quantity)| {
+        let assumptions = PureFactContext::new().assume_condition(
+            ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(quantity.clone()),
+                Box::new(Bitvector32Term::Constant(1)),
+            ),
+            true,
+        );
+        let context = ResourceContext::new().unchecked_with_facts([
+            CResourceFact::own_quantity(resource.clone(), quantity.clone()),
+            CResourceFact::own(resource.clone()),
+        ]);
+        let (normalized, normalization_work) =
+            crate::instrumentation::measure_deterministic_work(|| context.normalized(&assumptions));
+        assert_eq!(normalized.facts().len(), 1);
+
+        let available = ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own_quantity(resource.clone(), quantity));
+        let (remaining, consumption_work) =
+            crate::instrumentation::measure_deterministic_work(|| {
+                available.without_fact(&CResourceFact::own(resource.clone()), &assumptions)
+            });
+        assert!(remaining.is_some(), "{label} units should contain one unit");
+
+        (label, normalization_work, consumption_work)
+    })
+    .collect::<Vec<_>>();
+
+    assert!(
+        samples.iter().all(|sample| sample.1 == samples[0].1),
+        "normalization work depended on the coefficient: {samples:?}"
+    );
+    assert!(
+        samples[1..5].iter().all(|sample| sample.2 == samples[1].2),
+        "one-unit splitting work depended on the concrete coefficient: {samples:?}"
+    );
+    assert!(
+        samples[0].2 <= samples[1].2,
+        "the exact one-unit fast path should not cost more than splitting: {samples:?}"
+    );
+    assert!(
+        samples[5].2 <= samples[1].2 + 8,
+        "a symbolic coefficient should add only bounded expression-reasoning work: {samples:?}"
+    );
+}
+
+#[test]
 fn zero_declared_resource_quantity_is_the_composition_identity() {
     let zero = CResourceFact::own_quantity(
         CResource::Token {

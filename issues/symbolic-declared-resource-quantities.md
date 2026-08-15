@@ -199,8 +199,11 @@ smart sites all pass expansion audit. A separate abstract-resource regression
 passes a symbolic quantity through an opaque call and then consumes it without
 minting authority. `./scripts/check.sh` is green.
 
-The issue remains open for the bounded-pool regression and an explicit
-deterministic work comparison across constant and symbolic coefficient sizes.
+The issue remains open for the bounded-pool regression.
+`declared_resource_quantity_work_ignores_the_numeric_coefficient` pins equal
+normalization work for quantities `1`, `1_000`, and a symbolic parameter,
+equal one-unit splitting work across geometric concrete quantities, and only
+bounded expression-reasoning overhead for the symbolic case.
 `symbolic_quantity_rejects_recursive_composite.md` pins the unsupported
 recursive-composite boundary while ordinary guarded recursive resources remain
 covered separately.
