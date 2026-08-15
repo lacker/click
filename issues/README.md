@@ -25,9 +25,6 @@ when evidence exposes one.
   re-searches; measured at 97 percent of one tactic's budget before the
   landed relief ordering.
 - [Push contract path dropped by laundered inconsistency](push-contract-path-dropped-by-laundered-inconsistency.md):
-  the exit drain's "sibling certifies this path" skip silently dropped the
-  `grown == 1` path of `allocated_vector_push.contract` on master, hidden
-  by launder-induced inconsistency; honest re-verification lands on this
-  branch and stalls only on giant-term memory-resolution cost, with
-  owned-vector quarantined until the engine work and a no-silent-drop
-  guard land.
+  the silent sibling-path drop now has a structural guard; honest
+  `allocated_vector_push.contract` verification still stalls on giant-term
+  memory-resolution cost, so owned-vector remains quarantined.
