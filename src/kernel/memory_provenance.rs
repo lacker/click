@@ -993,6 +993,130 @@ pub(super) enum AtomicMemoryLoadEqualityEvidence {
     RightResolvesToLeft { right: MemoryDagCell },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum PointerOffsetEqualityEvidence {
+    Exact,
+    Add {
+        first: Box<PointerOffsetEqualityEvidence>,
+        second: Box<PointerOffsetEqualityEvidence>,
+        swapped: bool,
+    },
+    Int32Scaled {
+        byte_width: i64,
+        values: AtomicMemoryLoadEqualityEvidence,
+    },
+}
+
+pub(super) fn pointer_offset_equality_evidence(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    assumptions: &PureFactContext,
+) -> Option<PointerOffsetEqualityEvidence> {
+    if left == right {
+        return Some(PointerOffsetEqualityEvidence::Exact);
+    }
+    match (left, right) {
+        (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
+            if let Some((first, second)) =
+                pointer_offset_equality_evidence(left_a, right_a, assumptions).zip(
+                    pointer_offset_equality_evidence(left_b, right_b, assumptions),
+                )
+            {
+                return Some(PointerOffsetEqualityEvidence::Add {
+                    first: Box::new(first),
+                    second: Box::new(second),
+                    swapped: false,
+                });
+            }
+            let (first, second) =
+                pointer_offset_equality_evidence(left_a, right_b, assumptions).zip(
+                    pointer_offset_equality_evidence(left_b, right_a, assumptions),
+                )?;
+            Some(PointerOffsetEqualityEvidence::Add {
+                first: Box::new(first),
+                second: Box::new(second),
+                swapped: true,
+            })
+        }
+        (
+            PointerOffsetTerm::Int32Scaled {
+                value: left,
+                byte_width: left_width,
+            },
+            PointerOffsetTerm::Int32Scaled {
+                value: right,
+                byte_width: right_width,
+            },
+        ) if left_width == right_width => {
+            let values = atomic_memory_load_equality_evidence(left, right, assumptions)?;
+            values
+                .is_fully_typed()
+                .then_some(PointerOffsetEqualityEvidence::Int32Scaled {
+                    byte_width: *left_width,
+                    values,
+                })
+        }
+        _ => None,
+    }
+}
+
+impl PointerOffsetEqualityEvidence {
+    pub(super) fn replays(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        match self {
+            Self::Exact => left == right,
+            Self::Add {
+                first,
+                second,
+                swapped,
+            } => {
+                let (
+                    PointerOffsetTerm::Add(left_a, left_b),
+                    PointerOffsetTerm::Add(right_a, right_b),
+                ) = (left, right)
+                else {
+                    return false;
+                };
+                let (right_first, right_second) = if *swapped {
+                    (right_b.as_ref(), right_a.as_ref())
+                } else {
+                    (right_a.as_ref(), right_b.as_ref())
+                };
+                first.replays(left_a, right_first, assumptions)
+                    && second.replays(left_b, right_second, assumptions)
+            }
+            Self::Int32Scaled { byte_width, values } => {
+                let (
+                    PointerOffsetTerm::Int32Scaled {
+                        value: left,
+                        byte_width: left_width,
+                    },
+                    PointerOffsetTerm::Int32Scaled {
+                        value: right,
+                        byte_width: right_width,
+                    },
+                ) = (left, right)
+                else {
+                    return false;
+                };
+                left_width == byte_width
+                    && right_width == byte_width
+                    && values.replays(
+                        &Proposition::ConditionIs(
+                            ConditionTerm::equal(left.as_ref().clone(), right.as_ref().clone()),
+                            true,
+                        ),
+                        assumptions,
+                    )
+            }
+        }
+    }
+}
+
 impl AtomicMemoryLoadEqualityEvidence {
     /// Whether this evidence uses only rule families whose local structural
     /// checker is implemented. This inspects the already-built object; it

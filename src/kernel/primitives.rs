@@ -1,5 +1,5 @@
 use super::api::{int32, normalize_exact_memory_loads_in_pointer_offset, uint8};
-use super::memory_provenance::AtomicMemoryLoadEqualityEvidence;
+use super::memory_provenance::{AtomicMemoryLoadEqualityEvidence, PointerOffsetEqualityEvidence};
 use super::reasoning::{
     bitvector_terms_proven_equal_for_memory_resolution,
     c_values_proven_equal_for_memory_resolution, collect_or_cases, instantiate_range_fold_step,
@@ -1645,6 +1645,7 @@ pub(super) enum PropositionDerivationRule {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum AtomicPropositionDerivationEvidence {
     MemoryDag(AtomicMemoryLoadEqualityEvidence),
+    PointerOffsetMemoryDag(PointerOffsetEqualityEvidence),
     Legacy,
 }
 

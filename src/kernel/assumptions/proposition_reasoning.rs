@@ -970,6 +970,10 @@ impl PureFactContext {
                     .filter(AtomicMemoryLoadEqualityEvidence::is_fully_typed)
                     .map(AtomicPropositionDerivationEvidence::MemoryDag)
             }
+            Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) => {
+                crate::kernel::api::pointer_offset_equality_evidence(left, right, self)
+                    .map(AtomicPropositionDerivationEvidence::PointerOffsetMemoryDag)
+            }
             _ => None,
         };
         let result = memory_evidence.or_else(|| {
@@ -1018,6 +1022,14 @@ impl PureFactContext {
     ) -> bool {
         if let AtomicPropositionDerivationEvidence::MemoryDag(evidence) = evidence {
             return evidence.replays(proposition, self);
+        }
+        if let AtomicPropositionDerivationEvidence::PointerOffsetMemoryDag(evidence) = evidence {
+            let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) =
+                proposition
+            else {
+                return false;
+            };
+            return evidence.replays(left, right, self);
         }
         if !decide_memo_disabled()
             && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {

@@ -522,6 +522,27 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
         !evidence.replays(&goal, &PureFactContext::new()),
         "neither separation nor positivity may be borrowed from ambient search"
     );
+    let left_offset = PointerOffsetTerm::scale_int32(load(&called), 4);
+    let right_offset = PointerOffsetTerm::scale_int32(load(&base), 4);
+    let offset_goal = Proposition::ConditionIs(
+        ConditionTerm::pointer_offset_equal(left_offset.clone(), right_offset.clone()),
+        true,
+    );
+    let offset_derivation =
+        with_extended_dag_bridging(|| assumptions.derive_atomic_proposition(&offset_goal))
+            .expect("pointer-offset structure retains the child load proof");
+    assert!(matches!(
+        &offset_derivation.rule,
+        PropositionDerivationRule::ContextualAtomic {
+            evidence: AtomicPropositionDerivationEvidence::PointerOffsetMemoryDag(_),
+            ..
+        }
+    ));
+    assert!(offset_derivation.replay(&assumptions));
+    assert!(
+        !offset_derivation.replay(&PureFactContext::new()),
+        "pointer-offset replay checks the child proof's named premises"
+    );
 }
 
 /// The owned-string loadable shape: the permission fact and its bound facts
