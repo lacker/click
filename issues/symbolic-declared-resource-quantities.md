@@ -107,8 +107,9 @@ The first green slice supports symbolic quantities on user-declared abstract
 resources and on the nonrecursive population-wide resource exercised by the
 refcount example. It establishes the general syntax, coefficient
 representation, zero identity, splitting/rejoining algebra, contract
-obligations, diagnostics, and certification path. Quantified memory and
-allocation resources remain explicitly rejected.
+obligations, diagnostics, and certification path. Quantified memory,
+allocation, and recursive composite resources remain explicitly rejected.
+Ordinary one-unit guarded recursive resources remain supported.
 
 The representation and syntax are general to declared resources rather than a
 token-only special case. For resources with population-wide bodies, the
@@ -198,7 +199,8 @@ smart sites all pass expansion audit. A separate abstract-resource regression
 passes a symbolic quantity through an opaque call and then consumes it without
 minting authority. `./scripts/check.sh` is green.
 
-The issue remains open for the bounded-pool regression, explicit deterministic
-work comparison across constant and symbolic coefficient sizes, and any
-additional restriction or certification needed before claiming recursive
-composite quantities.
+The issue remains open for the bounded-pool regression and an explicit
+deterministic work comparison across constant and symbolic coefficient sizes.
+`symbolic_quantity_rejects_recursive_composite.md` pins the unsupported
+recursive-composite boundary while ordinary guarded recursive resources remain
+covered separately.

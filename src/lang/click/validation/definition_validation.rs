@@ -79,6 +79,18 @@ pub(in crate::lang::click) fn validate_click_definitions(
         }
     }
 
+    let recursive_resources = resource_definitions
+        .iter()
+        .filter(|definition| {
+            definition.composite_body().is_some_and(|body| {
+                body.contains().iter().any(|resource| {
+                    declared_composite_resource_name(resource) == Some(definition.name())
+                })
+            })
+        })
+        .map(|definition| definition.name().to_string())
+        .collect::<BTreeSet<_>>();
+
     let mut theorems = BTreeMap::new();
     for definition in &theorem_definitions {
         if predicates.contains_key(definition.name()) {
@@ -125,6 +137,7 @@ pub(in crate::lang::click) fn validate_click_definitions(
         validate_resource_definition(
             definition,
             &resources,
+            &recursive_resources,
             &predicates,
             &click_functions,
             &click_function_types,
@@ -245,6 +258,7 @@ pub(in crate::lang::click) fn validate_click_definitions(
                 validate_resource_clause(
                     resource,
                     &resources,
+                    &recursive_resources,
                     &click_functions,
                     &click_function_types,
                     &requires_type_environment,
@@ -291,6 +305,7 @@ pub(in crate::lang::click) fn validate_click_definitions(
                 Ensure::Resource(resource) => validate_resource_clause(
                     resource,
                     &resources,
+                    &recursive_resources,
                     &click_functions,
                     &click_function_types,
                     &ensures_type_environment,
@@ -375,6 +390,7 @@ fn validate_theorem_definition(
 fn validate_resource_definition(
     definition: &ResourceDefinition,
     resources: &BTreeMap<String, usize>,
+    recursive_resources: &BTreeSet<String>,
     predicates: &BTreeMap<String, usize>,
     click_functions: &BTreeMap<String, usize>,
     click_function_types: &BTreeMap<String, ClickFunctionType>,
@@ -442,6 +458,7 @@ fn validate_resource_definition(
         validate_resource_clause(
             resource,
             resources,
+            recursive_resources,
             click_functions,
             click_function_types,
             &variables,
@@ -1579,6 +1596,20 @@ fn constant_c_expression_i64(expression: &CExpression) -> Option<i64> {
             Some(constant_c_expression_i64(left)? - constant_c_expression_i64(right)?)
         }
         _ => None,
+    }
+}
+
+fn declared_composite_resource_name(resource: &ResourceClause) -> Option<&str> {
+    match resource {
+        ResourceClause::Declared {
+            kind: ResourceKind::Composite,
+            name,
+            ..
+        } => Some(name),
+        ResourceClause::Quantified { resource, .. } => declared_composite_resource_name(resource),
+        ResourceClause::Read(_) | ResourceClause::Write(_) | ResourceClause::Declared { .. } => {
+            None
+        }
     }
 }
 

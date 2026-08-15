@@ -237,10 +237,17 @@ the same arguments:
 abstract resource object_ref(object: struct object*);
 ```
 
-Click stores equal owned units as one canonical fact with a quantity. A
-contract clause transfers one unit: consuming one
-`object_ref(object)` from a quantity of two leaves one unit behind. Viewed
-facts remain idempotent and do not carry a count.
+Click stores equal owned units as one canonical fact with a quantity. A clause
+without a coefficient transfers one unit: consuming one `object_ref(object)`
+from a quantity of two leaves one unit behind. An owned user-declared resource
+may use `owns amount of object_ref(object)`, `consumes amount of ...`, or
+`produces amount of ...` to transfer a runtime `int32` quantity algebraically.
+The coefficient must be proved nonnegative at the contract snapshot, and zero
+grants no authority. Viewed facts remain idempotent and do not carry a count.
+
+Symbolic coefficients are rejected for memory, allocation, and recursively
+defined composite resources. Those families need distinct semantics; Click
+does not interpret a symbolic coefficient by expanding it into repeated facts.
 
 `count(object_ref(object))` observes the exact quantity. A resource body may
 relate that count to C state and belongs to the population as a whole, not to

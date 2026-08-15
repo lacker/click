@@ -468,8 +468,18 @@ resource object_ref(obj: struct object*) {
 ```
 
 Repeated owned clauses denote a quantity rather than a duplicate-ownership
-error. Each `owns`, `consumes`, or `produces` clause still transfers one unit.
-The body belongs to the population as a whole, not once per unit.
+error. Omitting a coefficient transfers one unit. An owned user-declared
+resource may instead transfer an `int32` quantity explicitly:
+
+```click
+owns amount of object_ref(obj);
+consumes amount of object_ref(obj);
+produces amount of object_ref(obj);
+```
+
+The coefficient must be provably nonnegative at the contract snapshot. Zero is
+the resource identity and grants no authority. The body belongs to the
+population as a whole, not once per unit.
 `count(object_ref(obj))` is an `int32` expression naming the population size.
 The example above therefore says that all references together own the object
 and that its stored count equals their logical total. A wildcard argument sums
@@ -489,9 +499,10 @@ body and requires it to be restored on exit without changing the population.
 `unfold(object_ref(obj))` is the inverse lifetime operation and is allowed only
 after proving that the count is exactly one; it exposes the body for a final
 destructor or `free`. Ordinary retain and release operations use `open` rather
-than folding or unfolding the body. Contract clauses currently transfer one
-unit at a time; symbolic quantities such as `owns n of object_ref(obj)` are
-not part of this slice.
+than folding or unfolding the body. Symbolic coefficients are not accepted on
+memory, allocation, or recursively defined composite resources. Those
+resource families need separate certified semantics rather than treating a
+quantity as repeated clauses.
 
 Population bodies preserved across opaque calls must have a resource footprint
 determined entirely by the declared resource arguments. A body whose owned

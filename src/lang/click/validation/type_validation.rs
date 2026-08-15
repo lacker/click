@@ -663,6 +663,7 @@ fn validate_contract_segment_expression_types(
 pub(super) fn validate_resource_clause(
     resource: &ResourceClause,
     resources: &BTreeMap<String, usize>,
+    recursive_resources: &BTreeSet<String>,
     click_functions: &BTreeMap<String, usize>,
     click_function_types: &BTreeMap<String, ClickFunctionType>,
     variables: &BTreeMap<String, C0Type>,
@@ -691,9 +692,17 @@ pub(super) fn validate_resource_clause(
                     "symbolic quantities require an owned user-declared resource in {context}"
                 )));
             }
+            if let ResourceClause::Declared { name, .. } = resource.as_ref()
+                && recursive_resources.contains(name)
+            {
+                return Err(ClickError::new(format!(
+                    "symbolic quantities for recursive composite resource `{name}` are not supported in {context}"
+                )));
+            }
             validate_resource_clause(
                 resource,
                 resources,
+                recursive_resources,
                 click_functions,
                 click_function_types,
                 variables,
