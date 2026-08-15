@@ -419,6 +419,7 @@ fn verify_theorem_ensure(
             | "int32_one_plus_strictly_increases"
             | "int32_nonnegative_add_within_max_is_defined"
             | "int32_nonnegative_subtract_within_value_is_defined"
+            | "int32_move_one_from_right_to_left_preserves_sum"
             | "int32_add_nonnegative_right_is_at_least_left"
             | "int32_add_nonnegative_left_is_at_least_right"
             | "int32_above_one_predecessor_is_at_least_one"
@@ -602,6 +603,7 @@ fn verify_kernel_standard_theorem_axiom(
         | "int32_nonnegative_subtract_within_value_is_defined"
         | "int32_add_nonnegative_right_is_at_least_left"
         | "int32_add_nonnegative_left_is_at_least_right" => (2, 2),
+        "int32_move_one_from_right_to_left_preserves_sum" => (3, 3),
         "int32_le_antisymmetric" => (2, 2),
         "int32_le_and_not_lt_implies_eq"
         | "int32_le_and_neq_implies_lt"
@@ -700,6 +702,13 @@ fn verify_kernel_standard_theorem_axiom(
         "int32_nonnegative_subtract_within_value_is_defined" => {
             prove_int32_nonnegative_subtract_within_value_is_defined(value, int32_parameter(1)?)
         }
+        "int32_move_one_from_right_to_left_preserves_sum" => {
+            prove_int32_move_one_from_right_to_left_preserves_sum(
+                value.clone(),
+                int32_parameter(1)?,
+                int32_parameter(2)?,
+            )
+        }
         "int32_add_nonnegative_right_is_at_least_left" => {
             prove_int32_add_nonnegative_right_is_at_least_left(value, int32_parameter(1)?)
         }
@@ -756,6 +765,9 @@ fn verify_kernel_standard_theorem_axiom(
     let kernel_authority = match theorem.name() {
         "int32_above_one_predecessor_is_at_least_one" => {
             Some(certify_int32_above_one_predecessor_is_at_least_one())
+        }
+        "int32_move_one_from_right_to_left_preserves_sum" => {
+            Some(certify_int32_move_one_from_right_to_left_preserves_sum())
         }
         _ => None,
     };

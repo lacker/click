@@ -31,7 +31,3 @@ when evidence exposes one.
   branch and stalls only on giant-term memory-resolution cost, with
   owned-vector quarantined until the engine work and a no-silent-drop
   guard land.
-- [Declared resources need symbolic quantities](symbolic-declared-resource-quantities.md):
-  every `owns`/`consumes`/`produces` clause transfers exactly one unit, so
-  runtime-sized capacity cannot become linear authority; bounded-pool is the
-  motivating case.

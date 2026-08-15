@@ -55,12 +55,14 @@ pub(super) struct TacticReplayState {
     pub(super) next_verification_variable: u64,
     pub(super) next_path_choice: usize,
     pub(super) execution_start_facts: Vec<Proposition>,
-    /// Exact non-contract facts selected by a statement certificate while the
-    /// C frontier is still at function entry.
+    /// Exact non-contract facts selected by a statement certificate, resource
+    /// observation, or explicit kernel theorem while the C frontier is still
+    /// at function entry.
     pub(super) function_entry_execution_prerequisites: Vec<Proposition>,
     /// Kernel-issued implications produced by explicit theorem applications
-    /// at function entry. Final certification uses these only to discharge
-    /// selected execution prerequisites.
+    /// and resource-count observations at function entry. Final certification
+    /// independently discharges their premises before admitting conclusions
+    /// that were exact assumptions of the checked execution.
     pub(super) function_entry_derivations: Vec<Theorem>,
     /// Frontier-local loop proofs become part of the checked function proof,
     /// not temporary tactic state.  Final kernel certification rebuilds the

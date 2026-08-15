@@ -955,6 +955,27 @@ fn execute_verified_function_rule(
                     &[],
                 )));
             }
+            // Preserve the source identity of a named predicate ensure. The
+            // expanded `ensure` above is the operational authority; this
+            // exact registered pair is its definitional surface identity.
+            if let Some(unfolding) = function
+                .predicate_unfoldings()
+                .iter()
+                .find(|unfolding| unfolding.body() == ensure)
+            {
+                let predicate_paths = lower_spec_proposition_at_state_with_loop_entry(
+                    &post_contract_state,
+                    unfolding.predicate(),
+                    Some(&entry_contract_state),
+                    &lowering_assumptions,
+                    budget,
+                )?;
+                for predicate_path in predicate_paths {
+                    if predicate_path.obligations.is_empty() {
+                        facts.push(ExecutionPureFact::certified(predicate_path.proposition));
+                    }
+                }
+            }
         }
         drop(ensure_timing);
 
@@ -1326,15 +1347,18 @@ fn prepare_function_resource_transfer(
             .composite_resource_definitions()
             .iter()
             .any(CCompositeResourceDefinition::is_recursive);
-    let required_resources = match evaluate_function_resource_context(
-        callee_state,
-        function.resource_requires(),
-        assumptions,
-        budget,
-    )? {
-        Ok(resources) => resources,
-        Err(error) => return Ok(Err(error)),
-    };
+    let required_resources =
+        match super::assumptions::capture_implicit_reasoning_provenance(|| {
+            evaluate_function_resource_context(
+                callee_state,
+                function.resource_requires(),
+                assumptions,
+                budget,
+            )
+        })? {
+            Ok(resources) => resources,
+            Err(error) => return Ok(Err(error)),
+        };
     let Some(canonical_resources) = expand_all_composite_resource_facts(
         &required_resources,
         function.composite_resource_definitions(),
@@ -1706,6 +1730,25 @@ fn resource_spec_has_snapshot_independent_footprint(resource: &CResourceSpec) ->
     }
 }
 
+fn population_body_requires_positive_witness(definition: &CCompositeResourceDefinition) -> bool {
+    fn resource_is_duplicable_view(resource: &CResourceSpec) -> bool {
+        match resource {
+            CResourceSpec::Read(_) => true,
+            CResourceSpec::Quantified { resource, .. } => resource_is_duplicable_view(resource),
+            CResourceSpec::Composite { access, .. } | CResourceSpec::Token { access, .. } => {
+                *access == CResourceAccessMode::View
+            }
+            CResourceSpec::Write(_) => false,
+        }
+    }
+
+    !definition.facts().is_empty()
+        || definition
+            .contains()
+            .iter()
+            .any(|resource| !resource_is_duplicable_view(resource))
+}
+
 fn c_expression_is_snapshot_independent(expression: &CExpression) -> bool {
     match expression {
         CExpression::Value(_) | CExpression::Variable(_) => true,
@@ -1850,17 +1893,13 @@ fn apply_counted_population_transitions(
     let mut transition = CCountedPopulationTransition::default();
     let mut transition_guaranteed_facts = Vec::new();
     for (name, arguments) in keys {
-        let population_body_definition =
-            function
-                .composite_resource_definitions()
-                .iter()
-                .find(|definition| {
-                    definition.name() == name
-                        && definition_has_population_wide_body(
-                            definition,
-                            track_ordinary_populations,
-                        )
-                });
+        let declared_population_definition = function
+            .composite_resource_definitions()
+            .iter()
+            .find(|definition| definition.name() == name);
+        let population_body_definition = declared_population_definition.filter(|definition| {
+            definition_has_population_wide_body(definition, track_ordinary_populations)
+        });
         let required_quantity = required_quantities
             .get(&(name.clone(), arguments.clone()))
             .cloned()
@@ -1940,6 +1979,7 @@ fn apply_counted_population_transitions(
         let visible_prior = caller_quantities
             .get(&(name.clone(), arguments.clone()))
             .cloned();
+        let prior_count_for_transition = tracked_prior.clone().or_else(|| visible_prior.clone());
         let new_count = if let Some((required, ensured)) = required_quantity
             .as_const()
             .zip(ensured_quantity.as_const())
@@ -2064,7 +2104,10 @@ fn apply_counted_population_transitions(
             // entry count >= required units, then both sides change by the
             // same net contract quantity. Only a population with no locally
             // returned unit needs an explicit proof that unseen units remain.
-            if population_quantity_is_zero(&ensured_quantity, assumptions) {
+            if population_quantity_is_zero(&ensured_quantity, assumptions)
+                && declared_population_definition
+                    .is_none_or(population_body_requires_positive_witness)
+            {
                 transition.postcondition_obligations.push(
                     ProofObligation::verification_condition(Proposition::ConditionIs(
                         ConditionTerm::Bitvector32SignedGreaterThan(
@@ -2095,7 +2138,30 @@ fn apply_counted_population_transitions(
                         "invalid counted population transition for `{name}`: post-count {new_count} is below returned quantity {ensured_count}"
                     ))));
                 }
-                if assumptions.proves(&guaranteed) {
+                let residual_is_certified_nonnegative =
+                    population_quantity_is_zero(&ensured_quantity, assumptions)
+                        && prior_count_for_transition.as_ref().is_some_and(|prior| {
+                            new_count
+                                == Bitvector32Term::subtract(
+                                    prior.clone(),
+                                    required_quantity.clone(),
+                                )
+                                && assumptions.proves(&Proposition::ConditionIs(
+                                    ConditionTerm::Bitvector32SignedGreaterEqual(
+                                        Box::new(required_quantity.clone()),
+                                        Box::new(Bitvector32Term::Constant(0)),
+                                    ),
+                                    true,
+                                ))
+                                && assumptions.proves(&Proposition::ConditionIs(
+                                    ConditionTerm::Bitvector32SignedLessEqual(
+                                        Box::new(required_quantity.clone()),
+                                        Box::new(prior.clone()),
+                                    ),
+                                    true,
+                                ))
+                        });
+                if assumptions.proves(&guaranteed) || residual_is_certified_nonnegative {
                     transition_guaranteed_facts.push(guaranteed);
                 } else {
                     transition.postcondition_obligations.push(
@@ -2121,6 +2187,19 @@ fn apply_counted_population_transitions(
         if population_quantity_is_zero(&population.count, assumptions) {
             continue;
         }
+        let population_body = function
+            .composite_resource_definitions()
+            .iter()
+            .find(|definition| {
+                definition.name() == population.name
+                    && definition_has_population_wide_body(definition, true)
+            });
+        let Some(population_body) = population_body else {
+            continue;
+        };
+        if !population_body_requires_positive_witness(population_body) {
+            continue;
+        }
         if !population_quantity_is_positive(&population.count, assumptions) {
             transition.postcondition_obligations.push(
                 ProofObligation::verification_condition(Proposition::ConditionIs(
@@ -2133,19 +2212,10 @@ fn apply_counted_population_transitions(
                 .with_context("resource population body is active"),
             );
         }
-        if function
-            .composite_resource_definitions()
-            .iter()
-            .any(|definition| {
-                definition.name() == population.name
-                    && definition_has_population_wide_body(definition, true)
-            })
-        {
-            active_populations.push(CResourceFact::own(CResource::Composite {
-                name: population.name.clone(),
-                arguments: population.arguments.clone(),
-            }));
-        }
+        active_populations.push(CResourceFact::own(CResource::Composite {
+            name: population.name.clone(),
+            arguments: population.arguments.clone(),
+        }));
     }
     let active_populations = ResourceContext::new().unchecked_with_facts(active_populations);
     let Some(population_facts) = evaluate_resource_population_fact_propositions(
@@ -3442,6 +3512,46 @@ pub(super) fn evaluate_function_resource_spec(
             budget,
         ),
     }
+}
+
+/// Lowers the nonnegativity conditions implicit in quantified resource
+/// requirements. A function may assume these at its own entry just as it may
+/// assume its ordinary `requires`; call sites still use
+/// `evaluate_function_resource_spec` and must prove every condition.
+pub(super) fn quantified_resource_requirement_assumptions(
+    state: &CState,
+    resources: &[CResourceSpec],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<Vec<Proposition>, CRuntimeError>> {
+    let mut propositions = Vec::new();
+    for resource in resources {
+        let CResourceSpec::Quantified { quantity, .. } = resource else {
+            continue;
+        };
+        let quantity = match evaluate_loop_effect_segment_value(
+            state,
+            quantity,
+            assumptions,
+            "declared resource quantity",
+            budget,
+        )? {
+            Ok(CValue::Int32(quantity)) => quantity,
+            Ok(_) | Err(_) => {
+                return Ok(Err(CRuntimeError::FunctionContract(
+                    "declared resource quantity must evaluate to int32".to_string(),
+                )));
+            }
+        };
+        propositions.push(Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(quantity),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        ));
+    }
+    Ok(Ok(propositions))
 }
 
 fn evaluate_function_declared_resource_spec(

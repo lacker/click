@@ -872,7 +872,7 @@ fn prepare_function_claim_path(
     let Ok(post_resource_facts) = post_resources.observable_facts(&assumptions) else {
         return Err("the returned resource context is not observable".to_string());
     };
-    let assumptions = assumptions_with_propositions(&assumptions, &post_resource_facts);
+    let mut assumptions = assumptions_with_propositions(&assumptions, &post_resource_facts);
     let mut post_state = entry_state
         .clone()
         .with_memory(return_state.memory().clone());
@@ -882,6 +882,43 @@ fn prepare_function_claim_path(
         post_state
             .locals
             .set_typed("result".to_string(), value.clone(), function.return_type());
+    }
+    // A named predicate returned by a verified call is an opaque certified
+    // execution fact. Reconstruct its registered body at the enclosing
+    // function's exact post-state so other postconditions can use the
+    // definition without trusting a surface-supplied expansion.
+    for unfolding in function.predicate_unfoldings() {
+        let Some((predicate, predicate_obligations, body, body_obligations)) =
+            instantiate_contract_predicate_unfolding_with_obligations(
+                &post_state,
+                unfolding,
+                &assumptions,
+                &mut budget,
+            )
+        else {
+            continue;
+        };
+        let obligations_hold =
+            predicate_obligations
+                .iter()
+                .chain(&body_obligations)
+                .all(|obligation| {
+                    certification_proves_proposition(&assumptions, obligation)
+                        || contract_endpoints_certify_loadability(
+                            &entry_state,
+                            &entry_resources,
+                            &post_state,
+                            &post_resources,
+                            obligation,
+                            &assumptions,
+                        )
+                        || loadable_covered_by_fact(&assumptions, obligation)
+                        || forall_loadable_covered_by_fact(&assumptions, obligation)
+                });
+        let predicate_holds = certification_proves_proposition(&assumptions, &predicate);
+        if obligations_hold && predicate_holds {
+            assumptions = assumptions.assume_proposition(body);
+        }
     }
     if let Some(obligation) = path.obligations().iter().find(|obligation| {
         let proved = certification_proves_proposition(&assumptions, obligation.proposition())
@@ -945,6 +982,43 @@ fn function_claim_holds_on_prepared_path(
             let Some(ensure) = function.contract_ensures().get(*index) else {
                 return false;
             };
+            // A surface predicate ensure is stored operationally as its
+            // expanded body, plus an exact registered opaque identity. If
+            // that identity is already certified at this post-state, it is
+            // the kernel authority for the named predicate claim itself.
+            // This path deliberately applies only to the exact registered
+            // body; arbitrary proposition ensures continue through ordinary
+            // lowering and loadability checks below.
+            let registered_predicate_ensure_holds = function
+                .predicate_unfoldings()
+                .iter()
+                .filter(|unfolding| unfolding.body() == ensure)
+                .any(|unfolding| {
+                    let Some((predicate, predicate_obligations, _, _)) =
+                        instantiate_contract_predicate_unfolding_with_obligations(
+                            post_state,
+                            unfolding,
+                            assumptions,
+                            &mut budget,
+                        )
+                    else {
+                        return false;
+                    };
+                    predicate_obligations.iter().all(|obligation| {
+                        certification_proves_proposition(assumptions, obligation)
+                            || contract_endpoints_certify_loadability(
+                                entry_state,
+                                entry_resources,
+                                post_state,
+                                post_resources,
+                                obligation,
+                                assumptions,
+                            )
+                    }) && certification_proves_proposition(assumptions, &predicate)
+                });
+            if registered_predicate_ensure_holds {
+                return true;
+            }
             let lowering_assumptions = assumptions.clone().allow_symbolic_contract_loads();
             let Ok(paths) = lower_spec_proposition_at_state_with_loop_entry(
                 post_state,

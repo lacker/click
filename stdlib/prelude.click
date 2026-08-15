@@ -103,6 +103,18 @@ theorem int32_nonnegative_subtract_within_value_is_defined(value: int32, amount:
     ensures defined(value - amount);
 }
 
+theorem int32_move_one_from_right_to_left_preserves_sum(
+    total: int32,
+    left: int32,
+    right: int32
+) {
+    requires 0 <= left;
+    requires 1 <= right;
+    requires total == left + right;
+
+    ensures total == (left + 1) + (right - 1);
+}
+
 theorem int32_subtract_equal_sum_right_cancels(value: int32, left: int32, amount: int32) {
     requires defined(left + amount) and value == left + amount;
     requires defined(value - amount);

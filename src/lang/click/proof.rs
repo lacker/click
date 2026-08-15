@@ -1885,6 +1885,12 @@ pub(super) fn initial_claim_context(
             collect_called_predicates(proposition, &mut pending_predicates);
         }
     }
+    for ensure in function_block.ensures() {
+        if let Ensure::Proposition(proposition) = ensure.ensure() {
+            collect_resource_count_families(proposition, &mut observed_population_families);
+            collect_called_predicates(proposition, &mut pending_predicates);
+        }
+    }
     // Predicate facts carry their resource-state snapshot opaquely. Register
     // every family a reachable predicate may observe before constructing
     // those facts so zero populations remain observable across later opaque

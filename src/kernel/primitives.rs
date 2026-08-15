@@ -488,6 +488,15 @@ pub struct CFunction {
     pub(super) contract_claims: Vec<CFunctionContractClaim>,
     pub(super) opaque_contract_supported: bool,
     pub(super) composite_resource_definitions: Vec<CCompositeResourceDefinition>,
+    /// Contract-local definitions for opaque Click predicate requirements.
+    /// Both sides are instantiated at the exact function entry state.
+    pub(super) predicate_unfoldings: Vec<CPredicateUnfolding>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CPredicateUnfolding {
+    pub(super) predicate: SpecProposition,
+    pub(super) body: SpecProposition,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

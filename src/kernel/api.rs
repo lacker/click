@@ -1814,6 +1814,106 @@ pub fn checked_c_function_execution_with_entry_derivations(
     checked
 }
 
+/// Seals one contract-local predicate unfolding as an implication theorem.
+///
+/// The claimed sides must be the exact instantiations registered on the
+/// kernel function. Contract certification separately reconstructs the entry
+/// contract and discharges the opaque predicate premise before accepting the
+/// unfolded body as a checked-execution assumption.
+pub fn prove_c_function_contract_predicate_unfolding(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    claimed_predicate: &Proposition,
+    claimed_body: &Proposition,
+    assumptions: &PureFactContext,
+) -> Option<Theorem> {
+    let entry_state = c_function_entry_state(caller_state, function, arguments)?;
+    let mut budget = ExecutionBudget::default();
+    function
+        .predicate_unfoldings()
+        .iter()
+        .find_map(|unfolding| {
+            let (predicate, body) =
+                contract_certification::instantiate_contract_predicate_unfolding(
+                    &entry_state,
+                    unfolding,
+                    assumptions,
+                    &mut budget,
+                )?;
+            (predicate == *claimed_predicate && body == *claimed_body)
+                .then(|| Theorem::new(Proposition::Implies(Box::new(predicate), Box::new(body))))
+        })
+}
+
+/// Seals a pure consequence of an exact proof context as an implication
+/// chain over only the premises consumed by the kernel derivation.
+///
+/// Contract certification independently re-proves every premise before
+/// admitting the conclusion to a checked execution's entry context.
+pub fn prove_pure_proposition_from_context(
+    assumptions: &PureFactContext,
+    proposition: &Proposition,
+) -> Option<Theorem> {
+    let derivation = assumptions.derive_proposition(proposition)?;
+    if !derivation.replay(assumptions) {
+        return None;
+    }
+    let theorem = derivation
+        .context_premises()
+        .into_iter()
+        .rev()
+        .fold(proposition.clone(), |body, premise| {
+            Proposition::Implies(Box::new(premise), Box::new(body))
+        });
+    Some(Theorem::new(theorem))
+}
+
+/// Certifies the exact count lower bound witnessed by owned declared-resource
+/// authority in a concrete ghost state. The returned theorem is sealed to the
+/// proposition reconstructed here; callers cannot use resource possession to
+/// bless an unrelated arithmetic fact.
+pub fn prove_owned_resource_count_lower_bound(
+    state: &CState,
+    owned: &CResourceFact,
+    claimed: &Proposition,
+    assumptions: &PureFactContext,
+) -> Option<Theorem> {
+    if !state.resources().satisfies_fact(owned, assumptions) {
+        return None;
+    }
+    let quantity = owned.owned_quantity_term()?.clone();
+    let (name, arguments) = match owned.resource() {
+        CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
+            (name, arguments)
+        }
+        CResource::Memory(_) => return None,
+    };
+    let count = state.counted_population(name, arguments)?.clone();
+    let conclusion =
+        Proposition::ConditionIs(ConditionTerm::signed_less_equal(quantity, count), true);
+    (claimed == &conclusion && assumptions.proves(&conclusion)).then(|| Theorem::new(conclusion))
+}
+
+/// Certifies the nonnegativity invariant carried by an owned declared-resource
+/// coefficient in a concrete ghost state.
+pub fn prove_owned_resource_quantity_nonnegative(
+    state: &CState,
+    owned: &CResourceFact,
+    claimed: &Proposition,
+    assumptions: &PureFactContext,
+) -> Option<Theorem> {
+    if !state.resources().satisfies_fact(owned, assumptions) {
+        return None;
+    }
+    let quantity = owned.owned_quantity_term()?.clone();
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), quantity),
+        true,
+    );
+    (claimed == &conclusion && assumptions.proves(&conclusion)).then(|| Theorem::new(conclusion))
+}
+
 /// Re-expresses a checked execution from a definitionally equal ghost-resource
 /// representation of the same concrete entry state.
 ///
@@ -2205,12 +2305,13 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                         };
                         let context_free_certified = !resource_certified
                             && matches!(fact, Proposition::ForAll { .. })
-                            && crate::instrumentation::measure_operation(
-                                function.name(),
-                                "contract certification",
-                                "derived forall context-free check",
-                                || certification_proves_context_free_forall(fact),
-                            );
+                            && (pure_theorem_facts.contains(fact)
+                                || crate::instrumentation::measure_operation(
+                                    function.name(),
+                                    "contract certification",
+                                    "derived forall context-free check",
+                                    || certification_proves_context_free_forall(fact),
+                                ));
                         let proposition_certified = !resource_certified
                             && !context_free_certified
                             && crate::instrumentation::measure_operation(
@@ -2318,12 +2419,12 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
             }
             entry_state.resources = entry_resources;
         }
-        // Explicit entry theorem applications can justify a selected
-        // evaluator prerequisite even when ghost-resource opening prevents
-        // reusing the checked execution's exact entry state. Admit only an
-        // exact selected fact, from an opaque kernel theorem attached to an
-        // otherwise matching checked execution, after every implication
-        // premise follows from the reconstructed contract context.
+        // Explicit entry theorem applications can justify facts used by the
+        // checked execution even when ghost-resource opening prevents reusing
+        // its exact entry state. Every attached theorem is kernel-issued, its
+        // conclusion had to be an exact checked-execution assumption, and all
+        // implication premises are independently discharged here before the
+        // conclusion enters the reconstructed contract context.
         for checked in checked_artifacts {
             if checked.function != function
                 || checked.arguments != arguments
@@ -2351,9 +2452,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                 if premises_hold {
                     derivation_assumptions =
                         derivation_assumptions.assume_proposition(body.clone());
-                    if checked.entry_prerequisites.contains(body) {
-                        assumptions = assumptions.assume_proposition(body.clone());
-                    }
+                    assumptions = assumptions.assume_proposition(body.clone());
                 }
             }
         }
@@ -3456,6 +3555,68 @@ pub fn prove_int32_nonnegative_subtract_within_value_is_defined(
             Box::new(conclusion),
         )),
     ))
+}
+
+/// Moving one unit between nonnegative summands preserves their signed int32
+/// sum. A positive right summand leaves both adjusted operands nonnegative,
+/// while definedness of the original sum supplies the shared upper bound that
+/// rules out overflow in the increment and recomposed sum.
+pub fn prove_int32_move_one_from_right_to_left_preserves_sum(
+    total: Bitvector32Term,
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+) -> Theorem {
+    let left_is_nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), left.clone()),
+        true,
+    );
+    let right_is_positive = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), right.clone()),
+        true,
+    );
+    let original_sum = Bitvector32Term::add(left.clone(), right.clone());
+    let total_is_original_sum = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(total.clone()), Box::new(original_sum)),
+        true,
+    );
+    let incremented = Bitvector32Term::add(left.clone(), Bitvector32Term::Constant(1));
+    let decremented = Bitvector32Term::Subtract(
+        Box::new(right.clone()),
+        Box::new(Bitvector32Term::Constant(1)),
+    );
+    let adjusted_sum = Bitvector32Term::add(incremented, decremented);
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(total), Box::new(adjusted_sum)),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(left_is_nonnegative),
+        Box::new(Proposition::Implies(
+            Box::new(right_is_positive),
+            Box::new(Proposition::Implies(
+                Box::new(total_is_original_sum),
+                Box::new(conclusion),
+            )),
+        )),
+    ))
+}
+
+/// Sealed universally quantified authority for the unit-transfer sum rule.
+pub fn certify_int32_move_one_from_right_to_left_preserves_sum() -> CVerifiedPureTheorem {
+    let total = Variable(0);
+    let left = Variable(1);
+    let right = Variable(2);
+    let implication = prove_int32_move_one_from_right_to_left_preserves_sum(
+        Bitvector32Term::Variable(total),
+        Bitvector32Term::Variable(left),
+        Bitvector32Term::Variable(right),
+    );
+    CVerifiedPureTheorem {
+        theorem: Theorem::new(forall_int32(
+            total,
+            forall_int32(left, forall_int32(right, implication.proposition().clone())),
+        )),
+    }
 }
 
 /// A defined signed addition with a nonnegative right operand is at least its

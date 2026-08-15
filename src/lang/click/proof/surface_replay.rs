@@ -745,6 +745,117 @@ pub(super) fn append_simple_proof_step_for_operation(
                 region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
                 kind: ProgramPointKind::Entry,
             });
+            let mut selectable_available = available.to_vec();
+            let mut unfolded_dependency_facts = BTreeSet::new();
+            let mut local_unfold_haves: Vec<(String, ClickProposition, Proposition)> = Vec::new();
+            for exact in exact_premises {
+                // Preserve an explicit unfolding already present in the
+                // ambient proof. Reconstructing the same prerequisite from
+                // an opaque predicate would add an unnecessary local `have`
+                // and discard the user's established source spelling.
+                if let Ok(Some(derivation)) = minimal_proposition_derivation(exact, available)
+                    && !derivation
+                        .context_premises()
+                        .iter()
+                        .any(|premise| matches!(premise, Proposition::Predicate { .. }))
+                    && replay.surface_propositions.surfaces(exact).next().is_some()
+                {
+                    continue;
+                }
+                for predicate in available {
+                    let Proposition::Predicate { name, .. } = predicate else {
+                        continue;
+                    };
+                    let Ok(unfolded) = unfold_predicates_in_proposition(
+                        predicate_environment,
+                        click_function_environment,
+                        std::slice::from_ref(name),
+                        predicate,
+                        &assumptions_from_propositions(available),
+                    ) else {
+                        continue;
+                    };
+                    let mut conjuncts = Vec::new();
+                    atomic_conjuncts(&unfolded, &mut conjuncts);
+                    let mut candidate_context = available
+                        .iter()
+                        .filter(|fact| *fact != exact && *fact != predicate)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    candidate_context.extend(conjuncts.iter().map(|fact| (*fact).clone()));
+                    if !matches!(
+                        minimal_proposition_derivation(exact, &candidate_context),
+                        Ok(Some(_))
+                    ) {
+                        continue;
+                    }
+                    let surface_predicate = replay
+                        .surface_propositions
+                        .surface(predicate)
+                        .ok()
+                        .cloned()
+                        .or_else(|| {
+                            synthesize_surface_proposition(predicate, parameters, arguments, state)
+                        });
+                    let Some(ClickProposition::PredicateCall {
+                        name: surface_name,
+                        arguments: surface_arguments,
+                    }) = surface_predicate.as_ref()
+                    else {
+                        continue;
+                    };
+                    let Some(definition) = predicate_environment.get(surface_name) else {
+                        continue;
+                    };
+                    let Ok(mut surface_body) =
+                        instantiate_click_predicate_definition(definition, surface_arguments)
+                    else {
+                        continue;
+                    };
+                    if replay.execution_start_facts.contains(predicate) {
+                        let point = ProgramPointRef {
+                            region: CodeRegionRef::Function,
+                            kind: ProgramPointKind::Entry,
+                        };
+                        let Ok(indexed) = surface_with_source_site(&surface_body, &point) else {
+                            continue;
+                        };
+                        surface_body = indexed;
+                    }
+                    if !local_unfold_haves
+                        .iter()
+                        .any(|(_, existing, _)| existing == &surface_body)
+                    {
+                        local_unfold_haves.push((name.clone(), surface_body, unfolded.clone()));
+                    }
+                    for conjunct in conjuncts {
+                        unfolded_dependency_facts.insert(conjunct.clone());
+                        if !selectable_available.contains(conjunct) {
+                            selectable_available.push(conjunct.clone());
+                        }
+                    }
+                    break;
+                }
+            }
+            for (name, surface, kernel) in local_unfold_haves {
+                if let Err(error) = replay
+                    .surface_propositions
+                    .record_lowering(&surface, &kernel)
+                {
+                    replay.simple_proof_builder.block(format!(
+                        "could not record local predicate-unfold prerequisite: {}",
+                        error.message()
+                    ));
+                    return;
+                }
+                replay.simple_proof_builder.push_have(
+                    surface,
+                    Proof::Script(vec![
+                        ProofTactic::UnfoldPredicate(name),
+                        ProofTactic::Assumption,
+                    ]),
+                );
+            }
             let premises = (|| -> Result<Vec<ClickProposition>, ClickError> {
                 let mut premises = Vec::new();
                 let derivation_context = derivations
@@ -771,7 +882,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 // Ordinary replay below remains the authority on whether this
                 // explicit, source-expressible subset is sufficient.
                 let mut available_conjuncts = Vec::new();
-                for fact in available {
+                for fact in &selectable_available {
                     atomic_conjuncts(fact, &mut available_conjuncts);
                 }
                 // Source-spelled memory-range separation facts (for example
@@ -817,7 +928,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 std::slice::from_ref(fact),
                             )
                             .is_some()
-                    });
+                    }) || unfolded_dependency_facts.contains(fact);
                     // A permission the resource projection reproduces is
                     // reconstructed by the replay for itself. One it does not
                     // reproduce is only available because the ambient context
@@ -888,7 +999,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     let surface = checked_surface_fact_at_point(
                         replay,
                         fact,
-                        available,
+                        &selectable_available,
                         parameters,
                         arguments,
                         state,
@@ -900,7 +1011,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             replay,
                             fact,
                             SurfaceFactMatch::ReplayEquivalent,
-                            available,
+                            &selectable_available,
                             parameters,
                             arguments,
                             state,
@@ -924,7 +1035,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         let lowered = lower_surface_candidate_at_point(
                             replay,
                             &indexed,
-                            available,
+                            &selectable_available,
                             parameters,
                             arguments,
                             state,

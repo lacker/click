@@ -639,6 +639,14 @@ fn certified_transitions_from_execution(
                                 Proposition::ConditionIs(_, _)
                             ) {
                                 search_condition_derivation(proposition, pure_facts)?
+                            } else if matches!(proposition, Proposition::And(_, _)) {
+                                // A contract predicate unfolds to one
+                                // conjunction. Composing that conjunction
+                                // from facts already present in the explicit
+                                // replay context is propositional certificate
+                                // construction, not open-ended premise
+                                // search.
+                                minimal_proposition_derivation(proposition, pure_facts)?
                             } else if matches!(
                                 proposition,
                                 Proposition::CResourceContains { .. }

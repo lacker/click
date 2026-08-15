@@ -1306,6 +1306,18 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
                     .collect(),
             })
             .collect(),
+        predicate_unfoldings: function
+            .predicate_unfoldings
+            .iter()
+            .map(|unfolding| CPredicateUnfolding {
+                predicate: substitute_bitvector_variable_in_spec_proposition(
+                    &unfolding.predicate,
+                    from,
+                    to,
+                ),
+                body: substitute_bitvector_variable_in_spec_proposition(&unfolding.body, from, to),
+            })
+            .collect(),
     }
 }
 

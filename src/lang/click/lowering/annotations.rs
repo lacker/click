@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::CPredicateUnfolding;
 
 type FunctionContractSummary = (
     Vec<SpecProposition>,
@@ -6,6 +7,7 @@ type FunctionContractSummary = (
     Vec<CMemorySegment>,
     Vec<CFunctionContractClaim>,
     bool,
+    Vec<CPredicateUnfolding>,
 );
 
 pub(in crate::lang::click) fn lower_composite_resource_condition(
@@ -178,6 +180,7 @@ pub(in crate::lang::click) fn annotated_function(
         contract_mutable,
         contract_claims,
         opaque_contract_supported,
+        predicate_unfoldings,
     ) = function_contract_summary(
         function_block,
         parsed_function,
@@ -203,6 +206,7 @@ pub(in crate::lang::click) fn annotated_function(
         predicate_environment,
         click_function_environment,
     )?)
+    .with_predicate_unfoldings(predicate_unfoldings)
     .with_contract(
         contract_requires,
         contract_ensures,
@@ -258,6 +262,7 @@ pub(in crate::lang::click) fn function_contract_summary(
         )
     };
     let mut opaque_contract_supported = true;
+    let mut predicate_unfoldings = Vec::new();
     let mut requires = Vec::new();
     for proposition in requirement_definedness_surfaces(function_block.requires()) {
         match lowerer.click_proposition_to_spec_proposition(&proposition, &context) {
@@ -273,6 +278,9 @@ pub(in crate::lang::click) fn function_contract_summary(
             },
             Requirement::Resource(_) | Requirement::Labeled { .. } => continue,
         };
+        let opaque_predicate = matches!(proposition, ClickProposition::PredicateCall { .. })
+            .then(|| lowerer.click_proposition_to_spec_proposition(&proposition, &context))
+            .transpose();
         let Ok(proposition) = unfold_contract_predicates(&proposition) else {
             opaque_contract_supported = false;
             continue;
@@ -282,7 +290,13 @@ pub(in crate::lang::click) fn function_contract_summary(
             continue;
         }
         match lowerer.click_proposition_to_spec_proposition(&proposition, &context) {
-            Ok(proposition) => requires.push(proposition),
+            Ok(proposition) => {
+                if let Ok(Some(predicate)) = opaque_predicate {
+                    predicate_unfoldings
+                        .push(CPredicateUnfolding::new(predicate, proposition.clone()));
+                }
+                requires.push(proposition)
+            }
             Err(_) => opaque_contract_supported = false,
         }
     }
@@ -295,6 +309,9 @@ pub(in crate::lang::click) fn function_contract_summary(
             Ensure::Resource(_) => None,
         })
     {
+        let opaque_predicate = matches!(proposition, ClickProposition::PredicateCall { .. })
+            .then(|| lowerer.click_proposition_to_spec_proposition(proposition, &context))
+            .transpose();
         let Ok(proposition) = unfold_contract_predicates(proposition) else {
             opaque_contract_supported = false;
             continue;
@@ -304,7 +321,13 @@ pub(in crate::lang::click) fn function_contract_summary(
             continue;
         }
         match lowerer.click_proposition_to_spec_proposition(&proposition, &context) {
-            Ok(proposition) => ensures.push(proposition),
+            Ok(proposition) => {
+                if let Ok(Some(predicate)) = opaque_predicate {
+                    predicate_unfoldings
+                        .push(CPredicateUnfolding::new(predicate, proposition.clone()));
+                }
+                ensures.push(proposition)
+            }
             Err(_) => opaque_contract_supported = false,
         }
     }
@@ -371,6 +394,7 @@ pub(in crate::lang::click) fn function_contract_summary(
         mutable,
         claims,
         opaque_contract_supported,
+        predicate_unfoldings,
     ))
 }
 

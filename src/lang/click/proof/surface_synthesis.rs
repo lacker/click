@@ -236,21 +236,23 @@ fn synthesize_surface_proposition_with_bound_variables(
         }
         _ => {}
     }
-    // A predicate call lowers each array-ref argument to a (memory, pointer)
-    // term pair and each value argument to a single value term, so the kernel
-    // argument list reads back unambiguously: a `CMemory` term always opens an
-    // array-ref pair. The snapshot the pair names is not spelled here — the
-    // current memory needs no spelling, and every caller re-lowers the
-    // candidate and compares it to the kernel fact, so a candidate built
-    // against the wrong snapshot is rejected by that round trip rather than by
-    // a guess made here.
+    // A declared predicate call starts with its hidden logical resource-state
+    // snapshot. Its source call does not spell that argument. Each array-ref
+    // argument then lowers to a (memory, pointer) term pair and each value
+    // argument to a single value term, so the remaining kernel argument list
+    // reads back unambiguously: a `CMemory` term always opens an array-ref
+    // pair. The snapshot the pair names is not spelled here — the current
+    // memory needs no spelling, and every caller re-lowers the candidate and
+    // compares it to the kernel fact, so a candidate built against the wrong
+    // snapshot is rejected by that round trip rather than by a guess made
+    // here.
     if let Proposition::Predicate {
         name,
         arguments: kernel_arguments,
     } = proposition
     {
         let mut call_arguments = Vec::new();
-        let mut index = 0;
+        let mut index = usize::from(matches!(kernel_arguments.first(), Some(Term::CState(_))));
         while index < kernel_arguments.len() {
             match &kernel_arguments[index] {
                 Term::CMemory(_) => {

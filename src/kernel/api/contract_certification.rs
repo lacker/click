@@ -902,6 +902,30 @@ pub(super) fn c_function_contract_certification_assumptions(
         }
         assumptions = assumptions.assume_proposition(path.proposition.clone());
     }
+    // Counted populations are nonnegative by construction. Quantified entry
+    // resource clauses may use a count-related C expression before the
+    // required resource context itself has been evaluated, so make this
+    // representation invariant explicit first.
+    for population in entry_state.counted_populations.iter() {
+        assumptions = assumptions.assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(0),
+                population.count.clone(),
+            ),
+            true,
+        ));
+    }
+    let quantity_assumptions = quantified_resource_requirement_assumptions(
+        &entry_state,
+        function.resource_requires(),
+        &assumptions,
+        &mut budget,
+    )
+    .ok()
+    .and_then(Result::ok)?;
+    for proposition in quantity_assumptions {
+        assumptions = assumptions.assume_proposition(proposition);
+    }
     let required_resources = evaluate_function_resource_context(
         &entry_state,
         function.resource_requires(),
@@ -995,6 +1019,28 @@ pub(super) fn c_function_contract_certification_assumptions(
         }
         return None;
     }
+    // Owned declared-resource requirements are a kernel witness that the
+    // tracked population contains at least the transferred quantity. Expose
+    // that exact arithmetic fact to independent contract certification; the
+    // surface `observe` tactic names the same invariant for proof scripts.
+    for required in required_resources.facts() {
+        let Some(quantity) = required.owned_quantity_term() else {
+            continue;
+        };
+        let (name, arguments) = match required.resource() {
+            CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
+                (name, arguments)
+            }
+            CResource::Memory(_) => continue,
+        };
+        let Some(count) = entry_state.counted_population(name, arguments) else {
+            continue;
+        };
+        assumptions = assumptions.assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(quantity.clone(), count.clone()),
+            true,
+        ));
+    }
     if !requirement_obligations.iter().all(|obligation| {
         // Definedness travels with the assumption. A heap-dependent
         // `requires` cannot be true in a state where its loads do not
@@ -1039,6 +1085,61 @@ pub(super) fn c_function_contract_certification_assumptions(
     }
     entry_state.resources = entry_resources.clone();
     Some(assumptions)
+}
+
+pub(super) fn instantiate_contract_predicate_unfolding(
+    entry_state: &CState,
+    unfolding: &CPredicateUnfolding,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> Option<(Proposition, Proposition)> {
+    let (predicate, predicate_obligations, body, body_obligations) =
+        instantiate_contract_predicate_unfolding_with_obligations(
+            entry_state,
+            unfolding,
+            assumptions,
+            budget,
+        )?;
+    predicate_obligations
+        .iter()
+        .chain(&body_obligations)
+        .all(|obligation| certification_proves_proposition(assumptions, obligation))
+        .then_some((predicate, body))
+}
+
+pub(super) fn instantiate_contract_predicate_unfolding_with_obligations(
+    state: &CState,
+    unfolding: &CPredicateUnfolding,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> Option<(Proposition, Vec<Proposition>, Proposition, Vec<Proposition>)> {
+    let lower = |spec: &SpecProposition, budget: &mut ExecutionBudget| {
+        let lowering_assumptions = assumptions
+            .clone()
+            .allow_symbolic_contract_loads()
+            .prefer_symbolic_external_loads();
+        let paths = lower_spec_proposition_at_state_with_loop_entry(
+            state,
+            spec,
+            None,
+            &lowering_assumptions,
+            budget,
+        )
+        .ok()?;
+        let [path] = paths.as_slice() else {
+            return None;
+        };
+        Some((
+            path.proposition.clone(),
+            path.obligations
+                .iter()
+                .map(|obligation| obligation.proposition().clone())
+                .collect(),
+        ))
+    };
+    let (predicate, predicate_obligations) = lower(&unfolding.predicate, budget)?;
+    let (body, body_obligations) = lower(&unfolding.body, budget)?;
+    Some((predicate, predicate_obligations, body, body_obligations))
 }
 
 #[allow(clippy::too_many_arguments)]

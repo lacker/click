@@ -87,9 +87,16 @@ pub(super) fn materialize_counted_population_bodies(
         };
         state = state.with_counted_population(&name, resource_arguments.clone(), count.clone());
         facts.push(Proposition::ConditionIs(
-            ConditionTerm::Bitvector32SignedGreaterEqual(
+            ConditionTerm::Bitvector32SignedLessEqual(
+                Box::new(Bitvector32Term::Constant(0)),
                 Box::new(count.clone()),
+            ),
+            true,
+        ));
+        facts.push(Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(
                 Box::new(visible_quantity),
+                Box::new(count.clone()),
             ),
             true,
         ));
@@ -408,18 +415,13 @@ pub(super) fn observe_composite_resource(
     state: CState,
     available_pure_facts: &mut Vec<Proposition>,
     surface_propositions: &mut SurfacePropositionMap,
+    count_derivations: &mut Vec<Theorem>,
+    count_certification_facts: &mut Vec<Proposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<CState, ClickError> {
-    let definition = composite_resource_law_definition(
-        resource_environment,
-        resource,
-        "observe",
-        claim_label,
-        tactic_index,
-    )?;
     let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
     if !state
@@ -439,6 +441,158 @@ pub(super) fn observe_composite_resource(
             )
         )));
     }
+    let (observed_quantity, counted_resource, explicit_quantity) = match resource {
+        ResourceClause::Quantified { quantity, resource } => {
+            (quantity.clone(), resource.as_ref().clone(), true)
+        }
+        ResourceClause::Declared { .. } => (
+            ContractExpression::CFragment(CExpression::Value(int32(1))),
+            resource.clone(),
+            false,
+        ),
+        ResourceClause::Read(_) | ResourceClause::Write(_) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `observe` expects a declared resource"
+            )));
+        }
+    };
+    if abstract_resource.owned_quantity_term().is_some() {
+        let count_witness = ClickProposition::Comparison {
+            left: observed_quantity.clone(),
+            operator: ComparisonOperator::LessEqual,
+            right: ContractExpression::ResourceCount(Box::new(counted_resource)),
+        };
+        let count_kernel = lower_outcome_proposition(
+        parameters,
+        arguments,
+        &state,
+        &state,
+        &CValue::Int32(Bitvector32Term::Constant(0)),
+        available_pure_facts,
+        &count_witness,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: could not lower `observe({})` count witness: {message}",
+            describe_resource_clause(resource)
+        ))
+    })?;
+        let count_authority = abstract_resource.clone();
+        if assumptions.proves(&count_kernel) {
+            let derivation = prove_owned_resource_count_lower_bound(
+                &state,
+                &count_authority,
+                &count_kernel,
+                &assumptions,
+            )
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: kernel rejected the resource-count witness for `observe({})`",
+                    describe_resource_clause(resource)
+                ))
+            })?;
+            if !count_derivations.contains(&derivation) {
+                count_derivations.push(derivation);
+            }
+            if !count_certification_facts.contains(&count_kernel) {
+                count_certification_facts.push(count_kernel.clone());
+            }
+            surface_propositions.record_lowering(&count_witness, &count_kernel)?;
+            if !available_pure_facts.contains(&count_kernel) {
+                available_pure_facts.push(count_kernel);
+            }
+        } else if explicit_quantity {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `observe({})` could not certify its resource-count lower bound",
+                describe_resource_clause(resource)
+            )));
+        }
+        let nonnegative_witness = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            operator: ComparisonOperator::LessEqual,
+            right: observed_quantity.clone(),
+        };
+        let nonnegative_kernel = lower_outcome_proposition(
+        parameters,
+        arguments,
+        &state,
+        &state,
+        &CValue::Int32(Bitvector32Term::Constant(0)),
+        available_pure_facts,
+        &nonnegative_witness,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: could not lower `observe({})` quantity witness: {message}",
+            describe_resource_clause(resource)
+        ))
+    })?;
+        let nonnegative_derivation = prove_owned_resource_quantity_nonnegative(
+            &state,
+            &count_authority,
+            &nonnegative_kernel,
+            &assumptions,
+        )
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: kernel rejected the quantity witness for `observe({})`",
+                describe_resource_clause(resource)
+            ))
+        })?;
+        if !count_derivations.contains(&nonnegative_derivation) {
+            count_derivations.push(nonnegative_derivation);
+        }
+        if !count_certification_facts.contains(&nonnegative_kernel) {
+            count_certification_facts.push(nonnegative_kernel.clone());
+        }
+        surface_propositions.record_lowering(&nonnegative_witness, &nonnegative_kernel)?;
+        if !available_pure_facts.contains(&nonnegative_kernel) {
+            available_pure_facts.push(nonnegative_kernel);
+        }
+    }
+    let underlying_resource = match resource {
+        ResourceClause::Quantified { resource, .. } => resource.as_ref(),
+        _ => resource,
+    };
+    if !matches!(
+        underlying_resource,
+        ResourceClause::Declared {
+            kind: ResourceKind::Composite,
+            ..
+        }
+    ) {
+        return Ok(state);
+    }
+    if explicit_quantity {
+        let quantity = abstract_resource
+            .owned_quantity_term()
+            .expect("an explicitly quantified observation lowers to owned authority");
+        let positive = quantity.as_const().is_some_and(|value| value > 0)
+            || assumptions.proves(&Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedGreaterThan(
+                    Box::new(quantity.clone()),
+                    Box::new(Bitvector32Term::Constant(0)),
+                ),
+                true,
+            ));
+        if !positive {
+            // The count lower bound remains valid for zero or an undecided
+            // nonnegative quantity. The population body, however, grants
+            // authority only when the held quantity is proved positive.
+            return Ok(state);
+        }
+    }
+    let definition = composite_resource_law_definition(
+        resource_environment,
+        resource,
+        "observe",
+        claim_label,
+        tactic_index,
+    )?;
     let CResource::Composite {
         arguments: resource_arguments,
         ..
@@ -1700,7 +1854,7 @@ pub(super) fn fold_composite_resources_on_outcome(
                 )));
             }
         };
-        let body_active = composite_resource_body_is_active(
+        let mut body_active = composite_resource_body_is_active(
             definition,
             &substitutions,
             parameters,
@@ -1727,6 +1881,10 @@ pub(super) fn fold_composite_resources_on_outcome(
             let population = lower_resource_clause_at_state_with_result(
                 resource, parameters, arguments, state, value,
             )?;
+            let quantity = population
+                .owned_quantity_term()
+                .expect("fold requires owned composite authority")
+                .clone();
             let (name, population_arguments) = match population.resource() {
                 CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                     (name, arguments)
@@ -1739,6 +1897,29 @@ pub(super) fn fold_composite_resources_on_outcome(
                 }
             };
             let assumptions = assumptions_from_propositions(available_pure_facts);
+            let quantity_is_zero = quantity.as_const() == Some(0)
+                || assumptions.proves(&Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(
+                        Box::new(quantity.clone()),
+                        Box::new(Bitvector32Term::Constant(0)),
+                    ),
+                    true,
+                ));
+            let quantity_is_positive = quantity.as_const().is_some_and(|value| value > 0)
+                || assumptions.proves(&Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedGreaterThan(
+                        Box::new(quantity.clone()),
+                        Box::new(Bitvector32Term::Constant(0)),
+                    ),
+                    true,
+                ));
+            if !quantity_is_zero && !quantity_is_positive {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: `fold({})` requires its quantity to be proved zero or positive",
+                    describe_resource_clause(resource)
+                )));
+            }
+            body_active &= quantity_is_positive;
             if state.resources().satisfies_fact(&population, &assumptions) {
                 // Exact execution preserves the abstract contract resource
                 // while the proof may still carry its exposed body. This is
@@ -1747,24 +1928,24 @@ pub(super) fn fold_composite_resources_on_outcome(
                 folded_representation_already_present = true;
             }
             if let Some(count) = state.counted_population(name, population_arguments) {
-                let singleton = Proposition::ConditionIs(
+                let matching_quantity = Proposition::ConditionIs(
                     ConditionTerm::Bitvector32Equal(
                         Box::new(count.clone()),
-                        Box::new(Bitvector32Term::Constant(1)),
+                        Box::new(quantity.clone()),
                     ),
                     true,
                 );
-                if !assumptions.proves(&singleton) {
+                if !assumptions.proves(&matching_quantity) {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` path {path_index}: `fold({})` can restore an existing resource population only when its count is proved equal to 1",
+                        "`{claim_label}` path {path_index}: `fold({})` can restore an existing resource population only when its count is proved equal to the folded quantity",
                         describe_resource_clause(resource)
                     )));
                 }
-            } else {
+            } else if quantity_is_positive {
                 *state = state.clone().with_counted_population(
                     name.clone(),
                     population_arguments.clone(),
-                    Bitvector32Term::Constant(1),
+                    quantity,
                 );
             }
         } else {
@@ -2068,6 +2249,12 @@ fn composite_resource_law_definition<'a>(
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<&'a ResourceDefinition, ClickError> {
+    let resource = match resource {
+        ResourceClause::Quantified { resource, .. } if matches!(action, "fold" | "observe") => {
+            resource.as_ref()
+        }
+        _ => resource,
+    };
     let ResourceClause::Declared { name, .. } = resource else {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{action}` expects a composite resource"
@@ -2116,6 +2303,10 @@ pub(super) fn resource_argument_substitutions(
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<BTreeMap<String, ContractExpression>, ClickError> {
+    let resource = match resource {
+        ResourceClause::Quantified { resource, .. } => resource.as_ref(),
+        _ => resource,
+    };
     let ResourceClause::Declared {
         name,
         arguments,

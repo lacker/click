@@ -1,5 +1,6 @@
 use super::diagnostics::{
     describe_code_region_ref, describe_contract_expression, describe_contract_segment,
+    describe_visit_selector,
 };
 use super::*;
 
@@ -23,6 +24,17 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
                 format!("{} and {}", at_precedence(left, 3), at_precedence(right, 4)),
             ),
             ClickProposition::Not(body) => (4, format!("not {}", at_precedence(body, 4))),
+            ClickProposition::At {
+                selector,
+                proposition,
+            } => (
+                5,
+                format!(
+                    "at({}, {})",
+                    describe_visit_selector(selector),
+                    at_precedence(proposition, 0)
+                ),
+            ),
             ClickProposition::ForAll { c_type, name, body } => (
                 5,
                 format!(
@@ -128,7 +140,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::FoldResource(resource) => line(
             output,
             &prefix,
-            &format!("fold({});", format_resource_call(resource)),
+            &format!("fold({});", format_resource_target(resource)),
         ),
         ProofTactic::Induct {
             parameter,
@@ -301,7 +313,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::ObserveResource(resource) => line(
             output,
             &prefix,
-            &format!("observe({});", format_resource_call(resource)),
+            &format!("observe({});", format_resource_target(resource)),
         ),
         ProofTactic::Witness(witness) => line(
             output,
@@ -532,4 +544,33 @@ fn line(output: &mut String, prefix: &str, text: &str) {
     output.push_str(prefix);
     output.push_str(text);
     output.push('\n');
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marked_conjunction_uses_parseable_click_connectives() {
+        let equality = |name: &str| ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable(name.to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Variable(name.to_string())),
+        };
+        let proposition = ClickProposition::At {
+            selector: VisitSelector::ProgramPoint(ProgramPointRef {
+                region: CodeRegionRef::Mark("checkpoint".to_string()),
+                kind: ProgramPointKind::Entry,
+            }),
+            proposition: Box::new(ClickProposition::And(
+                Box::new(equality("left")),
+                Box::new(equality("right")),
+            )),
+        };
+
+        assert_eq!(
+            source_click_proposition(&proposition),
+            "at(checkpoint, left == left and right == right)"
+        );
+    }
 }

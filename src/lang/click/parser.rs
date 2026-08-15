@@ -1928,8 +1928,20 @@ impl Parser {
             }
             "observe" => {
                 self.expect(Token::LParen)?;
-                let resource =
-                    self.parse_declared_resource_call_with_access(ResourceAccessMode::View)?;
+                let start = self.position;
+                let resource = if let Ok(quantity) = self.parse_contract_expression()
+                    && self.peek_ident() == Some("of")
+                {
+                    self.position += 1;
+                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
+                    ResourceClause::Quantified {
+                        quantity,
+                        resource: Box::new(resource),
+                    }
+                } else {
+                    self.position = start;
+                    self.parse_declared_resource_call_with_access(ResourceAccessMode::View)?
+                };
                 self.expect(Token::RParen)?;
                 ProofTactic::ObserveResource(resource)
             }
@@ -2054,7 +2066,7 @@ impl Parser {
             }
             "fold" => {
                 self.expect(Token::LParen)?;
-                let resource = self.parse_declared_resource_call()?;
+                let resource = self.parse_owned_resource_target()?;
                 self.expect(Token::RParen)?;
                 ProofTactic::FoldResource(resource)
             }

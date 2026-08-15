@@ -38,6 +38,7 @@ impl CFunction {
             contract_claims: Vec::new(),
             opaque_contract_supported: true,
             composite_resource_definitions: Vec::new(),
+            predicate_unfoldings: Vec::new(),
         }
     }
 
@@ -77,6 +78,11 @@ impl CFunction {
         definitions: Vec<CCompositeResourceDefinition>,
     ) -> Self {
         self.composite_resource_definitions = definitions;
+        self
+    }
+
+    pub fn with_predicate_unfoldings(mut self, unfoldings: Vec<CPredicateUnfolding>) -> Self {
+        self.predicate_unfoldings = unfoldings;
         self
     }
 
@@ -130,6 +136,24 @@ impl CFunction {
 
     pub fn composite_resource_definitions(&self) -> &[CCompositeResourceDefinition] {
         &self.composite_resource_definitions
+    }
+
+    pub fn predicate_unfoldings(&self) -> &[CPredicateUnfolding] {
+        &self.predicate_unfoldings
+    }
+}
+
+impl CPredicateUnfolding {
+    pub fn new(predicate: SpecProposition, body: SpecProposition) -> Self {
+        Self { predicate, body }
+    }
+
+    pub fn predicate(&self) -> &SpecProposition {
+        &self.predicate
+    }
+
+    pub fn body(&self) -> &SpecProposition {
+        &self.body
     }
 }
 

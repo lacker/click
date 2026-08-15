@@ -546,6 +546,47 @@ fn surface_synthesis_qualifies_a_c_local_named_result() {
 }
 
 #[test]
+fn surface_synthesis_omits_a_predicates_hidden_resource_state_argument() {
+    let function = syntax::parse_function(
+        r#"
+            struct pool {
+                int32 capacity;
+            };
+            void inspect(struct pool* pool) {}
+        "#,
+    )
+    .expect("struct pointer parameter should parse");
+    let pool = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let proposition = Proposition::Predicate {
+        name: "valid_pool".to_string(),
+        arguments: vec![
+            Term::CState(CState::new()),
+            Term::CValue(CValue::Pointer(pool.clone())),
+        ],
+    };
+
+    let surface = synthesize_surface_proposition(
+        &proposition,
+        function.parameters(),
+        &[CExpression::Value(CValue::Pointer(pool))],
+        &CState::new(),
+    )
+    .expect("the hidden state should not need a surface spelling");
+    assert_eq!(
+        surface,
+        ClickProposition::PredicateCall {
+            name: "valid_pool".to_string(),
+            arguments: vec![ContractExpression::CFragment(CExpression::Variable(
+                "pool".to_string(),
+            ))],
+        }
+    );
+}
+
+#[test]
 fn surface_synthesis_prefers_struct_field_places_to_typed_loads() {
     let function = syntax::parse_function(
         r#"

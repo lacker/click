@@ -830,8 +830,23 @@ impl CState {
     /// an unrelated C step from changing the identity of a predicate merely
     /// because the predicate language can also observe resource counts.
     pub fn resource_state_snapshot(&self) -> Self {
+        let observed_families = self
+            .counted_populations
+            .iter()
+            .filter(|population| population.family_observation_marker)
+            .map(|population| population.name.as_str())
+            .collect::<BTreeSet<_>>();
+        let counted_populations = self
+            .counted_populations
+            .iter()
+            .filter(|population| {
+                population.family_observation_marker
+                    || observed_families.contains(population.name.as_str())
+            })
+            .cloned()
+            .collect();
         Self {
-            counted_populations: self.counted_populations.clone(),
+            counted_populations: std::sync::Arc::new(counted_populations),
             ..Self::new()
         }
     }

@@ -1380,6 +1380,13 @@ pub(super) fn lower_outcome_simp_tactics(
         .collect::<Result<Vec<_>, _>>()
         .map_err(ClickError::new)?;
 
+    // An observed resource-count witness can survive execution as the exact
+    // postcondition fact. Its smallest certificate is the ordinary simple
+    // assumption rule; routing the identity derivation through arithmetic
+    // rewrite planning incorrectly reports that no certificate exists.
+    if premise_pairs.iter().any(|(premise, _)| premise == goal) {
+        return Ok(vec![ProofTactic::Assumption]);
+    }
     if let ClickProposition::PredicateCall { name, .. } = surface_goal {
         let unfolded_goal = unfold_predicates_in_proposition(
             predicate_environment,

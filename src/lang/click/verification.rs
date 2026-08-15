@@ -1608,6 +1608,7 @@ pub(in crate::lang::click) fn build_function_environment(
                     contract_mutable,
                     contract_claims,
                     opaque_supported,
+                    predicate_unfoldings,
                 ) = function_contract_summary(
                     function_block,
                     function,
@@ -1623,6 +1624,7 @@ pub(in crate::lang::click) fn build_function_environment(
                         predicate_environment,
                         click_function_environment,
                     )?)
+                    .with_predicate_unfoldings(predicate_unfoldings)
                     .with_contract(
                         contract_requires,
                         contract_ensures,

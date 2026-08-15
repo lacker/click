@@ -69,6 +69,7 @@ pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_at_curre
         application.name.as_str(),
         "int32_nonnegative_add_within_max_is_defined"
             | "int32_nonnegative_subtract_within_value_is_defined"
+            | "int32_move_one_from_right_to_left_preserves_sum"
             | "int32_one_plus_below_max_is_defined"
             | "int32_one_plus_strictly_increases"
             | "int32_lt_implies_le"
@@ -160,6 +161,18 @@ pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_at_curre
                 ));
             };
             prove_int32_nonnegative_subtract_within_value_is_defined(value.clone(), amount.clone())
+        }
+        "int32_move_one_from_right_to_left_preserves_sum" => {
+            let [total, left, right] = terms.as_slice() else {
+                return Err(ClickError::new(
+                    "standard sum-preservation theorem has the wrong arity",
+                ));
+            };
+            prove_int32_move_one_from_right_to_left_preserves_sum(
+                total.clone(),
+                left.clone(),
+                right.clone(),
+            )
         }
         _ => unreachable!("filtered above"),
     }))

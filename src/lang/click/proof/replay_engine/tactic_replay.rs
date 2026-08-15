@@ -1,4 +1,7 @@
 use super::*;
+use crate::kernel::{
+    prove_c_function_contract_predicate_unfolding, prove_pure_proposition_from_context,
+};
 
 /// Track, in the certificate-generation fact set, the facts a recorded
 /// post-execution surface tactic just added to the drain's requirements.
@@ -798,6 +801,8 @@ fn replay_linear_tactics_without_frontier_loops(
                     state,
                     &mut requirement_pure_facts,
                     &mut replay.surface_propositions,
+                    &mut replay.function_entry_derivations,
+                    &mut replay.function_entry_execution_prerequisites,
                     predicate_environment,
                     click_function_environment,
                     claim_label,
@@ -2041,7 +2046,7 @@ fn replay_linear_tactics_without_frontier_loops(
                             &assumptions,
                         )
                         .ok()?;
-                        Some((surface, unfolded))
+                        Some((kernel.clone(), surface, unfolded))
                     })
                     .collect::<Vec<_>>();
                 requirement_pure_facts = unfold_available_predicate_facts(
@@ -2053,10 +2058,39 @@ fn replay_linear_tactics_without_frontier_loops(
                 .map_err(|message| {
                     ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
                 })?;
-                for (surface, kernel) in surface_unfoldings {
+                for (predicate, surface, kernel) in surface_unfoldings {
                     replay
                         .surface_propositions
                         .record_lowering(&surface, &kernel)?;
+                    let contract_unfolding = replay
+                        .frontier
+                        .execution_start_state
+                        .as_ref()
+                        .is_none_or(|start| start == &state)
+                        .then(|| {
+                            prove_c_function_contract_predicate_unfolding(
+                                &state,
+                                function,
+                                arguments,
+                                &predicate,
+                                &kernel,
+                                &assumptions,
+                            )
+                        })
+                        .flatten();
+                    if let Some(derivation) = contract_unfolding {
+                        if !replay
+                            .function_entry_execution_prerequisites
+                            .contains(&kernel)
+                        {
+                            replay
+                                .function_entry_execution_prerequisites
+                                .push(kernel.clone());
+                        }
+                        if !replay.function_entry_derivations.contains(&derivation) {
+                            replay.function_entry_derivations.push(derivation);
+                        }
+                    }
                 }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
@@ -2197,9 +2231,22 @@ fn replay_linear_tactics_without_frontier_loops(
                         click_function_environment,
                         &lowering_facts,
                     )?
-                    && !replay.function_entry_derivations.contains(&derivation)
                 {
-                    replay.function_entry_derivations.push(derivation);
+                    let mut conclusion = derivation.proposition();
+                    while let Proposition::Implies(_, body) = conclusion {
+                        conclusion = body;
+                    }
+                    if !replay
+                        .function_entry_execution_prerequisites
+                        .contains(conclusion)
+                    {
+                        replay
+                            .function_entry_execution_prerequisites
+                            .push(conclusion.clone());
+                    }
+                    if !replay.function_entry_derivations.contains(&derivation) {
+                        replay.function_entry_derivations.push(derivation);
+                    }
                 }
                 for fact in all_pure_facts {
                     if !applied.contains(&fact) {
@@ -2434,9 +2481,22 @@ fn replay_linear_tactics_without_frontier_loops(
                                 click_function_environment,
                                 &have_facts,
                             )?
-                            && !replay.function_entry_derivations.contains(&derivation)
                         {
-                            replay.function_entry_derivations.push(derivation);
+                            let mut conclusion = derivation.proposition();
+                            while let Proposition::Implies(_, body) = conclusion {
+                                conclusion = body;
+                            }
+                            if !replay
+                                .function_entry_execution_prerequisites
+                                .contains(conclusion)
+                            {
+                                replay
+                                    .function_entry_execution_prerequisites
+                                    .push(conclusion.clone());
+                            }
+                            if !replay.function_entry_derivations.contains(&derivation) {
+                                replay.function_entry_derivations.push(derivation);
+                            }
                         }
                     }
                 }
@@ -2452,6 +2512,28 @@ fn replay_linear_tactics_without_frontier_loops(
                     .simple_proof_builder
                     .certificate_facts
                     .insert(fact.clone());
+                if replay
+                    .frontier
+                    .execution_start_state
+                    .as_ref()
+                    .is_none_or(|start| start == &state)
+                    && let Some(derivation) = prove_pure_proposition_from_context(
+                        &assumptions_from_propositions(&have_facts),
+                        &fact,
+                    )
+                {
+                    if !replay
+                        .function_entry_execution_prerequisites
+                        .contains(&fact)
+                    {
+                        replay
+                            .function_entry_execution_prerequisites
+                            .push(fact.clone());
+                    }
+                    if !replay.function_entry_derivations.contains(&derivation) {
+                        replay.function_entry_derivations.push(derivation);
+                    }
+                }
                 if !requirement_pure_facts.contains(&fact) {
                     requirement_pure_facts.push(fact.clone());
                     assumptions = assumptions.assume_proposition(fact);
