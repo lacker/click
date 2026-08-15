@@ -100,6 +100,17 @@ path), not a larger budget.
 
 The example is quarantined in `tests/examples.rs` referencing this issue.
 
+## Structural guard landed (2026-08-15)
+
+Proof-branch routing now distinguishes a genuine case contradiction from
+explosion in an already-inconsistent routed context. Exact-negation evidence
+still assigns a path to the sibling branch, but the whole-context fallback
+first checks consistency and reports an explicit path-routing error when the
+context is contradictory. Focused unit regressions pin both outcomes. This
+closes the silent-path-drop soundness hole; it does not remove the
+owned-vector quarantine because honest verification still hits the
+giant-memory-term performance wall described above.
+
 ## Acceptance criteria
 
 - A structural guard makes silently-dropped paths impossible: each

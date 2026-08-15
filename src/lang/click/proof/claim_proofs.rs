@@ -972,6 +972,17 @@ fn cached_independent_execution(
     execution
 }
 
+fn proof_case_fact_conflicts(
+    fact: &Proposition,
+    assumptions: &PureFactContext,
+) -> Result<bool, ()> {
+    let conflicts = fact_conflicts_with_assumptions(fact, assumptions);
+    if conflicts && crate::kernel::pure_fact_context_is_inconsistent(assumptions) {
+        return Err(());
+    }
+    Ok(conflicts)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn finish_ordered_proof_replay(
     mut expansion_capture: Option<&mut ExpansionCapture>,
@@ -1318,16 +1329,16 @@ pub(super) fn finish_ordered_proof_replay(
         // vacuous. Such a path needs no matching kernel certificate — the
         // exit drain below skips it by the same case reasoning.
         let path_excluded_by_proof_branch =
-            |replayed: &crate::kernel::CFunctionExecutionCandidate| -> bool {
+            |replayed: &crate::kernel::CFunctionExecutionCandidate| -> Result<bool, ClickError> {
                 if replay.case_assumptions.is_empty() {
-                    return false;
+                    return Ok(false);
                 }
                 let CFunctionOutcome::Return {
                     value: result,
                     state: post_state,
                 } = replayed.outcome()
                 else {
-                    return false;
+                    return Ok(false);
                 };
                 let mut available = pure_facts.clone();
                 available.extend(
@@ -1352,7 +1363,7 @@ pub(super) fn finish_ordered_proof_replay(
                             click_function_environment,
                             &replay.program_point_states,
                         ) else {
-                            return false;
+                            return Ok(false);
                         };
                         if case.value {
                             condition
@@ -1363,40 +1374,47 @@ pub(super) fn finish_ordered_proof_replay(
                     if available
                         .iter()
                         .any(|existing| propositions_are_exact_negations(existing, &fact))
-                        || fact_conflicts_with_assumptions(
-                            &fact,
-                            &assumptions_from_propositions(&available),
-                        )
                     {
-                        return true;
+                        return Ok(true);
+                    }
+                    let routed_assumptions = assumptions_from_propositions(&available);
+                    match proof_case_fact_conflicts(&fact, &routed_assumptions) {
+                        Ok(true) => return Ok(true),
+                        Ok(false) => {}
+                        Err(()) => {
+                            return Err(ClickError::new(format!(
+                                "execution replay for `{proof_label}` cannot attribute a path to a sibling proof branch: the routed assumptions are already inconsistent"
+                            )));
+                        }
                     }
                     available.push(fact);
                 }
-                false
+                Ok(false)
             };
         let certified_path_for_replay = crate::instrumentation::measure_operation(
             function_block.signature().name(),
             &proof_label,
             "certified outcome pairing",
-            || {
+            || -> Result<Option<Vec<Option<usize>>>, ClickError> {
                 if replay.execution_abstraction {
-                    (!certified_outcomes.is_empty()).then(|| vec![Some(0); execution.paths().len()])
-                } else {
-                    execution
-                        .paths()
-                        .iter()
-                        .map(|replayed| {
-                            match (0..certified_outcomes.len())
-                                .find(|certified_index| outcomes_match(replayed, *certified_index))
-                            {
-                                Some(certified_index) => Some(Some(certified_index)),
-                                None => path_excluded_by_proof_branch(replayed).then_some(None),
-                            }
-                        })
-                        .collect::<Option<Vec<_>>>()
+                    return Ok((!certified_outcomes.is_empty())
+                        .then(|| vec![Some(0); execution.paths().len()]));
                 }
+                let mut pairing = Vec::with_capacity(execution.paths().len());
+                for replayed in execution.paths() {
+                    if let Some(certified_index) = (0..certified_outcomes.len())
+                        .find(|certified_index| outcomes_match(replayed, *certified_index))
+                    {
+                        pairing.push(Some(certified_index));
+                    } else if path_excluded_by_proof_branch(replayed)? {
+                        pairing.push(None);
+                    } else {
+                        return Ok(None);
+                    }
+                }
+                Ok(Some(pairing))
             },
-        );
+        )?;
         let Some(certified_path_for_replay) = certified_path_for_replay else {
             // Outcome equality is a conservative kernel query: once the
             // ambient limit fires it returns `false`, which used to turn a
@@ -1543,20 +1561,30 @@ pub(super) fn finish_ordered_proof_replay(
                             // path assumptions. Some alias guards genuinely require
                             // the prover's whole-context inconsistency fallback, whose
                             // completed result is memoized by assumptions identity.
-                            if crate::instrumentation::measure_operation(
+                            let case_conflicts = crate::instrumentation::measure_operation(
                                 function_block.signature().name(),
                                 &proof_label,
                                 "proof case contradiction check",
-                                || fact_conflicts_with_assumptions(&fact, &routed_assumptions),
-                            ) {
-                                // A proof-level branch only owns execution outcomes
-                                // compatible with its assumption.  The sibling branch
-                                // certifies this path; replaying this branch's exact
-                                // per-outcome certificate against a contradictory
-                                // path would require it to list an unrelated
-                                // contradiction instead of the premises it was
-                                // generated from.
-                                continue 'execution_path;
+                                || proof_case_fact_conflicts(&fact, &routed_assumptions),
+                            );
+                            match case_conflicts {
+                                Err(()) => {
+                                    return Err(ClickError::new(format!(
+                                        "execution proof failed for `{proof_label}` path {path_index}: proof branch routing reached an inconsistent assumption context at tactic {}",
+                                        case.tactic_index
+                                    )));
+                                }
+                                Ok(true) => {
+                                    // A proof-level branch only owns execution outcomes
+                                    // compatible with its assumption.  The sibling branch
+                                    // certifies this path; replaying this branch's exact
+                                    // per-outcome certificate against a contradictory
+                                    // path would require it to list an unrelated
+                                    // contradiction instead of the premises it was
+                                    // generated from.
+                                    continue 'execution_path;
+                                }
+                                Ok(false) => {}
                             }
                             routed_assumptions =
                                 routed_assumptions.assume_proposition(fact.clone());
@@ -3680,4 +3708,49 @@ pub(super) fn finish_ordered_proof_replay(
         Ok(verified)
     })();
     result.map_err(|error| add_proof_branch_path(error, &branch_path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inconsistent_context_is_not_sibling_path_evidence() {
+        let left = Bitvector32Term::Variable(Variable(1));
+        let right = Bitvector32Term::Variable(Variable(2));
+        let assumptions = PureFactContext::new()
+            .assume_proposition(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(
+                    Box::new(left.clone()),
+                    Box::new(right.clone()),
+                ),
+                true,
+            ))
+            .assume_proposition(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(Box::new(right), Box::new(left)),
+                true,
+            ));
+        let unrelated = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessThan(
+                Box::new(Bitvector32Term::Variable(Variable(2))),
+                Box::new(Bitvector32Term::Constant(10)),
+            ),
+            true,
+        );
+
+        assert_eq!(proof_case_fact_conflicts(&unrelated, &assumptions), Err(()));
+    }
+
+    #[test]
+    fn consistent_exact_conflict_remains_sibling_path_evidence() {
+        let condition = ConditionTerm::Bitvector32SignedLessThan(
+            Box::new(Bitvector32Term::Variable(Variable(1))),
+            Box::new(Bitvector32Term::Constant(10)),
+        );
+        let assumptions = PureFactContext::new()
+            .assume_proposition(Proposition::ConditionIs(condition.clone(), false));
+        let fact = Proposition::ConditionIs(condition, true);
+
+        assert_eq!(proof_case_fact_conflicts(&fact, &assumptions), Ok(true));
+    }
 }

@@ -1869,6 +1869,15 @@ pub fn prove_pure_proposition_from_context(
     Some(Theorem::new(theorem))
 }
 
+/// Reports whether an exact pure-fact context is contradictory.
+///
+/// Proof orchestration uses this before treating a derived contradiction as
+/// path-exclusion evidence: explosion in an already-inconsistent context is
+/// not proof that a sibling branch owns the path.
+pub fn pure_fact_context_is_inconsistent(assumptions: &PureFactContext) -> bool {
+    assumptions.is_inconsistent()
+}
+
 /// Certifies the exact count lower bound witnessed by owned declared-resource
 /// authority in a concrete ghost state. The returned theorem is sealed to the
 /// proposition reconstructed here; callers cannot use resource possession to
