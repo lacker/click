@@ -440,6 +440,12 @@ mutable replay fields still need separation into persistent semantic state
 and legacy certificate/expansion bookkeeping before execution branches can
 become cheap `Proof` forks.
 
+The immutable execution-entry fact set is shared as well. It is now an
+`Arc<Vec<Proposition>>`, so proof-branch clones do not copy thousands of root
+facts; final certification makes the one owned copy it actually extends. A
+4096-fact identity regression distinguishes this guarantee from a merely
+fast small-corpus clone.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

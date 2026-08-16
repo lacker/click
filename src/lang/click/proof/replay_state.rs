@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 /// Identifies the `close_invariants` step of a replayed certificate well
 /// enough to emit a `click timing:` line for the work its caller does on its
@@ -54,7 +55,10 @@ pub(super) struct TacticReplayState {
     pub(super) next_opaque_call: u64,
     pub(super) next_verification_variable: u64,
     pub(super) next_path_choice: usize,
-    pub(super) execution_start_facts: Vec<Proposition>,
+    /// Immutable facts at the execution root. Every proof branch reads the
+    /// same entry context, so clones share it rather than copying a
+    /// project-sized fact vector.
+    pub(super) execution_start_facts: Arc<Vec<Proposition>>,
     /// Exact non-contract facts selected by a statement certificate, resource
     /// observation, or explicit kernel theorem while the C frontier is still
     /// at function entry.
@@ -1121,6 +1125,32 @@ mod proof_fact_store_tests {
         assert_eq!(facts.as_slice(), std::slice::from_ref(&second));
         assert!(!facts.exact.contains(&first));
         assert!(facts.exact.contains(&second));
+    }
+
+    #[test]
+    fn replay_clones_share_large_execution_entry_fact_sets() {
+        let facts = (0..4096)
+            .map(|index| {
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(
+                        Box::new(Bitvector32Term::Variable(Variable(0))),
+                        Box::new(Bitvector32Term::Constant(index)),
+                    ),
+                    true,
+                )
+            })
+            .collect::<Vec<_>>();
+        let replay = TacticReplayState {
+            execution_start_facts: Arc::new(facts),
+            ..TacticReplayState::default()
+        };
+        let cloned = replay.clone();
+
+        assert!(Arc::ptr_eq(
+            &replay.execution_start_facts,
+            &cloned.execution_start_facts
+        ));
+        assert_eq!(cloned.execution_start_facts.len(), 4096);
     }
 }
 

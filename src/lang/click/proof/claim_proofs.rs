@@ -1,5 +1,6 @@
 use super::*;
 use crate::kernel::apply_c_function_contract_resource_transition;
+use std::sync::Arc;
 
 fn apply_checked_contract_resource_transition(
     outcome: &mut CFunctionOutcome,
@@ -93,7 +94,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         proof_site: proof_site_for_claims(function_block, &proof_claims, false),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         ordered_finalization: true,
-        execution_start_facts: pure_facts.clone(),
+        execution_start_facts: Arc::new(pure_facts.clone()),
         function_entry_state: Some(function_entry_state),
         surface_propositions,
         ..TacticReplayState::default()
@@ -214,7 +215,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         ordered_finalization: true,
         grouped_contract: true,
-        execution_start_facts: pure_facts.clone(),
+        execution_start_facts: Arc::new(pure_facts.clone()),
         function_entry_state: Some(function_entry_state),
         surface_propositions,
         ..TacticReplayState::default()
@@ -1052,7 +1053,7 @@ pub(super) fn finish_ordered_proof_replay(
                 "execution proof could not prove any complete execution path for `{proof_label}`"
             )));
         }
-        let mut certification_facts = replay.execution_start_facts.clone();
+        let mut certification_facts = replay.execution_start_facts.as_ref().clone();
         certification_facts.extend(
             replay
                 .function_entry_execution_prerequisites
