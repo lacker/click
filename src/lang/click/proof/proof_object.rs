@@ -531,11 +531,14 @@ impl<'a> Proof<'a> {
                 "a tactic follows a completed execution frontier",
             ));
         }
-        let SimpleProofStep::StepUsing(premises) = &step else {
+        if !matches!(
+            step,
+            SimpleProofStep::StepUsing(_) | SimpleProofStep::TransportUsing { .. }
+        ) {
             return Err(step_error(
-                "owned execution proof currently accepts only `step using`",
+                "owned execution proof currently accepts only `transport using` and `step using`",
             ));
-        };
+        }
         let mut state = Arc::try_unwrap(proof_state).map_err(|_| {
             step_error(
                 "execution-frontier state was forked before its persistent representation exists",
@@ -545,21 +548,62 @@ impl<'a> Proof<'a> {
             .execution
             .take()
             .ok_or_else(|| step_error("execution-frontier proof lost its owned semantic state"))?;
-        check_step_using(
-            &mut execution.replay,
-            &mut execution.state,
-            &mut execution.pure_facts,
-            premises,
-            context.function_block,
-            context.function,
-            context.parsed_function,
-            context.arguments,
-            context.function_environment,
-            context.predicate_environment,
-            context.click_function_environment,
-            context.claim_label,
-            context.tactic_index,
-        )?;
+        match &step {
+            SimpleProofStep::StepUsing(premises) => check_step_using(
+                &mut execution.replay,
+                &mut execution.state,
+                &mut execution.pure_facts,
+                premises,
+                context.function_block,
+                context.function,
+                context.parsed_function,
+                context.arguments,
+                context.function_environment,
+                context.predicate_environment,
+                context.click_function_environment,
+                context.claim_label,
+                context.tactic_index,
+            )?,
+            SimpleProofStep::TransportUsing {
+                source,
+                target,
+                premises,
+            } => {
+                let pre_state = execution
+                    .replay
+                    .old_reference_state(&execution.state)
+                    .clone();
+                let checked = check_point_fact_transport_using(
+                    source,
+                    target,
+                    premises,
+                    context.claim_label,
+                    context.tactic_index,
+                    &execution.pure_facts,
+                    &execution.replay.effect_facts,
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    &pre_state,
+                    &execution.state,
+                    &execution.replay.program_point_states,
+                    &execution.replay.surface_propositions,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )?;
+                execution
+                    .replay
+                    .surface_propositions
+                    .record_lowering(source, &checked.source)?;
+                execution
+                    .replay
+                    .surface_propositions
+                    .record_lowering(target, &checked.target)?;
+                if !execution.pure_facts.contains(&checked.target) {
+                    execution.pure_facts.push(checked.target);
+                }
+            }
+            _ => unreachable!("checked above"),
+        }
         state.execution = Some(execution);
         state.added_facts = Arc::new(Vec::new());
         state.checked_facts = Arc::new(Vec::new());

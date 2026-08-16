@@ -362,6 +362,11 @@ Linear `execute_until(...)` plans composed entirely of `StepUsing` operations
 also use the owned execution `Proof`, with the same retained-certificate and
 legacy-fallback rules.
 
+Execution-frontier `Proof` now also checks `TransportUsing`, updating the
+owned exact fact set and surface lowerings without advancing C. Linear smart
+step/execute plans may therefore retain mixed sequences of explicit fact
+transports and statement steps; structured steps remain the fallback boundary.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

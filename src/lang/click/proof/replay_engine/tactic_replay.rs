@@ -1032,12 +1032,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         "`{claim_label}` tactic {tactic_index}: `transport` requires at least one completed execution step"
                     )));
                 }
-                // A mid-execution smart `transport` is planned into an
-                // explicit `transport using` and checked through
-                // `complete_smart_tactic` before this match (see the
-                // `Transport` pre-pass above), so only `transport using`
-                // reaches this point mid-execution.
-                let pre_state = replay.old_reference_state(&state).clone();
                 let ProofTactic::TransportUsing {
                     premises: surface_premises,
                     ..
@@ -1045,33 +1039,34 @@ fn replay_linear_tactics_without_frontier_loops(
                 else {
                     unreachable!("mid-execution `transport` is completed by its pre-pass")
                 };
-                let checked = check_point_fact_transport_using(
-                    surface_source,
-                    surface_target,
-                    surface_premises,
+                let proof = Proof::for_execution_frontier(
                     claim_label,
                     tactic_index,
-                    &requirement_pure_facts,
-                    &replay.effect_facts,
-                    parsed_function.parameters(),
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    function,
+                    parsed_function,
                     arguments,
-                    &pre_state,
-                    &state,
-                    &replay.program_point_states,
-                    &replay.surface_propositions,
+                    function_environment,
                     predicate_environment,
                     click_function_environment,
-                )?;
-                replay
-                    .surface_propositions
-                    .record_lowering(surface_source, &checked.source)?;
-                replay
-                    .surface_propositions
-                    .record_lowering(surface_target, &checked.target)?;
-                if !requirement_pure_facts.contains(&checked.target) {
-                    requirement_pure_facts.push(checked.target.clone());
-                    assumptions = assumptions.assume_proposition(checked.target);
-                }
+                );
+                let proof = proof.apply_owned_execution_step(SimpleProofStep::TransportUsing {
+                    source: surface_source.clone(),
+                    target: surface_target.clone(),
+                    premises: surface_premises.clone(),
+                })?;
+                let result = proof.into_execution_context()?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::StepUsing(premises) => {
                 check_step_using(
@@ -1145,9 +1140,19 @@ fn replay_linear_tactics_without_frontier_loops(
                 )?;
                 let construction = std::mem::take(&mut planning_replay.proof_certificate_builder);
                 if construction.blocker.is_none()
-                    && let [step @ SimpleProofStep::StepUsing(_)] = construction.steps.as_slice()
+                    && !construction.steps.is_empty()
+                    && matches!(
+                        construction.steps.last(),
+                        Some(SimpleProofStep::StepUsing(_))
+                    )
+                    && construction.steps.iter().all(|step| {
+                        matches!(
+                            step,
+                            SimpleProofStep::TransportUsing { .. } | SimpleProofStep::StepUsing(_)
+                        )
+                    })
                 {
-                    let proof = Proof::for_execution_frontier(
+                    let mut proof = Proof::for_execution_frontier(
                         claim_label,
                         tactic_index,
                         ProofReplayContext {
@@ -1164,7 +1169,9 @@ fn replay_linear_tactics_without_frontier_loops(
                         predicate_environment,
                         click_function_environment,
                     );
-                    let proof = proof.apply_owned_execution_step(step.clone())?;
+                    for step in &construction.steps {
+                        proof = proof.apply_owned_execution_step(step.clone())?;
+                    }
                     let certificate = proof.certificate();
                     let result = proof.into_execution_context()?;
                     state = result.state;
@@ -1277,10 +1284,16 @@ fn replay_linear_tactics_without_frontier_loops(
                 let construction = std::mem::take(&mut planning_replay.proof_certificate_builder);
                 if construction.blocker.is_none()
                     && !construction.steps.is_empty()
+                    && construction.steps.iter().all(|step| {
+                        matches!(
+                            step,
+                            SimpleProofStep::TransportUsing { .. } | SimpleProofStep::StepUsing(_)
+                        )
+                    })
                     && construction
                         .steps
                         .iter()
-                        .all(|step| matches!(step, SimpleProofStep::StepUsing(_)))
+                        .any(|step| matches!(step, SimpleProofStep::StepUsing(_)))
                 {
                     let mut proof = Proof::for_execution_frontier(
                         claim_label,
@@ -1394,10 +1407,16 @@ fn replay_linear_tactics_without_frontier_loops(
                 let construction = std::mem::take(&mut planning_replay.proof_certificate_builder);
                 if construction.blocker.is_none()
                     && !construction.steps.is_empty()
+                    && construction.steps.iter().all(|step| {
+                        matches!(
+                            step,
+                            SimpleProofStep::TransportUsing { .. } | SimpleProofStep::StepUsing(_)
+                        )
+                    })
                     && construction
                         .steps
                         .iter()
-                        .all(|step| matches!(step, SimpleProofStep::StepUsing(_)))
+                        .any(|step| matches!(step, SimpleProofStep::StepUsing(_)))
                 {
                     let mut proof = Proof::for_execution_frontier(
                         claim_label,
