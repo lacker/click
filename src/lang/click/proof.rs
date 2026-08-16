@@ -1250,6 +1250,14 @@ mod certificate_tests {
                 theorem reflexive(x: int32) {
                     ensures x == x by simp;
                 }
+
+                theorem applied(x: int32) {
+                    requires x >= 0;
+                    ensures x >= 0 by {
+                        apply(required(x)) using { x >= 0; }
+                        assumption();
+                    }
+                }
             "#,
         )
         .expect("theorems should parse");
@@ -1273,11 +1281,21 @@ mod certificate_tests {
             verified[1].proof_tactics().as_deref(),
             Some([ProofTactic::Normalize].as_slice())
         );
+        assert!(matches!(
+            verified[2].proof_tactics().as_deref(),
+            Some([
+                ProofTactic::ApplyTheoremUsing { .. },
+                ProofTactic::Assumption
+            ])
+        ));
         assert!(
             events.iter().all(|event| !matches!(
                 event,
                 crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                    if matches!(claim.as_str(), "required.ensures_0" | "reflexive.ensures_0")
+                    if matches!(
+                        claim.as_str(),
+                        "required.ensures_0" | "reflexive.ensures_0" | "applied.ensures_0"
+                    )
                         && name == "surface certificate replay"
             )),
             "checked smart pure proofs must not pass through ordinary certificate replay: {events:#?}"

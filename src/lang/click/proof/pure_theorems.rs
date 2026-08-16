@@ -506,7 +506,7 @@ fn verify_theorem_ensure(
             let (tactics, induction_setup) =
                 prepare_pure_induction_tactics(theorem, surface_goal, tactics)?;
             checked_certificate = if induction_setup.is_none() {
-                check_pure_application_script_with_proof(
+                check_linear_pure_script_with_proof(
                     theorem,
                     claim_label,
                     context,
@@ -861,15 +861,15 @@ fn verify_kernel_standard_theorem_axiom(
     })
 }
 
-/// First production slice of the checked proof-object API: one bare theorem
-/// application followed by the already-explicit simple `assumption` closer.
+/// Checks the linear pure-script subset already supported by the proof object.
 ///
-/// Search instantiates the selected theorem's actual requirements and chooses
-/// their exact source spellings. `Proof::apply_step` then checks the resulting
-/// `ApplyTheoremUsing` against only those named premises and retains that exact
-/// step with the semantic successor. No second ordinary execution is needed.
+/// Fully explicit `apply using`, `assumption`, and `normalize` scripts advance
+/// directly through `Proof::apply_step`. The one supported smart form is a
+/// single bare theorem application followed by `assumption`: search only
+/// selects the applied theorem's exact source premises, then submits the
+/// explicit `ApplyTheoremUsing` to the same checked path.
 #[allow(clippy::too_many_arguments)]
-fn check_pure_application_script_with_proof(
+fn check_linear_pure_script_with_proof(
     theorem: &TheoremDefinition,
     claim_label: &str,
     context: &PureTheoremContext,
@@ -879,6 +879,41 @@ fn check_pure_application_script_with_proof(
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Option<ProofCertificate>, ClickError> {
+    let root = Proof::for_pure_goal(
+        claim_label,
+        &context.requires,
+        goal.clone(),
+        context,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    );
+    if let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
+        && certificate.steps().iter().all(|step| {
+            matches!(
+                step,
+                SimpleProofStep::ApplyTheoremUsing { .. }
+                    | SimpleProofStep::Assumption
+                    | SimpleProofStep::Normalize
+            )
+        })
+    {
+        let mut proof = root.clone();
+        for step in certificate.steps() {
+            let Ok(next) = proof.apply_step(step.clone()) else {
+                // Migration is an optimization for successful scripts. Keep
+                // the legacy verifier authoritative for failure diagnostics
+                // until every pure simple step has moved behind `Proof`.
+                return Ok(None);
+            };
+            proof = next;
+        }
+        if !proof.is_complete() {
+            return Ok(None);
+        }
+        return Ok(Some(proof.certificate()));
+    }
+
     let [
         ProofTactic::ApplyTheorem(application),
         ProofTactic::Assumption,
@@ -949,16 +984,7 @@ fn check_pure_application_script_with_proof(
         }
     }
 
-    let proof = Proof::for_pure_goal(
-        claim_label,
-        &context.requires,
-        goal.clone(),
-        context,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-    );
-    let proof = proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
+    let proof = root.apply_step(SimpleProofStep::ApplyTheoremUsing {
         application: application.clone(),
         premises,
     })?;

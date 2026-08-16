@@ -316,6 +316,8 @@ The fifth checkpoint starts migrating direct pure smart goals. `auto` and
 `normalize` closures. A successful successor retains its own one-step
 certificate and avoids the ordinary construction/replay gateway; goals that
 need richer simple vocabulary continue through the legacy path for now.
+Fully explicit linear pure scripts composed of `apply using`, `assumption`,
+and `normalize` use the same checked path.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
