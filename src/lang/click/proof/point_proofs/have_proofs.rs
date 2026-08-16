@@ -284,7 +284,9 @@ pub(in crate::lang::click::proof) fn reverse_surface_equality(
     })
 }
 
-fn reverse_kernel_equality(proposition: Proposition) -> Option<Proposition> {
+pub(in crate::lang::click::proof) fn reverse_kernel_equality(
+    proposition: Proposition,
+) -> Option<Proposition> {
     match proposition {
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => Some(
             Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(right, left), true),

@@ -80,86 +80,136 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
     equality: &Proposition,
     available: &[Proposition],
 ) -> Result<Proposition, String> {
+    enum RewriteTask<'a> {
+        Visit(&'a Proposition),
+        BuildAnd,
+        BuildOr,
+        BuildNot,
+        BuildImplies,
+        BuildForAll {
+            var: Variable,
+            sort: Sort,
+        },
+        BuildExists {
+            name: String,
+            var: Variable,
+            sort: Sort,
+        },
+    }
+
+    let mut tasks = vec![RewriteTask::Visit(goal)];
+    let mut results: Vec<(Proposition, bool)> = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            RewriteTask::Visit(proposition) => match proposition {
+                Proposition::And(left, right) => {
+                    tasks.push(RewriteTask::BuildAnd);
+                    tasks.push(RewriteTask::Visit(right));
+                    tasks.push(RewriteTask::Visit(left));
+                }
+                Proposition::Or(left, right) => {
+                    tasks.push(RewriteTask::BuildOr);
+                    tasks.push(RewriteTask::Visit(right));
+                    tasks.push(RewriteTask::Visit(left));
+                }
+                Proposition::Not(body) => {
+                    tasks.push(RewriteTask::BuildNot);
+                    tasks.push(RewriteTask::Visit(body));
+                }
+                Proposition::Implies(antecedent, consequent) => {
+                    tasks.push(RewriteTask::BuildImplies);
+                    tasks.push(RewriteTask::Visit(consequent));
+                    tasks.push(RewriteTask::Visit(antecedent));
+                }
+                Proposition::ForAll { var, sort, body } => {
+                    tasks.push(RewriteTask::BuildForAll {
+                        var: *var,
+                        sort: sort.clone(),
+                    });
+                    tasks.push(RewriteTask::Visit(body));
+                }
+                Proposition::Exists {
+                    name,
+                    var,
+                    sort,
+                    body,
+                } => {
+                    tasks.push(RewriteTask::BuildExists {
+                        name: name.clone(),
+                        var: *var,
+                        sort: sort.clone(),
+                    });
+                    tasks.push(RewriteTask::Visit(body));
+                }
+                atomic => {
+                    match rewrite_atomic_proposition_by_exact_equality(atomic, equality, available)
+                    {
+                        Ok(rewritten) => results.push((rewritten, true)),
+                        Err(message) if message.contains("does not occur in") => {
+                            results.push((atomic.clone(), false));
+                        }
+                        Err(message) => return Err(message),
+                    }
+                }
+            },
+            RewriteTask::BuildAnd | RewriteTask::BuildOr | RewriteTask::BuildImplies => {
+                let (right, right_changed) = results.pop().expect("right rewrite result");
+                let (left, left_changed) = results.pop().expect("left rewrite result");
+                let rewritten = match task {
+                    RewriteTask::BuildAnd => Proposition::And(Box::new(left), Box::new(right)),
+                    RewriteTask::BuildOr => Proposition::Or(Box::new(left), Box::new(right)),
+                    RewriteTask::BuildImplies => {
+                        Proposition::Implies(Box::new(left), Box::new(right))
+                    }
+                    _ => unreachable!(),
+                };
+                results.push((rewritten, left_changed || right_changed));
+            }
+            RewriteTask::BuildNot => {
+                let (body, changed) = results.pop().expect("negation rewrite result");
+                results.push((Proposition::Not(Box::new(body)), changed));
+            }
+            RewriteTask::BuildForAll { var, sort } => {
+                let (body, changed) = results.pop().expect("universal rewrite result");
+                results.push((
+                    Proposition::ForAll {
+                        var,
+                        sort,
+                        body: Box::new(body),
+                    },
+                    changed,
+                ));
+            }
+            RewriteTask::BuildExists { name, var, sort } => {
+                let (body, changed) = results.pop().expect("existential rewrite result");
+                results.push((
+                    Proposition::Exists {
+                        name,
+                        var,
+                        sort,
+                        body: Box::new(body),
+                    },
+                    changed,
+                ));
+            }
+        }
+    }
+    let (rewritten, changed) = results.pop().expect("root rewrite result");
+    debug_assert!(results.is_empty());
+    return changed
+        .then_some(rewritten)
+        .ok_or_else(|| "`rewrite` equality does not occur in the current goal".to_string());
+}
+
+fn rewrite_atomic_proposition_by_exact_equality(
+    goal: &Proposition,
+    equality: &Proposition,
+    available: &[Proposition],
+) -> Result<Proposition, String> {
     let is_available = |fact: &Proposition| {
         available.contains(fact)
             || materialization_equivalent_available_fact(fact, available).is_some()
     };
-    fn rewrite_child(
-        child: &Proposition,
-        equality: &Proposition,
-        available: &[Proposition],
-    ) -> Result<(Proposition, bool), String> {
-        match rewrite_proposition_by_exact_equality(child, equality, available) {
-            Ok(rewritten) => Ok((rewritten, true)),
-            Err(message) if message.contains("does not occur in") => Ok((child.clone(), false)),
-            Err(message) => Err(message),
-        }
-    }
-
-    let structural = match goal {
-        Proposition::And(left, right) => {
-            let (left, left_changed) = rewrite_child(left, equality, available)?;
-            let (right, right_changed) = rewrite_child(right, equality, available)?;
-            Some((
-                Proposition::And(Box::new(left), Box::new(right)),
-                left_changed || right_changed,
-            ))
-        }
-        Proposition::Or(left, right) => {
-            let (left, left_changed) = rewrite_child(left, equality, available)?;
-            let (right, right_changed) = rewrite_child(right, equality, available)?;
-            Some((
-                Proposition::Or(Box::new(left), Box::new(right)),
-                left_changed || right_changed,
-            ))
-        }
-        Proposition::Not(body) => {
-            let (body, changed) = rewrite_child(body, equality, available)?;
-            Some((Proposition::Not(Box::new(body)), changed))
-        }
-        Proposition::Implies(antecedent, consequent) => {
-            let (antecedent, antecedent_changed) = rewrite_child(antecedent, equality, available)?;
-            let (consequent, consequent_changed) = rewrite_child(consequent, equality, available)?;
-            Some((
-                Proposition::Implies(Box::new(antecedent), Box::new(consequent)),
-                antecedent_changed || consequent_changed,
-            ))
-        }
-        Proposition::ForAll { var, sort, body } => {
-            let (body, changed) = rewrite_child(body, equality, available)?;
-            Some((
-                Proposition::ForAll {
-                    var: *var,
-                    sort: sort.clone(),
-                    body: Box::new(body),
-                },
-                changed,
-            ))
-        }
-        Proposition::Exists {
-            name,
-            var,
-            sort,
-            body,
-        } => {
-            let (body, changed) = rewrite_child(body, equality, available)?;
-            Some((
-                Proposition::Exists {
-                    name: name.clone(),
-                    var: *var,
-                    sort: sort.clone(),
-                    body: Box::new(body),
-                },
-                changed,
-            ))
-        }
-        _ => None,
-    };
-    if let Some((rewritten, changed)) = structural {
-        return changed
-            .then_some(rewritten)
-            .ok_or_else(|| "`rewrite` equality does not occur in the current goal".to_string());
-    }
 
     if let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) = equality
     {

@@ -472,152 +472,34 @@ impl<'a> Proof<'a> {
         }
 
         let next_state = match &step {
-            SimpleProofStep::Mark(name) => self.apply_execution_mark(name)?,
+            SimpleProofStep::Mark(name) => self.apply_execution_mark(name),
             SimpleProofStep::ApplyTheoremUsing {
                 application,
                 premises,
-            } => self.apply_theorem_using(application, premises)?,
-            SimpleProofStep::StepUsing(premises) => {
-                self.apply_execution_statement_using(premises)?
-            }
+            } => self.apply_theorem_using(application, premises),
+            SimpleProofStep::StepUsing(premises) => self.apply_execution_statement_using(premises),
             SimpleProofStep::TransportUsing {
                 source,
                 target,
                 premises,
-            } => self.apply_transport_using(source, target, premises)?,
-            SimpleProofStep::UnfoldPredicate(name) => self.apply_execution_unfold(name)?,
-            SimpleProofStep::Witness(witness) => self.apply_point_witness(witness)?,
-            SimpleProofStep::Extract(proposition) => self.apply_extract(proposition)?,
-            SimpleProofStep::Assumption => {
-                let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
-                if !self.state.facts.contains(goal) {
-                    return Err(self.step_error(format!(
-                        "`assumption` requires the exact current goal as an available fact: {:?}",
-                        goal
-                    )));
-                }
-                ProofState {
-                    facts: self.state.facts.clone(),
-                    goal: self.state.goal.clone(),
-                    complete: true,
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                    execution: None,
-                }
-            }
-            SimpleProofStep::Normalize => {
-                let goal = self.proposition_goal("`normalize` requires a proposition goal")?;
-                if !normalizes_context_free(goal) {
-                    return Err(self.step_error(format!(
-                        "`normalize` requires a context-free true goal: {:?}",
-                        goal
-                    )));
-                }
-                ProofState {
-                    facts: self.state.facts.clone(),
-                    goal: self.state.goal.clone(),
-                    complete: true,
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                    execution: None,
-                }
-            }
-            SimpleProofStep::Intro => {
-                let goal = self
-                    .proposition_goal("`intro` requires a proposition goal")?
-                    .clone();
-                let (goal, introduced) = match goal {
-                    Proposition::Implies(antecedent, consequent) => {
-                        (*consequent, Some(*antecedent))
-                    }
-                    Proposition::ForAll { body, .. } => (*body, None),
-                    Proposition::Not(body) => (
-                        Proposition::ConditionIs(ConditionTerm::Constant(false), true),
-                        Some(*body),
-                    ),
-                    other => {
-                        return Err(self.step_error(format!(
-                            "`intro` requires an implication, negation, or universal goal, got {other:?}"
-                        )));
-                    }
-                };
-                let mut facts = self.state.facts.clone();
-                let added_facts = introduced.into_iter().collect::<Vec<_>>();
-                for fact in &added_facts {
-                    facts = facts.with_fact(fact.clone());
-                }
-                ProofState {
-                    facts,
-                    goal: Goal::Proposition(Arc::new(goal)),
-                    complete: false,
-                    checked_facts: Arc::new(added_facts.clone()),
-                    added_facts: Arc::new(added_facts),
-                    execution: None,
-                }
-            }
-            SimpleProofStep::Split => {
-                let goal = self.proposition_goal("`split` requires a proposition goal")?;
-                let Proposition::And(left, right) = goal else {
-                    return Err(self
-                        .step_error(format!("`split` requires a conjunction goal, got {goal:?}")));
-                };
-                if !self.state.facts.contains(left) || !self.state.facts.contains(right) {
-                    return Err(self.step_error(format!(
-                        "`split` requires both conjuncts as exact facts: {left:?} and {right:?}"
-                    )));
-                }
-                self.closed_state()
-            }
-            SimpleProofStep::Left => {
-                let goal = self.proposition_goal("`left` requires a proposition goal")?;
-                let Proposition::Or(left, _) = goal else {
-                    return Err(self
-                        .step_error(format!("`left` requires a disjunction goal, got {goal:?}")));
-                };
-                if !self.state.facts.contains(left) {
-                    return Err(self.step_error(format!(
-                        "`left` requires its selected disjunct as an exact fact: {left:?}"
-                    )));
-                }
-                self.closed_state()
-            }
-            SimpleProofStep::Right => {
-                let goal = self.proposition_goal("`right` requires a proposition goal")?;
-                let Proposition::Or(_, right) = goal else {
-                    return Err(self
-                        .step_error(format!("`right` requires a disjunction goal, got {goal:?}")));
-                };
-                if !self.state.facts.contains(right) {
-                    return Err(self.step_error(format!(
-                        "`right` requires its selected disjunct as an exact fact: {right:?}"
-                    )));
-                }
-                self.closed_state()
-            }
-            SimpleProofStep::Enumerate => {
-                let goal = self.proposition_goal("`enumerate` requires a proposition goal")?;
-                let Some(instances) = crate::kernel::finite_forall_goal_instances(goal) else {
-                    return Err(self.step_error(format!(
-                        "`enumerate` requires a constant-bounded universal goal, got {goal:?}"
-                    )));
-                };
-                for (_, instance) in instances {
-                    if !normalizes_context_free(&instance) && !self.state.facts.contains(&instance)
-                    {
-                        return Err(self.step_error(format!(
-                            "`enumerate` requires an unavailable exact instance: {instance:?}"
-                        )));
-                    }
-                }
-                self.closed_state()
-            }
-            SimpleProofStep::Contradiction(surface) => self.apply_contradiction(surface)?,
+            } => self.apply_transport_using(source, target, premises),
+            SimpleProofStep::UnfoldPredicate(name) => self.apply_execution_unfold(name),
+            SimpleProofStep::Witness(witness) => self.apply_point_witness(witness),
+            SimpleProofStep::Extract(proposition) => self.apply_extract(proposition),
+            SimpleProofStep::Rewrite(equality) => self.apply_rewrite(equality),
+            SimpleProofStep::Assumption => self.apply_assumption(),
+            SimpleProofStep::Normalize => self.apply_normalize(),
+            SimpleProofStep::Intro => self.apply_intro(),
+            SimpleProofStep::Split => self.apply_split(),
+            SimpleProofStep::Left => self.apply_left(),
+            SimpleProofStep::Right => self.apply_right(),
+            SimpleProofStep::Enumerate => self.apply_enumerate(),
+            SimpleProofStep::Contradiction(surface) => self.apply_contradiction(surface),
             _ => {
-                return Err(self.step_error(
-                    "this simple step has not yet migrated to the checked `Proof` API",
-                ));
+                Err(self
+                    .step_error("this simple step has not yet migrated to the checked `Proof` API"))
             }
-        };
+        }?;
 
         Ok(Self {
             context: self.context.clone(),
@@ -628,6 +510,129 @@ impl<'a> Proof<'a> {
                 depth: self.node.depth + 1,
             }),
         })
+    }
+
+    #[inline(never)]
+    fn apply_assumption(&self) -> Result<ProofState, ClickError> {
+        let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
+        if !self.state.facts.contains(goal) {
+            return Err(self.step_error(format!(
+                "`assumption` requires the exact current goal as an available fact: {:?}",
+                goal
+            )));
+        }
+        Ok(self.closed_state())
+    }
+
+    #[inline(never)]
+    fn apply_normalize(&self) -> Result<ProofState, ClickError> {
+        let goal = self.proposition_goal("`normalize` requires a proposition goal")?;
+        if !normalizes_context_free(goal) {
+            return Err(self.step_error(format!(
+                "`normalize` requires a context-free true goal: {:?}",
+                goal
+            )));
+        }
+        Ok(self.closed_state())
+    }
+
+    #[inline(never)]
+    fn apply_intro(&self) -> Result<ProofState, ClickError> {
+        let goal = self
+            .proposition_goal("`intro` requires a proposition goal")?
+            .clone();
+        let (goal, introduced) = match goal {
+            Proposition::Implies(antecedent, consequent) => (*consequent, Some(*antecedent)),
+            Proposition::ForAll { body, .. } => (*body, None),
+            Proposition::Not(body) => (
+                Proposition::ConditionIs(ConditionTerm::Constant(false), true),
+                Some(*body),
+            ),
+            other => {
+                return Err(self.step_error(format!(
+                    "`intro` requires an implication, negation, or universal goal, got {other:?}"
+                )));
+            }
+        };
+        let mut facts = self.state.facts.clone();
+        let added_facts = introduced.into_iter().collect::<Vec<_>>();
+        for fact in &added_facts {
+            facts = facts.with_fact(fact.clone());
+        }
+        Ok(ProofState {
+            facts,
+            goal: Goal::Proposition(Arc::new(goal)),
+            complete: false,
+            checked_facts: Arc::new(added_facts.clone()),
+            added_facts: Arc::new(added_facts),
+            execution: None,
+        })
+    }
+
+    #[inline(never)]
+    fn apply_split(&self) -> Result<ProofState, ClickError> {
+        let goal = self.proposition_goal("`split` requires a proposition goal")?;
+        let Proposition::And(left, right) = goal else {
+            return Err(
+                self.step_error(format!("`split` requires a conjunction goal, got {goal:?}"))
+            );
+        };
+        if !self.state.facts.contains(left) || !self.state.facts.contains(right) {
+            return Err(self.step_error(format!(
+                "`split` requires both conjuncts as exact facts: {left:?} and {right:?}"
+            )));
+        }
+        Ok(self.closed_state())
+    }
+
+    #[inline(never)]
+    fn apply_left(&self) -> Result<ProofState, ClickError> {
+        let goal = self.proposition_goal("`left` requires a proposition goal")?;
+        let Proposition::Or(left, _) = goal else {
+            return Err(
+                self.step_error(format!("`left` requires a disjunction goal, got {goal:?}"))
+            );
+        };
+        if !self.state.facts.contains(left) {
+            return Err(self.step_error(format!(
+                "`left` requires its selected disjunct as an exact fact: {left:?}"
+            )));
+        }
+        Ok(self.closed_state())
+    }
+
+    #[inline(never)]
+    fn apply_right(&self) -> Result<ProofState, ClickError> {
+        let goal = self.proposition_goal("`right` requires a proposition goal")?;
+        let Proposition::Or(_, right) = goal else {
+            return Err(
+                self.step_error(format!("`right` requires a disjunction goal, got {goal:?}"))
+            );
+        };
+        if !self.state.facts.contains(right) {
+            return Err(self.step_error(format!(
+                "`right` requires its selected disjunct as an exact fact: {right:?}"
+            )));
+        }
+        Ok(self.closed_state())
+    }
+
+    #[inline(never)]
+    fn apply_enumerate(&self) -> Result<ProofState, ClickError> {
+        let goal = self.proposition_goal("`enumerate` requires a proposition goal")?;
+        let Some(instances) = crate::kernel::finite_forall_goal_instances(goal) else {
+            return Err(self.step_error(format!(
+                "`enumerate` requires a constant-bounded universal goal, got {goal:?}"
+            )));
+        };
+        for (_, instance) in instances {
+            if !normalizes_context_free(&instance) && !self.state.facts.contains(&instance) {
+                return Err(self.step_error(format!(
+                    "`enumerate` requires an unavailable exact instance: {instance:?}"
+                )));
+            }
+        }
+        Ok(self.closed_state())
     }
 
     pub(super) fn certificate(&self) -> ProofCertificate {
@@ -942,38 +947,112 @@ impl<'a> Proof<'a> {
         &self,
         certificate: &ProofCertificate,
     ) -> Result<Self, ClickError> {
-        let mut proof = self.clone();
-        for step in certificate.steps() {
-            proof = match step {
-                SimpleProofStep::Cases {
-                    disjunction,
-                    left_proof,
-                    right_proof,
-                } => proof
-                    .begin_cases(disjunction.clone())?
-                    .check_arm_certificate(ProofArm::Left, left_proof)?
-                    .check_arm_certificate(ProofArm::Right, right_proof)?
-                    .join()?,
-                SimpleProofStep::If {
-                    condition,
-                    then_proof,
-                    else_proof,
-                } => proof
-                    .begin_if(condition.clone())?
-                    .check_arm_certificate(ProofArm::Left, then_proof)?
-                    .check_arm_certificate(ProofArm::Right, else_proof)?
-                    .join()?,
-                SimpleProofStep::Have {
-                    proposition,
-                    proof: body,
-                } => proof
-                    .begin_have(proposition.clone())?
-                    .check_body_certificate(body)?
-                    .join()?,
-                _ => proof.apply_step(step.clone())?,
-            };
+        enum CheckFrame<'certificate, 'proof> {
+            Continue {
+                steps: &'certificate [SimpleProofStep],
+                next: usize,
+            },
+            BranchLeft {
+                branches: ProofBranches<'proof>,
+                right: &'certificate ProofCertificate,
+            },
+            BranchRight {
+                branches: ProofBranches<'proof>,
+            },
+            Have {
+                scope: ProofScope<'proof>,
+            },
         }
-        Ok(proof)
+
+        let mut proof = self.clone();
+        let mut steps = certificate.steps();
+        let mut next = 0;
+        let mut frames = Vec::new();
+        loop {
+            if let Some(step) = steps.get(next) {
+                next += 1;
+                match step {
+                    SimpleProofStep::Cases {
+                        disjunction,
+                        left_proof,
+                        right_proof,
+                    } => {
+                        let branches = proof.begin_cases(disjunction.clone())?;
+                        proof = branches.arms[ProofArm::Left.index()].clone();
+                        frames.push(CheckFrame::Continue { steps, next });
+                        frames.push(CheckFrame::BranchLeft {
+                            branches,
+                            right: right_proof,
+                        });
+                        steps = left_proof.steps();
+                        next = 0;
+                    }
+                    SimpleProofStep::If {
+                        condition,
+                        then_proof,
+                        else_proof,
+                    } => {
+                        let branches = proof.begin_if(condition.clone())?;
+                        proof = branches.arms[ProofArm::Left.index()].clone();
+                        frames.push(CheckFrame::Continue { steps, next });
+                        frames.push(CheckFrame::BranchLeft {
+                            branches,
+                            right: else_proof,
+                        });
+                        steps = then_proof.steps();
+                        next = 0;
+                    }
+                    SimpleProofStep::Have {
+                        proposition,
+                        proof: body,
+                    } => {
+                        let scope = proof.begin_have(proposition.clone())?;
+                        proof = scope.body.clone();
+                        frames.push(CheckFrame::Continue { steps, next });
+                        frames.push(CheckFrame::Have { scope });
+                        steps = body.steps();
+                        next = 0;
+                    }
+                    _ => proof = proof.apply_step(step.clone())?,
+                }
+                continue;
+            }
+
+            let Some(frame) = frames.pop() else {
+                return Ok(proof);
+            };
+            match frame {
+                CheckFrame::Continue {
+                    steps: continuation,
+                    next: continuation_next,
+                } => {
+                    steps = continuation;
+                    next = continuation_next;
+                }
+                CheckFrame::BranchLeft {
+                    mut branches,
+                    right,
+                } => {
+                    branches.arms[ProofArm::Left.index()] = proof;
+                    proof = branches.arms[ProofArm::Right.index()].clone();
+                    frames.push(CheckFrame::BranchRight { branches });
+                    steps = right.steps();
+                    next = 0;
+                }
+                CheckFrame::BranchRight { mut branches } => {
+                    branches.arms[ProofArm::Right.index()] = proof;
+                    proof = branches.join()?;
+                    steps = &[];
+                    next = 0;
+                }
+                CheckFrame::Have { mut scope } => {
+                    scope.body = proof;
+                    proof = scope.join()?;
+                    steps = &[];
+                    next = 0;
+                }
+            }
+        }
     }
 
     fn certificate_after_node(
@@ -1471,6 +1550,126 @@ impl<'a> Proof<'a> {
         })
     }
 
+    fn apply_rewrite(&self, surface_equality: &ClickProposition) -> Result<ProofState, ClickError> {
+        match self.context.as_ref() {
+            ProofContext::Pure(_) => self.apply_pure_rewrite(surface_equality),
+            ProofContext::Point(context) => self.apply_point_rewrite(context, surface_equality),
+            ProofContext::Execution(_) => {
+                Err(self.step_error("`rewrite` requires a proposition proof"))
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn apply_pure_rewrite(
+        &self,
+        surface_equality: &ClickProposition,
+    ) -> Result<ProofState, ClickError> {
+        let goal = Box::new(
+            self.proposition_goal("`rewrite` requires a proposition goal")?
+                .clone(),
+        );
+        let equality =
+            Box::new(self.lower_surface_proposition(surface_equality, "`rewrite` equality")?);
+        self.finish_rewrite(goal, equality)
+    }
+
+    #[inline(never)]
+    fn apply_point_rewrite(
+        &self,
+        context: &PointProofContext<'_>,
+        surface_equality: &ClickProposition,
+    ) -> Result<ProofState, ClickError> {
+        let goal = Box::new(
+            unfold_predicates_in_proposition(
+                context.predicate_environment,
+                context.click_function_environment,
+                context.unfolded_predicates,
+                self.proposition_goal("`rewrite` requires a proposition goal")?,
+                self.state.facts.assumptions(),
+            )
+            .map_err(|message| {
+                self.step_error(format!("could not unfold `rewrite` goal: {message}"))
+            })?,
+        );
+        let recorded = context
+            .surface_propositions
+            .available_kernel_matching(surface_equality, |kernel| {
+                self.state.facts.materialization_available(kernel)
+            })
+            .map(|kernel| Box::new(kernel.clone()))
+            .or_else(|| {
+                let reverse = reverse_surface_equality(surface_equality)?;
+                let kernel = context
+                    .surface_propositions
+                    .available_kernel_matching(&reverse, |kernel| {
+                        self.state.facts.materialization_available(kernel)
+                    })?
+                    .clone();
+                reverse_kernel_equality(kernel).map(Box::new)
+            });
+        let equality = match recorded {
+            Some(equality) => equality,
+            None => Box::new(
+                lower_point_proposition_with_assumptions(
+                    surface_equality,
+                    self.state.facts.assumptions(),
+                    context.parameters,
+                    context.arguments,
+                    context.pre_state,
+                    context.state,
+                    None,
+                    context.program_point_states,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+                .map_err(|message| {
+                    self.step_error(format!("could not lower `rewrite` equality: {message}"))
+                })?,
+            ),
+        };
+        let equality = Box::new(
+            unfold_predicates_in_proposition(
+                context.predicate_environment,
+                context.click_function_environment,
+                context.unfolded_predicates,
+                &equality,
+                self.state.facts.assumptions(),
+            )
+            .map_err(|message| {
+                self.step_error(format!("could not unfold `rewrite` equality: {message}"))
+            })?,
+        );
+        self.finish_rewrite(goal, equality)
+    }
+
+    #[inline(never)]
+    fn finish_rewrite(
+        &self,
+        goal: Box<Proposition>,
+        equality: Box<Proposition>,
+    ) -> Result<ProofState, ClickError> {
+        let admitted = self.state.facts.materialization_available(&equality)
+            || reverse_kernel_equality(equality.as_ref().clone())
+                .as_ref()
+                .is_some_and(|reverse| self.state.facts.materialization_available(reverse));
+        let available = if admitted {
+            std::slice::from_ref(equality.as_ref())
+        } else {
+            &[]
+        };
+        let rewritten = rewrite_proposition_by_exact_equality(&goal, &equality, available)
+            .map_err(|message| self.step_error(message))?;
+        Ok(ProofState {
+            facts: self.state.facts.clone(),
+            goal: Goal::Proposition(Arc::new(rewritten)),
+            complete: false,
+            added_facts: Arc::new(Vec::new()),
+            checked_facts: Arc::new(Vec::new()),
+            execution: None,
+        })
+    }
+
     fn apply_extract(&self, surface: &ClickProposition) -> Result<ProofState, ClickError> {
         if matches!(self.context.as_ref(), ProofContext::Execution(_)) {
             return Err(self.step_error("`extract` requires a proposition proof"));
@@ -1790,6 +1989,7 @@ impl<'a> ProofBranches<'a> {
 
     /// Applies one ordinary checked step inside one arm while preserving the
     /// other arm and the shared root. Failed candidates leave `self` intact.
+    #[allow(dead_code)]
     pub(super) fn apply_step(
         &self,
         arm: ProofArm,
@@ -1807,28 +2007,6 @@ impl<'a> ProofBranches<'a> {
         let mut next = self.clone();
         next.arms[arm.index()] = self.arms[arm.index()].try_direct_logical_closure()?;
         Some(next)
-    }
-
-    fn check_arm_certificate(
-        &self,
-        arm: ProofArm,
-        certificate: &ProofCertificate,
-    ) -> Result<Self, ClickError> {
-        let mut next = self.clone();
-        for step in certificate.steps() {
-            if matches!(
-                step,
-                SimpleProofStep::Cases { .. }
-                    | SimpleProofStep::If { .. }
-                    | SimpleProofStep::Have { .. }
-            ) {
-                let nested = ProofCertificate::from_steps(vec![step.clone()]);
-                next.arms[arm.index()] = next.arms[arm.index()].check_certificate(&nested)?;
-            } else {
-                next = next.apply_step(arm, step.clone())?;
-            }
-        }
-        Ok(next)
     }
 
     /// Joins two completed arms and records their retained bodies as one
@@ -2220,6 +2398,7 @@ impl<'a> ProofScope<'a> {
 
     /// Applies one ordinary checked step inside the nested body. Failed
     /// candidates leave the enclosing scope value unchanged.
+    #[allow(dead_code)]
     pub(super) fn apply_step(&self, step: SimpleProofStep) -> Result<Self, ClickError> {
         let mut next = self.clone();
         next.body = self.body.apply_step(step)?;
@@ -2232,24 +2411,6 @@ impl<'a> ProofScope<'a> {
         let mut next = self.clone();
         next.body = self.body.try_direct_logical_closure()?;
         Some(next)
-    }
-
-    fn check_body_certificate(&self, certificate: &ProofCertificate) -> Result<Self, ClickError> {
-        let mut next = self.clone();
-        for step in certificate.steps() {
-            if matches!(
-                step,
-                SimpleProofStep::Cases { .. }
-                    | SimpleProofStep::If { .. }
-                    | SimpleProofStep::Have { .. }
-            ) {
-                let nested = ProofCertificate::from_steps(vec![step.clone()]);
-                next.body = next.body.check_certificate(&nested)?;
-            } else {
-                next = next.apply_step(step.clone())?;
-            }
-        }
-        Ok(next)
     }
 
     /// Closes a completed nested proof and makes its checked proposition
@@ -2431,6 +2592,17 @@ impl ProofFacts {
             || condition_polarity_spellings(required)
                 .iter()
                 .any(|spelling| self.proper_conjuncts.contains(spelling))
+    }
+
+    /// Exact or direct-load-materialization-equivalent availability used by
+    /// the deterministic rewrite rule. Unlike snapshot replay, this does not
+    /// admit polarity changes or a semantic bridge beyond normalization.
+    pub(super) fn materialization_available(&self, required: &Proposition) -> bool {
+        if self.exact.contains(required) {
+            return true;
+        }
+        let normalized = normalize_direct_atomic_memory_loads(required);
+        self.exact.contains(&normalized) || self.normalized_exact.contains(&normalized)
     }
 
     pub(super) fn implicit_transport_assumptions(&self) -> &PureFactContext {
@@ -3319,6 +3491,107 @@ mod tests {
                     SimpleProofStep::Normalize,
                 ]
             );
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn pure_rewrite_uses_indexed_equality_availability_without_changing_facts() {
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let equality = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Variable("y".to_string())),
+        };
+        let unavailable = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("z".to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Variable("w".to_string())),
+        };
+        let values = BTreeMap::from([
+            (
+                "x".to_string(),
+                CValue::Int32(Bitvector32Term::Variable(Variable(9_100_000))),
+            ),
+            ("y".to_string(), int32(1)),
+            (
+                "z".to_string(),
+                CValue::Int32(Bitvector32Term::Variable(Variable(9_100_001))),
+            ),
+            ("w".to_string(), int32(3)),
+        ]);
+        let base_context = PureTheoremContext {
+            memory: CMemory::new(),
+            values,
+            array_refs: BTreeMap::new(),
+            requires: Vec::new(),
+        };
+        let kernel_equality = lower_pure_theorem_proposition(
+            "persistent rewrite",
+            &equality,
+            &base_context.values,
+            &base_context.array_refs,
+            &base_context.memory,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("constant equality should lower");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut requires = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            requires.push(kernel_equality.clone());
+            let theorem_context = PureTheoremContext {
+                requires: requires.clone(),
+                ..base_context.clone()
+            };
+            let root = Proof::for_pure_goal(
+                "persistent rewrite",
+                &requires,
+                kernel_equality.clone(),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_root = root.clone();
+            let error = root
+                .apply_step(SimpleProofStep::Rewrite(unavailable.clone()))
+                .err()
+                .expect("an unavailable equality must reject the candidate");
+            assert!(
+                error.message().contains("exact available fact"),
+                "{error:?}"
+            );
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+
+            let step = SimpleProofStep::Rewrite(equality.clone());
+            let before = fact_node_allocations();
+            let rewritten = root
+                .apply_step(step.clone())
+                .expect("the exact available equality should rewrite the goal");
+            let allocations = fact_node_allocations() - before;
+            assert_eq!(
+                allocations, 0,
+                "size {size} rewrite should not alter the persistent fact index"
+            );
+            assert_eq!(rewritten.certificate().steps(), &[step.clone()]);
+            assert!(rewritten.added_facts().is_empty());
+            assert!(!rewritten.is_complete());
+            let complete = rewritten
+                .apply_step(SimpleProofStep::Normalize)
+                .expect("the rewritten constant equality should normalize");
+            assert!(complete.is_complete());
+            assert_eq!(
+                complete.certificate().steps(),
+                &[step.clone(), SimpleProofStep::Normalize]
+            );
+            let alternative = root
+                .apply_step(step)
+                .expect("the ancestor should remain usable for another descendant");
+            assert_eq!(alternative.certificate(), rewritten.certificate());
             assert!(root.certificate().steps().is_empty());
         }
     }

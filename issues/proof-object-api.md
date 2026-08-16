@@ -622,6 +622,27 @@ on the legacy path until it has an indexed candidate lookup preserving the
 existing snapshot and quantified equivalences; moving that vector scan behind
 the new API would only hide the architectural bug.
 
+Explicit proposition `Rewrite` now advances through `Proof::apply_step` for
+pure and point goals. The rewrite engine accepts an indexed availability
+query, so recursively visiting a structured goal no longer rescans the entire
+ambient fact vector at every atomic child. `ProofFacts` answers the rule's
+exact and direct-load-materialization-equivalent membership without admitting
+the broader snapshot or polarity bridges used by other replay rules. The
+successor changes only the focused goal and retains the exact surface
+equality; failed and alternate descendants leave the ancestor and fact index
+unchanged. Existing explicit branch and expansion regressions exercise the
+same path, and a deterministic 16-through-4096 regression holds one rewrite
+fixed while growing unrelated facts and records zero persistent fact-node
+updates.
+
+The simple-step dispatcher now returns one shared `Result<ProofState, _>` and
+applies `?` after the match, with large logical and rewrite rules in outlined
+helpers. Previously every arm's internal `?` reserved a distinct, large
+return temporary, so admitting one more simple step grew the dispatcher stack
+frame and made an existing nested expansion overflow. Structured certificate
+checking and recursive proposition rewriting use explicit work stacks, so
+certificate nesting and proposition depth do not consume the process stack.
+
 The execution branch container now accepts linear arm bodies made only of
 `StepUsing`, `TransportUsing`, and `UnfoldPredicate`. Each arm advances through the ordinary
 checked `Proof` operation and accumulates only its fact and execution-effect
