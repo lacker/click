@@ -319,6 +319,94 @@ impl<'a> Proof<'a> {
                     checked_facts: Arc::new(Vec::new()),
                 }
             }
+            SimpleProofStep::Intro => {
+                let goal = self
+                    .proposition_goal("`intro` requires a proposition goal")?
+                    .clone();
+                let (goal, introduced) = match goal {
+                    Proposition::Implies(antecedent, consequent) => {
+                        (*consequent, Some(*antecedent))
+                    }
+                    Proposition::ForAll { body, .. } => (*body, None),
+                    Proposition::Not(body) => (
+                        Proposition::ConditionIs(ConditionTerm::Constant(false), true),
+                        Some(*body),
+                    ),
+                    other => {
+                        return Err(self.step_error(format!(
+                            "`intro` requires an implication, negation, or universal goal, got {other:?}"
+                        )));
+                    }
+                };
+                let mut facts = self.state.facts.clone();
+                let added_facts = introduced.into_iter().collect::<Vec<_>>();
+                for fact in &added_facts {
+                    facts = facts.with_fact(fact.clone());
+                }
+                ProofState {
+                    facts,
+                    goal: Goal::Proposition(Arc::new(goal)),
+                    complete: false,
+                    checked_facts: Arc::new(added_facts.clone()),
+                    added_facts: Arc::new(added_facts),
+                }
+            }
+            SimpleProofStep::Split => {
+                let goal = self.proposition_goal("`split` requires a proposition goal")?;
+                let Proposition::And(left, right) = goal else {
+                    return Err(self
+                        .step_error(format!("`split` requires a conjunction goal, got {goal:?}")));
+                };
+                if !self.state.facts.contains(left) || !self.state.facts.contains(right) {
+                    return Err(self.step_error(format!(
+                        "`split` requires both conjuncts as exact facts: {left:?} and {right:?}"
+                    )));
+                }
+                self.closed_state()
+            }
+            SimpleProofStep::Left => {
+                let goal = self.proposition_goal("`left` requires a proposition goal")?;
+                let Proposition::Or(left, _) = goal else {
+                    return Err(self
+                        .step_error(format!("`left` requires a disjunction goal, got {goal:?}")));
+                };
+                if !self.state.facts.contains(left) {
+                    return Err(self.step_error(format!(
+                        "`left` requires its selected disjunct as an exact fact: {left:?}"
+                    )));
+                }
+                self.closed_state()
+            }
+            SimpleProofStep::Right => {
+                let goal = self.proposition_goal("`right` requires a proposition goal")?;
+                let Proposition::Or(_, right) = goal else {
+                    return Err(self
+                        .step_error(format!("`right` requires a disjunction goal, got {goal:?}")));
+                };
+                if !self.state.facts.contains(right) {
+                    return Err(self.step_error(format!(
+                        "`right` requires its selected disjunct as an exact fact: {right:?}"
+                    )));
+                }
+                self.closed_state()
+            }
+            SimpleProofStep::Enumerate => {
+                let goal = self.proposition_goal("`enumerate` requires a proposition goal")?;
+                let Some(instances) = crate::kernel::finite_forall_goal_instances(goal) else {
+                    return Err(self.step_error(format!(
+                        "`enumerate` requires a constant-bounded universal goal, got {goal:?}"
+                    )));
+                };
+                for (_, instance) in instances {
+                    if !normalizes_context_free(&instance) && !self.state.facts.contains(&instance)
+                    {
+                        return Err(self.step_error(format!(
+                            "`enumerate` requires an unavailable exact instance: {instance:?}"
+                        )));
+                    }
+                }
+                self.closed_state()
+            }
             _ => {
                 return Err(self.step_error(
                     "this simple step has not yet migrated to the checked `Proof` API",
@@ -362,6 +450,28 @@ impl<'a> Proof<'a> {
     /// checker-owned spellings without re-lowering them.
     pub(super) fn checked_facts(&self) -> &[Proposition] {
         self.state.checked_facts.as_ref()
+    }
+
+    /// A small shared search combinator for structural proposition closure.
+    /// Every candidate is accepted only through `apply_step`; `intro` is the
+    /// sole nonterminal move and strictly removes one outer goal connective.
+    pub(super) fn try_direct_logical_closure(&self) -> Option<Self> {
+        let mut proof = self.clone();
+        loop {
+            for closer in [
+                SimpleProofStep::Assumption,
+                SimpleProofStep::Normalize,
+                SimpleProofStep::Split,
+                SimpleProofStep::Left,
+                SimpleProofStep::Right,
+                SimpleProofStep::Enumerate,
+            ] {
+                if let Ok(closed) = proof.apply_step(closer) {
+                    return Some(closed);
+                }
+            }
+            proof = proof.apply_step(SimpleProofStep::Intro).ok()?;
+        }
     }
 
     fn apply_theorem_using(
@@ -587,6 +697,16 @@ impl<'a> Proof<'a> {
 
     fn proposition_goal(&self, message: &str) -> Result<&Proposition, ClickError> {
         self.goal().ok_or_else(|| self.step_error(message))
+    }
+
+    fn closed_state(&self) -> ProofState {
+        ProofState {
+            facts: self.state.facts.clone(),
+            goal: self.state.goal.clone(),
+            complete: true,
+            added_facts: Arc::new(Vec::new()),
+            checked_facts: Arc::new(Vec::new()),
+        }
     }
 
     fn step_error(&self, message: impl Into<String>) -> ClickError {

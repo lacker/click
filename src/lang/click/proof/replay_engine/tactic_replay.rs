@@ -514,6 +514,11 @@ fn checked_linear_have(
                     SimpleProofStep::ApplyTheoremUsing { .. }
                         | SimpleProofStep::Assumption
                         | SimpleProofStep::Normalize
+                        | SimpleProofStep::Intro
+                        | SimpleProofStep::Split
+                        | SimpleProofStep::Left
+                        | SimpleProofStep::Right
+                        | SimpleProofStep::Enumerate
                 ) {
                     return Ok(None);
                 }
@@ -580,14 +585,7 @@ fn checked_linear_have(
             )
         }
         Plan::DirectSmart => {
-            let mut closed = None;
-            for closer in [SimpleProofStep::Assumption, SimpleProofStep::Normalize] {
-                if let Ok(candidate) = proof.apply_step(closer) {
-                    closed = Some(candidate);
-                    break;
-                }
-            }
-            let Some(closed) = closed else {
+            let Some(closed) = proof.try_direct_logical_closure() else {
                 return Ok(None);
             };
             (closed, true)

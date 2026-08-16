@@ -1258,6 +1258,24 @@ mod certificate_tests {
                         assumption();
                     }
                 }
+
+                theorem implication(x: int32) {
+                    ensures (x >= 0) implies (x >= 0) by {
+                        intro();
+                        assumption();
+                    }
+                }
+
+                theorem conjunction(x: int32) {
+                    requires x >= 0;
+                    requires x <= 10;
+                    ensures (x >= 0) and (x <= 10) by simp;
+                }
+
+                theorem disjunction(x: int32) {
+                    requires x >= 0;
+                    ensures (x >= 0) or (x < 0) by auto;
+                }
             "#,
         )
         .expect("theorems should parse");
@@ -1288,13 +1306,30 @@ mod certificate_tests {
                 ProofTactic::Assumption
             ])
         ));
+        assert_eq!(
+            verified[3].proof_tactics().as_deref(),
+            Some([ProofTactic::Intro, ProofTactic::Assumption].as_slice())
+        );
+        assert_eq!(
+            verified[4].proof_tactics().as_deref(),
+            Some([ProofTactic::Split].as_slice())
+        );
+        assert_eq!(
+            verified[5].proof_tactics().as_deref(),
+            Some([ProofTactic::Left].as_slice())
+        );
         assert!(
             events.iter().all(|event| !matches!(
                 event,
                 crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                     if matches!(
                         claim.as_str(),
-                        "required.ensures_0" | "reflexive.ensures_0" | "applied.ensures_0"
+                        "required.ensures_0"
+                            | "reflexive.ensures_0"
+                            | "applied.ensures_0"
+                            | "implication.ensures_0"
+                            | "conjunction.ensures_0"
+                            | "disjunction.ensures_0"
                     )
                         && name == "surface certificate replay"
             )),

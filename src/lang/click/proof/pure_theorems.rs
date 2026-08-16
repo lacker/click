@@ -652,13 +652,9 @@ fn check_direct_pure_goal_with_proof(
         click_function_environment,
         theorem_environment,
     );
-    for closer in [SimpleProofStep::Assumption, SimpleProofStep::Normalize] {
-        if let Ok(proof) = root.apply_step(closer) {
-            debug_assert!(proof.is_complete());
-            return Some(proof.certificate());
-        }
-    }
-    None
+    let proof = root.try_direct_logical_closure()?;
+    debug_assert!(proof.is_complete());
+    Some(proof.certificate())
 }
 
 fn verify_kernel_standard_theorem_axiom(
@@ -895,6 +891,11 @@ fn check_linear_pure_script_with_proof(
                 SimpleProofStep::ApplyTheoremUsing { .. }
                     | SimpleProofStep::Assumption
                     | SimpleProofStep::Normalize
+                    | SimpleProofStep::Intro
+                    | SimpleProofStep::Split
+                    | SimpleProofStep::Left
+                    | SimpleProofStep::Right
+                    | SimpleProofStep::Enumerate
             )
         })
     {

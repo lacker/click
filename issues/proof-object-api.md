@@ -329,6 +329,12 @@ One-step explicit point `have` bodies using `assumption`, `normalize`, or
 Their already-simple source certificate remains the enclosing record, so the
 migration neither rebuilds nor duplicates it.
 
+The checked proposition vocabulary now also includes the existing
+deterministic `intro`, `split`, `left`, `right`, and bounded `enumerate`
+operations. Direct pure and point smart closures share a small combinator that
+tries these candidates only through `apply_step`; a nonterminal `intro`
+strictly removes one outer goal connective.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
