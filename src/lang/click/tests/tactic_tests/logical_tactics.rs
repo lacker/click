@@ -1122,6 +1122,43 @@ fn mid_execution_witness_simp_have_expands_to_a_simple_certificate() {
 }
 
 #[test]
+fn explicit_mid_execution_witness_certificate_checks_and_expands() {
+    let c_source = "int32 explicit_witness(int32 x) { return x; }";
+    let click_source = r#"
+            verifying "explicit_witness.c";
+
+            int32 explicit_witness(int32 x) {
+                ensures result == x;
+            } by {
+                have exists (j: int32) { j == x } by {
+                    witness(j = x);
+                    normalize();
+                }
+                execute();
+                simp();
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("explicit_witness.c", c_source)])
+        .expect("an explicit witness certificate should verify through the point Proof");
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the retained witness certificate should expand structurally");
+    assert!(expanded.iter().any(|tactic| {
+        matches!(
+            tactic,
+            ProofTactic::Have(ProofHave {
+                proof: SourceProof::Script(body),
+                ..
+            }) if matches!(
+                body.as_slice(),
+                [ProofTactic::Witness(_), ProofTactic::Normalize]
+            )
+        )
+    }));
+}
+
+#[test]
 fn mid_execution_proof_if_have_expands_to_a_simple_certificate() {
     let c_source = r#"
             int32 sign_partition(int32 x) {

@@ -479,6 +479,7 @@ impl<'a> Proof<'a> {
                 premises,
             } => self.apply_transport_using(source, target, premises)?,
             SimpleProofStep::UnfoldPredicate(name) => self.apply_execution_unfold(name)?,
+            SimpleProofStep::Witness(witness) => self.apply_point_witness(witness)?,
             SimpleProofStep::Assumption => {
                 let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
                 if !self.state.facts.contains(goal) {
@@ -1327,6 +1328,60 @@ impl<'a> Proof<'a> {
             complete,
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
+            execution: None,
+        })
+    }
+
+    fn apply_point_witness(&self, witness: &ProofWitness) -> Result<ProofState, ClickError> {
+        let ProofContext::Point(context) = self.context.as_ref() else {
+            return Err(self.step_error("`witness` requires a point proposition proof"));
+        };
+        let goal = self
+            .proposition_goal("`witness` requires a proposition goal")?
+            .clone();
+        let goal = unfold_predicates_in_proposition(
+            context.predicate_environment,
+            context.click_function_environment,
+            context.unfolded_predicates,
+            &goal,
+            self.state.facts.assumptions(),
+        )
+        .map_err(|message| self.step_error(format!("could not unfold witness goal: {message}")))?;
+        let values = parameter_values(context.parameters, context.arguments)
+            .map_err(|error| self.step_error(error.message))?;
+        let array_refs =
+            array_refs_for_parameters(context.parameters, &values, context.state.memory());
+        let (values, array_refs) =
+            contract_environment_at_state(&values, &array_refs, context.state);
+        let value = evaluate_witness_tactic_value(
+            witness,
+            context.claim_label,
+            0,
+            context.tactic_index,
+            &values,
+            &array_refs,
+            context.pre_state,
+            context.state,
+            None,
+            self.state.facts.assumptions(),
+            context.predicate_environment,
+            context.click_function_environment,
+            context.program_point_states,
+        )?;
+        let goal = apply_witness_tactic(
+            witness,
+            value,
+            goal,
+            context.claim_label,
+            0,
+            context.tactic_index,
+        )?;
+        Ok(ProofState {
+            facts: self.state.facts.clone(),
+            goal: Goal::Proposition(Arc::new(goal)),
+            complete: false,
+            added_facts: Arc::new(Vec::new()),
+            checked_facts: Arc::new(Vec::new()),
             execution: None,
         })
     }
@@ -3031,6 +3086,95 @@ mod tests {
         assert!(!root.is_complete());
         assert!(root.added_facts().is_empty());
         assert!(root.certificate().steps().is_empty());
+    }
+
+    #[test]
+    fn point_witness_refines_existential_transactionally_with_constant_local_work() {
+        let state = CState::new();
+        let program_point_states = ProgramPointStates::new();
+        let surface_propositions = SurfacePropositionMap::default();
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let variable = Variable(9_000_000);
+        let expected = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(variable)),
+                Box::new(Bitvector32Term::Constant(7)),
+            ),
+            true,
+        );
+        let goal = Proposition::Exists {
+            name: "chosen".to_string(),
+            var: variable,
+            sort: Sort::CInt32,
+            body: Box::new(expected),
+        };
+        let witness = ProofWitness {
+            name: "chosen".to_string(),
+            value: ContractExpression::CFragment(CExpression::Value(int32(7))),
+        };
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            let root = Proof::for_point_goal(
+                "persistent witness",
+                0,
+                &facts,
+                goal.clone(),
+                &[],
+                &[],
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let wrong_name = SimpleProofStep::Witness(ProofWitness {
+                name: "other".to_string(),
+                value: ContractExpression::CFragment(CExpression::Value(int32(7))),
+            });
+            let error = root
+                .apply_step(wrong_name)
+                .err()
+                .expect("a mismatched witness must reject the candidate");
+            assert!(error.message().contains("binds `chosen`"), "{error:?}");
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+
+            let before = fact_node_allocations();
+            let refined = root
+                .apply_step(SimpleProofStep::Witness(witness.clone()))
+                .expect("the named int32 witness should refine the existential");
+            let allocations = fact_node_allocations() - before;
+            assert_eq!(
+                allocations, 0,
+                "size {size} witness should not alter the persistent fact index"
+            );
+            assert_eq!(
+                refined.certificate().steps(),
+                &[SimpleProofStep::Witness(witness.clone())]
+            );
+            assert!(refined.added_facts().is_empty());
+            assert!(!refined.is_complete());
+            let completed = refined
+                .apply_step(SimpleProofStep::Normalize)
+                .expect("the instantiated constant equality should normalize");
+            assert!(completed.is_complete());
+            assert_eq!(
+                completed.certificate().steps(),
+                &[
+                    SimpleProofStep::Witness(witness.clone()),
+                    SimpleProofStep::Normalize,
+                ]
+            );
+            assert!(root.certificate().steps().is_empty());
+        }
     }
 
     #[test]

@@ -591,6 +591,25 @@ single operation, and atomically retain both conclusion facts and any
 function-entry derivation delta. Do not add a parallel theorem engine or
 materialize all ambient facts per application.
 
+Point-proof `Witness` now advances through `Proof::apply_step` as a local goal
+refinement. The checked step evaluates its one explicit witness expression
+against the persistent assumption context, replaces the existential goal with
+the instantiated body, and retains the exact surface witness in provenance.
+Failed names or values leave the ancestor usable. A deterministic
+16-through-4096 regression establishes that applying the step does not alter
+or allocate nodes in the unrelated fact index; explicit simple `have` scripts
+containing `witness` consequently use the ordinary certificate checker backed
+by `Proof`.
+
+`Extract` was deliberately not moved unchanged in the same slice. Its legacy
+checker scans the complete available context to find proper conjunctions and
+again for every antecedent of a discharged implication. Since `extract` is a
+simple step, that implementation violates the efficiency contract. Its Proof
+migration must first add persistent indexes for proper-conjunct membership and
+implication candidates (including the existing snapshot and quantified
+equivalences); moving the vector scan behind the new API would only hide the
+architectural bug.
+
 The execution branch container now accepts linear arm bodies made only of
 `StepUsing`, `TransportUsing`, and `UnfoldPredicate`. Each arm advances through the ordinary
 checked `Proof` operation and accumulates only its fact and execution-effect
