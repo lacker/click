@@ -724,8 +724,9 @@ fn execute_verified_function_rule(
 
         let effective_assumptions =
             assumptions_with_path_context(assumptions, &facts, &obligations);
-        let effective_assumptions =
-            assumptions_with_propositions(&effective_assumptions, &established_requirements);
+        let mut effective_assumptions =
+            assumptions_with_propositions(&effective_assumptions, &established_requirements)
+                .transport_memory_load_condition_facts();
         let footprint_state = entry_contract_state.clone();
         let mut mutable_ranges = Vec::new();
         let mut footprint_error = None;
@@ -745,13 +746,20 @@ fn execute_verified_function_rule(
             }) {
                 continue;
             }
-            match evaluate_loop_effect_segment(
+            match evaluate_loop_effect_segment_with_facts(
                 &footprint_state,
                 segment,
                 &effective_assumptions,
                 budget,
             )? {
-                Ok(segment) => {
+                Ok((segment, segment_facts)) => {
+                    for fact in &segment_facts {
+                        if !facts.contains(fact) {
+                            facts.push(fact.clone());
+                        }
+                    }
+                    effective_assumptions =
+                        assumptions_with_path_context(&effective_assumptions, &segment_facts, &[]);
                     // Canonicalize the recorded footprint while its defining
                     // equalities (earlier callees' ensures, path facts) are
                     // in scope: every later frame query against this range

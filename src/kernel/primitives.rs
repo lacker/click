@@ -1568,7 +1568,7 @@ pub enum Proposition {
 }
 
 /// An abstract proven proposition produced by kernel axioms.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Theorem {
     pub(super) proposition: std::sync::Arc<Proposition>,
 }
@@ -1691,6 +1691,7 @@ pub struct PureFactContext {
     pub(super) prefer_symbolic_external_loads: bool,
     pub(super) force_symbolic_external_loads: bool,
     pub(super) allow_symbolic_contract_loads: bool,
+    pub(super) transport_memory_load_condition_facts: bool,
 }
 
 impl PartialEq for PureFactContext {
@@ -1705,6 +1706,8 @@ impl PartialEq for PureFactContext {
             && self.prefer_symbolic_external_loads == other.prefer_symbolic_external_loads
             && self.force_symbolic_external_loads == other.force_symbolic_external_loads
             && self.allow_symbolic_contract_loads == other.allow_symbolic_contract_loads
+            && self.transport_memory_load_condition_facts
+                == other.transport_memory_load_condition_facts
     }
 }
 
@@ -1729,6 +1732,13 @@ pub struct ExecutionPureFact {
     pub(super) public: bool,
     pub(super) certified: bool,
     pub(super) certified_store: Option<CertifiedMemoryStore>,
+    pub(super) transport: Option<CertifiedExecutionFactTransport>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CertifiedExecutionFactTransport {
+    pub(super) source: Proposition,
+    pub(super) theorem: Theorem,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

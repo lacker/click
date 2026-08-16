@@ -135,6 +135,12 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
     );
     let mut reasoning_facts = available_pure_facts.to_vec();
     reasoning_facts.extend(effect_facts.iter().map(|fact| fact.proposition().clone()));
+    let mut direct_facts = available_pure_facts.to_vec();
+    for fact in execution_pure_facts {
+        if fact.transport_theorem().is_some() && !direct_facts.contains(fact.proposition()) {
+            direct_facts.push(fact.proposition().clone());
+        }
+    }
     let mut assumptions = None;
     let mut derivations = Vec::new();
     let mut writes = memory_effect_write_pointers(&effect_facts);
@@ -148,14 +154,13 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
         // unnecessary in that overwhelmingly common case.
         if segments
             .iter()
-            .any(|segment| segment_contains_pointer_exact(segment, pointer, available_pure_facts))
+            .any(|segment| segment_contains_pointer_exact(segment, pointer, &direct_facts))
         {
             continue;
         }
         if let Some(selected) = segments.iter().find_map(|segment| {
-            let goals =
-                pointer_containment_goals_with_exact_base(segment, pointer, available_pure_facts)?;
-            derive_goals_from_individual_facts(goals, available_pure_facts)
+            let goals = pointer_containment_goals_with_exact_base(segment, pointer, &direct_facts)?;
+            derive_goals_from_individual_facts(goals, &direct_facts)
         }) {
             append_unique_derivations(&mut derivations, selected);
             continue;
@@ -168,10 +173,12 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
                 return None;
             }
             let goals = pointer_containment_goals(segment, pointer, assumptions)?;
-            goals
-                .into_iter()
-                .map(|goal| assumptions.derive_proposition(&goal))
-                .collect::<Option<Vec<_>>>()
+            derive_goals_from_individual_facts(goals.clone(), &direct_facts).or_else(|| {
+                goals
+                    .into_iter()
+                    .map(|goal| assumptions.derive_proposition(&goal))
+                    .collect::<Option<Vec<_>>>()
+            })
         });
         check_effect_planning_deadline()?;
         let Some(selected) = selected else {
@@ -223,14 +230,13 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
         check_effect_planning_deadline()?;
         if segments
             .iter()
-            .any(|segment| segment_contains_range_exact(segment, range, available_pure_facts))
+            .any(|segment| segment_contains_range_exact(segment, range, &direct_facts))
         {
             continue;
         }
         if let Some(selected) = segments.iter().find_map(|segment| {
-            let goals =
-                range_containment_goals_with_exact_base(segment, range, available_pure_facts)?;
-            derive_goals_from_individual_facts(goals, available_pure_facts)
+            let goals = range_containment_goals_with_exact_base(segment, range, &direct_facts)?;
+            derive_goals_from_individual_facts(goals, &direct_facts)
         }) {
             append_unique_derivations(&mut derivations, selected);
             continue;
@@ -243,10 +249,12 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
                 return None;
             }
             let goals = range_containment_goals(segment, range, assumptions)?;
-            goals
-                .into_iter()
-                .map(|goal| assumptions.derive_proposition(&goal))
-                .collect::<Option<Vec<_>>>()
+            derive_goals_from_individual_facts(goals.clone(), &direct_facts).or_else(|| {
+                goals
+                    .into_iter()
+                    .map(|goal| assumptions.derive_proposition(&goal))
+                    .collect::<Option<Vec<_>>>()
+            })
         });
         check_effect_planning_deadline()?;
         let Some(selected) = selected else {
@@ -570,7 +578,7 @@ fn derive_goals_from_individual_facts(
                 }
                 PureFactContext::new()
                     .assume_proposition(fact.clone())
-                    .derive_proposition(&goal)
+                    .derive_proposition_without_premise_minimization(&goal)
             })
         })
         .collect()

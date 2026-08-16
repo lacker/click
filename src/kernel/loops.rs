@@ -1344,6 +1344,63 @@ pub(super) fn evaluate_loop_effect_segment(
     Ok(Ok(EvaluatedMemorySegment { base, start, end }))
 }
 
+pub(super) fn evaluate_loop_effect_segment_with_facts(
+    state: &CState,
+    segment: &CMemorySegment,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<(EvaluatedMemorySegment, Vec<ExecutionPureFact>), String>> {
+    let mut facts = Vec::new();
+    let mut evaluate = |expression: &CExpression, label: &str| {
+        let local_assumptions = assumptions_with_path_context(assumptions, &facts, &[]);
+        let evaluated = evaluate_loop_effect_segment_value_with_facts(
+            state,
+            expression,
+            &local_assumptions,
+            label,
+            budget,
+        )?;
+        let (value, new_facts) = match evaluated {
+            Ok(evaluated) => evaluated,
+            Err(message) => return Ok(Err(message)),
+        };
+        for fact in new_facts {
+            if !facts.contains(&fact) {
+                facts.push(fact);
+            }
+        }
+        Ok(Ok(value))
+    };
+    let base = match evaluate(&segment.base, "segment base")? {
+        Ok(CValue::Pointer(pointer)) => pointer,
+        Ok(value) => {
+            return Ok(Err(format!(
+                "segment base evaluated to {value:?}, not pointer"
+            )));
+        }
+        Err(message) => return Ok(Err(message)),
+    };
+    let start = match evaluate(&segment.start, "segment start")? {
+        Ok(CValue::Int32(value)) => value,
+        Ok(value) => {
+            return Ok(Err(format!(
+                "segment start evaluated to {value:?}, not int32"
+            )));
+        }
+        Err(message) => return Ok(Err(message)),
+    };
+    let end = match evaluate(&segment.end, "segment end")? {
+        Ok(CValue::Int32(value)) => value,
+        Ok(value) => {
+            return Ok(Err(format!(
+                "segment end evaluated to {value:?}, not int32"
+            )));
+        }
+        Err(message) => return Ok(Err(message)),
+    };
+    Ok(Ok((EvaluatedMemorySegment { base, start, end }, facts)))
+}
+
 pub(super) fn evaluate_loop_effect_segment_value(
     state: &CState,
     expression: &CExpression,
@@ -1351,6 +1408,23 @@ pub(super) fn evaluate_loop_effect_segment_value(
     label: &str,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CValue, String>> {
+    Ok(evaluate_loop_effect_segment_value_with_facts(
+        state,
+        expression,
+        assumptions,
+        label,
+        budget,
+    )?
+    .map(|(value, _)| value))
+}
+
+fn evaluate_loop_effect_segment_value_with_facts(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &PureFactContext,
+    label: &str,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<(CValue, Vec<ExecutionPureFact>), String>> {
     let paths = evaluate_c_expression_paths(state, expression, assumptions, budget)?;
     if paths.len() != 1 {
         return Ok(Err(format!(
@@ -1368,7 +1442,7 @@ pub(super) fn evaluate_loop_effect_segment_value(
         )));
     }
     match path.outcome {
-        CExpressionOutcome::Value(value) => Ok(Ok(value)),
+        CExpressionOutcome::Value(value) => Ok(Ok((value, path.facts))),
         CExpressionOutcome::UndefinedBehavior(undefined_behavior) => Ok(Err(format!(
             "{label} produced undefined behavior: {undefined_behavior:?}"
         ))),

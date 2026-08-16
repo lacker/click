@@ -1082,6 +1082,8 @@ impl PureFactContext {
             && self.prefer_symbolic_external_loads == other.prefer_symbolic_external_loads
             && self.force_symbolic_external_loads == other.force_symbolic_external_loads
             && self.allow_symbolic_contract_loads == other.allow_symbolic_contract_loads
+            && self.transport_memory_load_condition_facts
+                == other.transport_memory_load_condition_facts
     }
 
     fn fingerprint<T: std::hash::Hash>(tag: u64, value: &T) -> u64 {
@@ -1116,6 +1118,9 @@ impl PureFactContext {
         }
         if self.allow_symbolic_contract_loads {
             fingerprint ^= 1 << 60;
+        }
+        if self.transport_memory_load_condition_facts {
+            fingerprint ^= 1 << 61;
         }
         self.content_fingerprint = fingerprint;
     }
@@ -1716,7 +1721,6 @@ impl PureFactContext {
         self.memory_loadable_candidates(block).count()
     }
 
-    #[cfg(test)]
     pub(crate) fn memo_fingerprint(&self) -> u64 {
         self.content_fingerprint
     }
@@ -1768,6 +1772,18 @@ impl PureFactContext {
 
     pub(crate) fn should_allow_symbolic_contract_loads(&self) -> bool {
         self.allow_symbolic_contract_loads
+    }
+
+    pub(crate) fn transport_memory_load_condition_facts(mut self) -> Self {
+        if !self.transport_memory_load_condition_facts {
+            self.transport_memory_load_condition_facts = true;
+            self.content_fingerprint ^= 1 << 61;
+        }
+        self
+    }
+
+    pub(crate) fn should_transport_memory_load_condition_facts(&self) -> bool {
+        self.transport_memory_load_condition_facts
     }
 
     pub(crate) fn defer_non_exact_condition_reasoning(mut self) -> Self {
@@ -2780,6 +2796,7 @@ impl ExecutionPureFact {
             public: true,
             certified: false,
             certified_store: None,
+            transport: None,
         }
     }
 
@@ -2789,6 +2806,7 @@ impl ExecutionPureFact {
             public: false,
             certified: false,
             certified_store: None,
+            transport: None,
         }
     }
 
@@ -2798,6 +2816,7 @@ impl ExecutionPureFact {
             public: true,
             certified: true,
             certified_store: None,
+            transport: None,
         }
     }
 
@@ -2823,6 +2842,7 @@ impl ExecutionPureFact {
                 value,
                 authorized_range,
             }),
+            transport: None,
         }
     }
 
@@ -2834,6 +2854,28 @@ impl ExecutionPureFact {
     pub(crate) fn with_proposition(mut self, proposition: Proposition) -> Self {
         self.proposition = proposition;
         self
+    }
+
+    pub(crate) fn certified_transport(
+        source: Proposition,
+        target: Proposition,
+        theorem: Theorem,
+    ) -> Self {
+        Self {
+            proposition: target,
+            public: false,
+            certified: true,
+            certified_store: None,
+            transport: Some(CertifiedExecutionFactTransport { source, theorem }),
+        }
+    }
+
+    pub(crate) fn transport_source(&self) -> Option<&Proposition> {
+        self.transport.as_ref().map(|transport| &transport.source)
+    }
+
+    pub(crate) fn transport_theorem(&self) -> Option<&Theorem> {
+        self.transport.as_ref().map(|transport| &transport.theorem)
     }
 
     pub fn condition(condition: ConditionTerm, value: bool) -> Self {

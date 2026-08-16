@@ -907,6 +907,33 @@ fn certified_transitions_from_execution(
                         execution_facts.push(fact);
                     }
                 }
+                for execution_fact in &execution_facts {
+                    let (Some(source), Some(theorem)) = (
+                        execution_fact.transport_source(),
+                        execution_fact.transport_theorem(),
+                    ) else {
+                        continue;
+                    };
+                    let Proposition::Implies(theorem_source, theorem_target) =
+                        theorem.proposition()
+                    else {
+                        continue;
+                    };
+                    if theorem_source.as_ref() != source
+                        || theorem_target.as_ref() != execution_fact.proposition()
+                    {
+                        continue;
+                    }
+                    let transport = CertifiedFactTransport {
+                        source: source.clone(),
+                        target: execution_fact.proposition().clone(),
+                        theorem: theorem.clone(),
+                        statement_local: false,
+                    };
+                    if !transported_facts.contains(&transport) {
+                        transported_facts.push(transport);
+                    }
+                }
                 let mut path_facts = path
                     .facts()
                     .iter()

@@ -88,15 +88,20 @@ pub(in crate::kernel) fn public_execution_pure_facts(
 pub(in crate::kernel) fn memory_effect_execution_facts(
     facts: &[ExecutionPureFact],
 ) -> Vec<ExecutionPureFact> {
+    // Internal memory effects and their theorem-backed provenance must
+    // survive the public-fact projection. The latter is planning metadata,
+    // not an additional path premise, and is consumed when Click constructs
+    // the corresponding explicit transport step.
     facts
         .iter()
         .filter(|fact| {
-            matches!(
-                fact.proposition(),
-                Proposition::CMemoryMutatesOnly { .. }
-                    | Proposition::CMemoryEffectSummary { .. }
-                    | Proposition::CHeapLifetimeRetired { .. }
-            )
+            fact.transport_theorem().is_some()
+                || matches!(
+                    fact.proposition(),
+                    Proposition::CMemoryMutatesOnly { .. }
+                        | Proposition::CMemoryEffectSummary { .. }
+                        | Proposition::CHeapLifetimeRetired { .. }
+                )
         })
         .cloned()
         .collect()

@@ -102,8 +102,9 @@ the C local `ignored` after it leaves scope (unlowerable pairs are now
 dropped rather than fatal, which advances the failure to a missing
 int32-equality premise). Every layer of this dance exists only because
 the derivation records premises instead of typed steps; with steps, the
-certificate transcribes instead of re-searching. De-quarantine the
-mdtest when this issue closes.
+certificate transcribes instead of re-searching. The progress note below
+records the narrower provenance fix that de-quarantined this reproduction
+while leaving the general typed-step work open.
 
 ### Progress (2026-08-15)
 
@@ -124,3 +125,12 @@ surface spellings lower to reflexive truth rather than the distinct DAG edges
 the decision traversed. Closing this issue therefore still requires a typed
 memory-derivation-path step (along with the order/equality/overflow steps
 above), rather than more ambient premise recovery.
+
+The quarantined reproduction was fixed on 2026-08-15 without weakening this
+broader issue. Opaque-call footprint evaluation now retains theorem-backed
+transport of relevant source requirements, threads those facts across the
+complete footprint, and exposes the selected transport to effect-certificate
+planning. The frame can therefore use the caller's explicit
+`owner->data == data` dependency instead of selecting the stronger anonymous
+memory-DAG proof. The mdtest is no longer quarantined, but the general
+typed-step and deterministic-scaling acceptance criteria above remain open.

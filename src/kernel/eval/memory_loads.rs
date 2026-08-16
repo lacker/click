@@ -2,10 +2,10 @@ use super::*;
 
 #[derive(Default)]
 struct MemoryLoadAliasCache {
-    resolution_equal: BTreeMap<Pointer, bool>,
-    resolution_distinct: BTreeMap<Pointer, bool>,
-    equal: BTreeMap<Pointer, bool>,
-    distinct: BTreeMap<Pointer, bool>,
+    resolution_equal: BTreeMap<(u64, Pointer), bool>,
+    resolution_distinct: BTreeMap<(u64, Pointer), bool>,
+    equal: BTreeMap<(u64, Pointer), bool>,
+    distinct: BTreeMap<(u64, Pointer), bool>,
 }
 
 impl MemoryLoadAliasCache {
@@ -17,7 +17,7 @@ impl MemoryLoadAliasCache {
     ) -> bool {
         *self
             .resolution_equal
-            .entry(stored_pointer.clone())
+            .entry((assumptions.memo_fingerprint(), stored_pointer.clone()))
             .or_insert_with(|| {
                 pointers_proven_equal_for_memory_resolution(pointer, stored_pointer, assumptions)
             })
@@ -31,7 +31,7 @@ impl MemoryLoadAliasCache {
     ) -> bool {
         *self
             .resolution_distinct
-            .entry(stored_pointer.clone())
+            .entry((assumptions.memo_fingerprint(), stored_pointer.clone()))
             .or_insert_with(|| {
                 pointers_proven_distinct_for_memory_resolution(pointer, stored_pointer, assumptions)
             })
@@ -45,7 +45,7 @@ impl MemoryLoadAliasCache {
     ) -> bool {
         *self
             .equal
-            .entry(stored_pointer.clone())
+            .entry((assumptions.memo_fingerprint(), stored_pointer.clone()))
             .or_insert_with(|| pointers_proven_equal(pointer, stored_pointer, assumptions))
     }
 
@@ -57,7 +57,7 @@ impl MemoryLoadAliasCache {
     ) -> bool {
         *self
             .distinct
-            .entry(stored_pointer.clone())
+            .entry((assumptions.memo_fingerprint(), stored_pointer.clone()))
             .or_insert_with(|| pointers_proven_distinct(pointer, stored_pointer, assumptions))
     }
 }
@@ -96,6 +96,35 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     has_external_read_resource: bool,
     alias_cache: &mut MemoryLoadAliasCache,
 ) -> Vec<CExpressionPath> {
+    let mut facts = facts;
+    let mut load_assumptions = assumptions.clone();
+    let candidates = assumptions
+        .should_transport_memory_load_condition_facts()
+        .then(|| {
+            assumptions
+                .exact_memory_load_condition_candidates(&pointer)
+                .map(|(condition, value)| Proposition::ConditionIs(condition.clone(), value))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for source in candidates {
+        let Some(theorem) = prove_c_condition_fact_transport(&source, memory, assumptions) else {
+            continue;
+        };
+        let Proposition::Implies(theorem_source, target) = theorem.proposition() else {
+            continue;
+        };
+        if theorem_source.as_ref() != &source || target.as_ref() == &source {
+            continue;
+        }
+        let target = target.as_ref().clone();
+        load_assumptions = load_assumptions.assume_proposition(target.clone());
+        let transported = ExecutionPureFact::certified_transport(source, target, theorem);
+        if !facts.contains(&transported) {
+            facts.push(transported);
+        }
+    }
+    let assumptions = &load_assumptions;
     // Provenance-sensitive lowering asks for the load identity even when this
     // snapshot has already materialized the cell's concrete value. Checking
     // `known_value` first would collapse `at(mark, field == 11)` to `true` and
@@ -432,5 +461,31 @@ pub(in crate::kernel) fn symbolic_load_value(
         CType::Int32Pointer => Some(memory.symbolic_pointer_load(pointer, 4)),
         CType::UInt8Pointer => Some(memory.symbolic_pointer_load(pointer, 1)),
         CType::Int32Array(_) | CType::UInt8Array(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alias_cache_keys_answers_by_assumption_context() {
+        let left = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Variable(Variable(810)),
+        };
+        let right = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Variable(Variable(811)),
+        };
+        let mut cache = MemoryLoadAliasCache::default();
+        let empty = PureFactContext::new();
+        assert!(!cache.resolution_equal(&left, &right, &empty));
+
+        let equal = empty.assume_condition(
+            ConditionTerm::pointer_offset_equal(left.offset.clone(), right.offset.clone()),
+            true,
+        );
+        assert!(cache.resolution_equal(&left, &right, &equal));
     }
 }

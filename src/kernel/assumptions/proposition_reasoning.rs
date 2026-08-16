@@ -283,10 +283,12 @@ impl PureFactContext {
     }
 
     /// Build a replayable derivation while retaining its complete atomic
-    /// premise sets. Internal deterministic checks that immediately replay and
-    /// discard the derivation do not benefit from the deletion-based premise
-    /// minimization used for emitted certificates.
-    pub(in crate::kernel) fn derive_proposition_without_premise_minimization(
+    /// premise sets. This is used both by internal deterministic checks that
+    /// immediately replay the result and by certificate planning after it has
+    /// already selected a narrow explicit premise set. In the latter case,
+    /// minimizing through a stronger internal theory can erase the selected
+    /// surface dependency even though the retained proof still replays.
+    pub(crate) fn derive_proposition_without_premise_minimization(
         &self,
         proposition: &Proposition,
     ) -> Option<PropositionDerivation> {
