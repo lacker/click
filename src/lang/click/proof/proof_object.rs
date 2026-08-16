@@ -146,6 +146,7 @@ struct ExecutionProofContext<'a> {
     function_environment: &'a CExecutionEnvironment,
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
 }
 
 #[derive(Clone)]
@@ -407,6 +408,7 @@ impl<'a> Proof<'a> {
         function_environment: &'a CExecutionEnvironment,
         predicate_environment: &'a PredicateEnvironment,
         click_function_environment: &'a ClickFunctionEnvironment,
+        theorem_environment: &'a TheoremEnvironment,
     ) -> Self {
         let ProofReplayContext {
             state,
@@ -425,6 +427,7 @@ impl<'a> Proof<'a> {
                 function_environment,
                 predicate_environment,
                 click_function_environment,
+                theorem_environment,
             })),
             state: Arc::new(ProofState {
                 facts: ProofFacts::from_ordered(&pure_facts),
@@ -1172,8 +1175,8 @@ impl<'a> Proof<'a> {
             ProofContext::Point(context) => {
                 self.apply_point_theorem_using(context, application, surface_premises)
             }
-            ProofContext::Execution(_) => {
-                Err(self.step_error("`apply using` requires a proposition or point proof"))
+            ProofContext::Execution(context) => {
+                self.apply_execution_theorem_using(context, application, surface_premises)
             }
         }
     }
@@ -1334,6 +1337,83 @@ impl<'a> Proof<'a> {
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
             execution: None,
+        })
+    }
+
+    fn apply_execution_theorem_using(
+        &self,
+        context: &ExecutionProofContext<'a>,
+        application: &TheoremApplication,
+        surface_premises: &[ClickProposition],
+    ) -> Result<ProofState, ClickError> {
+        let mut execution =
+            self.state.execution.clone().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        let pre_state = execution
+            .replay
+            .old_reference_state(&execution.state)
+            .clone();
+        let retain_function_entry_derivation = execution
+            .replay
+            .frontier
+            .execution_start_state
+            .as_ref()
+            .is_none_or(|start| start == &*execution.state);
+        let checked = check_point_theorem_application_using_facts(
+            context.theorem_environment,
+            application,
+            surface_premises,
+            context.claim_label,
+            context.tactic_index,
+            &self.state.facts,
+            context.parsed_function.parameters(),
+            context.arguments,
+            &pre_state,
+            &execution.state,
+            &execution.replay,
+            context.predicate_environment,
+            context.click_function_environment,
+            retain_function_entry_derivation,
+        )?;
+        if let Some(prerequisite) = checked.function_entry_prerequisite
+            && !execution
+                .replay
+                .function_entry_execution_prerequisites
+                .contains(&prerequisite)
+        {
+            execution
+                .last_step_delta
+                .function_entry_prerequisites
+                .push(prerequisite.clone());
+            execution
+                .replay
+                .function_entry_execution_prerequisites
+                .insert(prerequisite);
+        }
+        if let Some(derivation) = checked.function_entry_derivation
+            && !execution
+                .replay
+                .function_entry_derivations
+                .contains(&derivation)
+        {
+            execution
+                .last_step_delta
+                .function_entry_derivations
+                .push(derivation.clone());
+            execution
+                .replay
+                .function_entry_derivations
+                .insert(derivation);
+        }
+        Ok(ProofState {
+            facts: checked.facts,
+            goal: self.state.goal.clone(),
+            complete: false,
+            added_facts: Arc::new(checked.added_facts.clone()),
+            checked_facts: Arc::new(checked.added_facts),
+            execution: Some(execution),
         })
     }
 
@@ -1811,9 +1891,10 @@ impl<'a> ExecutionProofBranches<'a> {
             SimpleProofStep::StepUsing(_)
                 | SimpleProofStep::TransportUsing { .. }
                 | SimpleProofStep::UnfoldPredicate(_)
+                | SimpleProofStep::ApplyTheoremUsing { .. }
         ) {
             return Err(self.root.step_error(
-                "execution branch arms currently accept only `step using`, `transport using`, and `unfold`",
+                "execution branch arms currently accept only `step using`, `transport using`, `unfold`, and `apply using`",
             ));
         }
         let arm_index = usize::from(!take_then);
@@ -2284,7 +2365,7 @@ impl ProofFacts {
         self.exact.contains(fact)
     }
 
-    fn contains_top_level(&self, fact: &Proposition) -> bool {
+    pub(super) fn contains_top_level(&self, fact: &Proposition) -> bool {
         self.top_level_exact.contains(fact)
     }
 
@@ -3341,6 +3422,181 @@ mod tests {
     }
 
     #[test]
+    fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 identity(int32 x) {
+                    ensures returns_x: result == x by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test theorem and function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+            .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let function_environment = CExecutionEnvironment::new();
+        let state = CState::new();
+        let left = CValue::Int32(Bitvector32Term::Variable(Variable(8_000_000)));
+        let right = CValue::Int32(Bitvector32Term::Variable(Variable(8_000_001)));
+        let arguments = vec![CExpression::Value(left.clone())];
+        let premise = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(left.clone())),
+            operator: ComparisonOperator::LessThan,
+            right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+        };
+        let conclusion = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(left.clone())),
+            operator: ComparisonOperator::LessEqual,
+            right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+        };
+        let kernel_premise = lower_point_proposition_with_assumptions(
+            &premise,
+            &PureFactContext::new(),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            None,
+            &ProgramPointStates::new(),
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("the exact premise should lower");
+        let kernel_conclusion = lower_point_proposition_with_assumptions(
+            &conclusion,
+            &PureFactContext::new(),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            None,
+            &ProgramPointStates::new(),
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("the theorem conclusion should lower");
+        let application = TheoremApplication {
+            name: "int32_lt_implies_le".to_string(),
+            arguments: vec![
+                ContractExpression::CFragment(CExpression::Value(left)),
+                ContractExpression::CFragment(CExpression::Value(right)),
+            ],
+        };
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            pure_facts.push(kernel_premise.clone());
+            let root = Proof::for_execution_frontier(
+                "persistent theorem application",
+                0,
+                ProofReplayContext {
+                    state: state.clone(),
+                    pure_facts,
+                    replay: TacticReplayState::default(),
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_root = root.clone();
+            let omitted = root
+                .apply_step(SimpleProofStep::ApplyTheoremUsing {
+                    application: application.clone(),
+                    premises: Vec::new(),
+                })
+                .err()
+                .expect("ambient facts must not discharge an omitted named premise");
+            assert!(
+                omitted.message().contains("required exact fact"),
+                "{omitted:?}"
+            );
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+
+            let step = SimpleProofStep::ApplyTheoremUsing {
+                application: application.clone(),
+                premises: vec![premise.clone()],
+            };
+            let before = fact_node_allocations();
+            let applied = root
+                .apply_step(step.clone())
+                .expect("the exact named premise should certify the application");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 32 * logarithmic_height + 128;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} theorem application allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert_eq!(applied.certificate().steps(), &[step.clone()]);
+            assert_eq!(
+                applied.added_facts(),
+                std::slice::from_ref(&kernel_conclusion)
+            );
+            let root_execution = root.state.execution.as_ref().expect("root execution state");
+            let applied_execution = applied
+                .state
+                .execution
+                .as_ref()
+                .expect("application successor execution state");
+            assert!(
+                root_execution
+                    .state
+                    .shares_storage_with(&applied_execution.state),
+                "theorem application does not alter the C state"
+            );
+            assert!(
+                root_execution
+                    .replay
+                    .function_entry_execution_prerequisites
+                    .len()
+                    == 0
+            );
+            assert!(
+                applied_execution
+                    .replay
+                    .function_entry_execution_prerequisites
+                    .contains(&kernel_conclusion)
+            );
+            assert_eq!(
+                applied_execution
+                    .last_step_delta
+                    .function_entry_prerequisites,
+                vec![kernel_conclusion.clone()]
+            );
+            assert_eq!(
+                applied_execution
+                    .last_step_delta
+                    .function_entry_derivations
+                    .len(),
+                1
+            );
+            let alternative = root
+                .apply_step(step)
+                .expect("the retained ancestor should support another checked descendant");
+            assert_eq!(alternative.certificate(), applied.certificate());
+            assert!(root.certificate().steps().is_empty());
+            let result = applied
+                .into_execution_context()
+                .expect("the checked successor should export at the compatibility boundary");
+            assert!(result.pure_facts.contains(&kernel_conclusion));
+        }
+    }
+
+    #[test]
     fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
         let click_file = crate::lang::click::parse(
             r#"
@@ -3355,6 +3611,7 @@ mod tests {
         let predicate_environment = PredicateEnvironment::new(click_file.predicate_definitions());
         let click_function_environment =
             ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
         let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
             .expect("test C function should parse");
         let function = parsed_function.to_kernel_function();
@@ -3398,6 +3655,7 @@ mod tests {
                 &function_environment,
                 &predicate_environment,
                 &click_function_environment,
+                &theorem_environment,
             );
             let retained_root = root.clone();
             let before = fact_node_allocations();
@@ -3474,6 +3732,7 @@ mod tests {
         let predicate_environment = PredicateEnvironment::new(&[]);
         let click_function_environment =
             ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
         let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
             .expect("test C function should parse");
         let function = parsed_function.to_kernel_function();
@@ -3523,6 +3782,7 @@ mod tests {
                 &function_environment,
                 &predicate_environment,
                 &click_function_environment,
+                &theorem_environment,
             );
             let retained_root = root.clone();
             let step = SimpleProofStep::TransportUsing {
@@ -3586,6 +3846,7 @@ mod tests {
         let predicate_environment = PredicateEnvironment::new(&[]);
         let click_function_environment =
             ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
         let parsed_function = syntax::parse_function("int32 constant(int32 x) { return 1; }")
             .expect("test C function should parse");
         let function = parsed_function.to_kernel_function();
@@ -3619,6 +3880,7 @@ mod tests {
                 &function_environment,
                 &predicate_environment,
                 &click_function_environment,
+                &theorem_environment,
             );
             let retained_root = root.clone();
             let marked = root
@@ -3774,6 +4036,7 @@ mod tests {
         let predicate_environment = PredicateEnvironment::new(&[]);
         let click_function_environment =
             ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
         let parsed_function =
             syntax::parse_function("int32 identity(int32 x) { if (x < 0) {} else {} return x; }")
                 .expect("test C branch should parse");
@@ -3806,6 +4069,7 @@ mod tests {
                 &function_environment,
                 &predicate_environment,
                 &click_function_environment,
+                &theorem_environment,
             );
             let before = fact_node_allocations();
             let branches = root
@@ -3887,6 +4151,7 @@ mod tests {
         let predicate_environment = PredicateEnvironment::new(&[]);
         let click_function_environment =
             ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
         let parsed_function = syntax::parse_function(
             "int32 constant(int32 x) { if (x < 0) { x = 1; } else { x = 1; } return x; }",
         )
@@ -3919,6 +4184,7 @@ mod tests {
                 &function_environment,
                 &predicate_environment,
                 &click_function_environment,
+                &theorem_environment,
             );
             let branches = root
                 .begin_execution_branch()

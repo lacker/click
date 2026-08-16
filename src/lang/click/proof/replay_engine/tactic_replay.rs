@@ -880,64 +880,34 @@ fn replay_linear_tactics_without_frontier_loops(
                 predicate_environment,
                 click_function_environment,
             )?;
-            let pre_state = replay.old_reference_state(&state).clone();
-            let proof = Proof::for_point_frontier(
+            let proof = Proof::for_execution_frontier(
                 claim_label,
                 tactic_index,
-                &requirement_pure_facts,
-                parsed_function.parameters(),
+                ProofReplayContext {
+                    state,
+                    pure_facts: requirement_pure_facts,
+                    replay,
+                    branch_path,
+                },
+                function_block,
+                function,
+                parsed_function,
                 arguments,
-                &pre_state,
-                &state,
-                &replay.program_point_states,
-                &replay.surface_propositions,
+                function_environment,
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
-                &replay.unfolded_predicates,
-                &replay.effect_facts,
             );
             let proof = proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
                 application: application.clone(),
                 premises,
             })?;
-            let added_facts = proof.added_facts().to_vec();
             let certificate = proof.certificate();
-            drop(proof);
-            for fact in &added_facts {
-                if !requirement_pure_facts.contains(fact) {
-                    requirement_pure_facts.push(fact.clone());
-                }
-            }
-            let mut lowering_facts = requirement_pure_facts.clone();
-            append_resource_context_observable_facts(state.resources(), &mut lowering_facts);
-            if replay
-                .frontier
-                .execution_start_state
-                .as_ref()
-                .is_none_or(|start| start == &state)
-                && let Some(derivation) = kernel_standard_theorem_derivation_at_current_point(
-                    theorem_environment,
-                    application,
-                    parsed_function.parameters(),
-                    arguments,
-                    &pre_state,
-                    &state,
-                    &replay.program_point_states,
-                    predicate_environment,
-                    click_function_environment,
-                    &lowering_facts,
-                )?
-            {
-                let mut conclusion = derivation.proposition();
-                while let Proposition::Implies(_, body) = conclusion {
-                    conclusion = body;
-                }
-                replay
-                    .function_entry_execution_prerequisites
-                    .insert(conclusion.clone());
-                replay.function_entry_derivations.insert(derivation);
-            }
+            let result = proof.into_execution_context()?;
+            state = result.state;
+            requirement_pure_facts = result.pure_facts;
+            replay = result.replay;
+            branch_path = result.branch_path;
             for step in certificate.steps() {
                 replay.proof_certificate_builder.push_step(step.clone());
             }
@@ -967,6 +937,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     function_environment,
                     predicate_environment,
                     click_function_environment,
+                    theorem_environment,
                 );
                 let proof = proof.apply_step(SimpleProofStep::Mark(name.clone()))?;
                 let result = proof.into_execution_context()?;
@@ -1079,6 +1050,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     function_environment,
                     predicate_environment,
                     click_function_environment,
+                    theorem_environment,
                 );
                 let proof = proof.apply_step(SimpleProofStep::TransportUsing {
                     source: surface_source.clone(),
@@ -1109,6 +1081,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     function_environment,
                     predicate_environment,
                     click_function_environment,
+                    theorem_environment,
                 );
                 let proof = proof.apply_step(SimpleProofStep::StepUsing(premises.clone()))?;
                 let result = proof.into_execution_context()?;
@@ -1204,6 +1177,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         function_environment,
                         predicate_environment,
                         click_function_environment,
+                        theorem_environment,
                     );
                     let checkpoint = proof.checkpoint();
                     for step in &construction.steps {
@@ -1351,6 +1325,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         function_environment,
                         predicate_environment,
                         click_function_environment,
+                        theorem_environment,
                     );
                     let checkpoint = proof.checkpoint();
                     for step in &construction.steps {
@@ -1479,6 +1454,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         function_environment,
                         predicate_environment,
                         click_function_environment,
+                        theorem_environment,
                     );
                     let checkpoint = proof.checkpoint();
                     for step in &construction.steps {
@@ -2021,6 +1997,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     function_environment,
                     predicate_environment,
                     click_function_environment,
+                    theorem_environment,
                 );
                 let proof = proof.apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
                 let result = proof.into_execution_context()?;
@@ -2084,105 +2061,33 @@ fn replay_linear_tactics_without_frontier_loops(
                         "`{claim_label}` tactic {tactic_index}: post-execution `apply using` is not available in this region proof"
                     )));
                 }
-                let all_pure_facts = requirement_pure_facts.clone();
-                let mut lowering_facts = all_pure_facts.clone();
-                append_resource_context_observable_facts(state.resources(), &mut lowering_facts);
-                let pre_state = replay.old_reference_state(&state).clone();
-                let mut explicit_premises = Vec::new();
-                for surface_premise in premises {
-                    let premise = if let Some(recorded) = replay
-                        .surface_propositions
-                        .available_kernel(surface_premise, &all_pure_facts)
-                    {
-                        recorded.clone()
-                    } else {
-                        lower_point_proposition(
-                            surface_premise,
-                            &lowering_facts,
-                            parsed_function.parameters(),
-                            arguments,
-                            &pre_state,
-                            &state,
-                            None,
-                            &replay.program_point_states,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                        .map_err(|message| {
-                            ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: could not lower `apply using` premise: {message}"
-                            ))
-                        })?
-                    };
-                    if !exact_fact_is_available(&premise, &all_pure_facts)
-                        && materialization_equivalent_available_fact(&premise, &all_pure_facts)
-                            .is_none()
-                    {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: `apply using` requires an exact premise: {}",
-                            describe_missing_pure_fact(
-                                &premise,
-                                &all_pure_facts,
-                                state.resources().facts(),
-                                parsed_function.parameters(),
-                                arguments,
-                                &replay.effect_facts,
-                            )
-                        )));
-                    }
-                    if !explicit_premises.contains(&premise) {
-                        explicit_premises.push(premise);
-                    }
-                }
-                let mut applied = apply_theorem_at_current_point(
-                    theorem_environment,
-                    application,
+                let proof = Proof::for_execution_frontier(
                     claim_label,
                     tactic_index,
-                    explicit_premises,
-                    parsed_function.parameters(),
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    function,
+                    parsed_function,
                     arguments,
-                    &pre_state,
-                    &state,
-                    &replay.program_point_states,
+                    function_environment,
                     predicate_environment,
                     click_function_environment,
-                    &replay.unfolded_predicates,
-                    Some(&lowering_facts),
-                )?;
-                if replay
-                    .frontier
-                    .execution_start_state
-                    .as_ref()
-                    .is_none_or(|start| start == &state)
-                    && let Some(derivation) = kernel_standard_theorem_derivation_at_current_point(
-                        theorem_environment,
-                        application,
-                        parsed_function.parameters(),
-                        arguments,
-                        &pre_state,
-                        &state,
-                        &replay.program_point_states,
-                        predicate_environment,
-                        click_function_environment,
-                        &lowering_facts,
-                    )?
-                {
-                    let mut conclusion = derivation.proposition();
-                    while let Proposition::Implies(_, body) = conclusion {
-                        conclusion = body;
-                    }
-                    replay
-                        .function_entry_execution_prerequisites
-                        .insert(conclusion.clone());
-                    replay.function_entry_derivations.insert(derivation);
-                }
-                for fact in all_pure_facts {
-                    if !applied.contains(&fact) {
-                        applied.push(fact);
-                    }
-                }
-                requirement_pure_facts = applied;
+                    theorem_environment,
+                );
+                let proof = proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
+                    application: application.clone(),
+                    premises: premises.clone(),
+                })?;
+                let result = proof.into_execution_context()?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::FoldResource(resource) => {

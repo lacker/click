@@ -579,17 +579,22 @@ the named program point only in the returned successor, retains
 changing the accepted descendant or its ancestor. The old direct replay-state
 mutation has been removed.
 
-The next execution-step seam is `ApplyTheoremUsing`. Its checker currently
-represents two different capabilities as vectors: the small explicit premise
-set that is admissible theorem evidence, and the ambient/resource context that
-may only lower the theorem's arguments. The theorem instantiator now has one
-behavior-preserving internal boundary that receives those two assumption
-contexts separately. The execution `Proof` migration must feed the evidence
-context only from named premises, feed the lowering context from persistent
-`ProofFacts` plus observable resources, unfold predicates through the existing
-single operation, and atomically retain both conclusion facts and any
-function-entry derivation delta. Do not add a parallel theorem engine or
-materialize all ambient facts per application.
+Execution `ApplyTheoremUsing` now advances through `Proof::apply_step`. One
+canonical point-theorem checker receives the small named premise set as its
+complete admissible evidence and borrows the ambient persistent `ProofFacts`
+assumptions plus observable resource facts only for lowering. It inserts
+conclusions into the persistent successor and returns any standard
+function-entry prerequisite/derivation as the same step's explicit delta.
+Failed applications leave their ancestor usable; successful applications
+retain the exact named step while sharing the unchanged C state and replay
+histories. Explicit mid-execution `apply using` and bare smart `apply` both use
+this execution Proof transition; the smart form only searches for the premise
+spellings first and does not rerun the accepted application. Linear execution
+branch arms admit the same step and merge its already-checked deltas through
+the existing audited join. A deterministic 16-through-4096 regression proves
+logarithmic persistent-node growth, omitted-premise rejection despite ambient
+availability, alternate descendants, C-state sharing, structural certificate
+retention, and atomic function-entry evidence.
 
 Point-proof `Witness` now advances through `Proof::apply_step` as a local goal
 refinement. The checked step evaluates its one explicit witness expression

@@ -48,6 +48,159 @@ pub(in crate::lang::click::proof) fn apply_theorem_at_current_point(
     Ok(available)
 }
 
+pub(in crate::lang::click::proof) struct CheckedPointTheoremApplication {
+    pub(in crate::lang::click::proof) facts: ProofFacts,
+    pub(in crate::lang::click::proof) added_facts: Vec<Proposition>,
+    pub(in crate::lang::click::proof) function_entry_prerequisite: Option<Proposition>,
+    pub(in crate::lang::click::proof) function_entry_derivation: Option<Theorem>,
+}
+
+/// Canonical checker for an explicit theorem application at a C execution
+/// point. Named premises are the complete evidence set. Ambient proof facts
+/// and observable resource facts may only lower those premises and theorem
+/// arguments; they cannot discharge an omitted theorem requirement.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts(
+    theorem_environment: &TheoremEnvironment,
+    application: &TheoremApplication,
+    surface_premises: &[ClickProposition],
+    claim_label: &str,
+    tactic_index: usize,
+    available: &ProofFacts,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    replay: &TacticReplayState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    retain_function_entry_derivation: bool,
+) -> Result<CheckedPointTheoremApplication, ClickError> {
+    let resource_facts = state
+        .resources()
+        .observable_facts_assuming_valid(available.assumptions());
+    let mut lowering_assumptions = available.assumptions().clone();
+    for fact in resource_facts {
+        lowering_assumptions = lowering_assumptions.assume_proposition(fact);
+    }
+
+    let mut explicit_premises = Vec::new();
+    for surface_premise in surface_premises {
+        let premise = if let Some(recorded) = replay
+            .surface_propositions
+            .available_kernel_matching(surface_premise, |kernel| available.contains(kernel))
+        {
+            recorded.clone()
+        } else {
+            lower_point_proposition_with_assumptions(
+                surface_premise,
+                &lowering_assumptions,
+                parameters,
+                arguments,
+                pre_state,
+                state,
+                None,
+                &replay.program_point_states,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: could not lower `apply using` premise: {message}"
+                ))
+            })?
+        };
+        if !available.replay_available_across_effects(&premise, &[]) {
+            let available_facts = available.to_vec();
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `apply using` requires an exact premise: {}",
+                describe_missing_pure_fact(
+                    &premise,
+                    &available_facts,
+                    state.resources().facts(),
+                    parameters,
+                    arguments,
+                    &replay.effect_facts,
+                )
+            )));
+        }
+        if !explicit_premises.contains(&premise) {
+            explicit_premises.push(premise);
+        }
+    }
+
+    let evidence_assumptions = assumptions_from_propositions(&explicit_premises);
+    let values = parameter_values(parameters, arguments).map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: {}",
+            error.message
+        ))
+    })?;
+    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+    let application_context = TheoremApplicationContext {
+        values: &values,
+        array_refs: &array_refs,
+        pre_state,
+        post_state: state,
+        result: None,
+        program_point_states: &replay.program_point_states,
+    };
+    let conclusions = instantiate_theorem_application_with_assumptions(
+        theorem_environment,
+        application,
+        claim_label,
+        None,
+        tactic_index,
+        &explicit_premises,
+        &evidence_assumptions,
+        &lowering_assumptions,
+        &application_context,
+        predicate_environment,
+        click_function_environment,
+        &replay.unfolded_predicates,
+    )?;
+
+    let mut facts = available.clone();
+    let mut added_facts = Vec::new();
+    for conclusion in conclusions {
+        if !facts.contains_top_level(&conclusion) {
+            added_facts.push(conclusion.clone());
+        }
+        facts = facts.with_fact(conclusion);
+    }
+
+    let function_entry_derivation = if retain_function_entry_derivation {
+        kernel_standard_theorem_derivation_at_current_point_with_assumptions(
+            theorem_environment,
+            application,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            &replay.program_point_states,
+            predicate_environment,
+            click_function_environment,
+            &lowering_assumptions,
+        )?
+    } else {
+        None
+    };
+    let function_entry_prerequisite = function_entry_derivation.as_ref().map(|derivation| {
+        let mut conclusion = derivation.proposition();
+        while let Proposition::Implies(_, body) = conclusion {
+            conclusion = body;
+        }
+        conclusion.clone()
+    });
+    Ok(CheckedPointTheoremApplication {
+        facts,
+        added_facts,
+        function_entry_prerequisite,
+        function_entry_derivation,
+    })
+}
+
 /// Returns the kernel authority for a standard theorem application whose
 /// exact instantiated implication may be needed by whole-function
 /// certification. Surface replay still checks the application separately;

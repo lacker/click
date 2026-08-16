@@ -201,7 +201,7 @@ fn source_expander_makes_theorem_application_premises_explicit() {
         .count();
     assert_eq!(
         simple_apply_checks, 1,
-        "ordinary verification should check the retained apply step only during whole-certificate replay"
+        "ordinary verification should check the retained apply step once while constructing its Proof, without a second smart-path replay"
     );
 
     let expanded = expand_c0_claim_source(

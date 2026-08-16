@@ -20,6 +20,7 @@ fn linear_execution_simple_steps(node: &InternalProofNode) -> Option<Vec<SimpleP
                     SimpleProofStep::StepUsing(_)
                         | SimpleProofStep::TransportUsing { .. }
                         | SimpleProofStep::UnfoldPredicate(_)
+                        | SimpleProofStep::ApplyTheoremUsing { .. }
                 ) {
                     return None;
                 }
@@ -333,6 +334,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     function_environment,
                     predicate_environment,
                     click_function_environment,
+                    theorem_environment,
                 );
                 let checkpoint = proof.checkpoint();
                 let mut branches = proof.begin_execution_branch()?;
