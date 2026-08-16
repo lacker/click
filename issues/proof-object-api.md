@@ -416,6 +416,14 @@ those descendants as the structured certificate. Unsupported richer searches
 still fall back to the legacy planner while the shared smart-search vocabulary
 continues to migrate.
 
+Point-level `have` now accepts the same structured `If`, `Cases`, and nested
+`Have` certificates through `Proof::check_certificate`, rather than limiting
+the migrated path to one flat step. Smart point `if`/`cases` bodies with direct
+logical arm closures use `ProofBranches` directly. The post-execution outcome
+drain also calls this checked branch path against its outcome-specific surface
+map without cloning replay state, so these smart bodies no longer fall back to
+certificate reconstruction merely because the C execution has returned.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

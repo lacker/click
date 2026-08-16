@@ -2026,10 +2026,52 @@ pub(super) fn finish_ordered_proof_replay(
                                 // Restricting these facts to hand-written `derive`
                                 // scripts let smart `simp` search succeed and then
                                 // fail when its generated certificate was replayed.
+                                let smart_branch_body = matches!(
+                                    &have.proof,
+                                    SourceProof::Script(tactics)
+                                        if matches!(
+                                            tactics.as_slice(),
+                                            [ProofTactic::If(proof_if)]
+                                                if matches!(proof_if.then_tactics.as_slice(), [ProofTactic::Simp])
+                                                    && matches!(proof_if.else_tactics.as_slice(), [ProofTactic::Simp])
+                                        ) || matches!(
+                                            tactics.as_slice(),
+                                            [ProofTactic::Cases(proof_cases)]
+                                                if matches!(proof_cases.left_tactics.as_slice(), [ProofTactic::Simp])
+                                                    && matches!(proof_cases.right_tactics.as_slice(), [ProofTactic::Simp])
+                                        )
+                                );
+                                let checked_branch_have = if smart_branch_body {
+                                    checked_have_with_proof(
+                                        have,
+                                        theorem_environment,
+                                        &proof_label,
+                                        *tactic_index,
+                                        &certificate_available,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        post_state,
+                                        &replay,
+                                        &outcome_surface_propositions,
+                                        predicate_environment,
+                                        click_function_environment,
+                                    )?
+                                } else {
+                                    None
+                                };
                                 let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
-                                let (surface_have, fact) = if let Some(smart_unfolds) =
-                                    smart_unfolds
+                                let (surface_have, fact) = if let Some((fact, Some(certificate))) =
+                                    checked_branch_have
                                 {
+                                    let tactics = certificate.to_proof_tactics();
+                                    let [surface_have] = tactics.as_slice() else {
+                                        return Err(ClickError::new(format!(
+                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: checked smart branch `have` did not retain one `have` certificate"
+                                        )));
+                                    };
+                                    (surface_have.clone(), fact)
+                                } else if let Some(smart_unfolds) = smart_unfolds {
                                     let fact = lower_outcome_proposition_with_program_points(
                                 parsed_function.parameters(),
                                 arguments,

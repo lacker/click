@@ -1492,6 +1492,65 @@ fn smart_pure_cases_retains_checked_arm_proofs_directly() {
 }
 
 #[test]
+fn point_have_cases_certificate_uses_checked_proof_branches() {
+    let c_source = r#"
+        int32 keep(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "keep.c";
+
+        int32 keep(int32 x) {
+            requires sign: x <= 0 or x > 0;
+            ensures sign: x <= 0 or x > 0;
+        } by {
+            execute();
+            have x <= 0 or x > 0 by {
+                cases (x <= 0 or x > 0) {
+                    left();
+                } {
+                    right();
+                }
+            }
+            assumption();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("keep.c", c_source)])
+        .expect("point have cases should check through branch-local Proofs");
+}
+
+#[test]
+fn smart_point_have_if_retains_checked_arm_proofs_directly() {
+    let c_source = r#"
+        int32 keep(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "keep.c";
+
+        int32 keep(int32 x) {
+            ensures excluded_middle: x == 0 or not (x == 0);
+        } by {
+            execute();
+            have x == 0 or not (x == 0) by {
+                if x == 0 {
+                    simp();
+                } else {
+                    simp();
+                }
+            }
+            assumption();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("keep.c", c_source)])
+        .expect("smart point-have arms should retain their checked Proof descendants");
+}
+
+#[test]
 fn enumerate_closes_a_constant_bounded_universal_goal() {
     let c_source = r#"
         int32 keep(int32 x) {

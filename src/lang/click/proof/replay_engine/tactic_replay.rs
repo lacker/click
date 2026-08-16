@@ -464,16 +464,16 @@ fn replay_frontier_local_loop_tactic(
     })
 }
 
-/// Migrates the linear point-proof paths supported by the checked proof
-/// object: direct smart closers and a bare theorem application whose
-/// conclusion closes the `have`.
+/// Migrates point-proof paths supported by the checked proof object: direct
+/// smart closers, structured logical branches/scopes, and a bare theorem
+/// application whose conclusion closes the `have`.
 ///
 /// The premise planner is only a query. The theorem application advances
 /// through `Proof::apply_step`, so the returned certificate is the provenance
 /// of the semantic work already performed, not a second representation that
 /// ordinary verification must replay.
 #[allow(clippy::too_many_arguments)]
-fn checked_linear_have(
+pub(in crate::lang::click::proof) fn checked_have_with_proof(
     have: &ProofHave,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
@@ -484,13 +484,16 @@ fn checked_linear_have(
     pre_state: &CState,
     state: &CState,
     replay: &TacticReplayState,
+    surface_propositions: &SurfacePropositionMap,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Option<(Proposition, Option<ProofCertificate>)>, ClickError> {
     enum Plan<'a> {
         DirectSmart,
         BareApply(&'a TheoremApplication),
-        Explicit(SimpleProofStep),
+        SmartIf(&'a ProofIf),
+        SmartCases(&'a ProofCases),
+        Explicit(ProofCertificate),
     }
 
     let plan = match &have.proof {
@@ -500,28 +503,21 @@ fn checked_linear_have(
         SourceProof::Script(tactics) => {
             if let [ProofTactic::ApplyTheorem(application)] = tactics.as_slice() {
                 Plan::BareApply(application)
+            } else if let [ProofTactic::If(proof_if)] = tactics.as_slice()
+                && matches!(proof_if.then_tactics.as_slice(), [ProofTactic::Simp])
+                && matches!(proof_if.else_tactics.as_slice(), [ProofTactic::Simp])
+            {
+                Plan::SmartIf(proof_if)
+            } else if let [ProofTactic::Cases(proof_cases)] = tactics.as_slice()
+                && matches!(proof_cases.left_tactics.as_slice(), [ProofTactic::Simp])
+                && matches!(proof_cases.right_tactics.as_slice(), [ProofTactic::Simp])
+            {
+                Plan::SmartCases(proof_cases)
             } else {
                 let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics) else {
                     return Ok(None);
                 };
-                let [step] = certificate.steps() else {
-                    return Ok(None);
-                };
-                if !matches!(
-                    step,
-                    SimpleProofStep::ApplyTheoremUsing { .. }
-                        | SimpleProofStep::Assumption
-                        | SimpleProofStep::Normalize
-                        | SimpleProofStep::Intro
-                        | SimpleProofStep::Split
-                        | SimpleProofStep::Left
-                        | SimpleProofStep::Right
-                        | SimpleProofStep::Enumerate
-                        | SimpleProofStep::Contradiction(_)
-                ) {
-                    return Ok(None);
-                }
-                Plan::Explicit(step.clone())
+                Plan::Explicit(certificate)
             }
         }
         SourceProof::Tactic(SmartTactic::Frame) => return Ok(None),
@@ -553,7 +549,7 @@ fn checked_linear_have(
         pre_state,
         state,
         &replay.program_point_states,
-        &replay.surface_propositions,
+        surface_propositions,
         predicate_environment,
         click_function_environment,
         theorem_environment,
@@ -589,11 +585,34 @@ fn checked_linear_have(
             };
             (closed, true)
         }
-        Plan::Explicit(step) => {
-            // This is a candidate migration for an already-simple source
-            // body. Preserve legacy failure diagnostics until the whole
-            // point-proof vocabulary has moved behind `Proof`.
-            let Ok(checked) = proof.apply_step(step) else {
+        Plan::SmartIf(proof_if) => {
+            let Some(closed) = proof
+                .begin_if(proof_if.condition.clone())
+                .ok()
+                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Left))
+                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Right))
+                .and_then(|branches| branches.join().ok())
+            else {
+                return Ok(None);
+            };
+            (closed, true)
+        }
+        Plan::SmartCases(proof_cases) => {
+            let Some(closed) = proof
+                .begin_cases(proof_cases.disjunction.clone())
+                .ok()
+                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Left))
+                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Right))
+                .and_then(|branches| branches.join().ok())
+            else {
+                return Ok(None);
+            };
+            (closed, true)
+        }
+        Plan::Explicit(certificate) => {
+            // Preserve legacy failure diagnostics for certificate operations
+            // not yet admitted by Proof, or for a rejected source script.
+            let Ok(checked) = proof.check_certificate(&certificate) else {
                 return Ok(None);
             };
             (checked, false)
@@ -2221,7 +2240,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         have_facts.push(fact.clone());
                     }
                 }
-                let checked_proof_result = checked_linear_have(
+                let checked_proof_result = checked_have_with_proof(
                     have,
                     theorem_environment,
                     claim_label,
@@ -2232,6 +2251,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     replay.old_reference_state(&state),
                     &state,
                     &replay,
+                    &replay.surface_propositions,
                     predicate_environment,
                     click_function_environment,
                 )?;
