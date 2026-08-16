@@ -1092,14 +1092,17 @@ impl<'a> Proof<'a> {
     }
 
     /// Applies a C-frontier transition by consuming its current execution
-    /// state. Fact state and provenance are persistent; the owned boundary now
-    /// remains only because the underlying C state has not migrated to a
-    /// forkable semantic representation.
+    /// state. Fact-only operations use the ordinary forkable `apply_step`
+    /// path; this owned boundary remains only for statement execution because
+    /// the underlying C state has not migrated to a forkable representation.
     pub(super) fn apply_owned_execution_step(
         self,
         step: SimpleProofStep,
     ) -> Result<Self, ClickError> {
-        if matches!(step, SimpleProofStep::UnfoldPredicate(_)) {
+        if matches!(
+            step,
+            SimpleProofStep::TransportUsing { .. } | SimpleProofStep::UnfoldPredicate(_)
+        ) {
             return self.apply_step(step);
         }
         let Proof {
@@ -1123,12 +1126,9 @@ impl<'a> Proof<'a> {
                 "a tactic follows a completed execution frontier",
             ));
         }
-        if !matches!(
-            step,
-            SimpleProofStep::StepUsing(_) | SimpleProofStep::TransportUsing { .. }
-        ) {
+        if !matches!(step, SimpleProofStep::StepUsing(_)) {
             return Err(step_error(
-                "owned execution proof currently accepts only `transport using` and `step using`",
+                "owned execution proof currently accepts only `step using`",
             ));
         }
         let mut state = Arc::try_unwrap(proof_state).map_err(|_| {
@@ -1141,69 +1141,26 @@ impl<'a> Proof<'a> {
             .take()
             .ok_or_else(|| step_error("execution-frontier proof lost its owned semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
-        let (facts, added_facts) = match &step {
-            SimpleProofStep::StepUsing(premises) => {
-                let checked = check_step_using_facts(
-                    &mut execution.replay,
-                    &mut execution.state,
-                    &state.facts,
-                    premises,
-                    context.function_block,
-                    context.function,
-                    context.parsed_function,
-                    context.arguments,
-                    context.function_environment,
-                    context.predicate_environment,
-                    context.click_function_environment,
-                    context.claim_label,
-                    context.tactic_index,
-                )?;
-                (checked.facts, checked.added_facts)
-            }
-            SimpleProofStep::TransportUsing {
-                source,
-                target,
-                premises,
-            } => {
-                let pre_state = execution
-                    .replay
-                    .old_reference_state(&execution.state)
-                    .clone();
-                let checked = check_point_fact_transport_using_facts(
-                    source,
-                    target,
-                    premises,
-                    context.claim_label,
-                    context.tactic_index,
-                    &state.facts,
-                    &execution.replay.effect_facts,
-                    context.parsed_function.parameters(),
-                    context.arguments,
-                    &pre_state,
-                    &execution.state,
-                    &execution.replay.program_point_states,
-                    &execution.replay.surface_propositions,
-                    context.predicate_environment,
-                    context.click_function_environment,
-                )?;
-                execution
-                    .replay
-                    .surface_propositions
-                    .record_lowering(source, &checked.source)?;
-                execution
-                    .replay
-                    .surface_propositions
-                    .record_lowering(target, &checked.target)?;
-                let mut added_facts = Vec::new();
-                let mut facts = state.facts.clone();
-                if !facts.contains(&checked.target) {
-                    added_facts.push(checked.target.clone());
-                }
-                facts = facts.with_fact(checked.target);
-                (facts, added_facts)
-            }
-            _ => unreachable!("checked above"),
+        let SimpleProofStep::StepUsing(premises) = &step else {
+            unreachable!("checked above")
         };
+        let checked = check_step_using_facts(
+            &mut execution.replay,
+            &mut execution.state,
+            &state.facts,
+            premises,
+            context.function_block,
+            context.function,
+            context.parsed_function,
+            context.arguments,
+            context.function_environment,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.claim_label,
+            context.tactic_index,
+        )?;
+        let facts = checked.facts;
+        let added_facts = checked.added_facts;
         state.facts = facts;
         state.execution = Some(execution);
         state.added_facts = Arc::new(added_facts.clone());
@@ -1465,9 +1422,26 @@ impl<'a> Proof<'a> {
         target: &ClickProposition,
         premises: &[ClickProposition],
     ) -> Result<ProofState, ClickError> {
-        let ProofContext::Point(context) = self.context.as_ref() else {
-            return Err(self.step_error("`transport using` requires a point proof"));
-        };
+        match self.context.as_ref() {
+            ProofContext::Point(context) => {
+                self.apply_point_transport_using(source, target, premises, context)
+            }
+            ProofContext::Execution(context) => {
+                self.apply_execution_transport_using(source, target, premises, context)
+            }
+            ProofContext::Pure(_) => {
+                Err(self.step_error("`transport using` requires a point or execution proof"))
+            }
+        }
+    }
+
+    fn apply_point_transport_using(
+        &self,
+        source: &ClickProposition,
+        target: &ClickProposition,
+        premises: &[ClickProposition],
+        context: &PointProofContext<'a>,
+    ) -> Result<ProofState, ClickError> {
         if self.node.depth != 0 {
             return Err(
                 self.step_error("point `transport using` currently requires the root proof")
@@ -1506,6 +1480,64 @@ impl<'a> Proof<'a> {
             added_facts: Arc::new(added_facts),
             checked_facts: Arc::new(checked_facts),
             execution: None,
+        })
+    }
+
+    fn apply_execution_transport_using(
+        &self,
+        source: &ClickProposition,
+        target: &ClickProposition,
+        premises: &[ClickProposition],
+        context: &ExecutionProofContext<'a>,
+    ) -> Result<ProofState, ClickError> {
+        let mut execution =
+            self.state.execution.clone().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        let pre_state = execution
+            .replay
+            .old_reference_state(&execution.state)
+            .clone();
+        let checked = check_point_fact_transport_using_facts(
+            source,
+            target,
+            premises,
+            context.claim_label,
+            context.tactic_index,
+            &self.state.facts,
+            &execution.replay.effect_facts,
+            context.parsed_function.parameters(),
+            context.arguments,
+            &pre_state,
+            &execution.state,
+            &execution.replay.program_point_states,
+            &execution.replay.surface_propositions,
+            context.predicate_environment,
+            context.click_function_environment,
+        )?;
+        execution
+            .replay
+            .surface_propositions
+            .record_lowering(source, &checked.source)?;
+        execution
+            .replay
+            .surface_propositions
+            .record_lowering(target, &checked.target)?;
+        let mut facts = self.state.facts.clone();
+        let added_facts = if facts.contains(&checked.target) {
+            Vec::new()
+        } else {
+            vec![checked.target.clone()]
+        };
+        facts = facts.with_fact(checked.target);
+        Ok(ProofState {
+            facts,
+            goal: self.state.goal.clone(),
+            complete: false,
+            added_facts: Arc::new(added_facts.clone()),
+            checked_facts: Arc::new(added_facts),
+            execution: Some(execution),
         })
     }
 
@@ -3136,6 +3168,118 @@ mod tests {
                     .contains(&"selected".to_string())
             );
             assert!(context.pure_facts.len() > size as usize + 1);
+        }
+    }
+
+    #[test]
+    fn execution_transport_forks_without_copying_unrelated_state() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 identity(int32 x) {
+                    ensures returns_x: result == x by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+            .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let function_environment = CExecutionEnvironment::new();
+        let state = CState::new();
+        let arguments = vec![CExpression::Value(int32(7))];
+        let surface = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(7))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(7))),
+        };
+        let kernel = lower_point_proposition_with_assumptions(
+            &surface,
+            &PureFactContext::new(),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            None,
+            &ProgramPointStates::new(),
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("constant equality should lower at the execution point");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            pure_facts.push(kernel.clone());
+            let mut replay = TacticReplayState::default();
+            replay
+                .surface_propositions
+                .record_lowering(&surface, &kernel)
+                .expect("the source spelling should be recorded");
+            let root = Proof::for_execution_frontier(
+                "persistent transport",
+                0,
+                ProofReplayContext {
+                    state: state.clone(),
+                    pure_facts,
+                    replay,
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &predicate_environment,
+                &click_function_environment,
+            );
+            let retained_root = root.clone();
+            let step = SimpleProofStep::TransportUsing {
+                source: surface.clone(),
+                target: surface.clone(),
+                premises: vec![surface.clone()],
+            };
+            let successor = root
+                .apply_step(step.clone())
+                .expect("an exact identity transport should succeed");
+
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert_eq!(root.certificate().steps(), &[]);
+            assert_eq!(successor.certificate().steps(), &[step]);
+            assert!(successor.added_facts().is_empty());
+            let root_execution = root.state.execution.as_ref().expect("root execution state");
+            let successor_execution = successor
+                .state
+                .execution
+                .as_ref()
+                .expect("successor execution state");
+            assert!(
+                root_execution
+                    .state
+                    .shares_storage_with(&successor_execution.state),
+                "transport does not alter the C state"
+            );
+            assert!(
+                root_execution
+                    .replay
+                    .proof_certificate_builder
+                    .shares_storage_with(&successor_execution.replay.proof_certificate_builder),
+                "transport does not copy unrelated certificate history"
+            );
+            assert!(
+                root_execution
+                    .replay
+                    .effect_facts
+                    .shares_storage_with(&successor_execution.replay.effect_facts),
+                "transport does not copy unrelated effect history"
+            );
+            assert_eq!(
+                root_execution.replay.surface_propositions,
+                successor_execution.replay.surface_propositions,
+                "an identity transport does not change the recorded surface lowerings"
+            );
         }
     }
 

@@ -552,6 +552,15 @@ explicit-transport curve over increasing unrelated ambient facts now exercises
 this `Proof` path directly, while the focused snapshot, materialization,
 resource, and expansion tests preserve the transport judgment's semantics.
 
+Execution-frontier `TransportUsing` is now an ordinary forkable
+`Proof::apply_step(&self, ...)` operation as well. It clones only persistent
+fact and replay roots, records the selected lowerings in the successor, and
+leaves the ancestor's C state and provenance reusable for smart-search
+backtracking. The consuming execution adapter is consequently restricted to
+`StepUsing`, the remaining operation that mutates the not-yet-persistent C
+state. A multi-size regression retains the transport ancestor and checks that
+unrelated C state, certificate history, and effect history remain shared.
+
 The execution branch container now accepts linear arm bodies made only of
 `StepUsing`, `TransportUsing`, and `UnfoldPredicate`. Each arm advances through the ordinary
 checked `Proof` operation and accumulates only its fact and execution-effect

@@ -1067,7 +1067,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     predicate_environment,
                     click_function_environment,
                 );
-                let proof = proof.apply_owned_execution_step(SimpleProofStep::TransportUsing {
+                let proof = proof.apply_step(SimpleProofStep::TransportUsing {
                     source: surface_source.clone(),
                     target: surface_target.clone(),
                     premises: surface_premises.clone(),
