@@ -90,6 +90,102 @@ enum ProofBranchStructure {
     If { condition: ClickProposition },
 }
 
+fn explicit_linear_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
+    let certificate = ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).ok()?;
+    let [step] = certificate.steps() else {
+        return None;
+    };
+    matches!(
+        step,
+        SimpleProofStep::ApplyTheoremUsing { .. }
+            | SimpleProofStep::UnfoldPredicate(_)
+            | SimpleProofStep::Witness(_)
+            | SimpleProofStep::Choose(_)
+            | SimpleProofStep::Assumption
+            | SimpleProofStep::Extract(_)
+            | SimpleProofStep::Normalize
+            | SimpleProofStep::Intro
+            | SimpleProofStep::Split
+            | SimpleProofStep::Left
+            | SimpleProofStep::Right
+            | SimpleProofStep::Enumerate
+            | SimpleProofStep::Contradiction(_)
+            | SimpleProofStep::Rewrite(_)
+            | SimpleProofStep::TransportUsing { .. }
+            | SimpleProofStep::InstantiateUsing { .. }
+    )
+    .then(|| step.clone())
+}
+
+fn source_proof_contains_linear_search(proof: &SourceProof) -> bool {
+    match proof {
+        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
+        SourceProof::Script(tactics) => script_contains_linear_search(tactics),
+        SourceProof::Tactic(SmartTactic::Frame) => false,
+    }
+}
+
+fn script_contains_linear_search(tactics: &[ProofTactic]) -> bool {
+    tactics.iter().any(|tactic| match tactic {
+        ProofTactic::ApplyTheorem(_) | ProofTactic::Simp => true,
+        ProofTactic::Have(have) => source_proof_contains_linear_search(&have.proof),
+        ProofTactic::If(proof_if) => {
+            script_contains_linear_search(&proof_if.then_tactics)
+                || script_contains_linear_search(&proof_if.else_tactics)
+        }
+        ProofTactic::Cases(proof_cases) => {
+            script_contains_linear_search(&proof_cases.left_tactics)
+                || script_contains_linear_search(&proof_cases.right_tactics)
+        }
+        _ => false,
+    })
+}
+
+fn branch_arm_is_supported(tactics: &[ProofTactic]) -> bool {
+    if script_contains_linear_search(tactics) {
+        linear_script_is_supported(tactics)
+    } else {
+        ProofCertificate::from_proof_tactics(tactics).is_ok()
+    }
+}
+
+fn source_proof_is_supported(proof: &SourceProof) -> bool {
+    match proof {
+        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
+        SourceProof::Script(tactics) => {
+            if script_contains_linear_search(tactics) {
+                linear_script_is_supported(tactics)
+            } else {
+                ProofCertificate::from_proof_tactics(tactics).is_ok()
+            }
+        }
+        SourceProof::Tactic(SmartTactic::Frame) => false,
+    }
+}
+
+fn linear_script_is_supported(tactics: &[ProofTactic]) -> bool {
+    !tactics.is_empty()
+        && tactics
+            .iter()
+            .enumerate()
+            .all(|(index, tactic)| match tactic {
+                ProofTactic::ApplyTheorem(_) => true,
+                ProofTactic::Simp => index + 1 == tactics.len(),
+                ProofTactic::Have(have) => source_proof_is_supported(&have.proof),
+                ProofTactic::If(proof_if) => {
+                    index + 1 == tactics.len()
+                        && branch_arm_is_supported(&proof_if.then_tactics)
+                        && branch_arm_is_supported(&proof_if.else_tactics)
+                }
+                ProofTactic::Cases(proof_cases) => {
+                    index + 1 == tactics.len()
+                        && branch_arm_is_supported(&proof_cases.left_tactics)
+                        && branch_arm_is_supported(&proof_cases.right_tactics)
+                }
+                tactic => explicit_linear_step(tactic).is_some(),
+            })
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ProofArm {
     Left,
@@ -126,6 +222,7 @@ struct PointProofContext<'a> {
     arguments: &'a [CExpression],
     pre_state: &'a CState,
     state: &'a CState,
+    result: Option<&'a CValue>,
     program_point_states: &'a ProgramPointStates,
     surface_propositions: &'a SurfacePropositionMap,
     predicate_environment: &'a PredicateEnvironment,
@@ -336,6 +433,7 @@ impl<'a> Proof<'a> {
             arguments,
             pre_state,
             state,
+            None,
             program_point_states,
             surface_propositions,
             predicate_environment,
@@ -358,6 +456,7 @@ impl<'a> Proof<'a> {
         arguments: &'a [CExpression],
         pre_state: &'a CState,
         state: &'a CState,
+        result: Option<&'a CValue>,
         program_point_states: &'a ProgramPointStates,
         surface_propositions: &'a SurfacePropositionMap,
         predicate_environment: &'a PredicateEnvironment,
@@ -377,6 +476,7 @@ impl<'a> Proof<'a> {
             arguments,
             pre_state,
             state,
+            result,
             program_point_states,
             surface_propositions,
             predicate_environment,
@@ -415,6 +515,7 @@ impl<'a> Proof<'a> {
             arguments,
             pre_state,
             state,
+            None,
             program_point_states,
             surface_propositions,
             predicate_environment,
@@ -437,6 +538,7 @@ impl<'a> Proof<'a> {
         arguments: &'a [CExpression],
         pre_state: &'a CState,
         state: &'a CState,
+        result: Option<&'a CValue>,
         program_point_states: &'a ProgramPointStates,
         surface_propositions: &'a SurfacePropositionMap,
         predicate_environment: &'a PredicateEnvironment,
@@ -458,6 +560,7 @@ impl<'a> Proof<'a> {
                 arguments,
                 pre_state,
                 state,
+                result,
                 program_point_states,
                 surface_propositions,
                 predicate_environment,
@@ -1263,7 +1366,7 @@ impl<'a> Proof<'a> {
                     context.arguments,
                     context.pre_state,
                     context.state,
-                    None,
+                    context.result,
                     context.program_point_states,
                     context.predicate_environment,
                     context.click_function_environment,
@@ -1503,105 +1606,6 @@ impl<'a> Proof<'a> {
         &self,
         tactics: &[ProofTactic],
     ) -> Result<Option<Self>, ClickError> {
-        fn explicit_linear_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
-            let certificate =
-                ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).ok()?;
-            let [step] = certificate.steps() else {
-                return None;
-            };
-            matches!(
-                step,
-                SimpleProofStep::ApplyTheoremUsing { .. }
-                    | SimpleProofStep::UnfoldPredicate(_)
-                    | SimpleProofStep::Witness(_)
-                    | SimpleProofStep::Choose(_)
-                    | SimpleProofStep::Assumption
-                    | SimpleProofStep::Extract(_)
-                    | SimpleProofStep::Normalize
-                    | SimpleProofStep::Intro
-                    | SimpleProofStep::Split
-                    | SimpleProofStep::Left
-                    | SimpleProofStep::Right
-                    | SimpleProofStep::Enumerate
-                    | SimpleProofStep::Contradiction(_)
-                    | SimpleProofStep::Rewrite(_)
-                    | SimpleProofStep::TransportUsing { .. }
-                    | SimpleProofStep::InstantiateUsing { .. }
-            )
-            .then(|| step.clone())
-        }
-
-        fn source_proof_contains_linear_search(proof: &SourceProof) -> bool {
-            match proof {
-                SourceProof::Default
-                | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
-                SourceProof::Script(tactics) => script_contains_linear_search(tactics),
-                SourceProof::Tactic(SmartTactic::Frame) => false,
-            }
-        }
-
-        fn script_contains_linear_search(tactics: &[ProofTactic]) -> bool {
-            tactics.iter().any(|tactic| match tactic {
-                ProofTactic::ApplyTheorem(_) | ProofTactic::Simp => true,
-                ProofTactic::Have(have) => source_proof_contains_linear_search(&have.proof),
-                ProofTactic::If(proof_if) => {
-                    script_contains_linear_search(&proof_if.then_tactics)
-                        || script_contains_linear_search(&proof_if.else_tactics)
-                }
-                ProofTactic::Cases(proof_cases) => {
-                    script_contains_linear_search(&proof_cases.left_tactics)
-                        || script_contains_linear_search(&proof_cases.right_tactics)
-                }
-                _ => false,
-            })
-        }
-
-        fn branch_arm_is_supported(tactics: &[ProofTactic]) -> bool {
-            if script_contains_linear_search(tactics) {
-                linear_script_is_supported(tactics)
-            } else {
-                ProofCertificate::from_proof_tactics(tactics).is_ok()
-            }
-        }
-
-        fn source_proof_is_supported(proof: &SourceProof) -> bool {
-            match proof {
-                SourceProof::Default
-                | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
-                SourceProof::Script(tactics) => {
-                    if script_contains_linear_search(tactics) {
-                        linear_script_is_supported(tactics)
-                    } else {
-                        ProofCertificate::from_proof_tactics(tactics).is_ok()
-                    }
-                }
-                SourceProof::Tactic(SmartTactic::Frame) => false,
-            }
-        }
-
-        fn linear_script_is_supported(tactics: &[ProofTactic]) -> bool {
-            !tactics.is_empty()
-                && tactics
-                    .iter()
-                    .enumerate()
-                    .all(|(index, tactic)| match tactic {
-                        ProofTactic::ApplyTheorem(_) => true,
-                        ProofTactic::Simp => index + 1 == tactics.len(),
-                        ProofTactic::Have(have) => source_proof_is_supported(&have.proof),
-                        ProofTactic::If(proof_if) => {
-                            index + 1 == tactics.len()
-                                && branch_arm_is_supported(&proof_if.then_tactics)
-                                && branch_arm_is_supported(&proof_if.else_tactics)
-                        }
-                        ProofTactic::Cases(proof_cases) => {
-                            index + 1 == tactics.len()
-                                && branch_arm_is_supported(&proof_cases.left_tactics)
-                                && branch_arm_is_supported(&proof_cases.right_tactics)
-                        }
-                        tactic => explicit_linear_step(tactic).is_some(),
-                    })
-        }
-
         let contains_search = script_contains_linear_search(tactics);
         if !contains_search || tactics.is_empty() {
             return Ok(None);
@@ -1751,6 +1755,13 @@ impl<'a> Proof<'a> {
         Ok(proof.is_complete().then_some(proof))
     }
 
+    /// Whether this source proof is a smart script wholly represented by the
+    /// recursive proposition driver. This is a syntax-only capability query;
+    /// it does not inspect facts, lower propositions, or advance a proof.
+    pub(super) fn supports_linear_smart_source(proof: &SourceProof) -> bool {
+        source_proof_contains_linear_search(proof) && source_proof_is_supported(proof)
+    }
+
     /// Untrusted smart-tactic query for one explicit theorem-application
     /// candidate at a point proposition goal.
     ///
@@ -1782,7 +1793,7 @@ impl<'a> Proof<'a> {
             array_refs: &array_refs,
             pre_state: context.pre_state,
             post_state: context.state,
-            result: None,
+            result: context.result,
             program_point_states: context.program_point_states,
         };
         let unfolded_predicates = self.active_unfolded_predicates();
@@ -2055,6 +2066,7 @@ impl<'a> Proof<'a> {
             context.arguments,
             context.pre_state,
             context.state,
+            context.result,
             context.program_point_states,
             context.surface_propositions,
             &unfolded_predicates,
@@ -2108,6 +2120,7 @@ impl<'a> Proof<'a> {
             context.arguments,
             &pre_state,
             &execution.state,
+            None,
             &execution.replay.program_point_states,
             &execution.replay.surface_propositions,
             &execution.replay.unfolded_predicates,
@@ -2273,7 +2286,7 @@ impl<'a> Proof<'a> {
             &array_refs,
             context.pre_state,
             context.state,
-            None,
+            context.result,
             self.state.facts.assumptions(),
             context.predicate_environment,
             context.click_function_environment,
@@ -2359,7 +2372,7 @@ impl<'a> Proof<'a> {
             &array_refs,
             context.pre_state,
             context.state,
-            None,
+            context.result,
             self.state.facts.assumptions(),
             &argument,
             context.predicate_environment,
@@ -2463,7 +2476,7 @@ impl<'a> Proof<'a> {
                     context.arguments,
                     context.pre_state,
                     context.state,
-                    None,
+                    context.result,
                     context.program_point_states,
                     context.predicate_environment,
                     context.click_function_environment,
@@ -2577,11 +2590,6 @@ impl<'a> Proof<'a> {
         premises: &[ClickProposition],
         context: &PointProofContext<'a>,
     ) -> Result<ProofState, ClickError> {
-        if self.node.depth != 0 {
-            return Err(
-                self.step_error("point `transport using` currently requires the root proof")
-            );
-        }
         let checked = check_point_fact_transport_using_facts(
             source,
             target,
@@ -2594,6 +2602,7 @@ impl<'a> Proof<'a> {
             context.arguments,
             context.pre_state,
             context.state,
+            context.result,
             context.program_point_states,
             context.surface_propositions,
             context.predicate_environment,
@@ -2648,6 +2657,7 @@ impl<'a> Proof<'a> {
             context.arguments,
             &pre_state,
             &execution.state,
+            None,
             &execution.replay.program_point_states,
             &execution.replay.surface_propositions,
             context.predicate_environment,
@@ -2811,7 +2821,7 @@ impl<'a> Proof<'a> {
                         context.arguments,
                         context.pre_state,
                         context.state,
-                        None,
+                        context.result,
                         context.program_point_states,
                         context.predicate_environment,
                         context.click_function_environment,
@@ -4934,6 +4944,7 @@ mod tests {
                 &arguments,
                 &state,
                 &state,
+                None,
                 &program_point_states,
                 &surface_propositions,
                 &predicate_environment,
@@ -5788,6 +5799,206 @@ mod tests {
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());
         }
+    }
+
+    #[test]
+    fn result_aware_point_apply_scales_with_unrelated_facts() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                theorem result_reflexive(value: int32) {
+                    ensures value == value by { normalize(); }
+                }
+
+                int32 identity(int32 x) {
+                    ensures result == x;
+                } by {
+                    execute();
+                    have result == result by {
+                        apply(result_reflexive(result));
+                        simp();
+                    }
+                    simp();
+                }
+            "#,
+        )
+        .expect("result-aware theorem application should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let SourceProof::Script(grouped_tactics) = function_block
+            .grouped_proof()
+            .expect("test function should have a grouped proof")
+        else {
+            panic!("test function should have a proof script");
+        };
+        let have = grouped_tactics
+            .iter()
+            .find_map(|tactic| match tactic {
+                ProofTactic::Have(have) => Some(have),
+                _ => None,
+            })
+            .expect("grouped proof should contain the result-aware have");
+        let SourceProof::Script(have_tactics) = &have.proof else {
+            panic!("result-aware have should contain a proof script");
+        };
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+            .expect("test C function should parse");
+        let arguments = vec![CExpression::Value(CValue::Int32(
+            Bitvector32Term::Variable(Variable(8_150_000)),
+        ))];
+        let result = CValue::Int32(Bitvector32Term::Variable(Variable(8_150_001)));
+        let state = CState::new();
+        let program_point_states = ProgramPointStates::new();
+        let surface_propositions = SurfacePropositionMap::default();
+        let kernel_goal = lower_point_proposition_with_assumptions(
+            &have.proposition,
+            &PureFactContext::new(),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            Some(&result),
+            &program_point_states,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("the result-aware goal should lower");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            let root = Proof::for_point_goal_with_requirements(
+                "persistent result-aware theorem search",
+                0,
+                &facts,
+                kernel_goal.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                Some(&result),
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+                function_block.requires(),
+                function_block.requirement_label_indices(),
+            );
+            let before = fact_node_allocations();
+            let complete = root
+                .try_linear_smart_script(have_tactics)
+                .expect("result-aware theorem search should not fail")
+                .expect("result-aware theorem application and simp should close the goal");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 64 * logarithmic_height + 256;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} result-aware point script allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(complete.is_complete());
+            assert!(matches!(
+                complete.certificate().steps().first(),
+                Some(SimpleProofStep::ApplyTheoremUsing { application, premises })
+                    if application.name == "result_reflexive" && premises.is_empty()
+            ));
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn point_transport_can_follow_another_checked_step() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test C function should parse");
+        let state = CState::new();
+        let source = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(Variable(8_160_000)),
+            ))),
+            operator: ComparisonOperator::LessThan,
+            right: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(Variable(8_160_001)),
+            ))),
+        };
+        let extracted = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(Variable(8_160_002)),
+            ))),
+            operator: ComparisonOperator::LessThan,
+            right: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(Variable(8_160_003)),
+            ))),
+        };
+        let program_point_states = ProgramPointStates::new();
+        let lower = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &[],
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("test proposition should lower")
+        };
+        let kernel_source = lower(&source);
+        let kernel_extracted = lower(&extracted);
+        let facts = vec![
+            kernel_source.clone(),
+            Proposition::And(
+                Box::new(kernel_extracted),
+                Box::new(indexed_fact(8_160_004)),
+            ),
+        ];
+        let surface_propositions = SurfacePropositionMap::default();
+        let root = Proof::for_point_goal(
+            "nested point transport",
+            0,
+            &facts,
+            indexed_fact(8_160_005),
+            parsed_function.parameters(),
+            &[],
+            &state,
+            &state,
+            &program_point_states,
+            &surface_propositions,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+            &[],
+            &[],
+        );
+        let refined = root
+            .apply_step(SimpleProofStep::Extract(extracted.clone()))
+            .expect("the predecessor should advance the proof");
+        let transport = SimpleProofStep::TransportUsing {
+            source: source.clone(),
+            target: source.clone(),
+            premises: vec![source],
+        };
+        let transported = refined
+            .apply_step(transport.clone())
+            .expect("transport should be valid after an accepted predecessor");
+        assert_eq!(
+            transported.certificate().steps(),
+            &[SimpleProofStep::Extract(extracted), transport,]
+        );
+        assert_eq!(transported.added_facts(), &[]);
+        assert_eq!(root.certificate().steps(), &[]);
     }
 
     #[test]

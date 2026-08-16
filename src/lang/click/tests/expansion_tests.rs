@@ -197,6 +197,19 @@ fn selected_post_execution_smart_have_uses_its_path_certificate() {
                 simp();
             }
         "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("checked post-execution smart have should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.contract" && name == "surface certificate replay"
+        )),
+        "the result-aware smart have must retain its checked Proof: {events:#?}"
+    );
+
     let have_offset = click_source
         .find("have result")
         .expect("proof should contain the selected have");
@@ -219,6 +232,74 @@ fn selected_post_execution_smart_have_uses_its_path_certificate() {
     assert!(expanded.contains("have result == x by {"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
         .expect("selected post-execution have certificate should replay");
+}
+
+#[test]
+fn post_execution_smart_have_applies_a_theorem_to_result_through_proof() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            theorem int32_reflexive(value: int32) {
+                ensures value == value by {
+                    normalize();
+                }
+            }
+
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result == x;
+            } by {
+                execute();
+                have result == result by {
+                    apply(int32_reflexive(result));
+                    simp();
+                }
+                simp();
+            }
+        "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("result-aware theorem application should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.contract" && name == "surface certificate replay"
+        )),
+        "the result-aware theorem application must not reconstruct and replay a certificate: {events:#?}"
+    );
+
+    let have_offset = click_source
+        .find("have result == result")
+        .expect("proof should contain the result-aware have");
+    let position = expansion::position_at_offset(click_source, have_offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("identity.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the retained result-aware Proof should expand");
+    let expanded_have_start = expanded
+        .find("have result == result")
+        .expect("expanded proof should retain the selected have");
+    let expanded_have_end = expanded[expanded_have_start..]
+        .find("\n                simp();")
+        .map(|offset| expanded_have_start + offset)
+        .expect("expanded proof should retain its outer closer");
+    let expanded_have = &expanded[expanded_have_start..expanded_have_end];
+    assert!(
+        expanded_have.contains("apply(int32_reflexive(result)) using"),
+        "{expanded_have}"
+    );
+    assert!(!expanded_have.contains("simp();"), "{expanded_have}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("the expanded result-aware theorem application should independently verify");
 }
 
 #[test]

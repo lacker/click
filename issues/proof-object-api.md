@@ -876,6 +876,25 @@ plans have been deleted. A nested-have/branch/theorem regression expands both
 selected arm applications and independently verifies the recursive
 certificate.
 
+Post-execution proposition proofs now use that shared driver beyond the
+previous branch-only case. A point `Proof` owns the optional checked return
+value used by its goal lowering, witness evaluation, rewriting, theorem
+selection/application, and fact transport; result-dependent Surface Click is
+therefore interpreted by the same immutable object that retains the accepted
+steps. The deferred outcome drain asks the driver itself whether a smart
+`have` body is wholly supported, then searches and joins that body through
+`Proof` instead of duplicating tactic-shape recognition in the caller. A
+focused regression applies a theorem to `result` inside such a `have`, checks
+that ordinary construction emits no surface-certificate replay, expands the
+retained `ApplyTheoremUsing`, and independently verifies it. A deterministic
+16-through-4096-fact regression holds that result-aware theorem search fixed
+and bounds its persistent-node work logarithmically. Exercising the broader
+driver also removed the former root-only guard on point `TransportUsing`:
+the shared checker already consumes the current persistent facts, so the step
+can soundly follow another accepted refinement and retain both operations.
+The copy-segment mdtest and a focused predecessor/transport regression pin
+that nested case.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

@@ -71,6 +71,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
     arguments: &[CExpression],
     pre_state: &CState,
     state: &CState,
+    result: Option<&CValue>,
     program_point_states: &ProgramPointStates,
     surface_propositions: &SurfacePropositionMap,
     unfolded_predicates: &[String],
@@ -101,7 +102,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
                 arguments,
                 pre_state,
                 state,
-                None,
+                result,
                 program_point_states,
                 predicate_environment,
                 click_function_environment,
@@ -145,7 +146,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
         array_refs: &array_refs,
         pre_state,
         post_state: state,
-        result: None,
+        result,
         program_point_states,
     };
     let conclusions = instantiate_theorem_application_with_assumptions(
