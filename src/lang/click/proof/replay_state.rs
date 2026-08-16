@@ -268,6 +268,10 @@ impl<T> PersistentSequence<T> {
         self.tail.is_none()
     }
 
+    pub(super) fn len(&self) -> usize {
+        self.len
+    }
+
     pub(super) fn iter(&self) -> PersistentSequenceIter<'_, T> {
         let mut nodes = Vec::with_capacity(self.len);
         let mut current = self.tail.as_deref();
@@ -295,6 +299,17 @@ impl<T> PersistentSequence<T> {
             (None, None) => true,
             _ => false,
         }
+    }
+}
+
+impl<T: Clone> PersistentSequence<T> {
+    /// Removes the newest entry while preserving any shared ancestor prefix.
+    pub(super) fn pop(&mut self) -> Option<T> {
+        let tail = self.tail.take()?;
+        let value = tail.value.clone();
+        self.tail = tail.parent.clone();
+        self.len -= 1;
+        Some(value)
     }
 }
 
@@ -1469,6 +1484,80 @@ mod proof_fact_store_tests {
     }
 
     #[test]
+    fn execution_frontier_forks_share_remaining_c_and_continuation_history() {
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut statement = CStatement::Skip;
+            for _ in 0..size {
+                statement = c_seq(CStatement::Skip, statement);
+            }
+            let remaining = Arc::new(statement);
+            let mut frontier = ExecutionFrontier {
+                point: ProofExecutionPoint::StatementEntry {
+                    remaining: remaining.clone(),
+                },
+                continuations: PersistentSequence::default(),
+                ..ExecutionFrontier::default()
+            };
+            frontier.continuations.push(ProofExecutionContinuation {
+                remaining: Some(remaining.clone()),
+                next_statement_index: 1,
+                kind: ProofExecutionContinuationKind::LoopIteration,
+            });
+            let ancestor = frontier.clone();
+
+            let (
+                ProofExecutionPoint::StatementEntry {
+                    remaining: fork_remaining,
+                },
+                ProofExecutionPoint::StatementEntry {
+                    remaining: ancestor_remaining,
+                },
+            ) = (&frontier.point, &ancestor.point)
+            else {
+                panic!("test frontiers should remain at statement entry")
+            };
+            assert!(Arc::ptr_eq(fork_remaining, ancestor_remaining));
+            assert!(
+                frontier
+                    .continuations
+                    .shares_tail_with(&ancestor.continuations),
+                "size {size} frontier clone copied its continuation history"
+            );
+
+            frontier.continuations.push(ProofExecutionContinuation {
+                remaining: Some(remaining.clone()),
+                next_statement_index: 2,
+                kind: ProofExecutionContinuationKind::LoopIteration,
+            });
+            let local_tail = frontier
+                .continuations
+                .tail
+                .as_ref()
+                .expect("local continuation");
+            assert!(Arc::ptr_eq(
+                local_tail.parent.as_ref().expect("shared parent"),
+                ancestor.continuations.tail.as_ref().expect("ancestor tail")
+            ));
+            assert_eq!(ancestor.continuations.len(), 1);
+            assert_eq!(frontier.continuations.len(), 2);
+            assert_eq!(
+                frontier
+                    .continuations
+                    .pop()
+                    .expect("local continuation")
+                    .next_statement_index,
+                2
+            );
+            assert!(
+                frontier
+                    .continuations
+                    .shares_tail_with(&ancestor.continuations),
+                "popping the local suffix should restore the shared ancestor stack"
+            );
+        }
+    }
+
+    #[test]
     fn persistent_ordered_set_forks_and_local_insertions_scale_logarithmically() {
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut set = PersistentOrderedSet::default();
@@ -1544,12 +1633,12 @@ pub(super) struct ExecutionFrontier {
     pub(super) point: ProofExecutionPoint,
     pub(super) execution_start_state: Option<CState>,
     pub(super) next_statement_index: usize,
-    pub(super) continuations: SharedVec<ProofExecutionContinuation>,
+    pub(super) continuations: PersistentSequence<ProofExecutionContinuation>,
 }
 
 #[derive(Clone)]
 pub(super) struct ProofExecutionContinuation {
-    pub(super) remaining: Option<CStatement>,
+    pub(super) remaining: Option<Arc<CStatement>>,
     pub(super) next_statement_index: usize,
     pub(super) kind: ProofExecutionContinuationKind,
 }
@@ -1565,7 +1654,7 @@ pub(super) enum ProofExecutionPoint {
     #[default]
     FunctionEntry,
     StatementEntry {
-        remaining: CStatement,
+        remaining: Arc<CStatement>,
     },
     FunctionExit {
         execution: CFunctionExecutionCandidates,

@@ -330,7 +330,9 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
             .frontier_loop_source
             .and_then(|source| source.proof_site.clone()),
         frontier: ExecutionFrontier {
-            point: ProofExecutionPoint::StatementEntry { remaining },
+            point: ProofExecutionPoint::StatementEntry {
+                remaining: remaining.into(),
+            },
             execution_start_state: Some(preservation.state().clone()),
             next_statement_index: loop_body_statement_index,
             ..ExecutionFrontier::default()
@@ -367,7 +369,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
     while let Some(context) = pending.pop() {
         let at_back_edge = matches!(
             &context.replay.frontier.point,
-            ProofExecutionPoint::StatementEntry { remaining } if remaining == &sentinel
+            ProofExecutionPoint::StatementEntry { remaining } if remaining.as_ref() == &sentinel
         ) && context.replay.frontier.continuations.is_empty();
         if at_back_edge {
             completed.push(context);
@@ -679,7 +681,9 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     let mut replay = TacticReplayState {
         proof_site: Some(preserve_site),
         frontier: ExecutionFrontier {
-            point: ProofExecutionPoint::StatementEntry { remaining },
+            point: ProofExecutionPoint::StatementEntry {
+                remaining: remaining.into(),
+            },
             execution_start_state: Some(preservation.state().clone()),
             next_statement_index: loop_body_statement_index,
             ..ExecutionFrontier::default()
@@ -731,7 +735,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     for context in &contexts {
         let at_back_edge = matches!(
             &context.replay.frontier.point,
-            ProofExecutionPoint::StatementEntry { remaining } if remaining == &sentinel
+            ProofExecutionPoint::StatementEntry { remaining } if remaining.as_ref() == &sentinel
         ) && context.replay.frontier.continuations.is_empty();
         if !at_back_edge {
             return Err(ClickError::new(format!(
@@ -916,7 +920,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     for context in replayed {
         let at_back_edge = matches!(
             &context.replay.frontier.point,
-            ProofExecutionPoint::StatementEntry { remaining } if remaining == &sentinel
+            ProofExecutionPoint::StatementEntry { remaining } if remaining.as_ref() == &sentinel
         ) && context.replay.frontier.continuations.is_empty();
         if !at_back_edge {
             return Err(ClickError::new(format!(

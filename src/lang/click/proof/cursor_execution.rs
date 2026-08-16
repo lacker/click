@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 pub(super) fn apply_branch_interface(
     target: &ProgramPointRef,
@@ -610,7 +611,7 @@ pub(super) fn execute_branch_step_from_execution_point(
         .frontier
         .continuations
         .push(ProofExecutionContinuation {
-            remaining,
+            remaining: remaining.map(Arc::new),
             next_statement_index: source_region.continuation_node,
             kind: ProofExecutionContinuationKind::Branch { statement_index },
         });
@@ -627,10 +628,12 @@ pub(super) fn execute_branch_step_from_execution_point(
                 "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
             )));
         };
-        replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
+        replay.frontier.point = ProofExecutionPoint::StatementEntry {
+            remaining: remaining.into(),
+        };
     } else {
         replay.frontier.point = ProofExecutionPoint::StatementEntry {
-            remaining: selected_branch,
+            remaining: selected_branch.into(),
         };
     }
     record_current_statement_entry(
@@ -758,7 +761,7 @@ fn execute_concrete_loop_head_step(
             .frontier
             .continuations
             .push(ProofExecutionContinuation {
-                remaining: Some(loop_head),
+                remaining: Some(loop_head.into()),
                 next_statement_index: statement_index,
                 kind: ProofExecutionContinuationKind::LoopIteration,
             });
@@ -770,7 +773,9 @@ fn execute_concrete_loop_head_step(
                     "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve the source body of loop({loop_index})"
                 ))
             })?;
-        replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining: *body };
+        replay.frontier.point = ProofExecutionPoint::StatementEntry {
+            remaining: (*body).into(),
+        };
         record_statement_program_point_state(
             replay,
             function_block,
@@ -806,7 +811,9 @@ fn execute_concrete_loop_head_step(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
         )));
     };
-    replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
+    replay.frontier.point = ProofExecutionPoint::StatementEntry {
+        remaining: remaining.into(),
+    };
     record_statement_program_point_state(
         replay,
         function_block,
@@ -1722,7 +1729,9 @@ pub(super) fn execute_step_from_execution_point(
             };
             *available_pure_facts = successor_pure_facts;
             replay.frontier.execution_start_state = Some(execution_start_state);
-            replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
+            replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                remaining: remaining.into(),
+            };
             *state = next_state.clone();
             record_statement_program_point_state(
                 replay,
@@ -1882,7 +1891,7 @@ fn resume_after_completed_region(
         }
         replay.frontier.next_statement_index = continuation.next_statement_index;
         if let Some(remaining) = continuation.remaining {
-            return Some(remaining);
+            return Some(Arc::unwrap_or_clone(remaining));
         }
     }
     None

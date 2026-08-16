@@ -463,6 +463,16 @@ This removes the first mutable deep clone from proof-level execution `if`
 while the larger execution semantic state continues to migrate behind
 `Proof`.
 
+The execution frontier no longer deep-clones the remaining C statement tree
+or its continuation stack. Statement-entry and continuation bodies are shared
+immutable `Arc<CStatement>` values, while continuations use the same
+parent-linked persistent sequence as other branch histories. A branch-local
+push and pop changes one stack node and restores the shared ancestor prefix;
+a deterministic 16-through-4096 nested-statement regression checks pointer
+identity and stack-prefix identity rather than relying on wall-clock timing.
+This removes the last source-AST-sized clone from creating an execution branch
+before the semantic branch/scope/join operations move behind `Proof`.
+
 The execution diagnostic branch path uses the same persistent sequence.
 Proof-level and C-level branch exploration now share their complete enclosing
 diagnostic path instead of cloning every owned string, while `push`, join-time

@@ -114,7 +114,7 @@ fn execute_frontier_local_loop(
             })?;
         replay.frontier.execution_start_state = Some(initial_state.clone());
         replay.frontier.point = ProofExecutionPoint::StatementEntry {
-            remaining: annotated.body().clone(),
+            remaining: annotated.body().clone().into(),
         };
         *state = entry_state;
     }
@@ -258,7 +258,8 @@ fn execute_frontier_local_loop(
         }
         replay.frontier.point = ProofExecutionPoint::StatementEntry {
             remaining: sequence_from_statements(&statements)
-                .expect("the current loop always contributes one statement"),
+                .expect("the current loop always contributes one statement")
+                .into(),
         };
     }
 
