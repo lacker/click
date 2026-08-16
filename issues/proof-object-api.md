@@ -864,6 +864,18 @@ holds the smart body fixed, bounds scope search/join/outer closure by
 logarithmic persistent-node allocation, and checks that rejected nested
 search leaves the original scope untouched.
 
+`If` and `Cases` are now recursive operations of that same script driver,
+not root-level cases orchestrated by the pure and point callers. The driver
+opens the audited branch container, runs each smart arm on its branch-local
+`Proof`, checks an already-simple sibling through that same arm API when a
+branch mixes smart and explicit bodies, and joins the retained descendants.
+This works at the root or inside arbitrarily nested checked `have` scopes;
+fully explicit branches still bypass smart search and remain their own source
+certificate. The old pure direct-branch block and point `SmartIf`/`SmartCases`
+plans have been deleted. A nested-have/branch/theorem regression expands both
+selected arm applications and independently verifies the recursive
+certificate.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

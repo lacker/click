@@ -1544,8 +1544,24 @@ impl<'a> Proof<'a> {
             tactics.iter().any(|tactic| match tactic {
                 ProofTactic::ApplyTheorem(_) | ProofTactic::Simp => true,
                 ProofTactic::Have(have) => source_proof_contains_linear_search(&have.proof),
+                ProofTactic::If(proof_if) => {
+                    script_contains_linear_search(&proof_if.then_tactics)
+                        || script_contains_linear_search(&proof_if.else_tactics)
+                }
+                ProofTactic::Cases(proof_cases) => {
+                    script_contains_linear_search(&proof_cases.left_tactics)
+                        || script_contains_linear_search(&proof_cases.right_tactics)
+                }
                 _ => false,
             })
+        }
+
+        fn branch_arm_is_supported(tactics: &[ProofTactic]) -> bool {
+            if script_contains_linear_search(tactics) {
+                linear_script_is_supported(tactics)
+            } else {
+                ProofCertificate::from_proof_tactics(tactics).is_ok()
+            }
         }
 
         fn source_proof_is_supported(proof: &SourceProof) -> bool {
@@ -1572,6 +1588,16 @@ impl<'a> Proof<'a> {
                         ProofTactic::ApplyTheorem(_) => true,
                         ProofTactic::Simp => index + 1 == tactics.len(),
                         ProofTactic::Have(have) => source_proof_is_supported(&have.proof),
+                        ProofTactic::If(proof_if) => {
+                            index + 1 == tactics.len()
+                                && branch_arm_is_supported(&proof_if.then_tactics)
+                                && branch_arm_is_supported(&proof_if.else_tactics)
+                        }
+                        ProofTactic::Cases(proof_cases) => {
+                            index + 1 == tactics.len()
+                                && branch_arm_is_supported(&proof_cases.left_tactics)
+                                && branch_arm_is_supported(&proof_cases.right_tactics)
+                        }
                         tactic => explicit_linear_step(tactic).is_some(),
                     })
         }
@@ -1643,6 +1669,76 @@ impl<'a> Proof<'a> {
                         return Ok(None);
                     };
                     proof = selected.join()?;
+                }
+                ProofTactic::If(proof_if) => {
+                    let branches = proof.begin_if(proof_if.condition.clone())?;
+                    let selected = if script_contains_linear_search(&proof_if.then_tactics) {
+                        branches.try_linear_smart_script(ProofArm::Left, &proof_if.then_tactics)?
+                    } else {
+                        let Ok(certificate) =
+                            ProofCertificate::from_proof_tactics(&proof_if.then_tactics)
+                        else {
+                            return Ok(None);
+                        };
+                        branches
+                            .check_certificate(ProofArm::Left, &certificate)
+                            .ok()
+                    };
+                    let Some(branches) = selected else {
+                        return Ok(None);
+                    };
+                    let selected = if script_contains_linear_search(&proof_if.else_tactics) {
+                        branches.try_linear_smart_script(ProofArm::Right, &proof_if.else_tactics)?
+                    } else {
+                        let Ok(certificate) =
+                            ProofCertificate::from_proof_tactics(&proof_if.else_tactics)
+                        else {
+                            return Ok(None);
+                        };
+                        branches
+                            .check_certificate(ProofArm::Right, &certificate)
+                            .ok()
+                    };
+                    let Some(branches) = selected else {
+                        return Ok(None);
+                    };
+                    proof = branches.join()?;
+                }
+                ProofTactic::Cases(proof_cases) => {
+                    let branches = proof.begin_cases(proof_cases.disjunction.clone())?;
+                    let selected = if script_contains_linear_search(&proof_cases.left_tactics) {
+                        branches
+                            .try_linear_smart_script(ProofArm::Left, &proof_cases.left_tactics)?
+                    } else {
+                        let Ok(certificate) =
+                            ProofCertificate::from_proof_tactics(&proof_cases.left_tactics)
+                        else {
+                            return Ok(None);
+                        };
+                        branches
+                            .check_certificate(ProofArm::Left, &certificate)
+                            .ok()
+                    };
+                    let Some(branches) = selected else {
+                        return Ok(None);
+                    };
+                    let selected = if script_contains_linear_search(&proof_cases.right_tactics) {
+                        branches
+                            .try_linear_smart_script(ProofArm::Right, &proof_cases.right_tactics)?
+                    } else {
+                        let Ok(certificate) =
+                            ProofCertificate::from_proof_tactics(&proof_cases.right_tactics)
+                        else {
+                            return Ok(None);
+                        };
+                        branches
+                            .check_certificate(ProofArm::Right, &certificate)
+                            .ok()
+                    };
+                    let Some(branches) = selected else {
+                        return Ok(None);
+                    };
+                    proof = branches.join()?;
                 }
                 tactic => {
                     let step = explicit_linear_step(tactic)
@@ -2814,6 +2910,19 @@ impl<'a> ProofBranches<'a> {
         let mut next = self.clone();
         next.arms[arm.index()] = checked;
         Ok(Some(next))
+    }
+
+    /// Checks one already-simple branch body through the arm's owned Proof.
+    /// This supports mixed smart/explicit branches without giving the search
+    /// driver a second semantic transition path.
+    fn check_certificate(
+        &self,
+        arm: ProofArm,
+        certificate: &ProofCertificate,
+    ) -> Result<Self, ClickError> {
+        let mut next = self.clone();
+        next.arms[arm.index()] = self.arms[arm.index()].check_certificate(certificate)?;
+        Ok(next)
     }
 
     /// Joins two completed arms and records their retained bodies as one

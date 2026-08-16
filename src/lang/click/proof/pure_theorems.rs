@@ -912,56 +912,6 @@ fn check_pure_script_with_proof(
         theorem_environment,
     );
 
-    // A one-node smart logical branch runs each recognized linear script on
-    // its branch-local Proof. Successful arms are joined with their retained
-    // steps; no separately synthesized branch certificate is replayed.
-    let direct_branch = match tactics {
-        [ProofTactic::If(proof_if)] => {
-            if let Ok(branches) = root.begin_if(proof_if.condition.clone()) {
-                if let Some(branches) =
-                    branches.try_linear_smart_script(ProofArm::Left, &proof_if.then_tactics)?
-                {
-                    if let Some(branches) =
-                        branches.try_linear_smart_script(ProofArm::Right, &proof_if.else_tactics)?
-                    {
-                        branches.join().ok()
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
-        [ProofTactic::Cases(proof_cases)] => {
-            if let Ok(branches) = root.begin_cases(proof_cases.disjunction.clone()) {
-                if let Some(branches) =
-                    branches.try_linear_smart_script(ProofArm::Left, &proof_cases.left_tactics)?
-                {
-                    if let Some(branches) = branches
-                        .try_linear_smart_script(ProofArm::Right, &proof_cases.right_tactics)?
-                    {
-                        branches.join().ok()
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
-        _ => None,
-    };
-    if let Some(proof) = direct_branch
-        && proof.is_complete()
-    {
-        return Ok(Some(proof.certificate()));
-    }
-
     if let Some(proof) = root.try_linear_smart_script(tactics)? {
         return Ok(Some(proof.certificate()));
     }

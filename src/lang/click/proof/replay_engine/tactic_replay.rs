@@ -493,23 +493,13 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     enum Plan<'a> {
         DirectSmart,
         Script(&'a [ProofTactic]),
-        SmartIf(&'a ProofIf),
-        SmartCases(&'a ProofCases),
     }
 
     let plan = match &have.proof {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
             Plan::DirectSmart
         }
-        SourceProof::Script(tactics) => {
-            if let [ProofTactic::If(proof_if)] = tactics.as_slice() {
-                Plan::SmartIf(proof_if)
-            } else if let [ProofTactic::Cases(proof_cases)] = tactics.as_slice() {
-                Plan::SmartCases(proof_cases)
-            } else {
-                Plan::Script(tactics)
-            }
-        }
+        SourceProof::Script(tactics) => Plan::Script(tactics),
         SourceProof::Tactic(SmartTactic::Frame) => return Ok(None),
     };
     let goal = lower_point_proposition(
@@ -569,40 +559,6 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
             let Some(closed) = proof.try_direct_logical_closure() else {
                 return Ok(None);
             };
-            (closed, true)
-        }
-        Plan::SmartIf(proof_if) => {
-            let Ok(branches) = proof.begin_if(proof_if.condition.clone()) else {
-                return Ok(None);
-            };
-            let Some(branches) =
-                branches.try_linear_smart_script(ProofArm::Left, &proof_if.then_tactics)?
-            else {
-                return Ok(None);
-            };
-            let Some(branches) =
-                branches.try_linear_smart_script(ProofArm::Right, &proof_if.else_tactics)?
-            else {
-                return Ok(None);
-            };
-            let closed = branches.join()?;
-            (closed, true)
-        }
-        Plan::SmartCases(proof_cases) => {
-            let Ok(branches) = proof.begin_cases(proof_cases.disjunction.clone()) else {
-                return Ok(None);
-            };
-            let Some(branches) =
-                branches.try_linear_smart_script(ProofArm::Left, &proof_cases.left_tactics)?
-            else {
-                return Ok(None);
-            };
-            let Some(branches) =
-                branches.try_linear_smart_script(ProofArm::Right, &proof_cases.right_tactics)?
-            else {
-                return Ok(None);
-            };
-            let closed = branches.join()?;
             (closed, true)
         }
     };

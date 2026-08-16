@@ -1784,40 +1784,59 @@ fn pure_branch_local_apply_expands_the_retained_proof_object_paths() {
 }
 
 #[test]
-fn pure_nested_have_apply_expands_the_retained_proof_object_scope() {
+fn pure_nested_have_branch_apply_expands_the_retained_proof_object_scope() {
     let source = r#"
-        theorem restate_zero(x: int32) {
+        theorem equality_case_nested(x: int32) {
             requires x == 0;
-            ensures x == 0 by {
-                assumption();
+            ensures x == 0 or not (x == 0) by {
+                left();
             }
         }
 
-        theorem nested_apply(x: int32) {
-            requires x == 0;
-            ensures x == 0 by {
-                have x == 0 by {
-                    apply(restate_zero(x));
-                    simp();
+        theorem inequality_case_nested(x: int32) {
+            requires not (x == 0);
+            ensures x == 0 or not (x == 0) by {
+                right();
+            }
+        }
+
+        theorem nested_branch_apply(x: int32) {
+            ensures x == 0 or not (x == 0) by {
+                have x == 0 or not (x == 0) by {
+                    if x == 0 {
+                        apply(equality_case_nested(x));
+                        simp();
+                    } else {
+                        apply(inequality_case_nested(x));
+                        simp();
+                    }
                 }
                 assumption();
             }
         }
     "#;
-    let expanded = expand_pure_theorem_source(source, &[], "nested_apply", 0)
-        .expect("the checked nested theorem path should expand");
+    let expanded = expand_pure_theorem_source(source, &[], "nested_branch_apply", 0)
+        .expect("the checked nested branch path should expand");
     let selected = &expanded[expanded
-        .find("theorem nested_apply")
+        .find("theorem nested_branch_apply")
         .expect("expanded source should retain the selected theorem")..];
-    assert!(selected.contains("have x == 0 by {"), "{selected}");
     assert!(
-        selected.contains("apply(restate_zero(x)) using {"),
+        selected.contains("have x == 0 or") && selected.contains("if x == 0"),
         "{selected}"
     );
-    assert!(!selected.contains("apply(restate_zero(x));"), "{selected}");
+    assert!(
+        selected.contains("apply(equality_case_nested(x)) using {")
+            && selected.contains("apply(inequality_case_nested(x)) using {"),
+        "{selected}"
+    );
+    assert!(
+        !selected.contains("apply(equality_case_nested(x));")
+            && !selected.contains("apply(inequality_case_nested(x));"),
+        "{selected}"
+    );
     assert!(!selected.contains("simp();"), "{selected}");
     verify_click_theorems(&expanded)
-        .expect("the serialized nested pure scope should independently reverify");
+        .expect("the serialized nested pure branch should independently reverify");
 }
 
 #[test]
