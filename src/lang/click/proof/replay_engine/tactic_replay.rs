@@ -488,14 +488,37 @@ fn checked_linear_have(
     replay: &TacticReplayState,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-) -> Result<Option<(Proposition, ProofCertificate)>, ClickError> {
-    let application = match &have.proof {
-        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => None,
+) -> Result<Option<(Proposition, Option<ProofCertificate>)>, ClickError> {
+    enum Plan<'a> {
+        DirectSmart,
+        BareApply(&'a TheoremApplication),
+        Explicit(SimpleProofStep),
+    }
+
+    let plan = match &have.proof {
+        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
+            Plan::DirectSmart
+        }
         SourceProof::Script(tactics) => {
-            let [ProofTactic::ApplyTheorem(application)] = tactics.as_slice() else {
-                return Ok(None);
-            };
-            Some(application)
+            if let [ProofTactic::ApplyTheorem(application)] = tactics.as_slice() {
+                Plan::BareApply(application)
+            } else {
+                let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics) else {
+                    return Ok(None);
+                };
+                let [step] = certificate.steps() else {
+                    return Ok(None);
+                };
+                if !matches!(
+                    step,
+                    SimpleProofStep::ApplyTheoremUsing { .. }
+                        | SimpleProofStep::Assumption
+                        | SimpleProofStep::Normalize
+                ) {
+                    return Ok(None);
+                }
+                Plan::Explicit(step.clone())
+            }
         }
         SourceProof::Tactic(SmartTactic::Frame) => return Ok(None),
     };
@@ -533,47 +556,64 @@ fn checked_linear_have(
         &replay.unfolded_predicates,
         &replay.effect_facts,
     );
-    let proof = if let Some(application) = application {
-        let premises = select_explicit_theorem_application_premises(
-            theorem_environment,
-            application,
-            claim_label,
-            tactic_index,
-            available,
-            parameters,
-            arguments,
-            replay,
-            state,
-            predicate_environment,
-            click_function_environment,
-        )?;
-        proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
-            application: application.clone(),
-            premises,
-        })?
-    } else {
-        let mut closed = None;
-        for closer in [SimpleProofStep::Assumption, SimpleProofStep::Normalize] {
-            if let Ok(candidate) = proof.apply_step(closer) {
-                closed = Some(candidate);
-                break;
-            }
+    let (proof, append_certificate) = match plan {
+        Plan::BareApply(application) => {
+            let premises = select_explicit_theorem_application_premises(
+                theorem_environment,
+                application,
+                claim_label,
+                tactic_index,
+                available,
+                parameters,
+                arguments,
+                replay,
+                state,
+                predicate_environment,
+                click_function_environment,
+            )?;
+            (
+                proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
+                    application: application.clone(),
+                    premises,
+                })?,
+                true,
+            )
         }
-        let Some(closed) = closed else {
-            return Ok(None);
-        };
-        closed
+        Plan::DirectSmart => {
+            let mut closed = None;
+            for closer in [SimpleProofStep::Assumption, SimpleProofStep::Normalize] {
+                if let Ok(candidate) = proof.apply_step(closer) {
+                    closed = Some(candidate);
+                    break;
+                }
+            }
+            let Some(closed) = closed else {
+                return Ok(None);
+            };
+            (closed, true)
+        }
+        Plan::Explicit(step) => {
+            // This is a candidate migration for an already-simple source
+            // body. Preserve legacy failure diagnostics until the whole
+            // point-proof vocabulary has moved behind `Proof`.
+            let Ok(checked) = proof.apply_step(step) else {
+                return Ok(None);
+            };
+            (checked, false)
+        }
     };
     if !proof.is_complete() {
         return Err(ClickError::new(format!(
             "`{claim_label}` have proof {tactic_index}: checked proof retained an open goal"
         )));
     }
-    let body = proof.certificate();
-    let certificate = ProofCertificate::from_steps(vec![SimpleProofStep::Have {
-        proposition: have.proposition.clone(),
-        proof: Box::new(body),
-    }]);
+    let certificate = append_certificate.then(|| {
+        let body = proof.certificate();
+        ProofCertificate::from_steps(vec![SimpleProofStep::Have {
+            proposition: have.proposition.clone(),
+            proof: Box::new(body),
+        }])
+    });
     Ok(Some((goal, certificate)))
 }
 
@@ -2362,7 +2402,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 };
                 let (fact, surface_certificate, certificate_already_checked) =
                     match (checked_proof_result, smart_result) {
-                        (Some((fact, certificate)), _) => (fact, Some(certificate), true),
+                        (Some((fact, certificate)), _) => (fact, certificate, true),
                         (None, Some((fact, certificate))) => (fact, Some(certificate), false),
                         (None, None) => {
                             let fact = prove_have_at_current_point(

@@ -324,6 +324,11 @@ for `assumption` and `normalize`. The accepted successor is wrapped as the
 nested `Have` certificate and incorporated directly, without reconstructing
 or ordinarily replaying the selected closer.
 
+One-step explicit point `have` bodies using `assumption`, `normalize`, or
+`apply using` now check their semantic transition through `Proof` as well.
+Their already-simple source certificate remains the enclosing record, so the
+migration neither rebuilds nor duplicates it.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

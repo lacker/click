@@ -2844,6 +2844,43 @@ fn point_smart_have_retains_a_checked_simple_closer() {
 }
 
 #[test]
+fn explicit_linear_point_have_uses_the_checked_proof_path() {
+    let c_source = r#"
+            int32 identity(int32 value) {
+                return value;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 value) {
+                requires value >= 0;
+                ensures result >= 0;
+            } by {
+                have value >= 0 by {
+                    assumption();
+                }
+                step();
+                assumption();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("identity.c", c_source)])
+        .expect("explicit point have should advance through its checked simple step");
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("identity.c", c_source)],
+        "identity",
+        CProofClaim::Grouped,
+    )
+    .expect("explicit checked point have should remain expandable");
+    assert!(expanded.contains("have value >= 0 by {"));
+    assert!(expanded.matches("assumption();").count() >= 2);
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("expanded explicit point have should independently replay");
+}
+
+#[test]
 fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {
