@@ -43,6 +43,8 @@ struct PointProofContext<'a> {
     click_function_environment: &'a ClickFunctionEnvironment,
     theorem_environment: &'a TheoremEnvironment,
     unfolded_predicates: &'a [String],
+    available: &'a [Proposition],
+    effect_facts: &'a [ExecutionPureFact],
     lowering_context: Arc<Vec<Proposition>>,
 }
 
@@ -51,6 +53,7 @@ struct ProofState {
     goal: Goal,
     complete: bool,
     added_facts: Arc<Vec<Proposition>>,
+    checked_facts: Arc<Vec<Proposition>>,
 }
 
 /// One unresolved judgment owned by a `Proof`.
@@ -113,6 +116,7 @@ impl<'a> Proof<'a> {
                 goal: Goal::Proposition(Arc::new(goal)),
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -126,7 +130,7 @@ impl<'a> Proof<'a> {
     pub(super) fn for_point_goal(
         claim_label: &'a str,
         tactic_index: usize,
-        available: &[Proposition],
+        available: &'a [Proposition],
         goal: Proposition,
         parameters: &'a [syntax::C0Parameter],
         arguments: &'a [CExpression],
@@ -138,6 +142,7 @@ impl<'a> Proof<'a> {
         click_function_environment: &'a ClickFunctionEnvironment,
         theorem_environment: &'a TheoremEnvironment,
         unfolded_predicates: &'a [String],
+        effect_facts: &'a [ExecutionPureFact],
     ) -> Self {
         Self::for_point(
             claim_label,
@@ -154,6 +159,7 @@ impl<'a> Proof<'a> {
             click_function_environment,
             theorem_environment,
             unfolded_predicates,
+            effect_facts,
         )
     }
 
@@ -161,7 +167,7 @@ impl<'a> Proof<'a> {
     pub(super) fn for_point_frontier(
         claim_label: &'a str,
         tactic_index: usize,
-        available: &[Proposition],
+        available: &'a [Proposition],
         parameters: &'a [syntax::C0Parameter],
         arguments: &'a [CExpression],
         pre_state: &'a CState,
@@ -172,6 +178,7 @@ impl<'a> Proof<'a> {
         click_function_environment: &'a ClickFunctionEnvironment,
         theorem_environment: &'a TheoremEnvironment,
         unfolded_predicates: &'a [String],
+        effect_facts: &'a [ExecutionPureFact],
     ) -> Self {
         Self::for_point(
             claim_label,
@@ -188,6 +195,7 @@ impl<'a> Proof<'a> {
             click_function_environment,
             theorem_environment,
             unfolded_predicates,
+            effect_facts,
         )
     }
 
@@ -195,7 +203,7 @@ impl<'a> Proof<'a> {
     fn for_point(
         claim_label: &'a str,
         tactic_index: usize,
-        available: &[Proposition],
+        available: &'a [Proposition],
         goal: Goal,
         parameters: &'a [syntax::C0Parameter],
         arguments: &'a [CExpression],
@@ -207,6 +215,7 @@ impl<'a> Proof<'a> {
         click_function_environment: &'a ClickFunctionEnvironment,
         theorem_environment: &'a TheoremEnvironment,
         unfolded_predicates: &'a [String],
+        effect_facts: &'a [ExecutionPureFact],
     ) -> Self {
         let mut facts = PersistentFactIndex::default();
         for fact in available {
@@ -228,6 +237,8 @@ impl<'a> Proof<'a> {
                 click_function_environment,
                 theorem_environment,
                 unfolded_predicates,
+                available,
+                effect_facts,
                 lowering_context: Arc::new(lowering_context),
             })),
             state: Arc::new(ProofState {
@@ -235,6 +246,7 @@ impl<'a> Proof<'a> {
                 goal,
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -270,6 +282,11 @@ impl<'a> Proof<'a> {
                 application,
                 premises,
             } => self.apply_theorem_using(application, premises)?,
+            SimpleProofStep::TransportUsing {
+                source,
+                target,
+                premises,
+            } => self.apply_transport_using(source, target, premises)?,
             SimpleProofStep::Assumption => {
                 let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
                 if !self.state.facts.contains(goal) {
@@ -283,6 +300,7 @@ impl<'a> Proof<'a> {
                     goal: self.state.goal.clone(),
                     complete: true,
                     added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
                 }
             }
             SimpleProofStep::Normalize => {
@@ -298,6 +316,7 @@ impl<'a> Proof<'a> {
                     goal: self.state.goal.clone(),
                     complete: true,
                     added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
                 }
             }
             _ => {
@@ -336,6 +355,13 @@ impl<'a> Proof<'a> {
     /// delta without traversing or cloning the proof's complete fact set.
     pub(super) fn added_facts(&self) -> &[Proposition] {
         self.state.added_facts.as_ref()
+    }
+
+    /// Exact semantic facts selected or established by the latest step, in
+    /// step-defined order. This lets enclosing surface bookkeeping record the
+    /// checker-owned spellings without re-lowering them.
+    pub(super) fn checked_facts(&self) -> &[Proposition] {
+        self.state.checked_facts.as_ref()
     }
 
     fn apply_theorem_using(
@@ -422,6 +448,7 @@ impl<'a> Proof<'a> {
             facts,
             goal: self.state.goal.clone(),
             complete: false,
+            checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
         })
     }
@@ -504,7 +531,57 @@ impl<'a> Proof<'a> {
             facts,
             goal: self.state.goal.clone(),
             complete,
+            checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
+        })
+    }
+
+    fn apply_transport_using(
+        &self,
+        source: &ClickProposition,
+        target: &ClickProposition,
+        premises: &[ClickProposition],
+    ) -> Result<ProofState, ClickError> {
+        let ProofContext::Point(context) = self.context.as_ref() else {
+            return Err(self.step_error("`transport using` requires a point proof"));
+        };
+        if self.node.depth != 0 {
+            return Err(
+                self.step_error("point `transport using` currently requires the root proof")
+            );
+        }
+        let checked = check_point_fact_transport_using(
+            source,
+            target,
+            premises,
+            context.claim_label,
+            context.tactic_index,
+            context.available,
+            context.effect_facts,
+            context.parameters,
+            context.arguments,
+            context.pre_state,
+            context.state,
+            context.program_point_states,
+            context.surface_propositions,
+            context.predicate_environment,
+            context.click_function_environment,
+        )?;
+        let mut facts = self.state.facts.clone();
+        let added_facts = if facts.contains(&checked.target) {
+            Vec::new()
+        } else {
+            vec![checked.target.clone()]
+        };
+        let checked_facts = vec![checked.source, checked.target.clone()];
+        facts = facts.with_fact(checked.target);
+        let complete = self.goal().is_some_and(|goal| facts.contains(goal));
+        Ok(ProofState {
+            facts,
+            goal: self.state.goal.clone(),
+            complete,
+            added_facts: Arc::new(added_facts),
+            checked_facts: Arc::new(checked_facts),
         })
     }
 
@@ -809,6 +886,7 @@ mod tests {
             &predicate_environment,
             &click_function_environment,
             &theorem_environment,
+            &[],
             &[],
         );
         let fork = root.clone();

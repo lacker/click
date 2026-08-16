@@ -602,8 +602,25 @@ fn marked_constant_store_transport_retains_load_identity() {
     "#;
     let sources = [("touch_other.c", touch_c), ("pipeline.c", pipeline_c)];
 
-    verify_c0_sources(click_source, &sources)
-        .expect("the smart marked transport should verify before expansion");
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the smart marked transport should verify before expansion");
+    let simple_transport_checks = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                crate::instrumentation::VerificationEvent::TacticStarted(tactic)
+                    if tactic.claim == "pipeline.contract"
+                        && tactic.tactic_name == "transport"
+                        && tactic.class == "simple"
+            )
+        })
+        .count();
+    assert_eq!(
+        simple_transport_checks, 1,
+        "ordinary verification should not replay the smart transport before whole-certificate checking"
+    );
     let selected = click_source.find("transport(").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
     let expanded =

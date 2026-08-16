@@ -539,6 +539,7 @@ fn checked_bare_apply_have(
         click_function_environment,
         theorem_environment,
         &replay.unfolded_predicates,
+        &replay.effect_facts,
     );
     let proof = proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
         application: application.clone(),
@@ -656,13 +657,13 @@ fn replay_linear_tactics_without_frontier_loops(
                     "`{claim_label}` tactic {tactic_index}: `transport` requires a current statement frontier after at least one execution step"
                 )));
             }
-            let pre_state = replay.old_reference_state(&state);
+            let pre_state = replay.old_reference_state(&state).clone();
             let source = lower_point_proposition(
                 surface_source,
                 &requirement_pure_facts,
                 parsed_function.parameters(),
                 arguments,
-                pre_state,
+                &pre_state,
                 &state,
                 None,
                 &replay.program_point_states,
@@ -692,7 +693,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 &requirement_pure_facts,
                 parsed_function.parameters(),
                 arguments,
-                pre_state,
+                &pre_state,
                 &state,
                 None,
                 &replay.program_point_states,
@@ -729,45 +730,50 @@ fn replay_linear_tactics_without_frontier_loops(
                     )
                 ))
             })?;
-            let proof = ProofCertificate::from_proof_tactics(&[ProofTactic::TransportUsing {
+            let proof = Proof::for_point_frontier(
+                claim_label,
+                tactic_index,
+                &requirement_pure_facts,
+                parsed_function.parameters(),
+                arguments,
+                &pre_state,
+                &state,
+                &replay.program_point_states,
+                &replay.surface_propositions,
+                predicate_environment,
+                click_function_environment,
+                theorem_environment,
+                &replay.unfolded_predicates,
+                &replay.effect_facts,
+            );
+            let proof = proof.apply_step(SimpleProofStep::TransportUsing {
                 source: surface_source.clone(),
                 target: surface_target.clone(),
                 premises,
-            }])
-            .expect("explicit fact transport is a simple tactic");
-            let construction = ProofCertificateBuilder {
-                steps: proof.steps().to_vec(),
-                last_step_entry: replay.proof_certificate_builder.last_step_entry.clone(),
-                ..ProofCertificateBuilder::default()
+            })?;
+            let added_facts = proof.added_facts().to_vec();
+            let checked_facts = proof.checked_facts().to_vec();
+            let certificate = proof.certificate();
+            drop(proof);
+            let [checked_source, checked_target] = checked_facts.as_slice() else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: checked transport did not retain its source and target"
+                )));
             };
-            let result = complete_smart_tactic(
-                ProofReplayContext {
-                    state,
-                    pure_facts: requirement_pure_facts,
-                    replay,
-                    branch_path,
-                },
-                function_block,
-                parsed_function,
-                claims,
-                claim_label,
-                function_environment,
-                predicate_environment,
-                click_function_environment,
-                resource_environment,
-                theorem_environment,
-                function,
-                arguments,
-                tactic_index,
-                source_index,
-                construction,
-                false,
-                true,
-            )?;
-            state = result.state;
-            requirement_pure_facts = result.pure_facts;
-            replay = result.replay;
-            branch_path = result.branch_path;
+            replay
+                .surface_propositions
+                .record_lowering(surface_source, checked_source)?;
+            replay
+                .surface_propositions
+                .record_lowering(surface_target, checked_target)?;
+            for fact in &added_facts {
+                if !requirement_pure_facts.contains(fact) {
+                    requirement_pure_facts.push(fact.clone());
+                }
+            }
+            for step in certificate.steps() {
+                replay.proof_certificate_builder.push_step(step.clone());
+            }
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
             let slice =
                 end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
@@ -813,12 +819,16 @@ fn replay_linear_tactics_without_frontier_loops(
                 click_function_environment,
                 theorem_environment,
                 &replay.unfolded_predicates,
+                &replay.effect_facts,
             );
             let proof = proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
                 application: application.clone(),
                 premises,
             })?;
-            for fact in proof.added_facts() {
+            let added_facts = proof.added_facts().to_vec();
+            let certificate = proof.certificate();
+            drop(proof);
+            for fact in &added_facts {
                 if !requirement_pure_facts.contains(fact) {
                     requirement_pure_facts.push(fact.clone());
                 }
@@ -859,7 +869,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     replay.function_entry_derivations.push(derivation);
                 }
             }
-            for step in proof.certificate().steps() {
+            for step in certificate.steps() {
                 replay.proof_certificate_builder.push_step(step.clone());
             }
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
@@ -977,195 +987,32 @@ fn replay_linear_tactics_without_frontier_loops(
                 else {
                     unreachable!("mid-execution `transport` is completed by its pre-pass")
                 };
-                let mut explicit_premises = Vec::new();
-                for surface_premise in surface_premises {
-                    let premise = if let Some(recorded) = replay
-                        .surface_propositions
-                        .available_kernel(surface_premise, &requirement_pure_facts)
-                    {
-                        recorded.clone()
-                    } else {
-                        lower_point_proposition(
-                            surface_premise,
-                            &requirement_pure_facts,
-                            parsed_function.parameters(),
-                            arguments,
-                            &pre_state,
-                            &state,
-                            None,
-                            &replay.program_point_states,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                        .map_err(|message| {
-                            ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: could not lower `transport using` premise: {message}"
-                            ))
-                        })?
-                    };
-                    if !exact_fact_is_available(&premise, &requirement_pure_facts) {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: `transport using` requires an exact premise: {}",
-                            describe_missing_pure_fact(
-                                &premise,
-                                &requirement_pure_facts,
-                                state.resources().facts(),
-                                parsed_function.parameters(),
-                                arguments,
-                                &replay.effect_facts,
-                            )
-                        )));
-                    }
-                    if !explicit_premises.contains(&premise) {
-                        explicit_premises.push(premise);
-                    }
-                }
-                // Lowering memory expressions uses the already-validated
-                // ambient resource/loadability context. The proof search
-                // below is still restricted to explicit premises plus
-                // certified frame context.
-                let lowering_facts = requirement_pure_facts.as_slice();
-                let mut direct_lowering_facts =
-                    facts_for_direct_surface_lowering(&requirement_pure_facts);
-                for premise in &explicit_premises {
-                    if !direct_lowering_facts.contains(premise) {
-                        direct_lowering_facts.push(premise.clone());
-                    }
-                }
-                let source = if let Some(recorded) = replay
-                    .surface_propositions
-                    .available_kernel(surface_source, &requirement_pure_facts)
-                {
-                    recorded.clone()
-                } else {
-                    lower_point_proposition(
-                        surface_source,
-                        lowering_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        &pre_state,
-                        &state,
-                        None,
-                        &replay.program_point_states,
-                        predicate_environment,
-                        click_function_environment,
-                    )
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: could not lower `transport` source: {message}"
-                        ))
-                    })?
-                };
-                replay
-                    .surface_propositions
-                    .record_lowering(surface_source, &source)?;
-                let selected_assumptions = {
-                    let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
-                    let resource_facts = state
-                        .resources()
-                        .observable_facts_assuming_valid(&explicit_assumptions);
-                    requirement_pure_facts
-                        .iter()
-                        .filter(|fact| is_implicit_fact_transport_context(fact))
-                        .cloned()
-                        .chain(resource_facts)
-                        .fold(explicit_assumptions, |assumptions, fact| {
-                            assumptions.assume_proposition(fact)
-                        })
-                };
-                // A transport source spelled at a later program point than
-                // its listed fact is the same fact when the kernel proves the
-                // snapshots agree at the loaded pointers. Candidates still
-                // come only from the explicit premises, so the transport must
-                // still list the fact; the recorded effects and the selected
-                // assumptions only supply the frame evidence.
-                if !exact_fact_is_available(&source, &explicit_premises)
-                    && !snapshot_bridged_fact_is_available_under(
-                        &source,
-                        &explicit_premises,
-                        &selected_assumptions,
-                        &replay.effect_facts,
-                    )
-                    && selected_assumptions
-                        .derive_atomic_proposition(&source)
-                        .is_none()
-                {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `transport using` requires a source derivable from its explicit facts: {}",
-                        describe_missing_pure_fact(
-                            &source,
-                            &requirement_pure_facts,
-                            state.resources().facts(),
-                            parsed_function.parameters(),
-                            arguments,
-                            &replay.effect_facts,
-                        )
-                    )));
-                }
-                let target = lower_point_proposition(
+                let checked = check_point_fact_transport_using(
+                    surface_source,
                     surface_target,
-                    &direct_lowering_facts,
+                    surface_premises,
+                    claim_label,
+                    tactic_index,
+                    &requirement_pure_facts,
+                    &replay.effect_facts,
                     parsed_function.parameters(),
                     arguments,
                     &pre_state,
                     &state,
-                    None,
                     &replay.program_point_states,
+                    &replay.surface_propositions,
                     predicate_environment,
                     click_function_environment,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not lower `transport` target: {message}"
-                    ))
-                })?;
+                )?;
                 replay
                     .surface_propositions
-                    .record_lowering(surface_target, &target)?;
-                // The target can already be present under a different snapshot
-                // spelling; candidates come from the ambient facts, so the
-                // bridge only re-spells a fact that is genuinely available.
-                if exact_fact_is_available_across_effects(
-                    &target,
-                    &requirement_pure_facts,
-                    &replay.effect_facts,
-                ) || materialization_equivalent_available_fact(&target, &requirement_pure_facts)
-                    .is_some()
-                {
-                    if !requirement_pure_facts.contains(&target) {
-                        requirement_pure_facts.push(target.clone());
-                        assumptions = assumptions.assume_proposition(target);
-                    }
-                    end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
-                    continue;
-                }
-                let transition_facts =
-                    fact_transport_transition_facts(&replay.effect_facts, &source);
-                let transport_assumptions = transition_facts
-                    .iter()
-                    .fold(selected_assumptions, |assumptions, fact| {
-                        assumptions.assume_proposition(fact.proposition().clone())
-                    })
-                    .assume_proposition(source.clone());
-                if !certified_fact_transport_reaches_through(
-                    &source,
-                    &target,
-                    state.memory(),
-                    &transport_assumptions,
-                    &transition_facts,
-                ) {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: no certified frame transport applies to the exact source fact\n  source: {source:?}\n  current memory: {:?}\n  effect facts: {:?}",
-                        state.memory(),
-                        replay.effect_facts
-                    )));
-                }
-                if !requirement_pure_facts.contains(&target) {
-                    requirement_pure_facts.push(target.clone());
-                    assumptions = assumptions.assume_proposition(target);
+                    .record_lowering(surface_source, &checked.source)?;
+                replay
+                    .surface_propositions
+                    .record_lowering(surface_target, &checked.target)?;
+                if !requirement_pure_facts.contains(&checked.target) {
+                    requirement_pure_facts.push(checked.target.clone());
+                    assumptions = assumptions.assume_proposition(checked.target);
                 }
             }
             ProofTactic::StepUsing(premises) => {

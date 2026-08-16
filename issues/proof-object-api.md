@@ -302,6 +302,15 @@ one simple apply check in the later whole-certificate replay rather than a
 construction replay plus that final check. Proposition-only closers are
 transactionally rejected on an execution-frontier proof.
 
+The fourth checkpoint extracts mid-execution `TransportUsing` into one
+audited `check_point_fact_transport_using` operation shared by explicit source
+replay and `Proof::apply_step`. Bare mid-execution `transport` now searches for
+premises, applies the selected simple step once through `Proof`, incorporates
+its checked target delta, and retains its source/target spellings and
+certificate directly. The former `complete_smart_tactic` construction replay
+is gone for this path; snapshot/resource/effect semantics remain centralized
+in the same checker used by explicit certificates.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
