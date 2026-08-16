@@ -601,14 +601,21 @@ or allocate nodes in the unrelated fact index; explicit simple `have` scripts
 containing `witness` consequently use the ordinary certificate checker backed
 by `Proof`.
 
-`Extract` was deliberately not moved unchanged in the same slice. Its legacy
-checker scans the complete available context to find proper conjunctions and
-again for every antecedent of a discharged implication. Since `extract` is a
-simple step, that implementation violates the efficiency contract. Its Proof
-migration must first add persistent indexes for proper-conjunct membership and
-implication candidates (including the existing snapshot and quantified
-equivalences); moving the vector scan behind the new API would only hide the
-architectural bug.
+`Extract` was deliberately not moved unchanged in the witness slice. Its
+legacy checker scans the complete available context to find proper
+conjunctions and again for every antecedent of a discharged implication.
+Since `extract` is a simple step, that implementation violates the efficiency
+contract. `ProofFacts` now persistently indexes every strict conjunction
+subtree, and `Proof::apply_step(Extract)` uses that index for the exact
+proper-conjunct case. Failed extraction is transactional; successful
+extraction retains the named step and promotes the conjunct to a top-level
+fact with logarithmic persistent work. A deterministic 16-through-4096
+regression covers nested conjunctions and distinguishes a proper conjunct from
+an independently available fact. Point certificates using this structural
+case now cross the Proof boundary. Discharged-implication extraction remains
+on the legacy path until it has an indexed candidate lookup preserving the
+existing snapshot and quantified equivalences; moving that vector scan behind
+the new API would only hide the architectural bug.
 
 The execution branch container now accepts linear arm bodies made only of
 `StepUsing`, `TransportUsing`, and `UnfoldPredicate`. Each arm advances through the ordinary

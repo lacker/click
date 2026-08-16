@@ -207,6 +207,10 @@ pub(super) struct ProofFacts {
     prioritized: Option<Arc<PrioritizedProofFacts>>,
     top_level_exact: PersistentSet<Proposition>,
     exact: PersistentSet<Proposition>,
+    /// Every strict subtree of an available top-level conjunction. This is
+    /// the exact structural authority for `extract`; top-level facts are not
+    /// included merely because they are independently available.
+    proper_conjuncts: PersistentSet<Proposition>,
     /// Atomic exact facts after the same direct-load normalization used by
     /// condition replay. This lets a branch reject its opposite path with an
     /// indexed lookup instead of scanning every unrelated fact.
@@ -480,6 +484,7 @@ impl<'a> Proof<'a> {
             } => self.apply_transport_using(source, target, premises)?,
             SimpleProofStep::UnfoldPredicate(name) => self.apply_execution_unfold(name)?,
             SimpleProofStep::Witness(witness) => self.apply_point_witness(witness)?,
+            SimpleProofStep::Extract(proposition) => self.apply_extract(proposition)?,
             SimpleProofStep::Assumption => {
                 let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
                 if !self.state.facts.contains(goal) {
@@ -1386,6 +1391,33 @@ impl<'a> Proof<'a> {
         })
     }
 
+    fn apply_extract(&self, surface: &ClickProposition) -> Result<ProofState, ClickError> {
+        if matches!(self.context.as_ref(), ProofContext::Execution(_)) {
+            return Err(self.step_error("`extract` requires a proposition proof"));
+        }
+        let proposition = self.lower_surface_proposition(surface, "`extract` proposition")?;
+        if !self.state.facts.contains_proper_conjunct(&proposition) {
+            return Err(self.step_error(format!(
+                "`extract` proposition is not a proper conjunct of an exact available fact: {}",
+                describe_pure_fact(&proposition, &[], &[])
+            )));
+        }
+        let added_facts = (!self.state.facts.contains_top_level(&proposition))
+            .then(|| proposition.clone())
+            .into_iter()
+            .collect::<Vec<_>>();
+        let facts = self.state.facts.with_fact(proposition);
+        let complete = self.goal().is_some_and(|goal| facts.contains(goal));
+        Ok(ProofState {
+            facts,
+            goal: self.state.goal.clone(),
+            complete,
+            added_facts: Arc::new(added_facts.clone()),
+            checked_facts: Arc::new(added_facts),
+            execution: None,
+        })
+    }
+
     fn apply_transport_using(
         &self,
         source: &ClickProposition,
@@ -2191,6 +2223,7 @@ impl ProofFacts {
         let mut ordered = PersistentSequence::default();
         let mut top_level_exact = PersistentSet::default();
         let mut exact = PersistentSet::default();
+        let mut proper_conjuncts = PersistentSet::default();
         let mut normalized_exact = PersistentSet::default();
         let mut by_snapshot_blind = PersistentMap::default();
         let mut assumptions = PureFactContext::new();
@@ -2205,6 +2238,7 @@ impl ProofFacts {
             top_level_exact = top_level_exact.with_value(fact.clone());
             by_predicate = index_predicate_fact(by_predicate, fact);
             if matches!(fact, Proposition::And(_, _)) {
+                proper_conjuncts = index_proper_conjuncts(proper_conjuncts, fact);
                 let mut conjuncts = Vec::new();
                 collect_owned_atomic_conjuncts(fact, &mut conjuncts);
                 for conjunct in conjuncts {
@@ -2236,6 +2270,7 @@ impl ProofFacts {
             prioritized: None,
             top_level_exact,
             exact,
+            proper_conjuncts,
             normalized_exact,
             by_snapshot_blind,
             assumptions,
@@ -2249,14 +2284,20 @@ impl ProofFacts {
         self.exact.contains(fact)
     }
 
+    fn contains_top_level(&self, fact: &Proposition) -> bool {
+        self.top_level_exact.contains(fact)
+    }
+
     pub(super) fn with_fact(&self, fact: Proposition) -> Self {
         if self.top_level_exact.contains(&fact) {
             return self.clone();
         }
         let mut exact = self.exact.clone();
+        let mut proper_conjuncts = self.proper_conjuncts.clone();
         let mut normalized_exact = self.normalized_exact.clone();
         let mut by_snapshot_blind = self.by_snapshot_blind.clone();
         if matches!(fact, Proposition::And(_, _)) {
+            proper_conjuncts = index_proper_conjuncts(proper_conjuncts, &fact);
             let mut conjuncts = Vec::new();
             collect_owned_atomic_conjuncts(&fact, &mut conjuncts);
             for conjunct in conjuncts {
@@ -2288,6 +2329,7 @@ impl ProofFacts {
             prioritized: self.prioritized.clone(),
             top_level_exact: self.top_level_exact.with_value(fact.clone()),
             exact,
+            proper_conjuncts,
             normalized_exact,
             by_snapshot_blind,
             assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
@@ -2299,6 +2341,15 @@ impl ProofFacts {
 
     pub(super) fn assumptions(&self) -> &PureFactContext {
         &self.assumptions
+    }
+
+    /// Exact proper-conjunct membership with the same condition-polarity
+    /// equivalence as the legacy structural checker.
+    pub(super) fn contains_proper_conjunct(&self, required: &Proposition) -> bool {
+        self.proper_conjuncts.contains(required)
+            || condition_polarity_spellings(required)
+                .iter()
+                .any(|spelling| self.proper_conjuncts.contains(spelling))
     }
 
     pub(super) fn implicit_transport_assumptions(&self) -> &PureFactContext {
@@ -2446,6 +2497,20 @@ fn index_snapshot_fact(
         }
     }
     by_snapshot_blind
+}
+
+fn index_proper_conjuncts(
+    mut index: PersistentSet<Proposition>,
+    fact: &Proposition,
+) -> PersistentSet<Proposition> {
+    let Proposition::And(left, right) = fact else {
+        return index;
+    };
+    for conjunct in [left.as_ref(), right.as_ref()] {
+        index = index.with_value(conjunct.clone());
+        index = index_proper_conjuncts(index, conjunct);
+    }
+    index
 }
 
 fn index_transport_contexts(
@@ -3174,6 +3239,104 @@ mod tests {
                 ]
             );
             assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn point_extract_uses_persistent_proper_conjunct_membership() {
+        let state = CState::new();
+        let program_point_states = ProgramPointStates::new();
+        let surface_propositions = SurfacePropositionMap::default();
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let surface = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(7))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(7))),
+        };
+        let kernel = lower_point_proposition_with_assumptions(
+            &surface,
+            &PureFactContext::new(),
+            &[],
+            &[],
+            &state,
+            &state,
+            None,
+            &program_point_states,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("constant equality should lower");
+
+        let merely_top_level = Proof::for_point_goal(
+            "top-level is not a proper conjunct",
+            0,
+            std::slice::from_ref(&kernel),
+            kernel.clone(),
+            &[],
+            &[],
+            &state,
+            &state,
+            &program_point_states,
+            &surface_propositions,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+            &[],
+            &[],
+        );
+        assert!(
+            merely_top_level
+                .apply_step(SimpleProofStep::Extract(surface.clone()))
+                .is_err(),
+            "an independently available fact is not extractable unless it is also a proper conjunct"
+        );
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut available = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            available.push(Proposition::And(
+                Box::new(indexed_fact(size + 1)),
+                Box::new(Proposition::And(
+                    Box::new(kernel.clone()),
+                    Box::new(indexed_fact(size + 2)),
+                )),
+            ));
+            let root = Proof::for_point_goal(
+                "persistent extract",
+                0,
+                &available,
+                kernel.clone(),
+                &[],
+                &[],
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let step = SimpleProofStep::Extract(surface.clone());
+            let before = fact_node_allocations();
+            let extracted = root
+                .apply_step(step.clone())
+                .expect("the nested proper conjunct should extract");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 32 * logarithmic_height + 128;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} extract allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+            assert_eq!(extracted.certificate().steps(), &[step]);
+            assert_eq!(extracted.added_facts(), std::slice::from_ref(&kernel));
+            assert!(extracted.is_complete());
         }
     }
 
