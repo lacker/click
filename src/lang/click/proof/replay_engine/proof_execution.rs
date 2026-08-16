@@ -282,6 +282,58 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             else_branch,
             continuation,
         } => {
+            // The first execution-branch Proof slice owns the complete
+            // ordinary-verification path for an undecided C `if` with empty
+            // arms. Expansion capture continues through the legacy path
+            // until nonempty arm certificates and selected-source offsets
+            // migrate into the same structural container.
+            if expansion_capture.is_none()
+                && ensuring.is_none()
+                && matches!(then_branch.as_ref(), InternalProofNode::Done)
+                && matches!(else_branch.as_ref(), InternalProofNode::Done)
+            {
+                let proof = Proof::for_execution_frontier(
+                    claim_label,
+                    *index,
+                    context.clone(),
+                    function_block,
+                    function,
+                    parsed_function,
+                    arguments,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                );
+                let checkpoint = proof.checkpoint();
+                let branches = proof.begin_execution_branch()?;
+                if branches.has_both_feasible_arms() {
+                    let proof = branches.join_empty()?;
+                    let certificate = proof.certificate_since(&checkpoint)?;
+                    let mut joined_context = proof.into_execution_context()?;
+                    for step in certificate.steps() {
+                        joined_context
+                            .replay
+                            .proof_certificate_builder
+                            .push_step(step.clone());
+                    }
+                    return execute_internal_proof(
+                        continuation,
+                        joined_context,
+                        None,
+                        function_block,
+                        parsed_function,
+                        claims,
+                        claim_label,
+                        function_environment,
+                        predicate_environment,
+                        click_function_environment,
+                        resource_environment,
+                        theorem_environment,
+                        function,
+                        arguments,
+                    );
+                }
+            }
             let mut context = context;
             let statement_index = context.replay.frontier.next_statement_index;
             // The branch condition is spelled against the branch statement's

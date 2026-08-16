@@ -1,7 +1,6 @@
 use super::*;
 
 #[derive(Clone)]
-#[allow(dead_code)] // Consumed by the next execution-branch Proof slice.
 pub(in crate::lang::click::proof) struct CertifiedProofConditionTransition {
     pub(in crate::lang::click::proof) is_true: bool,
     pub(in crate::lang::click::proof) pure_facts: ProofFacts,
@@ -15,7 +14,6 @@ pub(in crate::lang::click::proof) struct CertifiedProofConditionTransition {
 /// This is the non-planning branch operation: it neither minimizes premises
 /// nor reconstructs a certificate. Each feasible path receives only its
 /// kernel-issued path facts, appended persistently to the shared ancestor.
-#[allow(dead_code)] // Consumed by the next execution-branch Proof slice.
 pub(in crate::lang::click::proof) fn certified_proof_condition_transitions(
     state: &CState,
     pure_facts: &ProofFacts,

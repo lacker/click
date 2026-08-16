@@ -73,6 +73,41 @@ fn parses_frontier_branch_ensuring_interface() {
 }
 
 #[test]
+fn empty_frontier_branch_uses_the_checked_structural_join() {
+    let c_source = r#"
+        int32 identity(int32 x) {
+            if (x < 0) {
+            } else {
+            }
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "identity.c";
+
+        int32 identity(int32 x) {
+            ensures returns_x: result == x;
+        } by {
+            branch {
+                then {
+                }
+                else {
+                }
+            }
+            step();
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("identity.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "empty frontier branch should retain and check its structural proof: {}",
+            error.message()
+        )
+    });
+}
+
+#[test]
 fn rejects_removed_reach_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",

@@ -497,8 +497,22 @@ are persistent AVL maps as well, including real persistent deletion rather
 than tombstones, so one arm-local condition no longer clones a complete map
 hidden beneath `PureFactContext`. Multi-size allocation regressions cover map
 removal, local fact insertion, and a 16-through-4096 condition split. This is
-the semantic arm-input operation for the next execution `Proof` branch
-container; branch entry, body ownership, and join are not yet migrated.
+the semantic arm-input operation used by the execution `Proof` branch
+container described next.
+
+The first C-execution structural container now owns undecided branches with
+empty arms. `Proof::begin_execution_branch` creates only kernel-feasible arm
+proofs, retains each condition theorem and path-fact delta, and advances the
+two C frontiers without creating detached certificate-builder evidence.
+`join_empty` requires both checked descendants at the exact shared
+continuation and equal C states, then derives common replay metadata from the
+shared root and source branch structure rather than selecting one arm's
+metadata. It records one `SimpleProofStep::Branch` atomically. Ordinary source
+verification uses this path for an unqualified empty `branch`; selected-source
+expansion, decided paths, nonempty bodies, and `ensuring` still use the legacy
+driver. A 16-through-4096 fact regression bounds the complete checked
+fork/join by logarithmic persistent-node growth and executes the retained
+continuation afterward.
 
 Function-entry execution prerequisites and their kernel derivations now use a
 persistent insertion-ordered set. Exact admission and one local insertion are

@@ -1873,7 +1873,7 @@ pub(super) fn execute_step_from_execution_point(
     Ok(())
 }
 
-fn resume_after_completed_region(
+pub(super) fn resume_after_completed_region(
     replay: &mut TacticReplayState,
     function_block: &FunctionBlock,
     state: &CState,
