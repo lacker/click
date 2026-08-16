@@ -122,8 +122,14 @@ fn instantiate_theorem_application(
     )
 }
 
+/// Instantiates one theorem from an explicit evidence set while borrowing the
+/// already-indexed contexts used to unfold requirements and lower arguments.
+///
+/// `available` is the complete admissible evidence set: ambient facts in the
+/// assumption contexts can affect representation and evaluation, but cannot
+/// discharge an omitted theorem requirement.
 #[allow(clippy::too_many_arguments)]
-fn instantiate_theorem_application_with_assumptions(
+pub(super) fn instantiate_theorem_application_with_assumptions(
     theorem_environment: &TheoremEnvironment,
     application: &TheoremApplication,
     claim_label: &str,

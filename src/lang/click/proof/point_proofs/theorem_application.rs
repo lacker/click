@@ -65,6 +65,36 @@ pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_at_curre
     click_function_environment: &ClickFunctionEnvironment,
     lowering_facts: &[Proposition],
 ) -> Result<Option<Theorem>, ClickError> {
+    let assumptions = assumptions_from_propositions(lowering_facts);
+    kernel_standard_theorem_derivation_at_current_point_with_assumptions(
+        theorem_environment,
+        application,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+        &assumptions,
+    )
+}
+
+/// Persistent-context form used by `Proof::apply_step`: theorem arguments may
+/// consult the ambient checked context without rebuilding it from a vector.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_at_current_point_with_assumptions(
+    theorem_environment: &TheoremEnvironment,
+    application: &TheoremApplication,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    lowering_assumptions: &PureFactContext,
+) -> Result<Option<Theorem>, ClickError> {
     if !matches!(
         application.name.as_str(),
         "int32_nonnegative_add_within_max_is_defined"
@@ -92,12 +122,11 @@ pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_at_curre
         result: None,
         program_point_states,
     };
-    let assumptions = assumptions_from_propositions(lowering_facts);
     let (values, _) = theorem_application_bindings(
         theorem,
         application,
         &context,
-        &assumptions,
+        lowering_assumptions,
         predicate_environment,
         click_function_environment,
     )
