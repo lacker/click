@@ -367,6 +367,13 @@ owned exact fact set and surface lowerings without advancing C. Linear smart
 step/execute plans may therefore retain mixed sequences of explicit fact
 transports and statement steps; structured steps remain the fallback boundary.
 
+The existing execution-point `UnfoldPredicate` judgment is now one named
+`check_unfold_predicate` operation rather than an inline dispatcher branch.
+It preserves the current fact rewriting, surface lowering, and contract-entry
+derivation behavior. Explicit source replay already uses this shared checker;
+admitting the same operation through execution-frontier `Proof` is the next
+small transition migration.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
