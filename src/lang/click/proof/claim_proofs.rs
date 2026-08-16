@@ -1146,8 +1146,8 @@ pub(super) fn finish_ordered_proof_replay(
         );
         let certified_execution = checked_c_function_execution_with_entry_derivations(
             certified_execution,
-            replay.function_entry_derivations.clone(),
-            replay.function_entry_execution_prerequisites.clone(),
+            replay.function_entry_derivations.to_vec(),
+            replay.function_entry_execution_prerequisites.to_vec(),
         );
         if let Some(limit) = certified_execution.limit() {
             if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {

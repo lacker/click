@@ -1517,13 +1517,10 @@ pub(super) fn execute_step_from_execution_point(
             .any(|required| proposition_tree_contains(required, conclusion))
             && exact_fact_is_available(conclusion, available_pure_facts)
             && !replay.execution_start_facts.contains(conclusion)
-            && !replay
-                .function_entry_execution_prerequisites
-                .contains(conclusion)
         {
             replay
                 .function_entry_execution_prerequisites
-                .push(conclusion.clone());
+                .insert(conclusion.clone());
         }
     }
     if matches!(loop_step_policy, LoopStepPolicy::ApplyVerifiedRule)

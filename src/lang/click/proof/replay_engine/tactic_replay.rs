@@ -932,17 +932,10 @@ fn replay_linear_tactics_without_frontier_loops(
                 while let Proposition::Implies(_, body) = conclusion {
                     conclusion = body;
                 }
-                if !replay
+                replay
                     .function_entry_execution_prerequisites
-                    .contains(conclusion)
-                {
-                    replay
-                        .function_entry_execution_prerequisites
-                        .push(conclusion.clone());
-                }
-                if !replay.function_entry_derivations.contains(&derivation) {
-                    replay.function_entry_derivations.push(derivation);
-                }
+                    .insert(conclusion.clone());
+                replay.function_entry_derivations.insert(derivation);
             }
             for step in certificate.steps() {
                 replay.proof_certificate_builder.push_step(step.clone());
@@ -2153,17 +2146,10 @@ fn replay_linear_tactics_without_frontier_loops(
                     while let Proposition::Implies(_, body) = conclusion {
                         conclusion = body;
                     }
-                    if !replay
+                    replay
                         .function_entry_execution_prerequisites
-                        .contains(conclusion)
-                    {
-                        replay
-                            .function_entry_execution_prerequisites
-                            .push(conclusion.clone());
-                    }
-                    if !replay.function_entry_derivations.contains(&derivation) {
-                        replay.function_entry_derivations.push(derivation);
-                    }
+                        .insert(conclusion.clone());
+                    replay.function_entry_derivations.insert(derivation);
                 }
                 for fact in all_pure_facts {
                     if !applied.contains(&fact) {
@@ -2423,17 +2409,10 @@ fn replay_linear_tactics_without_frontier_loops(
                             while let Proposition::Implies(_, body) = conclusion {
                                 conclusion = body;
                             }
-                            if !replay
+                            replay
                                 .function_entry_execution_prerequisites
-                                .contains(conclusion)
-                            {
-                                replay
-                                    .function_entry_execution_prerequisites
-                                    .push(conclusion.clone());
-                            }
-                            if !replay.function_entry_derivations.contains(&derivation) {
-                                replay.function_entry_derivations.push(derivation);
-                            }
+                                .insert(conclusion.clone());
+                            replay.function_entry_derivations.insert(derivation);
                         }
                     }
                 }
@@ -2459,17 +2438,10 @@ fn replay_linear_tactics_without_frontier_loops(
                         &fact,
                     )
                 {
-                    if !replay
+                    replay
                         .function_entry_execution_prerequisites
-                        .contains(&fact)
-                    {
-                        replay
-                            .function_entry_execution_prerequisites
-                            .push(fact.clone());
-                    }
-                    if !replay.function_entry_derivations.contains(&derivation) {
-                        replay.function_entry_derivations.push(derivation);
-                    }
+                        .insert(fact.clone());
+                    replay.function_entry_derivations.insert(derivation);
                 }
                 if !requirement_pure_facts.contains(&fact) {
                     requirement_pure_facts.push(fact.clone());

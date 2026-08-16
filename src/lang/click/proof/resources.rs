@@ -415,8 +415,8 @@ pub(super) fn observe_composite_resource(
     state: CState,
     available_pure_facts: &mut Vec<Proposition>,
     surface_propositions: &mut SurfacePropositionMap,
-    count_derivations: &mut Vec<Theorem>,
-    count_certification_facts: &mut Vec<Proposition>,
+    count_derivations: &mut PersistentOrderedSet<Theorem>,
+    count_certification_facts: &mut PersistentOrderedSet<Proposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
@@ -493,12 +493,8 @@ pub(super) fn observe_composite_resource(
                     describe_resource_clause(resource)
                 ))
             })?;
-            if !count_derivations.contains(&derivation) {
-                count_derivations.push(derivation);
-            }
-            if !count_certification_facts.contains(&count_kernel) {
-                count_certification_facts.push(count_kernel.clone());
-            }
+            count_derivations.insert(derivation);
+            count_certification_facts.insert(count_kernel.clone());
             surface_propositions.record_lowering(&count_witness, &count_kernel)?;
             if !available_pure_facts.contains(&count_kernel) {
                 available_pure_facts.push(count_kernel);
@@ -544,10 +540,10 @@ pub(super) fn observe_composite_resource(
             ))
         })?;
         if !count_derivations.contains(&nonnegative_derivation) {
-            count_derivations.push(nonnegative_derivation);
+            count_derivations.insert(nonnegative_derivation);
         }
         if !count_certification_facts.contains(&nonnegative_kernel) {
-            count_certification_facts.push(nonnegative_kernel.clone());
+            count_certification_facts.insert(nonnegative_kernel.clone());
         }
         surface_propositions.record_lowering(&nonnegative_witness, &nonnegative_kernel)?;
         if !available_pure_facts.contains(&nonnegative_kernel) {

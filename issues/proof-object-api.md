@@ -470,6 +470,15 @@ diagnostic path instead of cloning every owned string, while `push`, join-time
 is diagnostic rather than semantic, but removing it prevents otherwise-cheap
 semantic forks from retaining a hidden path-depth clone.
 
+Function-entry execution prerequisites and their kernel derivations now use a
+persistent insertion-ordered set. Exact admission and one local insertion are
+logarithmic, forks share both the AVL index and ordered history, and final
+certification alone materializes the ordered vectors it consumes. The AVL is
+one shared `PersistentSet` primitive also used by `ProofFacts`; the earlier
+fact-specific duplicate implementation was removed. A deterministic
+16-through-4096 regression bounds local node allocation and checks ancestor
+isolation, insertion order, and allocation-free duplicate admission.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

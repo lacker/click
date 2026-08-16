@@ -1,5 +1,11 @@
 use super::*;
+use std::cmp::Ordering;
 use std::sync::Arc;
+
+#[cfg(test)]
+thread_local! {
+    static PERSISTENT_SET_NODE_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// Identifies the `close_invariants` step of a replayed certificate well
 /// enough to emit a `click timing:` line for the work its caller does on its
@@ -62,12 +68,12 @@ pub(super) struct TacticReplayState {
     /// Exact non-contract facts selected by a statement certificate, resource
     /// observation, or explicit kernel theorem while the C frontier is still
     /// at function entry.
-    pub(super) function_entry_execution_prerequisites: Vec<Proposition>,
+    pub(super) function_entry_execution_prerequisites: PersistentOrderedSet<Proposition>,
     /// Kernel-issued implications produced by explicit theorem applications
     /// and resource-count observations at function entry. Final certification
     /// independently discharges their premises before admitting conclusions
     /// that were exact assumptions of the checked execution.
-    pub(super) function_entry_derivations: Vec<Theorem>,
+    pub(super) function_entry_derivations: PersistentOrderedSet<Theorem>,
     /// Frontier-local loop proofs become part of the checked function proof,
     /// not temporary tactic state.  Final kernel certification rebuilds the
     /// annotated function from these bound clauses and reuses these rules.
@@ -220,6 +226,230 @@ impl<'a, T> IntoIterator for &'a PersistentSequence<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+/// A deterministic insertion-ordered set with persistent exact membership.
+///
+/// The sequence preserves certificate/certification order; the AVL index
+/// makes exact queries and one local insertion logarithmic. Both roots are
+/// shared by a clone, so search forks never copy unrelated entries.
+#[derive(Clone)]
+pub(super) struct PersistentOrderedSet<T> {
+    ordered: PersistentSequence<T>,
+    exact: PersistentSet<T>,
+}
+
+/// A persistent AVL set used by checked proof-state indexes.
+#[derive(Clone)]
+pub(super) struct PersistentSet<T> {
+    root: Option<Arc<PersistentSetNode<T>>>,
+}
+
+struct PersistentSetNode<T> {
+    value: Arc<T>,
+    left: Option<Arc<PersistentSetNode<T>>>,
+    right: Option<Arc<PersistentSetNode<T>>>,
+    height: u16,
+}
+
+impl<T> Default for PersistentOrderedSet<T> {
+    fn default() -> Self {
+        Self {
+            ordered: PersistentSequence::default(),
+            exact: PersistentSet::default(),
+        }
+    }
+}
+
+impl<T> Default for PersistentSet<T> {
+    fn default() -> Self {
+        Self { root: None }
+    }
+}
+
+impl<T: Ord> PersistentSet<T> {
+    pub(super) fn with_value(&self, value: T) -> Self {
+        Self {
+            root: Some(insert_persistent_set_node(
+                self.root.as_ref(),
+                Arc::new(value),
+            )),
+        }
+    }
+
+    pub(super) fn contains(&self, value: &T) -> bool {
+        let mut node = self.root.as_ref();
+        while let Some(current) = node {
+            match value.cmp(current.value.as_ref()) {
+                Ordering::Less => node = current.left.as_ref(),
+                Ordering::Equal => return true,
+                Ordering::Greater => node = current.right.as_ref(),
+            }
+        }
+        false
+    }
+
+    #[cfg(test)]
+    pub(super) fn lookup_comparisons(&self, value: &T) -> usize {
+        let mut comparisons = 0;
+        let mut node = self.root.as_ref();
+        while let Some(current) = node {
+            comparisons += 1;
+            match value.cmp(current.value.as_ref()) {
+                Ordering::Less => node = current.left.as_ref(),
+                Ordering::Equal => return comparisons,
+                Ordering::Greater => node = current.right.as_ref(),
+            }
+        }
+        comparisons
+    }
+
+    #[cfg(test)]
+    pub(super) fn shares_root_with(&self, other: &Self) -> bool {
+        match (&self.root, &other.root) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+pub(super) fn persistent_set_node_allocations() -> usize {
+    PERSISTENT_SET_NODE_ALLOCATIONS.with(std::cell::Cell::get)
+}
+
+impl<T: Clone + Ord> PersistentOrderedSet<T> {
+    pub(super) fn insert(&mut self, value: T) -> bool {
+        if self.exact.contains(&value) {
+            return false;
+        }
+        self.exact = self.exact.with_value(value.clone());
+        self.ordered.push(value);
+        true
+    }
+
+    pub(super) fn contains(&self, value: &T) -> bool {
+        self.exact.contains(value)
+    }
+
+    pub(super) fn iter(&self) -> PersistentSequenceIter<'_, T> {
+        self.ordered.iter()
+    }
+
+    pub(super) fn to_vec(&self) -> Vec<T> {
+        self.iter().cloned().collect()
+    }
+}
+
+/// Ordered-set iteration follows accepted-step order rather than tree order.
+impl<'a, T: Clone + Ord> IntoIterator for &'a PersistentOrderedSet<T> {
+    type Item = &'a T;
+    type IntoIter = PersistentSequenceIter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+fn persistent_set_node_height<T>(node: Option<&Arc<PersistentSetNode<T>>>) -> u16 {
+    node.map_or(0, |node| node.height)
+}
+
+fn make_persistent_set_node<T>(
+    value: Arc<T>,
+    left: Option<Arc<PersistentSetNode<T>>>,
+    right: Option<Arc<PersistentSetNode<T>>>,
+) -> Arc<PersistentSetNode<T>> {
+    #[cfg(test)]
+    PERSISTENT_SET_NODE_ALLOCATIONS.with(|allocations| allocations.set(allocations.get() + 1));
+    Arc::new(PersistentSetNode {
+        value,
+        height: 1 + persistent_set_node_height(left.as_ref())
+            .max(persistent_set_node_height(right.as_ref())),
+        left,
+        right,
+    })
+}
+
+fn balance_persistent_set_node<T>(
+    value: Arc<T>,
+    left: Option<Arc<PersistentSetNode<T>>>,
+    right: Option<Arc<PersistentSetNode<T>>>,
+) -> Arc<PersistentSetNode<T>> {
+    let left_height = persistent_set_node_height(left.as_ref());
+    let right_height = persistent_set_node_height(right.as_ref());
+    if left_height > right_height + 1 {
+        let left_node = left.as_ref().expect("left-heavy node has a left child");
+        if persistent_set_node_height(left_node.left.as_ref())
+            >= persistent_set_node_height(left_node.right.as_ref())
+        {
+            let new_right = make_persistent_set_node(value, left_node.right.clone(), right);
+            return make_persistent_set_node(
+                left_node.value.clone(),
+                left_node.left.clone(),
+                Some(new_right),
+            );
+        }
+        let middle = left_node
+            .right
+            .as_ref()
+            .expect("left-right-heavy node has a middle child");
+        let new_left = make_persistent_set_node(
+            left_node.value.clone(),
+            left_node.left.clone(),
+            middle.left.clone(),
+        );
+        let new_right = make_persistent_set_node(value, middle.right.clone(), right);
+        return make_persistent_set_node(middle.value.clone(), Some(new_left), Some(new_right));
+    }
+    if right_height > left_height + 1 {
+        let right_node = right.as_ref().expect("right-heavy node has a right child");
+        if persistent_set_node_height(right_node.right.as_ref())
+            >= persistent_set_node_height(right_node.left.as_ref())
+        {
+            let new_left = make_persistent_set_node(value, left, right_node.left.clone());
+            return make_persistent_set_node(
+                right_node.value.clone(),
+                Some(new_left),
+                right_node.right.clone(),
+            );
+        }
+        let middle = right_node
+            .left
+            .as_ref()
+            .expect("right-left-heavy node has a middle child");
+        let new_left = make_persistent_set_node(value, left, middle.left.clone());
+        let new_right = make_persistent_set_node(
+            right_node.value.clone(),
+            middle.right.clone(),
+            right_node.right.clone(),
+        );
+        return make_persistent_set_node(middle.value.clone(), Some(new_left), Some(new_right));
+    }
+    make_persistent_set_node(value, left, right)
+}
+
+fn insert_persistent_set_node<T: Ord>(
+    node: Option<&Arc<PersistentSetNode<T>>>,
+    value: Arc<T>,
+) -> Arc<PersistentSetNode<T>> {
+    let Some(node) = node else {
+        return make_persistent_set_node(value, None, None);
+    };
+    match value.as_ref().cmp(node.value.as_ref()) {
+        Ordering::Less => balance_persistent_set_node(
+            node.value.clone(),
+            Some(insert_persistent_set_node(node.left.as_ref(), value)),
+            node.right.clone(),
+        ),
+        Ordering::Equal => node.clone(),
+        Ordering::Greater => balance_persistent_set_node(
+            node.value.clone(),
+            node.left.clone(),
+            Some(insert_persistent_set_node(node.right.as_ref(), value)),
+        ),
     }
 }
 
@@ -1272,6 +1502,42 @@ mod proof_fact_store_tests {
         );
         assert!(!sequence.shares_tail_with(&ancestor));
         assert_eq!(ancestor.tail.as_ref().map(Arc::strong_count), Some(2));
+    }
+
+    #[test]
+    fn persistent_ordered_set_forks_and_local_insertions_scale_logarithmically() {
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut set = PersistentOrderedSet::default();
+            for value in 0..size {
+                assert!(set.insert(value));
+            }
+            let ancestor = set.clone();
+            assert!(set.exact.shares_root_with(&ancestor.exact));
+            assert!(set.ordered.shares_tail_with(&ancestor.ordered));
+
+            let before = PERSISTENT_SET_NODE_ALLOCATIONS.with(std::cell::Cell::get);
+            assert!(set.insert(size));
+            let allocations = PERSISTENT_SET_NODE_ALLOCATIONS.with(std::cell::Cell::get) - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 4 * logarithmic_height + 8;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} local insertion allocated {allocations} set nodes (bound {allocation_bound})"
+            );
+            assert!(!ancestor.contains(&size));
+            assert!(set.contains(&size));
+            assert_eq!(
+                set.iter().copied().collect::<Vec<_>>(),
+                (0..=size).collect::<Vec<_>>()
+            );
+
+            let before_duplicate = PERSISTENT_SET_NODE_ALLOCATIONS.with(std::cell::Cell::get);
+            assert!(!set.insert(size));
+            assert_eq!(
+                PERSISTENT_SET_NODE_ALLOCATIONS.with(std::cell::Cell::get),
+                before_duplicate
+            );
+        }
     }
 }
 

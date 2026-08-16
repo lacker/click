@@ -1,13 +1,7 @@
 use super::pure_theorems::{PureTheoremContext, lower_pure_theorem_proposition};
 use super::*;
 
-use std::cmp::Ordering;
 use std::sync::Arc;
-
-#[cfg(test)]
-thread_local! {
-    static FACT_NODE_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
 
 /// Immutable checked proof state exposed to smart tactics.
 ///
@@ -156,11 +150,6 @@ struct ProofNode {
     depth: usize,
 }
 
-#[derive(Clone, Default)]
-struct PersistentFactIndex {
-    root: Option<Arc<FactNode>>,
-}
-
 /// Persistent semantic fact state shared by every `Proof` kind.
 ///
 /// The exact index serves local simple-step queries and `assumptions` retains
@@ -168,15 +157,8 @@ struct PersistentFactIndex {
 /// adding one fact copies only logarithmic index/context paths.
 #[derive(Clone, Default)]
 struct ProofFacts {
-    exact: PersistentFactIndex,
+    exact: PersistentSet<Proposition>,
     assumptions: PureFactContext,
-}
-
-struct FactNode {
-    fact: Arc<Proposition>,
-    left: Option<Arc<FactNode>>,
-    right: Option<Arc<FactNode>>,
-    height: u16,
 }
 
 impl<'a> Proof<'a> {
@@ -1499,13 +1481,20 @@ impl ProofContext<'_> {
 
 impl ProofFacts {
     fn from_ordered(facts: &[Proposition]) -> Self {
-        let mut exact = PersistentFactIndex::default();
+        let mut exact = PersistentSet::default();
         let mut assumptions = PureFactContext::new();
         for fact in facts {
             if exact.contains(fact) {
                 continue;
             }
-            exact = exact.with_fact(fact.clone());
+            if matches!(fact, Proposition::And(_, _)) {
+                let mut conjuncts = Vec::new();
+                collect_owned_atomic_conjuncts(fact, &mut conjuncts);
+                for conjunct in conjuncts {
+                    exact = exact.with_value(conjunct);
+                }
+            }
+            exact = exact.with_value(fact.clone());
             assumptions = assumptions.assume_proposition(fact.clone());
         }
         Self { exact, assumptions }
@@ -1519,8 +1508,17 @@ impl ProofFacts {
         if self.contains(&fact) {
             return self.clone();
         }
+        let mut exact = self.exact.clone();
+        if matches!(fact, Proposition::And(_, _)) {
+            let mut conjuncts = Vec::new();
+            collect_owned_atomic_conjuncts(&fact, &mut conjuncts);
+            for conjunct in conjuncts {
+                exact = exact.with_value(conjunct);
+            }
+        }
+        exact = exact.with_value(fact.clone());
         Self {
-            exact: self.exact.with_fact(fact.clone()),
+            exact,
             assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
         }
     }
@@ -1535,48 +1533,6 @@ impl ProofFacts {
     }
 }
 
-impl PersistentFactIndex {
-    fn with_fact(&self, fact: Proposition) -> Self {
-        let mut next = self.clone();
-        if matches!(fact, Proposition::And(_, _)) {
-            let mut conjuncts = Vec::new();
-            collect_owned_atomic_conjuncts(&fact, &mut conjuncts);
-            for conjunct in conjuncts {
-                next.root = insert_fact_node(next.root.as_ref(), Arc::new(conjunct));
-            }
-        }
-        next.root = insert_fact_node(next.root.as_ref(), Arc::new(fact));
-        next
-    }
-
-    fn contains(&self, fact: &Proposition) -> bool {
-        let mut node = self.root.as_ref();
-        while let Some(current) = node {
-            match fact.cmp(current.fact.as_ref()) {
-                Ordering::Less => node = current.left.as_ref(),
-                Ordering::Equal => return true,
-                Ordering::Greater => node = current.right.as_ref(),
-            }
-        }
-        false
-    }
-
-    #[cfg(test)]
-    fn lookup_comparisons(&self, fact: &Proposition) -> usize {
-        let mut comparisons = 0;
-        let mut node = self.root.as_ref();
-        while let Some(current) = node {
-            comparisons += 1;
-            match fact.cmp(current.fact.as_ref()) {
-                Ordering::Less => node = current.left.as_ref(),
-                Ordering::Equal => return comparisons,
-                Ordering::Greater => node = current.right.as_ref(),
-            }
-        }
-        comparisons
-    }
-}
-
 fn collect_owned_atomic_conjuncts(fact: &Proposition, output: &mut Vec<Proposition>) {
     match fact {
         Proposition::And(left, right) => {
@@ -1585,99 +1541,6 @@ fn collect_owned_atomic_conjuncts(fact: &Proposition, output: &mut Vec<Propositi
         }
         _ => output.push(fact.clone()),
     }
-}
-
-fn fact_node_height(node: Option<&Arc<FactNode>>) -> u16 {
-    node.map_or(0, |node| node.height)
-}
-
-fn make_fact_node(
-    fact: Arc<Proposition>,
-    left: Option<Arc<FactNode>>,
-    right: Option<Arc<FactNode>>,
-) -> Arc<FactNode> {
-    #[cfg(test)]
-    FACT_NODE_ALLOCATIONS.with(|allocations| allocations.set(allocations.get() + 1));
-    Arc::new(FactNode {
-        fact,
-        height: 1 + fact_node_height(left.as_ref()).max(fact_node_height(right.as_ref())),
-        left,
-        right,
-    })
-}
-
-fn balance_fact_node(
-    fact: Arc<Proposition>,
-    left: Option<Arc<FactNode>>,
-    right: Option<Arc<FactNode>>,
-) -> Arc<FactNode> {
-    let left_height = fact_node_height(left.as_ref());
-    let right_height = fact_node_height(right.as_ref());
-    if left_height > right_height + 1 {
-        let left_node = left.as_ref().expect("left-heavy node has a left child");
-        if fact_node_height(left_node.left.as_ref()) >= fact_node_height(left_node.right.as_ref()) {
-            let new_right = make_fact_node(fact, left_node.right.clone(), right);
-            return make_fact_node(
-                left_node.fact.clone(),
-                left_node.left.clone(),
-                Some(new_right),
-            );
-        }
-        let middle = left_node
-            .right
-            .as_ref()
-            .expect("left-right-heavy node has a middle child");
-        let new_left = make_fact_node(
-            left_node.fact.clone(),
-            left_node.left.clone(),
-            middle.left.clone(),
-        );
-        let new_right = make_fact_node(fact, middle.right.clone(), right);
-        return make_fact_node(middle.fact.clone(), Some(new_left), Some(new_right));
-    }
-    if right_height > left_height + 1 {
-        let right_node = right.as_ref().expect("right-heavy node has a right child");
-        if fact_node_height(right_node.right.as_ref()) >= fact_node_height(right_node.left.as_ref())
-        {
-            let new_left = make_fact_node(fact, left, right_node.left.clone());
-            return make_fact_node(
-                right_node.fact.clone(),
-                Some(new_left),
-                right_node.right.clone(),
-            );
-        }
-        let middle = right_node
-            .left
-            .as_ref()
-            .expect("right-left-heavy node has a middle child");
-        let new_left = make_fact_node(fact, left, middle.left.clone());
-        let new_right = make_fact_node(
-            right_node.fact.clone(),
-            middle.right.clone(),
-            right_node.right.clone(),
-        );
-        return make_fact_node(middle.fact.clone(), Some(new_left), Some(new_right));
-    }
-    make_fact_node(fact, left, right)
-}
-
-fn insert_fact_node(node: Option<&Arc<FactNode>>, fact: Arc<Proposition>) -> Option<Arc<FactNode>> {
-    let Some(node) = node else {
-        return Some(make_fact_node(fact, None, None));
-    };
-    Some(match fact.as_ref().cmp(node.fact.as_ref()) {
-        Ordering::Less => balance_fact_node(
-            node.fact.clone(),
-            insert_fact_node(node.left.as_ref(), fact),
-            node.right.clone(),
-        ),
-        Ordering::Equal => node.clone(),
-        Ordering::Greater => balance_fact_node(
-            node.fact.clone(),
-            node.left.clone(),
-            insert_fact_node(node.right.as_ref(), fact),
-        ),
-    })
 }
 
 #[cfg(test)]
@@ -1695,7 +1558,7 @@ mod tests {
     }
 
     fn fact_node_allocations() -> usize {
-        FACT_NODE_ALLOCATIONS.with(std::cell::Cell::get)
+        persistent_set_node_allocations()
     }
 
     #[test]
@@ -2008,13 +1871,7 @@ mod tests {
             let initial = (0..size).map(indexed_fact).collect::<Vec<_>>();
             let facts = ProofFacts::from_ordered(&initial);
             let fork = facts.clone();
-            assert!(Arc::ptr_eq(
-                facts.exact.root.as_ref().expect("nonempty fact index"),
-                fork.exact
-                    .root
-                    .as_ref()
-                    .expect("nonempty forked fact index")
-            ));
+            assert!(facts.exact.shares_root_with(&fork.exact));
             assert!(
                 facts
                     .assumptions

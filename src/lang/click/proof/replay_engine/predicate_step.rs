@@ -91,17 +91,10 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate(
             })
             .flatten();
         if let Some(derivation) = contract_unfolding {
-            if !replay
+            replay
                 .function_entry_execution_prerequisites
-                .contains(&kernel)
-            {
-                replay
-                    .function_entry_execution_prerequisites
-                    .push(kernel.clone());
-            }
-            if !replay.function_entry_derivations.contains(&derivation) {
-                replay.function_entry_derivations.push(derivation);
-            }
+                .insert(kernel.clone());
+            replay.function_entry_derivations.insert(derivation);
         }
     }
     Ok(())
