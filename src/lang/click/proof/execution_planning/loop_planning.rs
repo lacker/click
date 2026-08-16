@@ -360,7 +360,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         state: preservation.state().clone(),
         pure_facts: pure_facts.to_vec(),
         replay,
-        branch_path: Vec::new(),
+        branch_path: PersistentSequence::default(),
     }];
     let mut completed = Vec::new();
     let mut steps = 0;
@@ -712,7 +712,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             state: preservation.state().clone(),
             pure_facts: pure_facts.to_vec(),
             replay,
-            branch_path: Vec::new(),
+            branch_path: PersistentSequence::default(),
         },
         expansion_capture.as_deref_mut(),
         environment.function_block,
@@ -874,7 +874,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             state: preservation.state().clone(),
             pure_facts: pure_facts.to_vec(),
             replay: replay_start,
-            branch_path: Vec::new(),
+            branch_path: PersistentSequence::default(),
         },
         None,
         environment.function_block,

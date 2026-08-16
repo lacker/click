@@ -463,6 +463,13 @@ This removes the first mutable deep clone from proof-level execution `if`
 while the larger execution semantic state continues to migrate behind
 `Proof`.
 
+The execution diagnostic branch path uses the same persistent sequence.
+Proof-level and C-level branch exploration now share their complete enclosing
+diagnostic path instead of cloning every owned string, while `push`, join-time
+`clear`, and ordered error annotation retain their prior behavior. This field
+is diagnostic rather than semantic, but removing it prevents otherwise-cheap
+semantic forks from retaining a hidden path-depth clone.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

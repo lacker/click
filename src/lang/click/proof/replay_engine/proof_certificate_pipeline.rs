@@ -71,7 +71,7 @@ fn merge_surface_certificate_contexts(
     claim_label: &str,
     tactic_index: usize,
     source_index: usize,
-    enclosing_branch_path: &[String],
+    enclosing_branch_path: &PersistentSequence<String>,
     enclosing_case_assumptions: &PersistentSequence<ReplayCaseAssumption>,
 ) -> Result<ProofReplayContext, ClickError> {
     if completed.is_empty() {
@@ -153,7 +153,7 @@ fn merge_surface_certificate_contexts(
     merged.replay.case_assumptions = enclosing_case_assumptions.clone();
     merged.state = execution_start_state;
     merged.pure_facts = common_pure_facts;
-    merged.branch_path = enclosing_branch_path.to_vec();
+    merged.branch_path = enclosing_branch_path.clone();
     Ok(merged)
 }
 

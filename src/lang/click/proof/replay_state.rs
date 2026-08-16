@@ -208,6 +208,12 @@ impl<'a, T> Iterator for PersistentSequenceIter<'a, T> {
 
 impl<T> ExactSizeIterator for PersistentSequenceIter<'_, T> {}
 
+impl<T> DoubleEndedIterator for PersistentSequenceIter<'_, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.entries.next_back()
+    }
+}
+
 impl<'a, T> IntoIterator for &'a PersistentSequence<T> {
     type Item = &'a T;
     type IntoIter = PersistentSequenceIter<'a, T>;
@@ -1344,7 +1350,7 @@ pub(super) struct ProofReplayContext {
     pub(super) state: CState,
     pub(super) pure_facts: Vec<Proposition>,
     pub(super) replay: TacticReplayState,
-    pub(super) branch_path: Vec<String>,
+    pub(super) branch_path: PersistentSequence<String>,
 }
 
 impl TacticReplayState {

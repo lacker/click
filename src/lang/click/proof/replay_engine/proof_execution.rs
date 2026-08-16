@@ -957,7 +957,7 @@ fn add_proof_branch_context(error: ClickError, branch: &str) -> ClickError {
 
 pub(in crate::lang::click::proof) fn add_proof_branch_path(
     mut error: ClickError,
-    branch_path: &[String],
+    branch_path: &PersistentSequence<String>,
 ) -> ClickError {
     for branch in branch_path.iter().rev() {
         error = add_proof_branch_context(error, branch);
