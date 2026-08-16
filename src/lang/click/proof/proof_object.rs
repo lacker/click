@@ -206,13 +206,24 @@ struct ProofNode {
 #[derive(Clone, Default)]
 pub(super) struct ProofFacts {
     ordered: PersistentSequence<Proposition>,
+    prioritized: Option<Arc<PrioritizedProofFacts>>,
+    top_level_exact: PersistentSet<Proposition>,
     exact: PersistentSet<Proposition>,
     /// Atomic exact facts after the same direct-load normalization used by
     /// condition replay. This lets a branch reject its opposite path with an
     /// indexed lookup instead of scanning every unrelated fact.
     normalized_exact: PersistentSet<Proposition>,
+    by_snapshot_blind: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Proposition>>,
     assumptions: PureFactContext,
     by_predicate: PersistentMap<String, PersistentSequence<Proposition>>,
+}
+
+/// A statement transition places its explicitly transported successor facts
+/// before the ambient facts retained at their original snapshots. Prefix
+/// batches preserve that semantic order without copying the ambient sequence.
+struct PrioritizedProofFacts {
+    parent: Option<Arc<PrioritizedProofFacts>>,
+    facts: Arc<Vec<Proposition>>,
 }
 
 impl<'a> Proof<'a> {
@@ -1130,28 +1141,31 @@ impl<'a> Proof<'a> {
             .take()
             .ok_or_else(|| step_error("execution-frontier proof lost its owned semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
-        let mut pure_facts = state.facts.to_vec();
-        let added_facts = match &step {
-            SimpleProofStep::StepUsing(premises) => check_step_using(
-                &mut execution.replay,
-                &mut execution.state,
-                &mut pure_facts,
-                premises,
-                context.function_block,
-                context.function,
-                context.parsed_function,
-                context.arguments,
-                context.function_environment,
-                context.predicate_environment,
-                context.click_function_environment,
-                context.claim_label,
-                context.tactic_index,
-            )?,
+        let (facts, added_facts) = match &step {
+            SimpleProofStep::StepUsing(premises) => {
+                let checked = check_step_using_facts(
+                    &mut execution.replay,
+                    &mut execution.state,
+                    &state.facts,
+                    premises,
+                    context.function_block,
+                    context.function,
+                    context.parsed_function,
+                    context.arguments,
+                    context.function_environment,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                    context.claim_label,
+                    context.tactic_index,
+                )?;
+                (checked.facts, checked.added_facts)
+            }
             SimpleProofStep::TransportUsing {
                 source,
                 target,
                 premises,
             } => {
+                let mut pure_facts = state.facts.to_vec();
                 let pre_state = execution
                     .replay
                     .old_reference_state(&execution.state)
@@ -1186,11 +1200,11 @@ impl<'a> Proof<'a> {
                     added_facts.push(checked.target.clone());
                     pure_facts.push(checked.target);
                 }
-                added_facts
+                (ProofFacts::from_ordered(&pure_facts), added_facts)
             }
             _ => unreachable!("checked above"),
         };
-        state.facts = ProofFacts::from_ordered(&pure_facts);
+        state.facts = facts;
         state.execution = Some(execution);
         state.added_facts = Arc::new(added_facts.clone());
         state.checked_facts = Arc::new(added_facts);
@@ -2106,35 +2120,47 @@ impl ProofContext<'_> {
 impl ProofFacts {
     pub(super) fn from_ordered(facts: &[Proposition]) -> Self {
         let mut ordered = PersistentSequence::default();
+        let mut top_level_exact = PersistentSet::default();
         let mut exact = PersistentSet::default();
         let mut normalized_exact = PersistentSet::default();
+        let mut by_snapshot_blind = PersistentMap::default();
         let mut assumptions = PureFactContext::new();
         let mut by_predicate = PersistentMap::default();
         for fact in facts {
-            if exact.contains(fact) {
+            if top_level_exact.contains(fact) {
                 continue;
             }
             ordered.push(fact.clone());
+            top_level_exact = top_level_exact.with_value(fact.clone());
             by_predicate = index_predicate_fact(by_predicate, fact);
             if matches!(fact, Proposition::And(_, _)) {
                 let mut conjuncts = Vec::new();
                 collect_owned_atomic_conjuncts(fact, &mut conjuncts);
                 for conjunct in conjuncts {
-                    normalized_exact = normalized_exact
-                        .with_value(normalize_direct_atomic_memory_loads(&conjunct));
+                    by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
+                    let normalized = normalize_direct_atomic_memory_loads(&conjunct);
+                    if normalized != conjunct {
+                        normalized_exact = normalized_exact.with_value(normalized);
+                    }
                     exact = exact.with_value(conjunct);
                 }
             } else {
-                normalized_exact =
-                    normalized_exact.with_value(normalize_direct_atomic_memory_loads(fact));
+                let normalized = normalize_direct_atomic_memory_loads(fact);
+                if normalized != *fact {
+                    normalized_exact = normalized_exact.with_value(normalized);
+                }
             }
+            by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact);
             exact = exact.with_value(fact.clone());
             assumptions = assumptions.assume_proposition(fact.clone());
         }
         Self {
             ordered,
+            prioritized: None,
+            top_level_exact,
             exact,
             normalized_exact,
+            by_snapshot_blind,
             assumptions,
             by_predicate,
         }
@@ -2145,30 +2171,40 @@ impl ProofFacts {
     }
 
     pub(super) fn with_fact(&self, fact: Proposition) -> Self {
-        if self.contains(&fact) {
+        if self.top_level_exact.contains(&fact) {
             return self.clone();
         }
         let mut exact = self.exact.clone();
         let mut normalized_exact = self.normalized_exact.clone();
+        let mut by_snapshot_blind = self.by_snapshot_blind.clone();
         if matches!(fact, Proposition::And(_, _)) {
             let mut conjuncts = Vec::new();
             collect_owned_atomic_conjuncts(&fact, &mut conjuncts);
             for conjunct in conjuncts {
-                normalized_exact =
-                    normalized_exact.with_value(normalize_direct_atomic_memory_loads(&conjunct));
+                by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
+                let normalized = normalize_direct_atomic_memory_loads(&conjunct);
+                if normalized != conjunct {
+                    normalized_exact = normalized_exact.with_value(normalized);
+                }
                 exact = exact.with_value(conjunct);
             }
         } else {
-            normalized_exact =
-                normalized_exact.with_value(normalize_direct_atomic_memory_loads(&fact));
+            let normalized = normalize_direct_atomic_memory_loads(&fact);
+            if normalized != fact {
+                normalized_exact = normalized_exact.with_value(normalized);
+            }
         }
+        by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &fact);
         exact = exact.with_value(fact.clone());
         let mut ordered = self.ordered.clone();
         ordered.push(fact.clone());
         Self {
             ordered,
+            prioritized: self.prioritized.clone(),
+            top_level_exact: self.top_level_exact.with_value(fact.clone()),
             exact,
             normalized_exact,
+            by_snapshot_blind,
             assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
             by_predicate: index_predicate_fact(self.by_predicate.clone(), &fact),
         }
@@ -2178,19 +2214,97 @@ impl ProofFacts {
         &self.assumptions
     }
 
-    pub(super) fn directly_conflicts_with(&self, fact: &Proposition) -> bool {
-        directly_conflicts_with_normalized_index(
-            &self.normalized_exact,
-            &normalize_direct_atomic_memory_loads(fact),
-        )
+    /// Adds one statement's selected successor context while retaining the
+    /// old ambient order by shared prefix. The statement delta is explicit,
+    /// so insertion work is proportional only to that delta and index height.
+    pub(super) fn with_statement_facts(&self, facts: Vec<Proposition>) -> Self {
+        let ordered = self.ordered.clone();
+        let parent = self.prioritized.clone();
+        let mut successor = self.clone();
+        for fact in &facts {
+            successor = successor.with_fact(fact.clone());
+        }
+        successor.ordered = ordered;
+        successor.prioritized = Some(Arc::new(PrioritizedProofFacts {
+            parent,
+            facts: Arc::new(facts),
+        }));
+        successor
     }
 
-    fn iter(&self) -> PersistentSequenceIter<'_, Proposition> {
-        self.ordered.iter()
+    /// Availability accepted by explicit replay, answered from persistent
+    /// indexes. Snapshot-blind buckets only select structurally compatible
+    /// candidates; the kernel still proves every cross-snapshot match.
+    pub(super) fn replay_available_across_effects(
+        &self,
+        required: &Proposition,
+        framing: &[ExecutionPureFact],
+    ) -> bool {
+        if self.contains(required)
+            || {
+                let normalized = normalize_direct_atomic_memory_loads(required);
+                self.exact.contains(&normalized) || self.normalized_exact.contains(&normalized)
+            }
+            || condition_polarity_spellings(required)
+                .iter()
+                .any(|spelling| self.exact.contains(spelling))
+        {
+            return true;
+        }
+
+        let normalized = normalize_direct_atomic_memory_loads(required);
+        let keys = [
+            snapshot_blind_proposition_key(required),
+            snapshot_blind_proposition_key(&normalized),
+        ];
+        let mut candidates = Vec::new();
+        for key in keys {
+            if let Some(bucket) = self.by_snapshot_blind.get(&key) {
+                for candidate in bucket.iter() {
+                    if !candidates.contains(candidate) {
+                        candidates.push(candidate.clone());
+                    }
+                }
+            }
+        }
+        if candidates.is_empty() {
+            return false;
+        }
+        snapshot_bridged_fact_is_available_under(required, &candidates, &self.assumptions, framing)
+            || candidates.iter().any(|candidate| {
+                proposition_candidate_equals_modulo_proven_snapshots(
+                    candidate,
+                    required,
+                    &self.assumptions,
+                    framing,
+                )
+            })
+    }
+
+    pub(super) fn directly_conflicts_with(&self, fact: &Proposition) -> bool {
+        let normalized = normalize_direct_atomic_memory_loads(fact);
+        directly_conflicts_with_normalized_index(&self.exact, &normalized)
+            || directly_conflicts_with_normalized_index(&self.normalized_exact, &normalized)
     }
 
     pub(super) fn to_vec(&self) -> Vec<Proposition> {
-        self.iter().cloned().collect()
+        let mut ordered = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut batch = self.prioritized.as_deref();
+        while let Some(current) = batch {
+            for fact in current.facts.iter() {
+                if seen.insert(fact.clone()) {
+                    ordered.push(fact.clone());
+                }
+            }
+            batch = current.parent.as_deref();
+        }
+        for fact in self.ordered.iter() {
+            if seen.insert(fact.clone()) {
+                ordered.push(fact.clone());
+            }
+        }
+        ordered
     }
 
     pub(super) fn mentioning_predicate(&self, name: &String) -> impl Iterator<Item = &Proposition> {
@@ -2204,6 +2318,30 @@ impl ProofFacts {
     fn lookup_comparisons(&self, fact: &Proposition) -> usize {
         self.exact.lookup_comparisons(fact)
     }
+}
+
+fn index_snapshot_fact(
+    mut by_snapshot_blind: PersistentMap<
+        SnapshotBlindPropositionKey,
+        PersistentSequence<Proposition>,
+    >,
+    fact: &Proposition,
+) -> PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Proposition>> {
+    let normalized = normalize_direct_atomic_memory_loads(fact);
+    for key in [
+        snapshot_blind_proposition_key(fact),
+        snapshot_blind_proposition_key(&normalized),
+    ] {
+        if !key.forgets_a_snapshot() {
+            continue;
+        }
+        let mut bucket = by_snapshot_blind.get(&key).cloned().unwrap_or_default();
+        if !bucket.iter().any(|candidate| candidate == fact) {
+            bucket.push(fact.clone());
+            by_snapshot_blind = by_snapshot_blind.with_inserted(key, bucket);
+        }
+    }
+    by_snapshot_blind
 }
 
 fn directly_conflicts_with_normalized_index(
@@ -2640,6 +2778,58 @@ mod tests {
     }
 
     #[test]
+    fn statement_fact_prefix_preserves_successor_order_without_copying_ambient_history() {
+        let first = indexed_fact(1);
+        let promoted = indexed_fact(2);
+        let added = indexed_fact(3);
+        let facts = ProofFacts::from_ordered(&[first.clone(), promoted.clone()]);
+        let ambient_tail = facts.ordered.clone();
+        let successor = facts.with_statement_facts(vec![promoted.clone(), added.clone()]);
+
+        assert!(successor.ordered.shares_tail_with(&ambient_tail));
+        assert_eq!(successor.to_vec(), vec![promoted, added, first]);
+    }
+
+    #[test]
+    fn replay_availability_probes_equivalent_condition_polarities_by_exact_index() {
+        let left = Bitvector32Term::Variable(Variable(80_000));
+        let right = Bitvector32Term::Variable(Variable(80_001));
+        let available = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessThan(
+                Box::new(left.clone()),
+                Box::new(right.clone()),
+            ),
+            true,
+        );
+        let facts = ProofFacts::from_ordered(&[available]);
+        for required in [
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedGreaterEqual(
+                    Box::new(left.clone()),
+                    Box::new(right.clone()),
+                ),
+                false,
+            ),
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(
+                    Box::new(right.clone()),
+                    Box::new(left.clone()),
+                ),
+                false,
+            ),
+            Proposition::Not(Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedGreaterThan(
+                    Box::new(right.clone()),
+                    Box::new(left.clone()),
+                ),
+                false,
+            ))),
+        ] {
+            assert!(facts.replay_available_across_effects(&required, &[]));
+        }
+    }
+
+    #[test]
     fn proof_fact_predicate_index_ignores_unrelated_context() {
         let name = "selected".to_string();
         let predicate = Proposition::Predicate {
@@ -2893,6 +3083,84 @@ mod tests {
                     .contains(&"selected".to_string())
             );
             assert!(context.pure_facts.len() > size as usize + 1);
+        }
+    }
+
+    #[test]
+    fn checked_statement_step_ignores_unrelated_proof_facts() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 constant(int32 x) {
+                    ensures returns_one: result == 1 by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let parsed_function = syntax::parse_function("int32 constant(int32 x) { return 1; }")
+            .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let function_environment = CExecutionEnvironment::new();
+        let arguments = vec![CExpression::Value(int32(7))];
+        let mut samples = Vec::new();
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let replay = TacticReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..TacticReplayState::default()
+            };
+            let root = Proof::for_execution_frontier(
+                "persistent statement step",
+                0,
+                ProofReplayContext {
+                    state: CState::new(),
+                    pure_facts: (0..size).map(indexed_fact).collect(),
+                    replay,
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &predicate_environment,
+                &click_function_environment,
+            );
+            let before = fact_node_allocations();
+            let completed = root
+                .apply_owned_execution_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("an explicit return step should certify");
+            let allocations = fact_node_allocations() - before;
+            samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                allocations,
+            ));
+            assert!(
+                completed
+                    .state
+                    .execution
+                    .as_ref()
+                    .expect("statement successor retains execution")
+                    .replay
+                    .is_at_function_exit()
+            );
+            assert!(matches!(
+                completed.certificate().steps(),
+                [SimpleProofStep::StepUsing(premises)] if premises.is_empty()
+            ));
+        }
+
+        let (_, base_height, base_allocations) = samples[0];
+        for (size, height, allocations) in samples {
+            let logarithmic_bound = base_allocations + 24 * (height - base_height);
+            assert!(
+                allocations <= logarithmic_bound,
+                "size {size} statement step allocated {allocations} persistent nodes (logarithmic bound {logarithmic_bound})"
+            );
         }
     }
 

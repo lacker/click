@@ -522,8 +522,23 @@ ambient context it restores. Execution-frontier `Proof` retains that delta as
 `added_facts`, and a 16-through-4096 unrelated-fact regression confirms the
 reported statement output is identical at every context size. This is the
 arm-local fact input required by the next nonempty execution-branch join; the
-owned statement adapter still rebuilds its complete `ProofFacts` successor
-until statement facts themselves use persistent updates.
+statement transition now updates that `ProofFacts` successor persistently as
+described below.
+
+`StepUsing` now has a `ProofFacts`-native checked operation. Explicit premise
+lowering reuses the persistent kernel assumption context; exact,
+materialization-equivalent, condition-polarity, and cross-snapshot
+availability use bounded persistent index probes instead of scanning the
+ambient context. Snapshot-blind buckets only select same-shape candidates,
+which are still decided by the kernel snapshot bridge. The selected successor
+facts are inserted by output delta, and persistent prefix batches preserve the
+existing semantic order in which transported successor spellings precede
+ambient old-snapshot facts. Legacy source replay materializes a vector only at
+its compatibility boundary, while ordinary execution `Proof` steps remain
+persistent throughout. A deterministic 16-through-4096 regression checks a
+fixed explicit statement and retained certificate under unrelated facts with
+the original logarithmic allocation bounds; the complete library expansion
+suite pins polarity, snapshot, compound-fact, and successor-order behavior.
 
 The execution branch container now accepts linear arm bodies made only of
 `StepUsing`, `TransportUsing`, and `UnfoldPredicate`. Each arm advances through the ordinary

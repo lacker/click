@@ -1,5 +1,334 @@
 use super::*;
 
+/// The fixed set of condition spellings accepted by
+/// `condition_polarity_equivalent`. Callers can probe an exact index for these
+/// instead of maintaining another project-sized index.
+pub(super) fn condition_polarity_spellings(proposition: &Proposition) -> Vec<Proposition> {
+    let (condition, value) = match proposition {
+        Proposition::ConditionIs(condition, value) => (condition.clone(), *value),
+        Proposition::Not(negated) => match negated.as_ref() {
+            Proposition::ConditionIs(condition, value) => (condition.clone(), !value),
+            _ => return Vec::new(),
+        },
+        _ => return Vec::new(),
+    };
+    let mut conditions = vec![(condition, value)];
+    if let Some((left, right, strict)) =
+        canonical_order_condition(&conditions[0].0, conditions[0].1)
+    {
+        let left = Box::new(left);
+        let right = Box::new(right);
+        let mut equivalent = if strict {
+            vec![
+                (
+                    ConditionTerm::Bitvector32SignedLessThan(left.clone(), right.clone()),
+                    true,
+                ),
+                (
+                    ConditionTerm::Bitvector32SignedGreaterEqual(left.clone(), right.clone()),
+                    false,
+                ),
+                (
+                    ConditionTerm::Bitvector32SignedLessEqual(right.clone(), left.clone()),
+                    false,
+                ),
+                (
+                    ConditionTerm::Bitvector32SignedGreaterThan(right, left),
+                    true,
+                ),
+            ]
+        } else {
+            vec![
+                (
+                    ConditionTerm::Bitvector32SignedLessEqual(left.clone(), right.clone()),
+                    true,
+                ),
+                (
+                    ConditionTerm::Bitvector32SignedGreaterThan(left.clone(), right.clone()),
+                    false,
+                ),
+                (
+                    ConditionTerm::Bitvector32SignedLessThan(right.clone(), left.clone()),
+                    false,
+                ),
+                (
+                    ConditionTerm::Bitvector32SignedGreaterEqual(right, left),
+                    true,
+                ),
+            ]
+        };
+        conditions.append(&mut equivalent);
+    }
+    let mut spellings = Vec::new();
+    for (condition, value) in conditions {
+        let direct = Proposition::ConditionIs(condition.clone(), value);
+        if !spellings.contains(&direct) {
+            spellings.push(direct);
+        }
+        let negated = Proposition::Not(Box::new(Proposition::ConditionIs(condition, !value)));
+        if !spellings.contains(&negated) {
+            spellings.push(negated);
+        }
+    }
+    spellings
+}
+
+/// Structural key that deliberately forgets memory snapshot identities in
+/// load atoms. A matching key only selects candidates; the kernel snapshot
+/// bridge still proves that a selected candidate denotes the required fact.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(super) enum SnapshotBlindPropositionKey {
+    Condition(SnapshotBlindConditionKey, bool),
+    Implies(Box<Self>, Box<Self>),
+    And(Box<Self>, Box<Self>),
+    Or(Box<Self>, Box<Self>),
+    Not(Box<Self>),
+    Exact(Proposition),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(super) enum SnapshotBlindConditionKey {
+    Constant(bool),
+    Variable(Variable),
+    SignedLessThan(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
+    SignedLessEqual(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
+    SignedGreaterThan(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
+    SignedGreaterEqual(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
+    Equal(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
+    AddOverflows(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
+    SubtractOverflows(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
+    MultiplyOverflows(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
+    DivideOverflows(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
+    ShiftLeftOverflows(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
+    PointerOffsetEqual(SnapshotBlindPointerOffsetKey, SnapshotBlindPointerOffsetKey),
+    PointerEqual(SnapshotBlindPointerKey, SnapshotBlindPointerKey),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(super) enum SnapshotBlindBitvectorKey {
+    Load(Box<SnapshotBlindPointerKey>),
+    Add(Box<Self>, Box<Self>),
+    Subtract(Box<Self>, Box<Self>),
+    Multiply(Box<Self>, Box<Self>),
+    Exact(Bitvector32Term),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(super) struct SnapshotBlindPointerKey {
+    block: PointerBlock,
+    offset: Box<SnapshotBlindPointerOffsetKey>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(super) enum SnapshotBlindPointerOffsetKey {
+    Add(Box<Self>, Box<Self>),
+    Int32Scaled {
+        value: SnapshotBlindBitvectorKey,
+        byte_width: i64,
+    },
+    Exact(PointerOffsetTerm),
+}
+
+impl SnapshotBlindPropositionKey {
+    pub(super) fn forgets_a_snapshot(&self) -> bool {
+        match self {
+            Self::Condition(condition, _) => condition.forgets_a_snapshot(),
+            Self::Implies(left, right) | Self::And(left, right) | Self::Or(left, right) => {
+                left.forgets_a_snapshot() || right.forgets_a_snapshot()
+            }
+            Self::Not(body) => body.forgets_a_snapshot(),
+            Self::Exact(_) => false,
+        }
+    }
+}
+
+impl SnapshotBlindConditionKey {
+    fn forgets_a_snapshot(&self) -> bool {
+        match self {
+            Self::SignedLessThan(left, right)
+            | Self::SignedLessEqual(left, right)
+            | Self::SignedGreaterThan(left, right)
+            | Self::SignedGreaterEqual(left, right)
+            | Self::Equal(left, right)
+            | Self::AddOverflows(left, right)
+            | Self::SubtractOverflows(left, right)
+            | Self::MultiplyOverflows(left, right)
+            | Self::DivideOverflows(left, right)
+            | Self::ShiftLeftOverflows(left, right) => {
+                left.forgets_a_snapshot() || right.forgets_a_snapshot()
+            }
+            Self::PointerOffsetEqual(left, right) => {
+                left.forgets_a_snapshot() || right.forgets_a_snapshot()
+            }
+            Self::PointerEqual(left, right) => {
+                left.forgets_a_snapshot() || right.forgets_a_snapshot()
+            }
+            Self::Constant(_) | Self::Variable(_) => false,
+        }
+    }
+}
+
+impl SnapshotBlindBitvectorKey {
+    fn forgets_a_snapshot(&self) -> bool {
+        match self {
+            Self::Load(_) => true,
+            Self::Add(left, right) | Self::Subtract(left, right) | Self::Multiply(left, right) => {
+                left.forgets_a_snapshot() || right.forgets_a_snapshot()
+            }
+            Self::Exact(_) => false,
+        }
+    }
+}
+
+impl SnapshotBlindPointerKey {
+    fn forgets_a_snapshot(&self) -> bool {
+        self.offset.forgets_a_snapshot()
+    }
+}
+
+impl SnapshotBlindPointerOffsetKey {
+    fn forgets_a_snapshot(&self) -> bool {
+        match self {
+            Self::Add(left, right) => left.forgets_a_snapshot() || right.forgets_a_snapshot(),
+            Self::Int32Scaled { value, .. } => value.forgets_a_snapshot(),
+            Self::Exact(_) => false,
+        }
+    }
+}
+
+pub(super) fn snapshot_blind_proposition_key(
+    proposition: &Proposition,
+) -> SnapshotBlindPropositionKey {
+    match proposition {
+        Proposition::ConditionIs(condition, value) => {
+            SnapshotBlindPropositionKey::Condition(snapshot_blind_condition_key(condition), *value)
+        }
+        Proposition::Implies(left, right) => SnapshotBlindPropositionKey::Implies(
+            Box::new(snapshot_blind_proposition_key(left)),
+            Box::new(snapshot_blind_proposition_key(right)),
+        ),
+        Proposition::And(left, right) => SnapshotBlindPropositionKey::And(
+            Box::new(snapshot_blind_proposition_key(left)),
+            Box::new(snapshot_blind_proposition_key(right)),
+        ),
+        Proposition::Or(left, right) => SnapshotBlindPropositionKey::Or(
+            Box::new(snapshot_blind_proposition_key(left)),
+            Box::new(snapshot_blind_proposition_key(right)),
+        ),
+        Proposition::Not(body) => {
+            SnapshotBlindPropositionKey::Not(Box::new(snapshot_blind_proposition_key(body)))
+        }
+        proposition => SnapshotBlindPropositionKey::Exact(proposition.clone()),
+    }
+}
+
+fn snapshot_blind_condition_key(condition: &ConditionTerm) -> SnapshotBlindConditionKey {
+    let terms = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        (
+            snapshot_blind_bitvector_key(left),
+            snapshot_blind_bitvector_key(right),
+        )
+    };
+    match condition {
+        ConditionTerm::Constant(value) => SnapshotBlindConditionKey::Constant(*value),
+        ConditionTerm::Variable(variable) => SnapshotBlindConditionKey::Variable(*variable),
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::SignedLessThan(left, right)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::SignedLessEqual(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::SignedGreaterThan(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::SignedGreaterEqual(left, right)
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::Equal(left, right)
+        }
+        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::AddOverflows(left, right)
+        }
+        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::SubtractOverflows(left, right)
+        }
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::MultiplyOverflows(left, right)
+        }
+        ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::DivideOverflows(left, right)
+        }
+        ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            let (left, right) = terms(left, right);
+            SnapshotBlindConditionKey::ShiftLeftOverflows(left, right)
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            SnapshotBlindConditionKey::PointerOffsetEqual(
+                snapshot_blind_pointer_offset_key(left),
+                snapshot_blind_pointer_offset_key(right),
+            )
+        }
+        ConditionTerm::PointerEqual(left, right) => SnapshotBlindConditionKey::PointerEqual(
+            snapshot_blind_pointer_key(left),
+            snapshot_blind_pointer_key(right),
+        ),
+    }
+}
+
+fn snapshot_blind_bitvector_key(term: &Bitvector32Term) -> SnapshotBlindBitvectorKey {
+    match term {
+        Bitvector32Term::MemoryLoad(_, pointer) => {
+            SnapshotBlindBitvectorKey::Load(Box::new(snapshot_blind_pointer_key(pointer)))
+        }
+        Bitvector32Term::Add(left, right) => SnapshotBlindBitvectorKey::Add(
+            Box::new(snapshot_blind_bitvector_key(left)),
+            Box::new(snapshot_blind_bitvector_key(right)),
+        ),
+        Bitvector32Term::Subtract(left, right) => SnapshotBlindBitvectorKey::Subtract(
+            Box::new(snapshot_blind_bitvector_key(left)),
+            Box::new(snapshot_blind_bitvector_key(right)),
+        ),
+        Bitvector32Term::Multiply(left, right) => SnapshotBlindBitvectorKey::Multiply(
+            Box::new(snapshot_blind_bitvector_key(left)),
+            Box::new(snapshot_blind_bitvector_key(right)),
+        ),
+        term => SnapshotBlindBitvectorKey::Exact(term.clone()),
+    }
+}
+
+fn snapshot_blind_pointer_key(pointer: &Pointer) -> SnapshotBlindPointerKey {
+    SnapshotBlindPointerKey {
+        block: pointer.block.clone(),
+        offset: Box::new(snapshot_blind_pointer_offset_key(&pointer.offset)),
+    }
+}
+
+fn snapshot_blind_pointer_offset_key(offset: &PointerOffsetTerm) -> SnapshotBlindPointerOffsetKey {
+    match offset {
+        PointerOffsetTerm::Add(left, right) => SnapshotBlindPointerOffsetKey::Add(
+            Box::new(snapshot_blind_pointer_offset_key(left)),
+            Box::new(snapshot_blind_pointer_offset_key(right)),
+        ),
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            SnapshotBlindPointerOffsetKey::Int32Scaled {
+                value: snapshot_blind_bitvector_key(value),
+                byte_width: *byte_width,
+            }
+        }
+        offset => SnapshotBlindPointerOffsetKey::Exact(offset.clone()),
+    }
+}
+
 pub(super) fn exact_fact_is_available(required: &Proposition, available: &[Proposition]) -> bool {
     exact_fact_is_available_across_effects(required, available, &[])
 }
@@ -133,6 +462,23 @@ fn propositions_equal_modulo_proven_snapshots(
         }
         _ => false,
     }
+}
+
+/// Proves that one already-selected structural candidate is the same fact as
+/// `required` across certified memory snapshots. Candidate selection remains
+/// the caller's responsibility; this operation never searches a context.
+pub(super) fn proposition_candidate_equals_modulo_proven_snapshots(
+    candidate: &Proposition,
+    required: &Proposition,
+    assumptions: &PureFactContext,
+    framing: &[ExecutionPureFact],
+) -> bool {
+    let assumptions = framing
+        .iter()
+        .fold(assumptions.clone(), |assumptions, fact| {
+            assumptions.assume_proposition(fact.proposition().clone())
+        });
+    propositions_equal_modulo_proven_snapshots(candidate, required, &assumptions)
 }
 
 fn normalize_condition_modulo_memories(condition: &ConditionTerm) -> ConditionTerm {

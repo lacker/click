@@ -1,13 +1,13 @@
 use super::*;
 
-/// Checks one explicit statement transition from exactly the named surface
-/// premises and atomically advances the owned execution state.
-///
-/// This is the audited semantic operation shared by explicit source replay
-/// and the checked proof-object frontier. It performs no premise search: the
-/// selected surface premises are lowered, checked, and used as the only facts
-/// transported across the statement boundary before ambient facts are
-/// restored at their original snapshots.
+pub(in crate::lang::click::proof) struct CheckedStatementStep {
+    pub(in crate::lang::click::proof) facts: ProofFacts,
+    pub(in crate::lang::click::proof) added_facts: Vec<Proposition>,
+}
+
+/// Legacy vector adapter. Ordinary proof-object execution calls the
+/// persistent operation below directly; source replay materializes only at
+/// this compatibility boundary.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn check_step_using(
     replay: &mut TacticReplayState,
@@ -24,8 +24,51 @@ pub(in crate::lang::click::proof) fn check_step_using(
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<Vec<Proposition>, ClickError> {
-    let assumptions = assumptions_from_propositions(requirement_pure_facts);
-    let all_pure_facts = requirement_pure_facts.clone();
+    let facts = ProofFacts::from_ordered(requirement_pure_facts);
+    let checked = check_step_using_facts(
+        replay,
+        state,
+        &facts,
+        premises,
+        function_block,
+        function,
+        parsed_function,
+        arguments,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+        tactic_index,
+    )?;
+    *requirement_pure_facts = checked.facts.to_vec();
+    Ok(checked.added_facts)
+}
+
+/// Checks one explicit statement transition from exactly the named surface
+/// premises and atomically advances the owned execution state.
+///
+/// This is the audited semantic operation shared by explicit source replay
+/// and the checked proof-object frontier. It performs no premise search: the
+/// selected surface premises are lowered, checked, and used as the only facts
+/// transported across the statement boundary before ambient facts are
+/// restored at their original snapshots.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn check_step_using_facts(
+    replay: &mut TacticReplayState,
+    state: &mut CState,
+    requirement_pure_facts: &ProofFacts,
+    premises: &[ClickProposition],
+    function_block: &FunctionBlock,
+    function: &CFunction,
+    parsed_function: &syntax::C0Function,
+    arguments: &[CExpression],
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+) -> Result<CheckedStatementStep, ClickError> {
+    let assumptions = requirement_pure_facts.assumptions();
     let tactic_name = "step() using";
     let prerequisite_policy = StatementPrerequisitePolicy::Explicit;
     let loop_step_policy = LoopStepPolicy::EnterBody;
@@ -48,7 +91,9 @@ pub(in crate::lang::click::proof) fn check_step_using(
     for surface_premise in premises {
         let recorded = replay
             .surface_propositions
-            .available_kernel(surface_premise, &all_pure_facts);
+            .available_kernel_matching(surface_premise, |kernel| {
+                requirement_pure_facts.contains(kernel)
+            });
         let recorded_is_constant_truth = recorded.is_some_and(|premise| match premise {
             Proposition::ConditionIs(ConditionTerm::Constant(true), true) => true,
             Proposition::ConditionIs(
@@ -65,9 +110,9 @@ pub(in crate::lang::click::proof) fn check_step_using(
             _ => false,
         });
         let lower_at_current = || {
-            lower_point_proposition(
+            lower_point_proposition_with_assumptions(
                 surface_premise,
-                &all_pure_facts,
+                assumptions,
                 parsed_function.parameters(),
                 arguments,
                 &pre_state,
@@ -82,11 +127,8 @@ pub(in crate::lang::click::proof) fn check_step_using(
             .then(|| lower_at_current().ok())
             .flatten()
             .filter(|current| {
-                exact_fact_is_available_across_effects(
-                    current,
-                    &all_pure_facts,
-                    &replay.effect_facts,
-                ) || materialization_equivalent_available_fact(current, &all_pure_facts).is_some()
+                requirement_pure_facts
+                    .replay_available_across_effects(current, &replay.effect_facts)
             });
         let parameter_names = parsed_function
             .parameters()
@@ -112,15 +154,8 @@ pub(in crate::lang::click::proof) fn check_step_using(
             match lower_at_current() {
                 Ok(current)
                     if !PureFactContext::new().proves(&current)
-                        && (exact_fact_is_available_across_effects(
-                            &current,
-                            &all_pure_facts,
-                            &replay.effect_facts,
-                        ) || materialization_equivalent_available_fact(
-                            &current,
-                            &all_pure_facts,
-                        )
-                        .is_some()) =>
+                        && requirement_pure_facts
+                            .replay_available_across_effects(&current, &replay.effect_facts) =>
                 {
                     current
                 }
@@ -167,13 +202,9 @@ pub(in crate::lang::click::proof) fn check_step_using(
         // snapshot spellings and recorded effects: the recorded
         // fact and the premise print identically but embed
         // different memory snapshots.
-        let premise_is_available = exact_fact_is_available_across_effects(
-                &premise,
-                &all_pure_facts,
-                &replay.effect_facts,
-            ) || materialization_equivalent_available_fact(&premise, &all_pure_facts)
-                .is_some()
-                || crate::kernel::loadable_covered_by_fact(&assumptions, &premise)
+        let premise_is_available = requirement_pure_facts
+                .replay_available_across_effects(&premise, &replay.effect_facts)
+                || crate::kernel::loadable_covered_by_fact(assumptions, &premise)
                 // A premise spelled for a sibling execution path
                 // can lower to a context-free truth on this path
                 // (a shared post-branch step's premise after a
@@ -192,13 +223,13 @@ pub(in crate::lang::click::proof) fn check_step_using(
                         state.memory(),
                     );
                     concretized != premise
-                        && exact_fact_is_available_across_effects(
+                        && requirement_pure_facts.replay_available_across_effects(
                             &concretized,
-                            &all_pure_facts,
                             &replay.effect_facts,
                         )
                 };
         if !premise_is_available {
+            let all_pure_facts = requirement_pure_facts.to_vec();
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise: {}",
                 describe_missing_pure_fact(
@@ -219,9 +250,9 @@ pub(in crate::lang::click::proof) fn check_step_using(
         let branch_fact = if let Some(fact) = &case.fact {
             fact.clone()
         } else {
-            let proposition = lower_point_proposition(
+            let proposition = lower_point_proposition_with_assumptions(
                 &case.condition,
-                &all_pure_facts,
+                assumptions,
                 parsed_function.parameters(),
                 arguments,
                 &pre_state,
@@ -248,7 +279,8 @@ pub(in crate::lang::click::proof) fn check_step_using(
                 }
             }
         };
-        if exact_fact_is_available(&branch_fact, &all_pure_facts)
+        if requirement_pure_facts
+            .replay_available_across_effects(&branch_fact, &replay.effect_facts)
             && !explicit_premises.contains(&branch_fact)
         {
             explicit_premises.push(branch_fact);
@@ -287,11 +319,9 @@ pub(in crate::lang::click::proof) fn check_step_using(
         loop_step_policy,
         None,
     )?;
-    for fact in all_pure_facts {
-        if !explicit_premises.contains(&fact) {
-            explicit_premises.push(fact);
-        }
-    }
-    *requirement_pure_facts = explicit_premises;
-    Ok(introduced_facts)
+    let facts = requirement_pure_facts.with_statement_facts(explicit_premises);
+    Ok(CheckedStatementStep {
+        facts,
+        added_facts: introduced_facts,
+    })
 }
