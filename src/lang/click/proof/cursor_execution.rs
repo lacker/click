@@ -1213,7 +1213,7 @@ pub(super) fn execute_step_from_execution_point(
     fact_transport_policy: StatementFactTransportPolicy,
     loop_step_policy: LoopStepPolicy,
     construction: Option<ConstructionEnvironments<'_>>,
-) -> Result<(), ClickError> {
+) -> Result<Vec<Proposition>, ClickError> {
     replay.completed_branch_regions.clear();
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
@@ -1240,7 +1240,7 @@ pub(super) fn execute_step_from_execution_point(
             construction,
         )?;
         debug_assert!(entered);
-        return Ok(());
+        return Ok(Vec::new());
     }
     let loop_index = match source_region.kind {
         SourceStatementKind::Loop { loop_index } => Some(loop_index),
@@ -1264,7 +1264,7 @@ pub(super) fn execute_step_from_execution_point(
     if let (Some(loop_index), CStatement::While { .. }) = (loop_index, &source_statement)
         && matches!(loop_step_policy, LoopStepPolicy::EnterBody)
     {
-        return execute_concrete_loop_head_step(
+        execute_concrete_loop_head_step(
             replay,
             state,
             available_pure_facts,
@@ -1283,7 +1283,8 @@ pub(super) fn execute_step_from_execution_point(
             source_statement,
             remaining,
             construction,
-        );
+        )?;
+        return Ok(Vec::new());
     }
     let step_statement = source_statement;
 
@@ -1402,6 +1403,13 @@ pub(super) fn execute_step_from_execution_point(
                 .skip(1)
                 .all(|transition| transition.pure_facts.contains(fact))
         });
+        let mut common_introduced_facts = transitions[0].introduced_facts.clone();
+        common_introduced_facts.retain(|fact| {
+            transitions
+                .iter()
+                .skip(1)
+                .all(|transition| transition.introduced_facts.contains(fact))
+        });
         let mut completed_outcomes = Vec::new();
         for transition in transitions {
             let mut completed_execution_facts = transition.execution_facts;
@@ -1434,7 +1442,7 @@ pub(super) fn execute_step_from_execution_point(
         replay.frontier.next_statement_index = source_region.continuation_node;
         *available_pure_facts = common_pure_facts;
         *state = replay_state;
-        return Ok(());
+        return Ok(common_introduced_facts);
     }
     if transitions.len() != 1 {
         if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
@@ -1513,6 +1521,7 @@ pub(super) fn execute_step_from_execution_point(
         .into_iter()
         .next()
         .expect("one statement transition was required");
+    let introduced_facts = transition.introduced_facts.clone();
     let definedness = statement_expression_definedness(&current_state, &step_statement);
     for derivation in &replay.function_entry_derivations {
         let mut conclusion = derivation.proposition();
@@ -1870,7 +1879,7 @@ pub(super) fn execute_step_from_execution_point(
             }
         }
     }
-    Ok(())
+    Ok(introduced_facts)
 }
 
 pub(super) fn resume_after_completed_region(

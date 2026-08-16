@@ -1094,6 +1094,11 @@ pub struct CertifiedStatementTransition {
     pub(crate) path_facts: Vec<Proposition>,
     pub(crate) obligations: Vec<ProofObligation>,
     pub(crate) pure_facts: Vec<Proposition>,
+    /// Facts emitted by this statement transition itself, after applying the
+    /// same snapshot transports reflected in `pure_facts`. This is an
+    /// output-sized semantic delta; it deliberately excludes inherited
+    /// ambient facts without rediscovering them by set difference.
+    pub(crate) introduced_facts: Vec<Proposition>,
     pub(crate) prerequisite_derivations: Vec<PropositionDerivation>,
     /// Exact entry-state facts consumed while planning this
     /// transition. Kept outside the kernel theorem so collecting certificate

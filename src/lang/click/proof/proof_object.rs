@@ -1104,7 +1104,7 @@ impl<'a> Proof<'a> {
             .take()
             .ok_or_else(|| step_error("execution-frontier proof lost its owned semantic state"))?;
         let mut pure_facts = state.facts.to_vec();
-        match &step {
+        let added_facts = match &step {
             SimpleProofStep::StepUsing(premises) => check_step_using(
                 &mut execution.replay,
                 &mut execution.state,
@@ -1154,16 +1154,19 @@ impl<'a> Proof<'a> {
                     .replay
                     .surface_propositions
                     .record_lowering(target, &checked.target)?;
+                let mut added_facts = Vec::new();
                 if !pure_facts.contains(&checked.target) {
+                    added_facts.push(checked.target.clone());
                     pure_facts.push(checked.target);
                 }
+                added_facts
             }
             _ => unreachable!("checked above"),
-        }
+        };
         state.facts = ProofFacts::from_ordered(&pure_facts);
         state.execution = Some(execution);
-        state.added_facts = Arc::new(Vec::new());
-        state.checked_facts = Arc::new(Vec::new());
+        state.added_facts = Arc::new(added_facts.clone());
+        state.checked_facts = Arc::new(added_facts);
         Ok(Self {
             context: proof_context,
             state: Arc::new(state),
@@ -2757,6 +2760,7 @@ mod tests {
         let arguments = vec![argument];
         let function_environment = CExecutionEnvironment::new();
         let mut allocation_samples = Vec::new();
+        let mut statement_delta: Option<Vec<Proposition>> = None;
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut replay = TacticReplayState {
                 source_layout: SourceExecutionLayout::new(parsed_function.body()),
@@ -2814,6 +2818,17 @@ mod tests {
             let completed = joined
                 .apply_owned_execution_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("the joined continuation should execute its return");
+            assert!(
+                completed
+                    .added_facts()
+                    .iter()
+                    .all(|fact| { !(0..size).any(|index| *fact == indexed_fact(index)) })
+            );
+            if let Some(expected) = &statement_delta {
+                assert_eq!(completed.added_facts(), expected.as_slice());
+            } else {
+                statement_delta = Some(completed.added_facts().to_vec());
+            }
             assert!(
                 completed
                     .state

@@ -514,6 +514,17 @@ driver. A 16-through-4096 fact regression bounds the complete checked
 fork/join by logarithmic persistent-node growth and executes the retained
 continuation afterward.
 
+Statement certification now exposes the exact facts emitted by the checked
+transition as an output-sized semantic delta. Snapshot transports rewrite
+that delta while they are already being certified; `step using` therefore
+does not rediscover additions by diffing its complete successor against the
+ambient context it restores. Execution-frontier `Proof` retains that delta as
+`added_facts`, and a 16-through-4096 unrelated-fact regression confirms the
+reported statement output is identical at every context size. This is the
+arm-local fact input required by the next nonempty execution-branch join; the
+owned statement adapter still rebuilds its complete `ProofFacts` successor
+until statement facts themselves use persistent updates.
+
 Function-entry execution prerequisites and their kernel derivations now use a
 persistent insertion-ordered set. Exact admission and one local insertion are
 logarithmic, forks share both the AVL index and ordered history, and final

@@ -23,7 +23,7 @@ pub(in crate::lang::click::proof) fn check_step_using(
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
     tactic_index: usize,
-) -> Result<(), ClickError> {
+) -> Result<Vec<Proposition>, ClickError> {
     let assumptions = assumptions_from_propositions(requirement_pure_facts);
     let all_pure_facts = requirement_pure_facts.clone();
     let tactic_name = "step() using";
@@ -264,7 +264,7 @@ pub(in crate::lang::click::proof) fn check_step_using(
         }
     }
     let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
-    execute_step_from_execution_point(
+    let introduced_facts = execute_step_from_execution_point(
         replay,
         state,
         &mut explicit_premises,
@@ -293,5 +293,5 @@ pub(in crate::lang::click::proof) fn check_step_using(
         }
     }
     *requirement_pure_facts = explicit_premises;
-    Ok(())
+    Ok(introduced_facts)
 }

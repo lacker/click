@@ -828,6 +828,7 @@ fn certified_transitions_from_execution(
                 execution_facts
                     .retain(|fact| !is_derived_prerequisite(fact.proposition()));
             }
+            let mut introduced_facts = statement_facts.clone();
             let Proposition::CStatementVerifies {
                 state: statement_pre_state,
                 outcome,
@@ -986,6 +987,12 @@ fn certified_transitions_from_execution(
                         }
                     }
                 }
+                for transport in &transported_facts {
+                    introduced_facts.retain(|fact| fact != &transport.source);
+                    if !introduced_facts.contains(&transport.target) {
+                        introduced_facts.push(transport.target.clone());
+                    }
+                }
                 for fact in transported_execution_facts {
                     if !execution_facts.contains(&fact) {
                         execution_facts.push(fact);
@@ -1036,6 +1043,7 @@ fn certified_transitions_from_execution(
                     path_facts,
                     obligations: path.obligations().to_vec(),
                     pure_facts: successor_facts,
+                    introduced_facts,
                     prerequisite_derivations,
                     planning_premises: Vec::new(),
                     fact_transports: transported_facts,
@@ -1053,6 +1061,7 @@ fn certified_transitions_from_execution(
                     .collect(),
                 obligations: path.obligations().to_vec(),
                 pure_facts: successor_facts,
+                introduced_facts,
                 prerequisite_derivations,
                 planning_premises: Vec::new(),
                 fact_transports: Vec::new(),
