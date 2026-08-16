@@ -45,7 +45,7 @@ pub(in crate::lang::click::proof) fn check_step_using(
 }
 
 /// Checks one explicit statement transition from exactly the named surface
-/// premises and atomically advances the owned execution state.
+/// premises and atomically advances the caller-selected execution successor.
 ///
 /// This is the audited semantic operation shared by explicit source replay
 /// and the checked proof-object frontier. It performs no premise search: the

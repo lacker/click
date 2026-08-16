@@ -347,19 +347,19 @@ is the shared audited transition the execution-goal `Proof` slice will call;
 explicit source replay already delegates to it.
 
 Linear smart `step()` plans that select exactly one `StepUsing` now move the
-outer execution context into an execution-frontier `Proof`, consume that
-uniquely owned proof while applying the shared checker, move the checked
-successor back out, and append the retained step. They no longer use
+outer execution context into an execution-frontier `Proof`, apply the shared
+checker through the ordinary immutable successor API, move the checked
+successor back out, and append its retained step. They no longer use
 `complete_smart_tactic` or ordinary per-tactic replay. Multi-step and
 branching plans remain on the legacy path pending structured proof goals.
 
 Linear `execute()` and `execute_all_paths()` plans composed entirely of one or
-more `StepUsing` operations now use the same consuming execution `Proof` path.
+more `StepUsing` operations now use the same checked execution `Proof` path.
 The proof owns the whole accepted sequence and exports its retained
 certificate once; mixed and structured plans still fall back.
 
 Linear `execute_until(...)` plans composed entirely of `StepUsing` operations
-also use the owned execution `Proof`, with the same retained-certificate and
+also use the execution `Proof`, with the same retained-certificate and
 legacy-fallback rules.
 
 Execution-frontier `Proof` now also checks `TransportUsing`, updating the
@@ -379,8 +379,8 @@ them alongside transports and statement steps without an ordinary replay.
 execution state. `certificate_since` accepts only pointer-identical ancestors
 from the same checking context and extracts the already-checked suffix in work
 proportional to its output. Linear execution uses this path now; branch joins
-can use the same primitive to embed each arm without inferring it from final
-semantic state or making an owned execution frontier shared.
+use the same primitive to embed each arm without inferring it from final
+semantic state.
 
 The first audited structural branch is `cases`. `Proof::begin_cases` requires
 an exact available disjunction and creates an immutable `ProofBranches` value
@@ -556,10 +556,21 @@ Execution-frontier `TransportUsing` is now an ordinary forkable
 `Proof::apply_step(&self, ...)` operation as well. It clones only persistent
 fact and replay roots, records the selected lowerings in the successor, and
 leaves the ancestor's C state and provenance reusable for smart-search
-backtracking. The consuming execution adapter is consequently restricted to
-`StepUsing`, the remaining operation that mutates the not-yet-persistent C
-state. A multi-size regression retains the transport ancestor and checks that
-unrelated C state, certificate history, and effect history remain shared.
+backtracking. A multi-size regression retains the transport ancestor and
+checks that unrelated C state, certificate history, and effect history remain
+shared.
+
+`StepUsing` has now crossed that same boundary. `CState` is a shallow value
+whose local, memory, resource, and counted-population storage is internally
+shared, so cloning the execution wrapper does not clone complete semantic
+state. The checked statement mutates only its successor, the ancestor remains
+available for failed-candidate recovery and alternate descendants, and the
+separate consuming Proof operation has been deleted. Deterministic multi-size
+coverage combines the existing logarithmic fact-allocation bound with direct
+ancestor transactionality, repeatable descendant construction, and sharing of
+unchanged memory/resource/population storage. The legacy context-export adapter
+also accepts a shared checked successor, so retaining a search result cannot
+reintroduce a hidden uniqueness requirement.
 
 The execution branch container now accepts linear arm bodies made only of
 `StepUsing`, `TransportUsing`, and `UnfoldPredicate`. Each arm advances through the ordinary

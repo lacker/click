@@ -339,10 +339,10 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 if branches.has_both_feasible_arms() {
                     let empty = then_steps.is_empty() && else_steps.is_empty();
                     for step in then_steps {
-                        branches = branches.apply_owned_step(true, step)?;
+                        branches = branches.apply_step(true, step)?;
                     }
                     for step in else_steps {
-                        branches = branches.apply_owned_step(false, step)?;
+                        branches = branches.apply_step(false, step)?;
                     }
                     let proof = if empty {
                         branches.join_empty()?

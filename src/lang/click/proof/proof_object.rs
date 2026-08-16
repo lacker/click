@@ -9,10 +9,9 @@ use std::sync::Arc;
 
 /// Immutable checked proof state exposed to smart tactics.
 ///
-/// This first vertical slice supports linear pure goals. The representation is
-/// deliberately already persistent: cloning a `Proof` shares its semantic
-/// state and derivation prefix, and applying a step copies only logarithmically
-/// many fact-index nodes plus the step's own semantic delta.
+/// Cloning a `Proof` shares its semantic state and derivation prefix. Applying
+/// a step copies only persistent index paths and the step's own semantic delta;
+/// proposition, point, and execution-frontier goals use the same boundary.
 #[derive(Clone)]
 pub(super) struct Proof<'a> {
     context: Arc<ProofContext<'a>>,
@@ -22,9 +21,8 @@ pub(super) struct Proof<'a> {
 
 /// An opaque position in one `Proof` derivation.
 ///
-/// This retains no semantic state, so an owned execution proof can remember a
-/// branch root without making its frontier state shared. Structured joins use
-/// it to extract only the already-checked descendant steps for an arm.
+/// This retains no semantic state. Structured joins use it to extract only the
+/// already-checked descendant steps for an arm.
 #[derive(Clone)]
 pub(super) struct ProofCheckpoint<'a> {
     context: Arc<ProofContext<'a>>,
@@ -150,6 +148,7 @@ struct ExecutionProofContext<'a> {
     click_function_environment: &'a ClickFunctionEnvironment,
 }
 
+#[derive(Clone)]
 struct ProofState {
     facts: ProofFacts,
     goal: Goal,
@@ -390,10 +389,8 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Creates a uniquely owned execution-frontier proof without cloning the
-    /// mutable replay history. The accepted linear statement step consumes
-    /// this root and returns its owned successor; cheap forkable execution
-    /// state will arrive with the branch representation.
+    /// Creates an execution-frontier proof whose C state, replay metadata,
+    /// facts, and provenance are structurally shared by checked descendants.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn for_execution_frontier(
         claim_label: &'a str,
@@ -472,6 +469,9 @@ impl<'a> Proof<'a> {
                 application,
                 premises,
             } => self.apply_theorem_using(application, premises)?,
+            SimpleProofStep::StepUsing(premises) => {
+                self.apply_execution_statement_using(premises)?
+            }
             SimpleProofStep::TransportUsing {
                 source,
                 target,
@@ -1091,106 +1091,20 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// Applies a C-frontier transition by consuming its current execution
-    /// state. Fact-only operations use the ordinary forkable `apply_step`
-    /// path; this owned boundary remains only for statement execution because
-    /// the underlying C state has not migrated to a forkable representation.
-    pub(super) fn apply_owned_execution_step(
-        self,
-        step: SimpleProofStep,
-    ) -> Result<Self, ClickError> {
-        if matches!(
-            step,
-            SimpleProofStep::TransportUsing { .. } | SimpleProofStep::UnfoldPredicate(_)
-        ) {
-            return self.apply_step(step);
-        }
-        let Proof {
-            context: proof_context,
-            state: proof_state,
-            node,
-        } = self;
-        let ProofContext::Execution(context) = proof_context.as_ref() else {
-            return Err(ClickError::new(
-                "`step using` requires an execution-frontier proof",
-            ));
-        };
-        let step_error = |message: &str| {
-            ClickError::new(format!(
-                "`{}` proof step {}: {message}",
-                context.claim_label, node.depth
-            ))
-        };
-        if proof_state.complete {
-            return Err(step_error(
-                "a tactic follows a completed execution frontier",
-            ));
-        }
-        if !matches!(step, SimpleProofStep::StepUsing(_)) {
-            return Err(step_error(
-                "owned execution proof currently accepts only `step using`",
-            ));
-        }
-        let mut state = Arc::try_unwrap(proof_state).map_err(|_| {
-            step_error(
-                "execution-frontier state was forked before its persistent representation exists",
-            )
-        })?;
-        let mut execution = state
-            .execution
-            .take()
-            .ok_or_else(|| step_error("execution-frontier proof lost its owned semantic state"))?;
-        execution.last_step_delta = ExecutionProofStepDelta::default();
-        let SimpleProofStep::StepUsing(premises) = &step else {
-            unreachable!("checked above")
-        };
-        let checked = check_step_using_facts(
-            &mut execution.replay,
-            &mut execution.state,
-            &state.facts,
-            premises,
-            context.function_block,
-            context.function,
-            context.parsed_function,
-            context.arguments,
-            context.function_environment,
-            context.predicate_environment,
-            context.click_function_environment,
-            context.claim_label,
-            context.tactic_index,
-        )?;
-        let facts = checked.facts;
-        let added_facts = checked.added_facts;
-        state.facts = facts;
-        state.execution = Some(execution);
-        state.added_facts = Arc::new(added_facts.clone());
-        state.checked_facts = Arc::new(added_facts);
-        Ok(Self {
-            context: proof_context,
-            state: Arc::new(state),
-            node: Arc::new(ProofNode {
-                parent: Some(node.clone()),
-                step: Some(Arc::new(step)),
-                depth: node.depth + 1,
-            }),
-        })
-    }
-
     pub(super) fn into_execution_context(self) -> Result<ProofReplayContext, ClickError> {
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
             return Err(self.step_error("proof does not own an execution frontier"));
         }
-        let error = format!(
-            "`{}` proof step {}: execution-frontier successor is still shared",
-            self.context.claim_label(),
-            self.node.depth
-        );
         let missing = format!(
             "`{}` proof step {}: execution-frontier successor lost its semantic state",
             self.context.claim_label(),
             self.node.depth
         );
-        let mut state = Arc::try_unwrap(self.state).map_err(|_| ClickError::new(error))?;
+        // This is a legacy compatibility/export boundary, not a semantic
+        // transition. A smart tactic may legitimately retain any ancestor or
+        // successor; materializing the selected checked state must therefore
+        // not require unique ownership of the Proof.
+        let mut state = Arc::unwrap_or_clone(self.state);
         let execution = state
             .execution
             .take()
@@ -1541,6 +1455,43 @@ impl<'a> Proof<'a> {
         })
     }
 
+    fn apply_execution_statement_using(
+        &self,
+        premises: &[ClickProposition],
+    ) -> Result<ProofState, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("`step using` requires an execution-frontier proof"));
+        };
+        let mut execution =
+            self.state.execution.clone().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        let checked = check_step_using_facts(
+            &mut execution.replay,
+            &mut execution.state,
+            &self.state.facts,
+            premises,
+            context.function_block,
+            context.function,
+            context.parsed_function,
+            context.arguments,
+            context.function_environment,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.claim_label,
+            context.tactic_index,
+        )?;
+        Ok(ProofState {
+            facts: checked.facts,
+            goal: self.state.goal.clone(),
+            complete: false,
+            added_facts: Arc::new(checked.added_facts.clone()),
+            checked_facts: Arc::new(checked.added_facts),
+            execution: Some(execution),
+        })
+    }
+
     fn apply_contradiction(&self, surface: &ClickProposition) -> Result<ProofState, ClickError> {
         let fact = match self.context.as_ref() {
             ProofContext::Pure(context) => lower_pure_theorem_proposition(
@@ -1732,7 +1683,7 @@ impl<'a> ExecutionProofBranches<'a> {
 
     /// Applies one checked simple step inside the selected C arm and retains
     /// only that step's semantic fact delta for the eventual join.
-    pub(super) fn apply_owned_step(
+    pub(super) fn apply_step(
         mut self,
         take_then: bool,
         step: SimpleProofStep,
@@ -1766,7 +1717,7 @@ impl<'a> ExecutionProofBranches<'a> {
             .replay
             .effect_facts
             .len();
-        arm.proof = arm.proof.apply_owned_execution_step(step)?;
+        arm.proof = arm.proof.apply_step(step)?;
         for fact in arm.proof.added_facts() {
             arm.introduced_facts.insert(fact.clone());
         }
@@ -1801,8 +1752,8 @@ impl<'a> ExecutionProofBranches<'a> {
         Ok(self)
     }
 
-    /// Preserves the original empty-arm entry point while the ordinary source
-    /// driver migrates nonempty bodies onto `apply_owned_step`.
+    /// Preserves the original empty-arm entry point for callers that require
+    /// the branch to contain no body steps.
     pub(super) fn join_empty(self) -> Result<Proof<'a>, ClickError> {
         self.join_checked(true)
     }
@@ -3302,6 +3253,11 @@ mod tests {
         let function = parsed_function.to_kernel_function();
         let function_environment = CExecutionEnvironment::new();
         let arguments = vec![CExpression::Value(int32(7))];
+        let unavailable = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(1))),
+        };
         let mut samples = Vec::new();
 
         for size in [16_u32, 64, 256, 1024, 4096] {
@@ -3326,9 +3282,18 @@ mod tests {
                 &predicate_environment,
                 &click_function_environment,
             );
+            let retained_root = root.clone();
+            let error = root
+                .apply_step(SimpleProofStep::StepUsing(vec![unavailable.clone()]))
+                .err()
+                .expect("an unavailable explicit premise must reject the candidate");
+            assert!(error.message().contains("requires an exact premise"));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+
             let before = fact_node_allocations();
             let completed = root
-                .apply_owned_execution_step(SimpleProofStep::StepUsing(Vec::new()))
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("an explicit return step should certify");
             let allocations = fact_node_allocations() - before;
             samples.push((
@@ -3347,6 +3312,31 @@ mod tests {
             );
             assert!(matches!(
                 completed.certificate().steps(),
+                [SimpleProofStep::StepUsing(premises)] if premises.is_empty()
+            ));
+            let alternative = root
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("the retained ancestor should support another checked descendant");
+            assert_eq!(alternative.certificate(), completed.certificate());
+            let root_execution = root.state.execution.as_ref().expect("root execution state");
+            let completed_execution = completed
+                .state
+                .execution
+                .as_ref()
+                .expect("statement successor retains execution state");
+            assert!(
+                root_execution
+                    .state
+                    .shares_nonlocal_storage_with(&completed_execution.state),
+                "a return step should not copy unchanged memory, resources, or populations"
+            );
+            let retained_completed = completed.clone();
+            let exported = completed
+                .into_execution_context()
+                .expect("a shared checked successor should export at the legacy boundary");
+            assert!(exported.replay.is_at_function_exit());
+            assert!(matches!(
+                retained_completed.certificate().steps(),
                 [SimpleProofStep::StepUsing(premises)] if premises.is_empty()
             ));
         }
@@ -3495,7 +3485,7 @@ mod tests {
             assert!(execution.replay.completed_branch_regions.contains(&0));
             assert_eq!(execution.branch_path.len(), 0);
             let completed = joined
-                .apply_owned_execution_step(SimpleProofStep::StepUsing(Vec::new()))
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("the joined continuation should execute its return");
             assert!(
                 completed
@@ -3579,9 +3569,9 @@ mod tests {
             let branches = root
                 .begin_execution_branch()
                 .expect("symbolic condition should open two checked arms")
-                .apply_owned_step(true, SimpleProofStep::StepUsing(Vec::new()))
+                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
                 .expect("then assignment should check")
-                .apply_owned_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
                 .expect("else assignment should check");
             let before = fact_node_allocations();
             let joined = branches
@@ -3602,7 +3592,7 @@ mod tests {
                     && matches!(else_proof.steps(), [SimpleProofStep::StepUsing(_)])
             ));
             let completed = joined
-                .apply_owned_execution_step(SimpleProofStep::StepUsing(Vec::new()))
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("the joined continuation should execute its return");
             assert!(
                 completed

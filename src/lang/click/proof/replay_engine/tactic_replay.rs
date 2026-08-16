@@ -1186,7 +1186,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     );
                     let checkpoint = proof.checkpoint();
                     for step in &construction.steps {
-                        proof = proof.apply_owned_execution_step(step.clone())?;
+                        proof = proof.apply_step(step.clone())?;
                     }
                     let certificate = proof.certificate_since(&checkpoint)?;
                     let result = proof.into_execution_context()?;
@@ -1333,7 +1333,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     );
                     let checkpoint = proof.checkpoint();
                     for step in &construction.steps {
-                        proof = proof.apply_owned_execution_step(step.clone())?;
+                        proof = proof.apply_step(step.clone())?;
                     }
                     let certificate = proof.certificate_since(&checkpoint)?;
                     let result = proof.into_execution_context()?;
@@ -1461,7 +1461,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     );
                     let checkpoint = proof.checkpoint();
                     for step in &construction.steps {
-                        proof = proof.apply_owned_execution_step(step.clone())?;
+                        proof = proof.apply_step(step.clone())?;
                     }
                     let certificate = proof.certificate_since(&checkpoint)?;
                     let result = proof.into_execution_context()?;
@@ -2001,8 +2001,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     predicate_environment,
                     click_function_environment,
                 );
-                let proof = proof
-                    .apply_owned_execution_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
+                let proof = proof.apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
                 let result = proof.into_execution_context()?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
