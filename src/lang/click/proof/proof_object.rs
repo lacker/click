@@ -62,7 +62,8 @@ pub(super) struct ExecutionProofBranches<'a> {
 
 struct ExecutionProofArm<'a> {
     proof: Proof<'a>,
-    path_facts: Vec<Proposition>,
+    introduced_facts: PersistentOrderedSet<Proposition>,
+    introduced_effect_facts: Vec<ExecutionPureFact>,
     condition_theorem: Theorem,
 }
 
@@ -856,6 +857,10 @@ impl<'a> Proof<'a> {
                 "{} arm of C `if` at statement({statement_index})",
                 if take_then { "then" } else { "else" }
             ));
+            let mut introduced_facts = PersistentOrderedSet::default();
+            for fact in &transition.path_facts {
+                introduced_facts.insert(fact.clone());
+            }
             let arm = ExecutionProofArm {
                 proof: Proof {
                     context: self.context.clone(),
@@ -868,10 +873,11 @@ impl<'a> Proof<'a> {
                         execution: Some(arm_execution),
                     }),
                     // The structural certificate is owned by the container
-                    // and installed atomically by `join_empty`.
+                    // and installed atomically by the checked join.
                     node: self.node.clone(),
                 },
-                path_facts: transition.path_facts,
+                introduced_facts,
+                introduced_effect_facts: Vec::new(),
                 condition_theorem: transition.theorem,
             };
             arms[usize::from(!take_then)] = Some(arm);
@@ -1657,14 +1663,73 @@ impl<'a> ExecutionProofBranches<'a> {
             .map(|arm| &arm.proof)
     }
 
-    /// Joins a C branch whose feasible arms required no body steps.
-    ///
-    /// This intentionally narrow first join proves the ownership boundary:
-    /// branch entry created checked descendant states and the join installs
-    /// one structured certificate node. The common replay frontier is derived
-    /// from the shared root and branch structure; it is never selected from
-    /// one arm while silently discarding the other's metadata.
+    /// Applies one checked simple step inside the selected C arm and retains
+    /// only that step's semantic fact delta for the eventual join.
+    pub(super) fn apply_owned_step(
+        mut self,
+        take_then: bool,
+        step: SimpleProofStep,
+    ) -> Result<Self, ClickError> {
+        if !matches!(
+            step,
+            SimpleProofStep::StepUsing(_) | SimpleProofStep::TransportUsing { .. }
+        ) {
+            return Err(self.root.step_error(
+                "execution branch arms currently accept only `step using` and `transport using`",
+            ));
+        }
+        let arm_index = usize::from(!take_then);
+        let mut arm = self.arms[arm_index].take().ok_or_else(|| {
+            self.root.step_error(format!(
+                "cannot apply a step to the infeasible {} execution arm",
+                if take_then { "then" } else { "else" }
+            ))
+        })?;
+        let prior_effect_count = arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .ok_or_else(|| {
+                self.root
+                    .step_error("execution branch arm lost its semantic state")
+            })?
+            .replay
+            .effect_facts
+            .len();
+        arm.proof = arm.proof.apply_owned_execution_step(step)?;
+        for fact in arm.proof.added_facts() {
+            arm.introduced_facts.insert(fact.clone());
+        }
+        let effects = &arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .expect("checked execution step retains semantic state")
+            .replay
+            .effect_facts;
+        for fact in effects.iter().skip(prior_effect_count) {
+            if !arm.introduced_effect_facts.contains(fact) {
+                arm.introduced_effect_facts.push(fact.clone());
+            }
+        }
+        self.arms[arm_index] = Some(arm);
+        Ok(self)
+    }
+
+    /// Preserves the original empty-arm entry point while the ordinary source
+    /// driver migrates nonempty bodies onto `apply_owned_step`.
     pub(super) fn join_empty(self) -> Result<Proof<'a>, ClickError> {
+        self.join_checked(true)
+    }
+
+    /// Joins two checked non-returning C branch arms at their shared frontier.
+    pub(super) fn join(self) -> Result<Proof<'a>, ClickError> {
+        self.join_checked(false)
+    }
+
+    fn join_checked(self, require_empty: bool) -> Result<Proof<'a>, ClickError> {
         let [Some(then_arm), Some(else_arm)] = self.arms else {
             return Err(self.root.step_error(
                 "an execution `branch` with one feasible arm is a decided path, not a join",
@@ -1673,7 +1738,7 @@ impl<'a> ExecutionProofBranches<'a> {
         let validate_arm =
             |name: &str, expected: bool, arm: &ExecutionProofArm<'a>| -> Result<(), ClickError> {
                 let body = arm.proof.certificate_since(&self.root_checkpoint)?;
-                if !body.steps().is_empty() {
+                if require_empty && !body.steps().is_empty() {
                     return Err(self.root.step_error(format!(
                         "cannot use the empty execution join for a nonempty {name} arm"
                     )));
@@ -1709,6 +1774,8 @@ impl<'a> ExecutionProofBranches<'a> {
             };
         validate_arm("then", true, &then_arm)?;
         validate_arm("else", false, &else_arm)?;
+        let then_proof = then_arm.proof.certificate_since(&self.root_checkpoint)?;
+        let else_proof = else_arm.proof.certificate_since(&self.root_checkpoint)?;
         let then_state = &then_arm
             .proof
             .state
@@ -1726,16 +1793,59 @@ impl<'a> ExecutionProofBranches<'a> {
         if **then_state != **else_state {
             return Err(self
                 .root
-                .step_error("empty execution `branch` arms reached different C states"));
+                .step_error("execution `branch` arms reached different C states"));
         }
         let continuation_remaining = self.continuation_remaining.ok_or_else(|| {
             self.root
-                .step_error("empty execution `branch` has no shared continuation statement")
+                .step_error("execution `branch` has no shared continuation statement")
         })?;
         let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
             self.root
                 .step_error("execution branch root lost its semantic state")
         })?;
+        for (name, arm) in [("then", &then_arm), ("else", &else_arm)] {
+            let replay = &arm
+                .proof
+                .state
+                .execution
+                .as_ref()
+                .expect("validated branch execution state")
+                .replay;
+            if replay.function_entry_execution_prerequisites.len()
+                != root_execution
+                    .replay
+                    .function_entry_execution_prerequisites
+                    .len()
+                || replay.function_entry_derivations.len()
+                    != root_execution.replay.function_entry_derivations.len()
+                || replay.frontier_loop_clauses.len()
+                    != root_execution.replay.frontier_loop_clauses.len()
+                || replay.frontier_loop_rules.len()
+                    != root_execution.replay.frontier_loop_rules.len()
+                || replay.unfolded_predicates.len()
+                    != root_execution.replay.unfolded_predicates.len()
+                || replay.planned_statement_transitions.len()
+                    != root_execution.replay.planned_statement_transitions.len()
+            {
+                return Err(self.root.step_error(format!(
+                    "{name} execution arm changed replay metadata that the checked join has not migrated"
+                )));
+            }
+        }
+        let then_replay = &then_arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .expect("validated then execution state")
+            .replay;
+        let else_replay = &else_arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .expect("validated else execution state")
+            .replay;
         let mut execution = root_execution.clone();
         execution.state = (**then_state).clone().into();
         execution.replay.completed_branch_regions.clear();
@@ -1749,6 +1859,22 @@ impl<'a> ExecutionProofBranches<'a> {
             remaining: continuation_remaining,
         };
         execution.replay.has_structured_branch_history = true;
+        execution.replay.next_opaque_call = then_replay
+            .next_opaque_call
+            .max(else_replay.next_opaque_call);
+        execution.replay.next_verification_variable = then_replay
+            .next_verification_variable
+            .max(else_replay.next_verification_variable);
+        for effect in then_arm
+            .introduced_effect_facts
+            .iter()
+            .chain(&else_arm.introduced_effect_facts)
+        {
+            append_execution_effect_facts(
+                &mut execution.replay.effect_facts,
+                std::slice::from_ref(effect),
+            );
+        }
         execution.branch_path.clear();
         execution.replay.case_assumptions.clear();
         let ProofContext::Execution(context) = self.root.context.as_ref() else {
@@ -1773,15 +1899,33 @@ impl<'a> ExecutionProofBranches<'a> {
         )?;
 
         let mut facts = self.root.state.facts.clone();
-        for fact in &then_arm.path_facts {
-            if else_arm.proof.state.facts.contains(fact) {
+        let mut common_added_facts = Vec::new();
+        for fact in &then_arm.introduced_facts {
+            if else_arm.introduced_facts.contains(fact)
+                && then_arm.proof.state.facts.contains(fact)
+                && else_arm.proof.state.facts.contains(fact)
+                && !facts.contains(fact)
+            {
                 facts = facts.with_fact(fact.clone());
+                common_added_facts.push(fact.clone());
+                for surface in then_replay.surface_propositions.surfaces(fact) {
+                    if else_replay
+                        .surface_propositions
+                        .surfaces(fact)
+                        .any(|candidate| candidate == surface)
+                    {
+                        execution
+                            .replay
+                            .surface_propositions
+                            .record_lowering(surface, fact)?;
+                    }
+                }
             }
         }
         let step = SimpleProofStep::Branch {
             ensuring: None,
-            then_proof: Box::new(ProofCertificate::from_steps(Vec::new())),
-            else_proof: Box::new(ProofCertificate::from_steps(Vec::new())),
+            then_proof: Box::new(then_proof),
+            else_proof: Box::new(else_proof),
         };
         Ok(Proof {
             context: self.root.context.clone(),
@@ -1789,8 +1933,8 @@ impl<'a> ExecutionProofBranches<'a> {
                 facts,
                 goal: Goal::ExecutionFrontier,
                 complete: false,
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
+                added_facts: Arc::new(common_added_facts.clone()),
+                checked_facts: Arc::new(common_added_facts),
                 execution: Some(execution),
             }),
             node: Arc::new(ProofNode {
@@ -2846,6 +2990,101 @@ mod tests {
             assert!(
                 allocations <= allocation_bound,
                 "size {size} checked execution branch allocated {allocations} persistent nodes (logarithmic bound {allocation_bound})"
+            );
+        }
+    }
+
+    #[test]
+    fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 constant(int32 x) {
+                    ensures returns_one: result == 1 by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let parsed_function = syntax::parse_function(
+            "int32 constant(int32 x) { if (x < 0) { x = 1; } else { x = 1; } return x; }",
+        )
+        .expect("test C branch should parse");
+        let function = parsed_function.to_kernel_function();
+        let arguments = vec![CExpression::Value(CValue::Int32(
+            Bitvector32Term::Variable(Variable(70_000)),
+        ))];
+        let function_environment = CExecutionEnvironment::new();
+        let mut allocation_samples = Vec::new();
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut replay = TacticReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..TacticReplayState::default()
+            };
+            replay.frontier.next_statement_index = 0;
+            let root = Proof::for_execution_frontier(
+                "nonempty branch proof",
+                0,
+                ProofReplayContext {
+                    state: CState::new(),
+                    pure_facts: (0..size).map(indexed_fact).collect(),
+                    replay,
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &predicate_environment,
+                &click_function_environment,
+            );
+            let branches = root
+                .begin_execution_branch()
+                .expect("symbolic condition should open two checked arms")
+                .apply_owned_step(true, SimpleProofStep::StepUsing(Vec::new()))
+                .expect("then assignment should check")
+                .apply_owned_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .expect("else assignment should check");
+            let before = fact_node_allocations();
+            let joined = branches
+                .join()
+                .expect("identical checked assignment arms should rejoin");
+            allocation_samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before,
+            ));
+            assert!(matches!(
+                joined.certificate().steps(),
+                [SimpleProofStep::Branch {
+                    ensuring: None,
+                    then_proof,
+                    else_proof,
+                }] if matches!(then_proof.steps(), [SimpleProofStep::StepUsing(_)])
+                    && matches!(else_proof.steps(), [SimpleProofStep::StepUsing(_)])
+            ));
+            let completed = joined
+                .apply_owned_execution_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("the joined continuation should execute its return");
+            assert!(
+                completed
+                    .state
+                    .execution
+                    .as_ref()
+                    .expect("completed proof retains execution state")
+                    .replay
+                    .is_at_function_exit()
+            );
+        }
+        let (_, base_height, base_allocations) = allocation_samples[0];
+        for (size, height, allocations) in allocation_samples {
+            let allocation_bound = base_allocations + 32 * (height - base_height);
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} nonempty branch join allocated {allocations} persistent nodes (logarithmic bound {allocation_bound})"
             );
         }
     }

@@ -525,6 +525,21 @@ arm-local fact input required by the next nonempty execution-branch join; the
 owned statement adapter still rebuilds its complete `ProofFacts` successor
 until statement facts themselves use persistent updates.
 
+The execution branch container now accepts linear arm bodies made only of
+`StepUsing` and `TransportUsing`. Each arm advances through the ordinary
+checked `Proof` operation and accumulates only its fact and execution-effect
+deltas. The join embeds each checkpoint suffix directly in the structured
+`Branch` certificate, intersects common facts by visiting those arm-local
+deltas, unions arm-local certified effects, advances freshness counters, and
+reconstructs the common frontier from the shared root. Replay histories that
+do not yet have an audited merge rule are rejected by constant-size metadata
+checks instead of being selected from one arm. Ordinary verification uses
+this path for undecided, no-`ensuring`, linear simple branches; expansion
+capture, decided paths, structured/nonsimple arm bodies, and branch
+interfaces remain on the legacy driver. A deterministic 16-through-4096
+regression measures the join after fixed arm bodies and bounds persistent fact
+node growth logarithmically in unrelated context size.
+
 Function-entry execution prerequisites and their kernel derivations now use a
 persistent insertion-ordered set. Exact admission and one local insertion are
 logarithmic, forks share both the AVL index and ordered history, and final

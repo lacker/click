@@ -385,6 +385,10 @@ impl<T: Clone + Ord> PersistentOrderedSet<T> {
         self.exact.contains(value)
     }
 
+    pub(super) fn len(&self) -> usize {
+        self.ordered.len()
+    }
+
     pub(super) fn iter(&self) -> PersistentSequenceIter<'_, T> {
         self.ordered.iter()
     }

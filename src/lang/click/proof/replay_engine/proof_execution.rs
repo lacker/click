@@ -1,5 +1,34 @@
 use super::*;
 
+fn linear_execution_simple_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofStep>> {
+    match node {
+        InternalProofNode::Done => Some(Vec::new()),
+        InternalProofNode::Linear {
+            tactics,
+            continuation,
+        } if matches!(continuation.as_ref(), InternalProofNode::Done) => {
+            let mut steps = Vec::with_capacity(tactics.len());
+            for indexed in tactics {
+                let certificate =
+                    ProofCertificate::from_proof_tactics(std::slice::from_ref(&indexed.tactic))
+                        .ok()?;
+                let [step] = certificate.steps() else {
+                    return None;
+                };
+                if !matches!(
+                    step,
+                    SimpleProofStep::StepUsing(_) | SimpleProofStep::TransportUsing { .. }
+                ) {
+                    return None;
+                }
+                steps.push(step.clone());
+            }
+            Some(steps)
+        }
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn execute_internal_proof(
     node: &InternalProofNode,
@@ -282,15 +311,14 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             else_branch,
             continuation,
         } => {
-            // The first execution-branch Proof slice owns the complete
-            // ordinary-verification path for an undecided C `if` with empty
-            // arms. Expansion capture continues through the legacy path
-            // until nonempty arm certificates and selected-source offsets
-            // migrate into the same structural container.
+            // Ordinary linear simple arms advance only through the checked
+            // execution Proof container. Expansion capture continues through
+            // the legacy path until selected-source offsets migrate into the
+            // same structural container.
             if expansion_capture.is_none()
                 && ensuring.is_none()
-                && matches!(then_branch.as_ref(), InternalProofNode::Done)
-                && matches!(else_branch.as_ref(), InternalProofNode::Done)
+                && let Some(then_steps) = linear_execution_simple_steps(then_branch)
+                && let Some(else_steps) = linear_execution_simple_steps(else_branch)
             {
                 let proof = Proof::for_execution_frontier(
                     claim_label,
@@ -305,9 +333,20 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     click_function_environment,
                 );
                 let checkpoint = proof.checkpoint();
-                let branches = proof.begin_execution_branch()?;
+                let mut branches = proof.begin_execution_branch()?;
                 if branches.has_both_feasible_arms() {
-                    let proof = branches.join_empty()?;
+                    let empty = then_steps.is_empty() && else_steps.is_empty();
+                    for step in then_steps {
+                        branches = branches.apply_owned_step(true, step)?;
+                    }
+                    for step in else_steps {
+                        branches = branches.apply_owned_step(false, step)?;
+                    }
+                    let proof = if empty {
+                        branches.join_empty()?
+                    } else {
+                        branches.join()?
+                    };
                     let certificate = proof.certificate_since(&checkpoint)?;
                     let mut joined_context = proof.into_execution_context()?;
                     for step in certificate.steps() {

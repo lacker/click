@@ -108,6 +108,45 @@ fn empty_frontier_branch_uses_the_checked_structural_join() {
 }
 
 #[test]
+fn linear_frontier_branch_uses_the_checked_structural_join() {
+    let c_source = r#"
+        int32 constant(int32 x) {
+            if (x < 0) {
+                x = 1;
+            } else {
+                x = 1;
+            }
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "constant.c";
+
+        int32 constant(int32 x) {
+            ensures returns_one: result == 1;
+        } by {
+            branch {
+                then {
+                    step();
+                }
+                else {
+                    step();
+                }
+            }
+            step();
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("constant.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "linear frontier branch should retain and check its arm proofs: {}",
+            error.message()
+        )
+    });
+}
+
+#[test]
 fn rejects_removed_reach_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",
