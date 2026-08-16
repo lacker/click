@@ -951,16 +951,29 @@ fn replay_linear_tactics_without_frontier_loops(
         }
         match tactic {
             ProofTactic::Mark(name) => {
-                let point = ProgramPointRef {
-                    region: CodeRegionRef::Mark(name.clone()),
-                    kind: ProgramPointKind::Entry,
-                };
-                if replay.program_point_states.contains_key(&point) {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: duplicate proof mark `{name}`"
-                    )));
-                }
-                replay.program_point_states.insert(point, state.clone());
+                let proof = Proof::for_execution_frontier(
+                    claim_label,
+                    tactic_index,
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    function,
+                    parsed_function,
+                    arguments,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                );
+                let proof = proof.apply_step(SimpleProofStep::Mark(name.clone()))?;
+                let result = proof.into_execution_context()?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
             }
             ProofTactic::UnfoldResource(resource) => {
                 if replay.is_at_function_exit() {
@@ -1080,11 +1093,15 @@ fn replay_linear_tactics_without_frontier_loops(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::StepUsing(premises) => {
-                check_step_using(
-                    &mut replay,
-                    &mut state,
-                    &mut requirement_pure_facts,
-                    premises,
+                let proof = Proof::for_execution_frontier(
+                    claim_label,
+                    tactic_index,
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
                     function_block,
                     function,
                     parsed_function,
@@ -1092,9 +1109,13 @@ fn replay_linear_tactics_without_frontier_loops(
                     function_environment,
                     predicate_environment,
                     click_function_environment,
-                    claim_label,
-                    tactic_index,
-                )?;
+                );
+                let proof = proof.apply_step(SimpleProofStep::StepUsing(premises.clone()))?;
+                let result = proof.into_execution_context()?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::Step => {

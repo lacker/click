@@ -5,45 +5,6 @@ pub(in crate::lang::click::proof) struct CheckedStatementStep {
     pub(in crate::lang::click::proof) added_facts: Vec<Proposition>,
 }
 
-/// Legacy vector adapter. Ordinary proof-object execution calls the
-/// persistent operation below directly; source replay materializes only at
-/// this compatibility boundary.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn check_step_using(
-    replay: &mut TacticReplayState,
-    state: &mut CState,
-    requirement_pure_facts: &mut Vec<Proposition>,
-    premises: &[ClickProposition],
-    function_block: &FunctionBlock,
-    function: &CFunction,
-    parsed_function: &syntax::C0Function,
-    arguments: &[CExpression],
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
-) -> Result<Vec<Proposition>, ClickError> {
-    let facts = ProofFacts::from_ordered(requirement_pure_facts);
-    let checked = check_step_using_facts(
-        replay,
-        state,
-        &facts,
-        premises,
-        function_block,
-        function,
-        parsed_function,
-        arguments,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        claim_label,
-        tactic_index,
-    )?;
-    *requirement_pure_facts = checked.facts.to_vec();
-    Ok(checked.added_facts)
-}
-
 /// Checks one explicit statement transition from exactly the named surface
 /// premises and atomically advances the caller-selected execution successor.
 ///

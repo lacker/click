@@ -533,12 +533,13 @@ ambient context. Snapshot-blind buckets only select same-shape candidates,
 which are still decided by the kernel snapshot bridge. The selected successor
 facts are inserted by output delta, and persistent prefix batches preserve the
 existing semantic order in which transported successor spellings precede
-ambient old-snapshot facts. Legacy source replay materializes a vector only at
-its compatibility boundary, while ordinary execution `Proof` steps remain
-persistent throughout. A deterministic 16-through-4096 regression checks a
-fixed explicit statement and retained certificate under unrelated facts with
-the original logarithmic allocation bounds; the complete library expansion
-suite pins polarity, snapshot, compound-fact, and successor-order behavior.
+ambient old-snapshot facts. Explicit source `step() using`, smart execution,
+and structured execution arms now all enter that operation only through
+`Proof::apply_step`; the obsolete vector adapter has been deleted. A
+deterministic 16-through-4096 regression checks a fixed explicit statement and
+retained certificate under unrelated facts with the original logarithmic
+allocation bounds; the complete library expansion suite pins polarity,
+snapshot, compound-fact, and successor-order behavior.
 
 `TransportUsing` now uses the same persistent boundary. `ProofFacts` retains
 incrementally built restricted contexts for implicit frame facts and direct
@@ -571,6 +572,12 @@ ancestor transactionality, repeatable descendant construction, and sharing of
 unchanged memory/resource/population storage. The legacy context-export adapter
 also accepts a shared checked successor, so retaining a search result cannot
 reintroduce a hidden uniqueness requirement.
+
+Explicit `mark` is also a checked execution `Proof` transition now. It records
+the named program point only in the returned successor, retains
+`SimpleProofStep::Mark`, and rejects a duplicate transactionally without
+changing the accepted descendant or its ancestor. The old direct replay-state
+mutation has been removed.
 
 The execution branch container now accepts linear arm bodies made only of
 `StepUsing`, `TransportUsing`, and `UnfoldPredicate`. Each arm advances through the ordinary

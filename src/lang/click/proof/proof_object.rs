@@ -465,6 +465,7 @@ impl<'a> Proof<'a> {
         }
 
         let next_state = match &step {
+            SimpleProofStep::Mark(name) => self.apply_execution_mark(name)?,
             SimpleProofStep::ApplyTheoremUsing {
                 application,
                 premises,
@@ -1488,6 +1489,36 @@ impl<'a> Proof<'a> {
             complete: false,
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
+            execution: Some(execution),
+        })
+    }
+
+    fn apply_execution_mark(&self, name: &str) -> Result<ProofState, ClickError> {
+        if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
+            return Err(self.step_error("`mark` requires an execution-frontier proof"));
+        }
+        let mut execution =
+            self.state.execution.clone().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+        let point = ProgramPointRef {
+            region: CodeRegionRef::Mark(name.to_string()),
+            kind: ProgramPointKind::Entry,
+        };
+        if execution.replay.program_point_states.contains_key(&point) {
+            return Err(self.step_error(format!("duplicate proof mark `{name}`")));
+        }
+        execution
+            .replay
+            .program_point_states
+            .insert(point, (*execution.state).clone());
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        Ok(ProofState {
+            facts: self.state.facts.clone(),
+            goal: self.state.goal.clone(),
+            complete: false,
+            added_facts: Arc::new(Vec::new()),
+            checked_facts: Arc::new(Vec::new()),
             execution: Some(execution),
         })
     }
@@ -3283,6 +3314,22 @@ mod tests {
                 &click_function_environment,
             );
             let retained_root = root.clone();
+            let marked = root
+                .apply_step(SimpleProofStep::Mark("candidate".to_string()))
+                .expect("a fresh proof mark should produce a checked descendant");
+            assert!(matches!(
+                marked.certificate().steps(),
+                [SimpleProofStep::Mark(name)] if name == "candidate"
+            ));
+            let duplicate = marked
+                .apply_step(SimpleProofStep::Mark("candidate".to_string()))
+                .err()
+                .expect("a duplicate mark must reject the candidate");
+            assert!(duplicate.message().contains("duplicate proof mark"));
+            assert!(matches!(
+                marked.certificate().steps(),
+                [SimpleProofStep::Mark(name)] if name == "candidate"
+            ));
             let error = root
                 .apply_step(SimpleProofStep::StepUsing(vec![unavailable.clone()]))
                 .err()
