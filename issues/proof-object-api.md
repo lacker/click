@@ -311,6 +311,12 @@ certificate directly. The former `complete_smart_tactic` construction replay
 is gone for this path; snapshot/resource/effect semantics remain centralized
 in the same checker used by explicit certificates.
 
+The fifth checkpoint starts migrating direct pure smart goals. `auto` and
+`simp` now try checked `Proof` successors for the simple `assumption` and
+`normalize` closures. A successful successor retains its own one-step
+certificate and avoids the ordinary construction/replay gateway; goals that
+need richer simple vocabulary continue through the legacy path for now.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

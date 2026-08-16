@@ -1239,6 +1239,52 @@ mod certificate_tests {
     }
 
     #[test]
+    fn direct_pure_auto_and_simp_retain_checked_simple_proofs() {
+        let file = parse(
+            r#"
+                theorem required(x: int32) {
+                    requires x >= 0;
+                    ensures x >= 0 by auto;
+                }
+
+                theorem reflexive(x: int32) {
+                    ensures x == x by simp;
+                }
+            "#,
+        )
+        .expect("theorems should parse");
+        let predicate_environment = PredicateEnvironment::new(file.predicate_definitions());
+        let click_function_environment =
+            ClickFunctionEnvironment::new(file.click_function_definitions());
+
+        let (verified, events) = crate::instrumentation::collect(|| {
+            verify_theorem_definitions(
+                file.theorem_definitions(),
+                &predicate_environment,
+                &click_function_environment,
+            )
+        });
+        let verified = verified.expect("direct checked pure proofs should verify");
+        assert_eq!(
+            verified[0].proof_tactics().as_deref(),
+            Some([ProofTactic::Assumption].as_slice())
+        );
+        assert_eq!(
+            verified[1].proof_tactics().as_deref(),
+            Some([ProofTactic::Normalize].as_slice())
+        );
+        assert!(
+            events.iter().all(|event| !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                    if matches!(claim.as_str(), "required.ensures_0" | "reflexive.ensures_0")
+                        && name == "surface certificate replay"
+            )),
+            "checked smart pure proofs must not pass through ordinary certificate replay: {events:#?}"
+        );
+    }
+
+    #[test]
     fn path_aligned_certificates_preserve_branch_structure() {
         let condition = ClickProposition::Comparison {
             left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),

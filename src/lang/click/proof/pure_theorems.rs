@@ -438,38 +438,58 @@ fn verify_theorem_ensure(
         );
     }
 
-    let mut checked_certificate = None;
+    let checked_certificate;
     let (proof_kind, source_tactics, induction_setup) = match ensure_clause.proof() {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto) => {
-            prove_pure_theorem_goal(
+            checked_certificate = check_direct_pure_goal_with_proof(
                 claim_label,
-                "auto",
-                &context.requires,
+                context,
                 &goal,
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
-                context,
-                &[],
-                &[],
-                true,
-            )?;
+            );
+            if checked_certificate.is_none() {
+                prove_pure_theorem_goal(
+                    claim_label,
+                    "auto",
+                    &context.requires,
+                    &goal,
+                    predicate_environment,
+                    click_function_environment,
+                    theorem_environment,
+                    context,
+                    &[],
+                    &[],
+                    true,
+                )?;
+            }
             (ProofKind::Pure, None, None)
         }
         SourceProof::Tactic(SmartTactic::Simp) => {
-            prove_pure_theorem_goal(
+            checked_certificate = check_direct_pure_goal_with_proof(
                 claim_label,
-                "simp",
-                &context.requires,
+                context,
                 &goal,
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
-                context,
-                &[],
-                &[],
-                true,
-            )?;
+            );
+            if checked_certificate.is_none() {
+                prove_pure_theorem_goal(
+                    claim_label,
+                    "simp",
+                    &context.requires,
+                    &goal,
+                    predicate_environment,
+                    click_function_environment,
+                    theorem_environment,
+                    context,
+                    &[],
+                    &[],
+                    true,
+                )?;
+            }
             (ProofKind::Simp, None, None)
         }
         SourceProof::Tactic(SmartTactic::Frame) => {
@@ -606,6 +626,39 @@ fn verify_theorem_ensure(
         conclusion: goal,
         kernel_authority,
     })
+}
+
+/// Lets direct smart pure proofs search by applying checked simple steps.
+///
+/// Failed descendants are simply discarded. A successful descendant already
+/// owns both the semantic successor and the exact simple certificate that
+/// produced it, so ordinary operation does not reconstruct and replay that
+/// certificate through the legacy gateway.
+#[allow(clippy::too_many_arguments)]
+fn check_direct_pure_goal_with_proof(
+    claim_label: &str,
+    context: &PureTheoremContext,
+    goal: &Proposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
+) -> Option<ProofCertificate> {
+    let root = Proof::for_pure_goal(
+        claim_label,
+        &context.requires,
+        goal.clone(),
+        context,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    );
+    for closer in [SimpleProofStep::Assumption, SimpleProofStep::Normalize] {
+        if let Ok(proof) = root.apply_step(closer) {
+            debug_assert!(proof.is_complete());
+            return Some(proof.certificate());
+        }
+    }
+    None
 }
 
 fn verify_kernel_standard_theorem_axiom(
