@@ -2463,17 +2463,30 @@ fn replay_linear_tactics_without_frontier_loops(
                 )));
             }
             ProofTactic::CloseInvariants => {
-                if !replay.loop_invariant_region {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `close_invariants` is only available in a loop-region proof"
-                    )));
-                }
-                if replay.region_invariants_closed {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: the invariant bundle was closed more than once on one path"
-                    )));
-                }
-                replay.region_invariants_closed = true;
+                let proof = Proof::for_execution_frontier(
+                    claim_label,
+                    tactic_index,
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    function,
+                    parsed_function,
+                    arguments,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    theorem_environment,
+                );
+                let proof = proof.apply_step(SimpleProofStep::CloseInvariants)?;
+                let result = proof.into_execution_context()?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
                 replay.invariant_closer_step = Some(InvariantCloserStep {
                     tactic_index,
                     source_index,

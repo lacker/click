@@ -643,6 +643,14 @@ frame and made an existing nested expansion overflow. Structured certificate
 checking and recursive proposition rewriting use explicit work stacks, so
 certificate nesting and proposition depth do not consume the process stack.
 
+Execution `CloseInvariants` is now an atomic `Proof::apply_step` transition.
+It checks the loop-region capability, rejects a duplicate transactionally,
+sets only the successor's invariant-closure intent, and retains the exact
+simple step. Source-position data used solely to attribute the later kernel
+bundle check remains attached at the legacy replay export boundary rather
+than becoming proof authority. A 16-through-4096 regression holds the step
+fixed while growing unrelated facts and records no persistent fact updates.
+
 The execution branch container now accepts linear arm bodies made only of
 `StepUsing`, `TransportUsing`, and `UnfoldPredicate`. Each arm advances through the ordinary
 checked `Proof` operation and accumulates only its fact and execution-effect

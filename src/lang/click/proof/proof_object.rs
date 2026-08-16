@@ -495,6 +495,7 @@ impl<'a> Proof<'a> {
             SimpleProofStep::Right => self.apply_right(),
             SimpleProofStep::Enumerate => self.apply_enumerate(),
             SimpleProofStep::Contradiction(surface) => self.apply_contradiction(surface),
+            SimpleProofStep::CloseInvariants => self.apply_close_invariants(),
             _ => {
                 Err(self
                     .step_error("this simple step has not yet migrated to the checked `Proof` API"))
@@ -1878,6 +1879,36 @@ impl<'a> Proof<'a> {
             .replay
             .program_point_states
             .insert(point, (*execution.state).clone());
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        Ok(ProofState {
+            facts: self.state.facts.clone(),
+            goal: self.state.goal.clone(),
+            complete: false,
+            added_facts: Arc::new(Vec::new()),
+            checked_facts: Arc::new(Vec::new()),
+            execution: Some(execution),
+        })
+    }
+
+    fn apply_close_invariants(&self) -> Result<ProofState, ClickError> {
+        if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
+            return Err(self.step_error("`close_invariants` requires an execution-frontier proof"));
+        }
+        let mut execution =
+            self.state.execution.clone().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+        if !execution.replay.loop_invariant_region {
+            return Err(
+                self.step_error("`close_invariants` is only available in a loop-region proof")
+            );
+        }
+        if execution.replay.region_invariants_closed {
+            return Err(
+                self.step_error("the invariant bundle was closed more than once on one path")
+            );
+        }
+        execution.replay.region_invariants_closed = true;
         execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             facts: self.state.facts.clone(),
@@ -4236,6 +4267,93 @@ mod tests {
             assert!(
                 allocations <= logarithmic_bound,
                 "size {size} statement step allocated {allocations} persistent nodes (logarithmic bound {logarithmic_bound})"
+            );
+        }
+    }
+
+    #[test]
+    fn close_invariants_is_a_transactional_constant_local_proof_step() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 loop_region(int32 x) {
+                    ensures unchanged: result == x by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let parsed_function = syntax::parse_function("int32 loop_region(int32 x) { return x; }")
+            .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let function_environment = CExecutionEnvironment::new();
+        let arguments = vec![CExpression::Value(int32(7))];
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let make_root = |loop_invariant_region| {
+                let replay = TacticReplayState {
+                    loop_invariant_region,
+                    ..TacticReplayState::default()
+                };
+                Proof::for_execution_frontier(
+                    "persistent close invariants",
+                    0,
+                    ProofReplayContext {
+                        state: CState::new(),
+                        pure_facts: (0..size).map(indexed_fact).collect(),
+                        replay,
+                        branch_path: PersistentSequence::default(),
+                    },
+                    function_block,
+                    &function,
+                    &parsed_function,
+                    &arguments,
+                    &function_environment,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &theorem_environment,
+                )
+            };
+
+            let outside_loop = make_root(false);
+            assert!(
+                outside_loop
+                    .apply_step(SimpleProofStep::CloseInvariants)
+                    .is_err(),
+                "the step is restricted to loop-region proofs"
+            );
+            assert!(outside_loop.certificate().steps().is_empty());
+
+            let root = make_root(true);
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .apply_step(SimpleProofStep::CloseInvariants)
+                .expect("the first close should produce a checked descendant");
+            assert_eq!(fact_node_allocations() - before, 0);
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+            assert_eq!(
+                closed.certificate().steps(),
+                &[SimpleProofStep::CloseInvariants]
+            );
+            let execution = closed
+                .state
+                .execution
+                .as_ref()
+                .expect("the successor retains execution state");
+            assert!(execution.replay.region_invariants_closed);
+            assert!(
+                execution.replay.invariant_closer_step.is_none(),
+                "source timing metadata is attached only at the replay adapter boundary"
+            );
+            assert!(closed.apply_step(SimpleProofStep::CloseInvariants).is_err());
+            assert_eq!(
+                closed.certificate().steps(),
+                &[SimpleProofStep::CloseInvariants]
             );
         }
     }
