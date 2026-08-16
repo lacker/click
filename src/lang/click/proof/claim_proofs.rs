@@ -2627,6 +2627,33 @@ pub(super) fn finish_ordered_proof_replay(
                             }
                             PostExecutionTactic::Assumption => {
                                 let mut closed_any = false;
+                                let transition_facts = path.execution_facts();
+                                let point_root = match &outcome {
+                                    CFunctionOutcome::Return {
+                                        value: result,
+                                        state: post_state,
+                                    } => Some(Proof::for_point_frontier(
+                                        &proof_label,
+                                        *tactic_index,
+                                        &path_requirements,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        post_state,
+                                        Some(result),
+                                        &replay.program_point_states,
+                                        &outcome_surface_propositions,
+                                        predicate_environment,
+                                        click_function_environment,
+                                        theorem_environment,
+                                        &unfolded_predicates,
+                                        &transition_facts,
+                                    )),
+                                    CFunctionOutcome::VerificationDiverges
+                                    | CFunctionOutcome::UndefinedBehavior(_)
+                                    | CFunctionOutcome::RuntimeError(_) => None,
+                                };
+                                let mut retained_certificate = None;
                                 for (claim_index, claim) in claims.iter().enumerate() {
                                     if closures[claim_index].is_closed() {
                                         continue;
@@ -2689,21 +2716,20 @@ pub(super) fn finish_ordered_proof_replay(
                                             }
                                         }
                                     };
-                                    if path_requirements.contains(&goal)
-                                        || materialization_equivalent_available_fact(
-                                            &goal,
-                                            &path_requirements,
-                                        )
-                                        .is_some()
-                                        || quantified_replay_equivalent_available_fact(
-                                            &goal,
-                                            &path_requirements,
-                                        )
-                                        .is_some()
+                                    let Some(point_root) = &point_root else {
+                                        continue;
+                                    };
+                                    match point_root
+                                        .focus_point_goal(goal)?
+                                        .apply_step(SimpleProofStep::Assumption)
                                     {
-                                        closures[claim_index] = ClaimClosure::by_exact_check();
-                                        closed_any = true;
-                                        break;
+                                        Ok(proof) => {
+                                            retained_certificate = Some(proof.certificate());
+                                            closures[claim_index] = ClaimClosure::by_exact_check();
+                                            closed_any = true;
+                                            break;
+                                        }
+                                        Err(_) => check_verification_deadline()?,
                                     }
                                 }
                                 if !closed_any {
@@ -2711,18 +2737,51 @@ pub(super) fn finish_ordered_proof_replay(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: `assumption` did not match any current proposition goal"
                                     )));
                                 }
-                                record_post_execution_surface_tactic(
-                                    deferred.surface_recorded,
-                                    &mut path_surface_post_tactics,
-                                    &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
-                                    post_execution_index,
-                                    *tactic_index,
-                                    ProofTactic::Assumption,
-                                );
+                                let tactics = retained_certificate
+                                    .as_ref()
+                                    .map(ProofCertificate::to_proof_tactics)
+                                    .unwrap_or_else(|| vec![ProofTactic::Assumption]);
+                                for tactic in tactics {
+                                    record_post_execution_surface_tactic(
+                                        deferred.surface_recorded,
+                                        &mut path_surface_post_tactics,
+                                        &mut path_deferred_capture_tactics,
+                                        replay.deferred_tactic_capture.as_ref(),
+                                        post_execution_index,
+                                        *tactic_index,
+                                        tactic.clone(),
+                                    );
+                                }
                             }
                             PostExecutionTactic::Normalize => {
                                 let mut closed_any = false;
+                                let transition_facts = path.execution_facts();
+                                let point_root = match &outcome {
+                                    CFunctionOutcome::Return {
+                                        value: result,
+                                        state: post_state,
+                                    } => Some(Proof::for_point_frontier(
+                                        &proof_label,
+                                        *tactic_index,
+                                        &path_requirements,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        post_state,
+                                        Some(result),
+                                        &replay.program_point_states,
+                                        &outcome_surface_propositions,
+                                        predicate_environment,
+                                        click_function_environment,
+                                        theorem_environment,
+                                        &unfolded_predicates,
+                                        &transition_facts,
+                                    )),
+                                    CFunctionOutcome::VerificationDiverges
+                                    | CFunctionOutcome::UndefinedBehavior(_)
+                                    | CFunctionOutcome::RuntimeError(_) => None,
+                                };
+                                let mut retained_certificate = None;
                                 for (claim_index, claim) in claims.iter().enumerate() {
                                     if closures[claim_index].is_closed() {
                                         continue;
@@ -2744,29 +2803,39 @@ pub(super) fn finish_ordered_proof_replay(
                                         continue;
                                     };
                                     let goal = match &rewritten_claim_goals[claim_index] {
-                                Some(goal) => goal.clone(),
-                                None => lower_ensure_proposition_goal(
-                                    &path_requirements,
-                                    surface_goal,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    &outcome,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    &replay.program_point_states,
-                                    &unfolded_predicates,
-                                )
-                                .map_err(|message| {
-                                    ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: `normalize` could not lower goal: {message}"
-                                    ))
-                                })?,
-                            };
-                                    if matches!(normalize_proposition(&goal), SimpProposition::True)
+                                        Some(goal) => goal.clone(),
+                                        None => lower_ensure_proposition_goal(
+                                            &path_requirements,
+                                            surface_goal,
+                                            parsed_function.parameters(),
+                                            arguments,
+                                            pre_state,
+                                            &outcome,
+                                            predicate_environment,
+                                            click_function_environment,
+                                            &replay.program_point_states,
+                                            &unfolded_predicates,
+                                        )
+                                        .map_err(|message| {
+                                            ClickError::new(format!(
+                                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `normalize` could not lower goal: {message}"
+                                            ))
+                                        })?,
+                                    };
+                                    let Some(point_root) = &point_root else {
+                                        continue;
+                                    };
+                                    match point_root
+                                        .focus_point_goal(goal)?
+                                        .apply_step(SimpleProofStep::Normalize)
                                     {
-                                        closures[claim_index] = ClaimClosure::by_exact_check();
-                                        closed_any = true;
+                                        Ok(proof) => {
+                                            retained_certificate
+                                                .get_or_insert_with(|| proof.certificate());
+                                            closures[claim_index] = ClaimClosure::by_exact_check();
+                                            closed_any = true;
+                                        }
+                                        Err(_) => check_verification_deadline()?,
                                     }
                                 }
                                 if !closed_any {
@@ -2774,15 +2843,21 @@ pub(super) fn finish_ordered_proof_replay(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: `normalize` did not prove any current proposition goal"
                                     )));
                                 }
-                                record_post_execution_surface_tactic(
-                                    deferred.surface_recorded,
-                                    &mut path_surface_post_tactics,
-                                    &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
-                                    post_execution_index,
-                                    *tactic_index,
-                                    ProofTactic::Normalize,
-                                );
+                                let tactics = retained_certificate
+                                    .as_ref()
+                                    .map(ProofCertificate::to_proof_tactics)
+                                    .unwrap_or_else(|| vec![ProofTactic::Normalize]);
+                                for tactic in tactics {
+                                    record_post_execution_surface_tactic(
+                                        deferred.surface_recorded,
+                                        &mut path_surface_post_tactics,
+                                        &mut path_deferred_capture_tactics,
+                                        replay.deferred_tactic_capture.as_ref(),
+                                        post_execution_index,
+                                        *tactic_index,
+                                        tactic.clone(),
+                                    );
+                                }
                             }
                             PostExecutionTactic::Rewrite(surface_equality) => {
                                 let CFunctionOutcome::Return {

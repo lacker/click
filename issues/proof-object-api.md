@@ -943,6 +943,17 @@ and a 16-through-4096 unrelated-fact curve covers result-aware frontier
 unfolding, transactional unknown-predicate rejection, logarithmic persistent
 allocation, and ancestor isolation.
 
+Grouped post-execution proposition goals now share one immutable result-aware
+point-frontier `Proof` context. An audited `focus_point_goal` root operation
+selects each externally owned contract goal without rebuilding its persistent
+fact indexes or inheriting another goal's provenance. Outcome `assumption` and
+`normalize` apply their existing simple steps to those focused roots and retain
+the checked certificates immediately; failed candidates leave the shared root
+unchanged. A deterministic 16-through-4096-fact regression pins fact-index
+sharing and logarithmic local lookup, while a grouped contract regression
+requires the two closers to discharge different postconditions without an
+ordinary surface-certificate replay.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

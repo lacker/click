@@ -468,6 +468,41 @@ fn grouped_post_execution_unfold_retains_its_checked_proof_step() {
 }
 
 #[test]
+fn grouped_post_execution_closers_use_independent_checked_proofs() {
+    let c_source = r#"
+        int32 identity(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "identity.c";
+
+        int32 identity(int32 x) {
+            requires selected: x == 0;
+            ensures retained: x == 0;
+            ensures reflexive: result == result;
+        } by {
+            execute();
+            assumption();
+            normalize();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("grouped outcome closers should verify through focused Proof roots");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.contract" && name == "surface certificate replay"
+        )),
+        "grouped outcome closers must retain their checked Proof steps: {events:#?}"
+    );
+}
+
+#[test]
 fn selected_post_execution_smart_apply_uses_exact_path_premises() {
     let c_source = r#"
             int32 identity(int32 x) {

@@ -657,6 +657,43 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Starts one externally selected proposition judgment from an initial
+    /// point-frontier context without rebuilding its persistent facts.
+    ///
+    /// Grouped contract finalization owns several independent ensure goals;
+    /// this audited root operation focuses one of them while sharing the
+    /// checked outcome context. It is not a proof transition and therefore
+    /// starts fresh provenance. Only an untouched point-frontier root may be
+    /// focused, so accepted descendants cannot replace their current goal.
+    pub(super) fn focus_point_goal(&self, goal: Proposition) -> Result<Self, ClickError> {
+        if !matches!(self.context.as_ref(), ProofContext::Point(_))
+            || !matches!(&self.state.goal, Goal::ExecutionFrontier)
+            || self.node.depth != 0
+        {
+            return Err(self.step_error(
+                "a proposition goal can be focused only from an initial point frontier",
+            ));
+        }
+        Ok(Self {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                facts: self.state.facts.clone(),
+                locals: self.state.locals.clone(),
+                unfolded_predicates: self.state.unfolded_predicates.clone(),
+                goal: Goal::Proposition(Arc::new(goal)),
+                complete: false,
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+                execution: None,
+            }),
+            node: Arc::new(ProofNode {
+                parent: None,
+                step: None,
+                depth: 0,
+            }),
+        })
+    }
+
     pub(super) fn is_complete(&self) -> bool {
         self.state.complete
     }
@@ -743,7 +780,14 @@ impl<'a> Proof<'a> {
     #[inline(never)]
     fn apply_assumption(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
-        if !self.state.facts.contains(goal) {
+        let available = match self.context.as_ref() {
+            ProofContext::Point(context) => self
+                .state
+                .facts
+                .replay_available_across_effects(goal, context.effect_facts),
+            ProofContext::Pure(_) | ProofContext::Execution(_) => self.state.facts.contains(goal),
+        };
+        if !available {
             return Err(self.step_error(format!(
                 "`assumption` requires the exact current goal as an available fact: {:?}",
                 goal
@@ -4801,6 +4845,74 @@ mod tests {
         );
         assert_eq!(root.state.unfolded_predicates.len(), 0);
         assert_eq!(root.active_unfolded_predicates(), inherited);
+    }
+
+    #[test]
+    fn result_aware_point_goal_focus_shares_facts_and_checks_assumption() {
+        let state = CState::new();
+        let result = int32(0);
+        let program_point_states = ProgramPointStates::new();
+        let surface_propositions = SurfacePropositionMap::default();
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let goal = indexed_fact(9_000_000);
+        let missing = indexed_fact(9_000_001);
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.push(goal.clone());
+            let root = Proof::for_point_frontier(
+                "result-aware point goal focus",
+                0,
+                &facts,
+                &[],
+                &[],
+                &state,
+                &state,
+                Some(&result),
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let before = fact_node_allocations();
+            let focused = root
+                .focus_point_goal(goal.clone())
+                .expect("an initial point frontier should focus one ensure goal");
+            assert_eq!(
+                fact_node_allocations() - before,
+                0,
+                "focusing a goal must share every persistent fact index"
+            );
+            assert!(
+                root.state
+                    .facts
+                    .exact
+                    .shares_root_with(&focused.state.facts.exact)
+            );
+            let retained_focused = focused.clone();
+            assert!(
+                root.focus_point_goal(missing.clone())
+                    .expect("focusing does not prove the selected goal")
+                    .apply_step(SimpleProofStep::Assumption)
+                    .is_err()
+            );
+            assert!(Arc::ptr_eq(&focused.state, &retained_focused.state));
+
+            let complete = focused
+                .apply_step(SimpleProofStep::Assumption)
+                .expect("the focused exact goal should close through Proof");
+            assert!(complete.is_complete());
+            assert_eq!(
+                complete.certificate().steps(),
+                &[SimpleProofStep::Assumption]
+            );
+            assert!(root.certificate().steps().is_empty());
+        }
     }
 
     #[test]
