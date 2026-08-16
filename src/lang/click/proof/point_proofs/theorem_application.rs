@@ -179,7 +179,7 @@ pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_at_curre
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lower_theorem_application_requirements(
+pub(in crate::lang::click::proof) fn lower_theorem_application_requirements(
     theorem_environment: &TheoremEnvironment,
     application: &TheoremApplication,
     context: &TheoremApplicationContext<'_>,

@@ -278,6 +278,47 @@ fn verifies_pure_theorem_definition() {
 }
 
 #[test]
+fn pure_bare_apply_builds_a_checked_proof_object_certificate() {
+    let source = r#"
+        theorem equality_symmetric(first: int32, second: int32) {
+            requires first == second;
+            ensures second == first by simp;
+        }
+
+        theorem use_equality_symmetric(first: int32, second: int32) {
+            requires first == second;
+            ensures second == first by {
+                apply(equality_symmetric(first, second));
+                assumption();
+            }
+        }
+    "#;
+
+    let verified = verify_click_theorems(source).expect("bare apply should verify");
+    assert!(matches!(
+        verified[1].proof_tactics().as_deref(),
+        Some([
+            ProofTactic::ApplyTheoremUsing { application, premises },
+            ProofTactic::Assumption,
+        ]) if application.name == "equality_symmetric" && premises.len() == 1
+    ));
+
+    let explicit = source.replace(
+        "apply(equality_symmetric(first, second));",
+        "apply(equality_symmetric(first, second)) using { first == second; }",
+    );
+    verify_click_theorems(&explicit).expect("exported explicit steps should verify independently");
+
+    let corrupted = source.replace(
+        "apply(equality_symmetric(first, second));",
+        "apply(equality_symmetric(first, second)) using {}",
+    );
+    let error = verify_click_theorems(&corrupted)
+        .expect_err("an independently supplied certificate cannot omit its premise");
+    assert!(error.message().contains("required exact fact"), "{error:?}");
+}
+
+#[test]
 fn pure_simp_exposes_an_explicit_theorem_certificate() {
     let source = r#"
         theorem positive_is_nonnegative(x: int32) {

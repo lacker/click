@@ -7,6 +7,7 @@ mod cursor_execution;
 mod execution_planning;
 mod fact_reasoning;
 mod point_proofs;
+mod proof_object;
 mod pure_theorems;
 mod replay_engine;
 mod replay_state;
@@ -34,6 +35,7 @@ pub(super) use fact_reasoning::{
     search_condition_derivation,
 };
 use point_proofs::*;
+use proof_object::*;
 #[cfg(test)]
 use pure_theorems::{
     lower_pure_theorem_proposition, pure_theorem_context, replay_pure_theorem_certificate,

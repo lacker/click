@@ -438,6 +438,7 @@ fn verify_theorem_ensure(
         );
     }
 
+    let mut checked_certificate = None;
     let (proof_kind, source_tactics, induction_setup) = match ensure_clause.proof() {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto) => {
             prove_pure_theorem_goal(
@@ -484,49 +485,73 @@ fn verify_theorem_ensure(
             }
             let (tactics, induction_setup) =
                 prepare_pure_induction_tactics(theorem, surface_goal, tactics)?;
-            prove_pure_theorem_script(
-                claim_label,
-                &context.requires,
-                &goal,
-                predicate_environment,
-                click_function_environment,
-                theorem_environment,
-                context,
-                &tactics,
-                induction_setup.as_ref(),
-            )?;
-            (ProofKind::TacticScript, Some(tactics), induction_setup)
+            checked_certificate = if induction_setup.is_none() {
+                check_pure_application_script_with_proof(
+                    theorem,
+                    claim_label,
+                    context,
+                    &goal,
+                    &tactics,
+                    predicate_environment,
+                    click_function_environment,
+                    theorem_environment,
+                )?
+            } else {
+                None
+            };
+            if checked_certificate.is_some() {
+                (ProofKind::TacticScript, None, induction_setup)
+            } else {
+                prove_pure_theorem_script(
+                    claim_label,
+                    &context.requires,
+                    &goal,
+                    predicate_environment,
+                    click_function_environment,
+                    theorem_environment,
+                    context,
+                    &tactics,
+                    induction_setup.as_ref(),
+                )?;
+                (ProofKind::TacticScript, Some(tactics), induction_setup)
+            }
         }
     };
 
-    let (certificate, ()) = pure_goal_proof_certificate_gateway(
-        claim_label,
-        || {
-            pure_theorem_surface_certificate(
-                theorem,
+    let certificate = match checked_certificate {
+        Some(certificate) => certificate,
+        None => {
+            let (certificate, ()) = pure_goal_proof_certificate_gateway(
                 claim_label,
-                context,
-                &goal,
-                source_tactics.as_deref(),
-                predicate_environment,
-                click_function_environment,
-                induction_setup.as_ref(),
-            )
-        },
-        |certificate| {
-            replay_pure_theorem_certificate(
-                claim_label,
-                &context.requires,
-                &goal,
-                predicate_environment,
-                click_function_environment,
-                theorem_environment,
-                context,
-                certificate,
-                induction_setup.as_ref(),
-            )
-        },
-    )?;
+                || {
+                    pure_theorem_surface_certificate(
+                        theorem,
+                        claim_label,
+                        context,
+                        &goal,
+                        source_tactics.as_deref(),
+                        predicate_environment,
+                        click_function_environment,
+                        induction_setup.as_ref(),
+                    )
+                },
+                |certificate| {
+                    replay_pure_theorem_certificate(
+                        claim_label,
+                        &context.requires,
+                        &goal,
+                        predicate_environment,
+                        click_function_environment,
+                        theorem_environment,
+                        context,
+                        certificate,
+                        induction_setup.as_ref(),
+                    )
+                },
+            )?;
+            certificate
+        }
+    };
     let kernel_variables = theorem
         .parameters()
         .iter()
@@ -781,6 +806,112 @@ fn verify_kernel_standard_theorem_axiom(
         conclusion: goal,
         kernel_authority,
     })
+}
+
+/// First production slice of the checked proof-object API: one bare theorem
+/// application followed by the already-explicit simple `assumption` closer.
+///
+/// Search instantiates the selected theorem's actual requirements and chooses
+/// their exact source spellings. `Proof::apply_step` then checks the resulting
+/// `ApplyTheoremUsing` against only those named premises and retains that exact
+/// step with the semantic successor. No second ordinary execution is needed.
+#[allow(clippy::too_many_arguments)]
+fn check_pure_application_script_with_proof(
+    theorem: &TheoremDefinition,
+    claim_label: &str,
+    context: &PureTheoremContext,
+    goal: &Proposition,
+    tactics: &[ProofTactic],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
+) -> Result<Option<ProofCertificate>, ClickError> {
+    let [
+        ProofTactic::ApplyTheorem(application),
+        ProofTactic::Assumption,
+    ] = tactics
+    else {
+        return Ok(None);
+    };
+
+    let state = CState::new().with_memory(context.memory.clone());
+    let program_point_states = ProgramPointStates::new();
+    let application_context = TheoremApplicationContext {
+        values: &context.values,
+        array_refs: &context.array_refs,
+        pre_state: &state,
+        post_state: &state,
+        result: None,
+        program_point_states: &program_point_states,
+    };
+    let requirements = lower_theorem_application_requirements(
+        theorem_environment,
+        application,
+        &application_context,
+        &context.requires,
+        predicate_environment,
+        click_function_environment,
+        &[],
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic 0: could not lower theorem requirements: {message}"
+        ))
+    })?;
+    let mut premises = Vec::new();
+    for requirement in requirements {
+        if normalizes_context_free(&requirement) {
+            continue;
+        }
+        let source_index = context
+            .requires
+            .iter()
+            .position(|available| {
+                available == &requirement
+                    || condition_polarity_equivalent(available, &requirement)
+                    || materialization_equivalent_available_fact(
+                        &requirement,
+                        std::slice::from_ref(available),
+                    )
+                    .is_some()
+            })
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic 0: required exact fact for theorem `{}` is unavailable: {requirement:?}",
+                    application.name,
+                ))
+            })?;
+        let source = theorem
+            .requires()
+            .get(source_index)
+            .and_then(Requirement::proposition)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic 0: selected theorem premise has no source proposition"
+                ))
+            })?
+            .clone();
+        if !premises.contains(&source) {
+            premises.push(source);
+        }
+    }
+
+    let proof = Proof::for_pure_goal(
+        claim_label,
+        &context.requires,
+        goal.clone(),
+        context,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    );
+    let proof = proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
+        application: application.clone(),
+        premises,
+    })?;
+    let proof = proof.apply_step(SimpleProofStep::Assumption)?;
+    debug_assert!(proof.is_complete());
+    Ok(Some(proof.certificate()))
 }
 
 fn pure_theorem_surface_certificate(
