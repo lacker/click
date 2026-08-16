@@ -220,6 +220,9 @@ struct ClickFunctionType {
 pub struct FunctionBlock {
     signature: FunctionSignature,
     requires: Vec<Requirement>,
+    /// Parsed once so a simple `choose(... from requirement label)` step does
+    /// not linearly rescan every function requirement.
+    requirement_label_indices: BTreeMap<String, usize>,
     decreases: Option<CFunctionDecrease>,
     structural_clauses: Vec<StructuralClause>,
     effects: Vec<EffectClause>,
@@ -2331,6 +2334,10 @@ impl FunctionBlock {
 
     pub fn requires(&self) -> &[Requirement] {
         &self.requires
+    }
+
+    pub(in crate::lang::click) fn requirement_label_indices(&self) -> &BTreeMap<String, usize> {
+        &self.requirement_label_indices
     }
 
     pub fn decreases(&self) -> Option<&CFunctionDecrease> {

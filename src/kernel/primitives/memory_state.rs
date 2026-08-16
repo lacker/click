@@ -85,6 +85,13 @@ impl CLocalEnvironment {
         }
     }
 
+    /// Exact name membership, including arrays and uninitialized objects.
+    /// Proof-local binders use this indexed query to reject shadowing without
+    /// materializing or scanning the complete local environment.
+    pub fn contains_name(&self, name: &str) -> bool {
+        self.bindings.contains_key(name)
+    }
+
     pub fn object_values(&self) -> impl Iterator<Item = (&str, &CValue)> {
         self.bindings
             .iter()

@@ -488,6 +488,8 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     surface_propositions: &SurfacePropositionMap,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    original_requirements: &[Requirement],
+    requirement_label_indices: &BTreeMap<String, usize>,
 ) -> Result<Option<(Proposition, Option<ProofCertificate>)>, ClickError> {
     enum Plan<'a> {
         DirectSmart,
@@ -543,7 +545,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
             "`{claim_label}` have proof {tactic_index}: could not lower pure goal: {message}"
         ))
     })?;
-    let proof = Proof::for_point_goal(
+    let proof = Proof::for_point_goal_with_requirements(
         claim_label,
         tactic_index,
         available,
@@ -559,6 +561,8 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
         theorem_environment,
         &replay.unfolded_predicates,
         &replay.effect_facts,
+        original_requirements,
+        requirement_label_indices,
     );
     let (proof, append_certificate) = match plan {
         Plan::BareApply(application) => {
@@ -659,7 +663,7 @@ fn direct_point_refinement_prefix(tactics: &[ProofTactic]) -> Option<ProofCertif
         || !prefix.iter().all(|tactic| {
             matches!(
                 tactic,
-                ProofTactic::UnfoldPredicate(_) | ProofTactic::Witness(_)
+                ProofTactic::UnfoldPredicate(_) | ProofTactic::Choose(_) | ProofTactic::Witness(_)
             )
         })
     {
@@ -2205,6 +2209,8 @@ fn replay_linear_tactics_without_frontier_loops(
                     &replay.surface_propositions,
                     predicate_environment,
                     click_function_environment,
+                    function_block.requires(),
+                    function_block.requirement_label_indices(),
                 )?;
                 let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
                 // Smart search and certificate construction are one event:
@@ -2267,8 +2273,8 @@ fn replay_linear_tactics_without_frontier_loops(
                         }
                     };
                 // A body that is neither simple nor covered by the smart
-                // lowerings above (a `witness`/`choose` prefix before `simp`,
-                // or a proof-level `if` closing its cases by `simp`) must
+                // lowerings above (for example, a richer proof-level `if`
+                // whose cases close through unsupported smart search) must
                 // still yield a replayed simple certificate; otherwise the
                 // tactic fails instead of silently losing the enclosing
                 // proof's expansion.

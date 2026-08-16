@@ -1159,6 +1159,88 @@ fn mid_execution_witness_simp_have_expands_to_a_simple_certificate() {
 }
 
 #[test]
+fn mid_execution_choose_witness_simp_retains_the_checked_proof_path() {
+    let c_source = "int32 choose_witness(int32 x) { return x; }";
+    let click_source = r#"
+            verifying "choose_witness.c";
+
+            int32 choose_witness(int32 x) {
+                requires has_k: exists (k: int32) { k == x };
+                ensures result == x;
+            } by {
+                have exists (j: int32) { j == x } by {
+                    choose(k from requirement has_k);
+                    witness(j = k);
+                    simp();
+                }
+                execute();
+                simp();
+            }
+        "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("choose_witness.c", c_source)])
+    });
+    let verified = verified.expect("a choose/witness/simp have should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "choose_witness.contract" && name == "surface certificate replay"
+        )),
+        "the migrated choose/witness/simp path must not reconstruct and replay: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked claim should expose its retained certificate");
+    let have = expanded
+        .iter()
+        .find_map(|tactic| match tactic {
+            ProofTactic::Have(have) => Some(have),
+            _ => None,
+        })
+        .expect("the expansion should retain the have");
+    let SourceProof::Script(body) = &have.proof else {
+        panic!("the expanded have should be explicit: {have:?}");
+    };
+    assert!(
+        matches!(
+            body.as_slice(),
+            [
+                ProofTactic::Choose(_),
+                ProofTactic::Witness(_),
+                ProofTactic::Assumption
+            ]
+        ),
+        "the expansion should be the exact retained choose/witness/assumption path: {body:?}"
+    );
+
+    let have_offset = click_source
+        .find("have exists (j: int32)")
+        .expect("source should contain the selected have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let rewritten = expand_c0_tactic_source_at(
+        click_source,
+        &[("choose_witness.c", c_source)],
+        line,
+        column,
+    )
+    .expect("the retained choose proof should serialize at its source site");
+    verify_c0_sources(&rewritten, &[("choose_witness.c", c_source)])
+        .expect("the serialized choose proof should independently verify");
+}
+
+#[test]
 fn explicit_mid_execution_witness_certificate_checks_and_expands() {
     let c_source = "int32 explicit_witness(int32 x) { return x; }";
     let click_source = r#"

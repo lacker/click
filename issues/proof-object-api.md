@@ -778,6 +778,20 @@ without constructing and replaying another body certificate; its expansion
 regression checks the exact retained path and independently verifies the
 serialized proof.
 
+Point-proof `Choose` is now a checked refinement too. Function parsing builds
+the requirement-label index once, so a named source is not rediscovered by a
+linear requirement scan. The successor stores the fresh int32 choice in a
+persistent proof-local value map and inserts only the instantiated existential
+body into `ProofFacts`; failed labels and duplicate names leave the ancestor
+unchanged. Subsequent surface inputs collect the names in their explicit
+syntax, probe only those proof-local values, and substitute that bounded set
+before ordinary lowering, rather than materializing every preceding choice.
+The common smart `choose; witness; simp` path consequently retains its exact
+checked `Choose`, `Witness`, and selected closer without construction replay.
+A deterministic 16-through-4096 unrelated-fact regression bounds persistent
+node growth logarithmically, and the source expansion regression independently
+verifies the serialized path.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

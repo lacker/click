@@ -835,9 +835,18 @@ impl Parser {
         };
         self.current_struct_params = previous_struct_params;
 
+        let requirement_label_indices = requires
+            .iter()
+            .enumerate()
+            .filter_map(|(index, requirement)| {
+                requirement.label().map(|label| (label.to_string(), index))
+            })
+            .collect();
+
         Ok(FunctionBlock {
             signature,
             requires,
+            requirement_label_indices,
             decreases,
             structural_clauses: Vec::new(),
             effects,

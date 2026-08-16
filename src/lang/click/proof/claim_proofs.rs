@@ -2058,6 +2058,8 @@ pub(super) fn finish_ordered_proof_replay(
                                         &outcome_surface_propositions,
                                         predicate_environment,
                                         click_function_environment,
+                                        function_block.requires(),
+                                        function_block.requirement_label_indices(),
                                     )?
                                 } else {
                                     None

@@ -134,6 +134,9 @@ struct PointProofContext<'a> {
     unfolded_predicates: &'a [String],
     effect_facts: &'a [ExecutionPureFact],
     lowering_context: Arc<Vec<Proposition>>,
+    original_requirements: &'a [Requirement],
+    requirement_label_indices: Option<&'a BTreeMap<String, usize>>,
+    requirement_facts: &'a [Proposition],
 }
 
 struct ExecutionProofContext<'a> {
@@ -152,6 +155,7 @@ struct ExecutionProofContext<'a> {
 #[derive(Clone)]
 struct ProofState {
     facts: ProofFacts,
+    locals: ProofLocals,
     /// Predicate definitions activated by accepted proof-local unfold steps.
     /// Inherited point/execution names remain in their shared context; this is
     /// only the local delta, so creating a root never rebuilds proof history.
@@ -162,6 +166,24 @@ struct ProofState {
     added_facts: Arc<Vec<Proposition>>,
     checked_facts: Arc<Vec<Proposition>>,
     execution: Option<ExecutionProofState>,
+}
+
+/// Proof-local surface names introduced by checked refinements such as
+/// `choose`. The persistent map makes forks and one local binding logarithmic;
+/// the counter is branch-local scalar freshness state.
+#[derive(Clone)]
+struct ProofLocals {
+    values: PersistentMap<String, ContractExpression>,
+    next_choice_variable: u64,
+}
+
+impl Default for ProofLocals {
+    fn default() -> Self {
+        Self {
+            values: PersistentMap::default(),
+            next_choice_variable: 3_000_000,
+        }
+    }
 }
 
 /// Execution data whose unchanged pieces can be shared by checked `Proof`
@@ -270,6 +292,7 @@ impl<'a> Proof<'a> {
             })),
             state: Arc::new(ProofState {
                 facts,
+                locals: ProofLocals::default(),
                 unfolded_predicates: PersistentOrderedSet::default(),
                 goal: Goal::Proposition(Arc::new(goal)),
                 complete: false,
@@ -286,6 +309,7 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(super) fn for_point_goal(
         claim_label: &'a str,
         tactic_index: usize,
@@ -319,6 +343,49 @@ impl<'a> Proof<'a> {
             theorem_environment,
             unfolded_predicates,
             effect_facts,
+            &[],
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn for_point_goal_with_requirements(
+        claim_label: &'a str,
+        tactic_index: usize,
+        available: &'a [Proposition],
+        goal: Proposition,
+        parameters: &'a [syntax::C0Parameter],
+        arguments: &'a [CExpression],
+        pre_state: &'a CState,
+        state: &'a CState,
+        program_point_states: &'a ProgramPointStates,
+        surface_propositions: &'a SurfacePropositionMap,
+        predicate_environment: &'a PredicateEnvironment,
+        click_function_environment: &'a ClickFunctionEnvironment,
+        theorem_environment: &'a TheoremEnvironment,
+        unfolded_predicates: &'a [String],
+        effect_facts: &'a [ExecutionPureFact],
+        original_requirements: &'a [Requirement],
+        requirement_label_indices: &'a BTreeMap<String, usize>,
+    ) -> Self {
+        Self::for_point(
+            claim_label,
+            tactic_index,
+            available,
+            Goal::Proposition(Arc::new(goal)),
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            program_point_states,
+            surface_propositions,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            unfolded_predicates,
+            effect_facts,
+            original_requirements,
+            Some(requirement_label_indices),
         )
     }
 
@@ -355,6 +422,8 @@ impl<'a> Proof<'a> {
             theorem_environment,
             unfolded_predicates,
             effect_facts,
+            &[],
+            None,
         )
     }
 
@@ -375,6 +444,8 @@ impl<'a> Proof<'a> {
         theorem_environment: &'a TheoremEnvironment,
         unfolded_predicates: &'a [String],
         effect_facts: &'a [ExecutionPureFact],
+        original_requirements: &'a [Requirement],
+        requirement_label_indices: Option<&'a BTreeMap<String, usize>>,
     ) -> Self {
         let facts = ProofFacts::from_ordered(available);
         let mut lowering_context = available.to_vec();
@@ -395,9 +466,13 @@ impl<'a> Proof<'a> {
                 unfolded_predicates,
                 effect_facts,
                 lowering_context: Arc::new(lowering_context),
+                original_requirements,
+                requirement_label_indices,
+                requirement_facts: available,
             })),
             state: Arc::new(ProofState {
                 facts,
+                locals: ProofLocals::default(),
                 unfolded_predicates: PersistentOrderedSet::default(),
                 goal,
                 complete: false,
@@ -450,6 +525,7 @@ impl<'a> Proof<'a> {
             })),
             state: Arc::new(ProofState {
                 facts: ProofFacts::from_ordered(&pure_facts),
+                locals: ProofLocals::default(),
                 unfolded_predicates: PersistentOrderedSet::default(),
                 goal: Goal::ExecutionFrontier,
                 complete: false,
@@ -525,6 +601,7 @@ impl<'a> Proof<'a> {
                 premises,
             } => self.apply_transport_using(source, target, premises),
             SimpleProofStep::UnfoldPredicate(name) => self.apply_predicate_unfold(name),
+            SimpleProofStep::Choose(choice) => self.apply_point_choose(choice),
             SimpleProofStep::Witness(witness) => self.apply_point_witness(witness),
             SimpleProofStep::InstantiateUsing {
                 quantified,
@@ -608,6 +685,7 @@ impl<'a> Proof<'a> {
         }
         Ok(ProofState {
             facts,
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: Goal::Proposition(Arc::new(goal)),
             complete: false,
@@ -787,6 +865,7 @@ impl<'a> Proof<'a> {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 facts: self.state.facts.clone(),
+                locals: self.state.locals.clone(),
                 unfolded_predicates: self.state.unfolded_predicates.clone(),
                 goal: Goal::Proposition(Arc::new(kernel.clone())),
                 complete: false,
@@ -953,6 +1032,7 @@ impl<'a> Proof<'a> {
                     context: self.context.clone(),
                     state: Arc::new(ProofState {
                         facts: transition.pure_facts,
+                        locals: self.state.locals.clone(),
                         unfolded_predicates: self.state.unfolded_predicates.clone(),
                         goal: Goal::ExecutionFrontier,
                         complete: false,
@@ -1136,6 +1216,7 @@ impl<'a> Proof<'a> {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 facts,
+                locals: self.state.locals.clone(),
                 unfolded_predicates: self.state.unfolded_predicates.clone(),
                 goal: self.state.goal.clone(),
                 complete: false,
@@ -1168,14 +1249,15 @@ impl<'a> Proof<'a> {
                 self.step_error(format!("could not lower {description}: {message}"))
             }),
             ProofContext::Point(context) => {
+                let surface = self.substitute_point_locals_in_proposition(surface)?;
                 if let Some(recorded) = context
                     .surface_propositions
-                    .available_kernel(surface, context.lowering_context.as_ref())
+                    .available_kernel(&surface, context.lowering_context.as_ref())
                 {
                     return Ok(recorded.clone());
                 }
                 lower_point_proposition_with_assumptions(
-                    surface,
+                    &surface,
                     self.state.facts.assumptions(),
                     context.parameters,
                     context.arguments,
@@ -1194,6 +1276,56 @@ impl<'a> Proof<'a> {
                 "{description} is not an execution-frontier proposition"
             ))),
         }
+    }
+
+    /// Materializes only proof-local substitutions named by this explicit
+    /// surface input. Work is proportional to the input expression and each
+    /// selected name is an indexed persistent-map lookup; unrelated choices
+    /// are neither scanned nor cloned.
+    fn point_local_substitutions(
+        &self,
+        names: impl IntoIterator<Item = String>,
+    ) -> BTreeMap<String, ContractExpression> {
+        names
+            .into_iter()
+            .filter_map(|name| {
+                self.state
+                    .locals
+                    .values
+                    .get(&name)
+                    .cloned()
+                    .map(|value| (name, value))
+            })
+            .collect()
+    }
+
+    fn substitute_point_locals_in_proposition(
+        &self,
+        proposition: &ClickProposition,
+    ) -> Result<ClickProposition, ClickError> {
+        let mut names = BTreeSet::new();
+        collect_click_proposition_referenced_names(proposition, &mut names);
+        let substitutions = self.point_local_substitutions(names);
+        if substitutions.is_empty() {
+            return Ok(proposition.clone());
+        }
+        substitute_click_proposition(proposition, &substitutions).map_err(|message| {
+            self.step_error(format!("could not substitute proof locals: {message}"))
+        })
+    }
+
+    fn substitute_point_locals_in_expression(
+        &self,
+        expression: &ContractExpression,
+    ) -> Result<ContractExpression, ClickError> {
+        let names = contract_expression_referenced_names(expression);
+        let substitutions = self.point_local_substitutions(names);
+        if substitutions.is_empty() {
+            return Ok(expression.clone());
+        }
+        substitute_contract_expression(expression, &substitutions).map_err(|message| {
+            self.step_error(format!("could not substitute proof locals: {message}"))
+        })
     }
 
     fn apply_predicate_unfold(&self, name: &String) -> Result<ProofState, ClickError> {
@@ -1246,6 +1378,7 @@ impl<'a> Proof<'a> {
         unfolded_predicates.insert(name.clone());
         Ok(ProofState {
             facts: checked.facts,
+            locals: self.state.locals.clone(),
             unfolded_predicates,
             goal: Goal::Proposition(Arc::new(goal)),
             complete: false,
@@ -1286,6 +1419,7 @@ impl<'a> Proof<'a> {
         };
         Ok(ProofState {
             facts: checked.facts,
+            locals: self.state.locals.clone(),
             unfolded_predicates,
             goal: self.state.goal.clone(),
             complete: false,
@@ -1443,6 +1577,7 @@ impl<'a> Proof<'a> {
         }
         Ok(ProofState {
             facts,
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
@@ -1529,6 +1664,7 @@ impl<'a> Proof<'a> {
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
             facts,
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete,
@@ -1607,12 +1743,93 @@ impl<'a> Proof<'a> {
         }
         Ok(ProofState {
             facts: checked.facts,
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
             execution: Some(execution),
+        })
+    }
+
+    fn apply_point_choose(&self, choice: &ProofChoice) -> Result<ProofState, ClickError> {
+        let ProofContext::Point(context) = self.context.as_ref() else {
+            return Err(self.step_error("`choose` requires a point proposition proof"));
+        };
+        self.proposition_goal("`choose` requires a proposition goal")?;
+        if choice.name == "result"
+            || context.state.locals().contains_name(&choice.name)
+            || self.state.locals.values.contains_key(&choice.name)
+        {
+            return Err(self.step_error(format!("`{}` is already in scope", choice.name)));
+        }
+
+        let source_index = match &choice.source {
+            ProofFactSource::Requirement(index) => {
+                if *index >= context.original_requirements.len() {
+                    return Err(self.step_error(format!(
+                        "requirement {index} is out of range; function has {} requirement(s)",
+                        context.original_requirements.len()
+                    )));
+                }
+                *index
+            }
+            ProofFactSource::RequirementLabel(label) => context
+                .requirement_label_indices
+                .and_then(|indices| indices.get(label))
+                .copied()
+                .ok_or_else(|| self.step_error(format!("unknown requirement label `{label}`")))?,
+        };
+        let mut source = context
+            .requirement_facts
+            .get(source_index)
+            .cloned()
+            .ok_or_else(|| {
+                self.step_error(format!("requirement {source_index} was not available"))
+            })?;
+        let unfolded_predicates = self.active_unfolded_predicates();
+        if !matches!(source, Proposition::Exists { .. }) && !unfolded_predicates.is_empty() {
+            source = unfold_predicates_in_proposition(
+                context.predicate_environment,
+                context.click_function_environment,
+                &unfolded_predicates,
+                &source,
+                self.state.facts.assumptions(),
+            )
+            .map_err(|message| self.step_error(message))?;
+        }
+        let Proposition::Exists {
+            var, sort, body, ..
+        } = source
+        else {
+            return Err(self.step_error("`choose` source is not an existential proposition"));
+        };
+        if sort != Sort::CInt32 {
+            return Err(self.step_error("only int32 existential choices are supported"));
+        }
+
+        let chosen = Bitvector32Term::Variable(Variable(self.state.locals.next_choice_variable));
+        let chosen_fact = substitute_int32_variable_in_proposition(&body, var, chosen.clone());
+        let mut locals = self.state.locals.clone();
+        locals.values = locals.values.with_inserted(
+            choice.name.clone(),
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(chosen))),
+        );
+        locals.next_choice_variable += 1;
+        let added_facts = (!self.state.facts.contains_top_level(&chosen_fact))
+            .then(|| vec![chosen_fact.clone()])
+            .unwrap_or_default();
+        let facts = self.state.facts.with_fact(chosen_fact.clone());
+        Ok(ProofState {
+            facts,
+            locals,
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
+            goal: self.state.goal.clone(),
+            complete: false,
+            added_facts: Arc::new(added_facts),
+            checked_facts: Arc::new(vec![chosen_fact]),
+            execution: None,
         })
     }
 
@@ -1638,8 +1855,12 @@ impl<'a> Proof<'a> {
             array_refs_for_parameters(context.parameters, &values, context.state.memory());
         let (values, array_refs) =
             contract_environment_at_state(&values, &array_refs, context.state);
+        let checked_witness = ProofWitness {
+            name: witness.name.clone(),
+            value: self.substitute_point_locals_in_expression(&witness.value)?,
+        };
         let value = evaluate_witness_tactic_value(
-            witness,
+            &checked_witness,
             context.claim_label,
             0,
             context.tactic_index,
@@ -1654,7 +1875,7 @@ impl<'a> Proof<'a> {
             context.program_point_states,
         )?;
         let goal = apply_witness_tactic(
-            witness,
+            &checked_witness,
             value,
             goal,
             context.claim_label,
@@ -1663,6 +1884,7 @@ impl<'a> Proof<'a> {
         )?;
         Ok(ProofState {
             facts: self.state.facts.clone(),
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: Goal::Proposition(Arc::new(goal)),
             complete: false,
@@ -1726,6 +1948,7 @@ impl<'a> Proof<'a> {
         let (values, array_refs) =
             contract_environment_at_state(&parameter_values, &array_refs, context.state);
         let mut active_functions = BTreeSet::new();
+        let argument = self.substitute_point_locals_in_expression(argument)?;
         let value = evaluate_contract_expression_with_environment(
             &values,
             &array_refs,
@@ -1733,7 +1956,7 @@ impl<'a> Proof<'a> {
             context.state,
             None,
             self.state.facts.assumptions(),
-            argument,
+            &argument,
             context.predicate_environment,
             context.click_function_environment,
             context.program_point_states,
@@ -1757,6 +1980,7 @@ impl<'a> Proof<'a> {
         let added_facts = added.then_some(conclusion).into_iter().collect::<Vec<_>>();
         Ok(ProofState {
             facts,
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete,
@@ -1878,6 +2102,7 @@ impl<'a> Proof<'a> {
             .map_err(|message| self.step_error(message))?;
         Ok(ProofState {
             facts: self.state.facts.clone(),
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: Goal::Proposition(Arc::new(rewritten)),
             complete: false,
@@ -1911,6 +2136,7 @@ impl<'a> Proof<'a> {
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
             facts,
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete,
@@ -1979,6 +2205,7 @@ impl<'a> Proof<'a> {
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
             facts,
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete,
@@ -2038,6 +2265,7 @@ impl<'a> Proof<'a> {
         facts = facts.with_fact(checked.target);
         Ok(ProofState {
             facts,
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
@@ -2076,6 +2304,7 @@ impl<'a> Proof<'a> {
         )?;
         Ok(ProofState {
             facts: checked.facts,
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
@@ -2107,6 +2336,7 @@ impl<'a> Proof<'a> {
         execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             facts: self.state.facts.clone(),
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
@@ -2138,6 +2368,7 @@ impl<'a> Proof<'a> {
         execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             facts: self.state.facts.clone(),
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
@@ -2216,6 +2447,7 @@ impl<'a> Proof<'a> {
     fn closed_state(&self) -> ProofState {
         ProofState {
             facts: self.state.facts.clone(),
+            locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: true,
@@ -2642,6 +2874,7 @@ impl<'a> ExecutionProofBranches<'a> {
             context: self.root.context.clone(),
             state: Arc::new(ProofState {
                 facts,
+                locals: self.root.state.locals.clone(),
                 unfolded_predicates,
                 goal: Goal::ExecutionFrontier,
                 complete: false,
@@ -2700,6 +2933,7 @@ impl<'a> ProofScope<'a> {
             context: self.root.context.clone(),
             state: Arc::new(ProofState {
                 facts,
+                locals: self.root.state.locals.clone(),
                 unfolded_predicates: self.root.state.unfolded_predicates.clone(),
                 goal: self.root.state.goal.clone(),
                 complete: false,
@@ -4093,6 +4327,147 @@ mod tests {
                     SimpleProofStep::Normalize,
                 ]
             );
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn point_choose_uses_indexed_requirement_and_persistent_local_bindings() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 choose_source(int32 x) {
+                    requires source: exists (k: int32) { k == x };
+                    ensures result == x by { assumption(); }
+                }
+            "#,
+        )
+        .expect("labeled existential requirement should parse");
+        let function_block = &click_file.function_blocks()[0];
+        assert_eq!(
+            function_block.requirement_label_indices().get("source"),
+            Some(&0),
+            "the parser should build the requirement-label index once"
+        );
+        let parsed_function = syntax::parse_function("int32 choose_source(int32 x) { return x; }")
+            .expect("test function should parse");
+        let state = CState::new().with_local("x", int32(7));
+        let arguments = vec![CExpression::Value(int32(7))];
+        let program_point_states = ProgramPointStates::new();
+        let surface_propositions = SurfacePropositionMap::default();
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let source_variable = Variable(9_200_000);
+        let source_fact = Proposition::Exists {
+            name: "source_value".to_string(),
+            var: source_variable,
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(source_variable)),
+                    Box::new(Bitvector32Term::Constant(7)),
+                ),
+                true,
+            )),
+        };
+        let goal_variable = Variable(9_200_001);
+        let goal = Proposition::Exists {
+            name: "witness".to_string(),
+            var: goal_variable,
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(goal_variable)),
+                    Box::new(Bitvector32Term::Constant(7)),
+                ),
+                true,
+            )),
+        };
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = vec![source_fact.clone()];
+            facts.extend((0..size).map(indexed_fact));
+            let root = Proof::for_point_goal_with_requirements(
+                "persistent choose",
+                0,
+                &facts,
+                goal.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+                function_block.requires(),
+                function_block.requirement_label_indices(),
+            );
+            let retained_root = root.clone();
+            let missing = root
+                .apply_step(SimpleProofStep::Choose(ProofChoice {
+                    name: "candidate".to_string(),
+                    source: ProofFactSource::RequirementLabel("missing".to_string()),
+                }))
+                .err()
+                .expect("an unknown label must reject the candidate");
+            assert!(missing.message().contains("unknown requirement label"));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+
+            let choice = ProofChoice {
+                name: "candidate".to_string(),
+                source: ProofFactSource::RequirementLabel("source".to_string()),
+            };
+            let before = fact_node_allocations();
+            let chosen = root
+                .apply_step(SimpleProofStep::Choose(choice.clone()))
+                .expect("the indexed existential requirement should introduce one local");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 48 * logarithmic_height + 64;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} choose allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert_eq!(
+                chosen.certificate().steps(),
+                &[SimpleProofStep::Choose(choice.clone())]
+            );
+            assert_eq!(chosen.state.locals.values.len(), 1);
+            assert!(root.state.locals.values.is_empty());
+
+            let duplicate = chosen
+                .apply_step(SimpleProofStep::Choose(choice.clone()))
+                .err()
+                .expect("a duplicate local name must reject transactionally");
+            assert!(duplicate.message().contains("already in scope"));
+            assert_eq!(
+                chosen.certificate().steps(),
+                &[SimpleProofStep::Choose(choice)]
+            );
+
+            let completed = chosen
+                .apply_step(SimpleProofStep::Witness(ProofWitness {
+                    name: "witness".to_string(),
+                    value: ContractExpression::CFragment(CExpression::Variable(
+                        "candidate".to_string(),
+                    )),
+                }))
+                .expect("witness should resolve the one referenced proof local")
+                .apply_step(SimpleProofStep::Assumption)
+                .expect("the chosen existential fact should close the refined goal");
+            assert!(completed.is_complete());
+            assert!(matches!(
+                completed.certificate().steps(),
+                [
+                    SimpleProofStep::Choose(_),
+                    SimpleProofStep::Witness(_),
+                    SimpleProofStep::Assumption
+                ]
+            ));
             assert!(root.certificate().steps().is_empty());
         }
     }
