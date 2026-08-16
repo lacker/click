@@ -399,6 +399,16 @@ Explicit pure `if` certificates over the migrated arm vocabulary recursively
 check through `Proof`, including the ordinary independently checked source
 path.
 
+The first audited nested scope is pure `have`. `begin_have` creates a fresh
+body `Proof` that shares immutable facts and checking context but owns its own
+provenance root. Closing an incomplete body is rejected; closing a complete
+body publishes exactly its checked proposition and retains its exact nested
+certificate in one `SimpleProofStep::Have`. Explicit pure `have` scripts now
+use this path. A smart `have ... by simp/auto` whose body closes through the
+direct logical vocabulary searches inside that body `Proof` and retains the
+successful steps directly, rather than constructing and ordinarily replaying
+a second body certificate.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

@@ -1418,6 +1418,42 @@ fn pure_if_certificate_uses_checked_proof_branches() {
 }
 
 #[test]
+fn pure_have_certificate_uses_checked_proof_scope() {
+    let click_source = r#"
+        theorem retain_zero(x: int32) {
+            requires zero: x == 0;
+
+            ensures x == 0 by {
+                have x == 0 by {
+                    assumption();
+                }
+                assumption();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect("a checked nested body should publish its exact fact to the enclosing Proof");
+}
+
+#[test]
+fn smart_pure_have_retains_the_checked_scope_body_directly() {
+    let click_source = r#"
+        theorem retain_zero_smart(x: int32) {
+            requires zero: x == 0;
+
+            ensures x == 0 by {
+                have x == 0 by simp;
+                assumption();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect("smart have should search by applying steps to its nested Proof");
+}
+
+#[test]
 fn enumerate_closes_a_constant_bounded_universal_goal() {
     let c_source = r#"
         int32 keep(int32 x) {

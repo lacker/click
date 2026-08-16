@@ -180,6 +180,9 @@ fn validate_pure_theorem_tactics(
                 validate_pure_theorem_tactics(theorem_name, &proof_cases.left_tactics)?;
                 validate_pure_theorem_tactics(theorem_name, &proof_cases.right_tactics)?;
             }
+            ProofTactic::Have(proof_have) => {
+                validate_pure_theorem_proof(theorem_name, &proof_have.proof)?;
+            }
             ProofTactic::Branch(_)
             | ProofTactic::Loop(_)
             | ProofTactic::Open(_)
@@ -204,7 +207,6 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::InstantiateUsing { .. }
             | ProofTactic::UnfoldResource(_)
             | ProofTactic::FoldResource(_)
-            | ProofTactic::Have(_)
             | ProofTactic::Witness(_)
             | ProofTactic::Choose(_) => {
                 return Err(ClickError::new(format!(

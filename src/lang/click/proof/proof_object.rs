@@ -41,6 +41,22 @@ pub(super) struct ProofBranches<'a> {
     arms: [Proof<'a>; 2],
 }
 
+/// One nested proposition proof owned by an audited scope operation.
+#[derive(Clone)]
+pub(super) struct ProofScope<'a> {
+    root: Proof<'a>,
+    structure: ProofScopeStructure,
+    body: Proof<'a>,
+}
+
+#[derive(Clone)]
+enum ProofScopeStructure {
+    Have {
+        proposition: ClickProposition,
+        kernel: Proposition,
+    },
+}
+
 #[derive(Clone)]
 enum ProofBranchStructure {
     Cases { disjunction: ClickProposition },
@@ -623,6 +639,44 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Opens a nested proof for one surface proposition. The body has a fresh
+    /// provenance root but shares the persistent semantic fact index and
+    /// immutable checking context with its enclosing proof.
+    pub(super) fn begin_have(
+        &self,
+        proposition: ClickProposition,
+    ) -> Result<ProofScope<'a>, ClickError> {
+        if self.state.complete {
+            return Err(self.step_error("`have` follows a completed proof"));
+        }
+        self.proposition_goal("`have` requires a proposition proof context")?;
+        let kernel = self.lower_surface_proposition(&proposition, "`have` proposition")?;
+        let body = Proof {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                facts: self.state.facts.clone(),
+                goal: Goal::Proposition(Arc::new(kernel.clone())),
+                complete: false,
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+                execution: None,
+            }),
+            node: Arc::new(ProofNode {
+                parent: None,
+                step: None,
+                depth: 0,
+            }),
+        };
+        Ok(ProofScope {
+            root: self.clone(),
+            structure: ProofScopeStructure::Have {
+                proposition,
+                kernel,
+            },
+            body,
+        })
+    }
+
     /// Independently checks an already-serialized simple certificate.
     ///
     /// This is for explicit source verification and expansion/audit, where
@@ -652,6 +706,13 @@ impl<'a> Proof<'a> {
                     .begin_if(condition.clone())?
                     .check_arm_certificate(ProofArm::Left, then_proof)?
                     .check_arm_certificate(ProofArm::Right, else_proof)?
+                    .join()?,
+                SimpleProofStep::Have {
+                    proposition,
+                    proof: body,
+                } => proof
+                    .begin_have(proposition.clone())?
+                    .check_body_certificate(body)?
                     .join()?,
                 _ => proof.apply_step(step.clone())?,
             };
@@ -743,9 +804,9 @@ impl<'a> Proof<'a> {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })
             }
-            ProofContext::Execution(_) => {
-                Err(self.step_error("`cases` is not an execution-frontier operation"))
-            }
+            ProofContext::Execution(_) => Err(self.step_error(format!(
+                "{description} is not an execution-frontier proposition"
+            ))),
         }
     }
 
@@ -1281,7 +1342,9 @@ impl<'a> ProofBranches<'a> {
         for step in certificate.steps() {
             if matches!(
                 step,
-                SimpleProofStep::Cases { .. } | SimpleProofStep::If { .. }
+                SimpleProofStep::Cases { .. }
+                    | SimpleProofStep::If { .. }
+                    | SimpleProofStep::Have { .. }
             ) {
                 let nested = ProofCertificate::from_steps(vec![step.clone()]);
                 next.arms[arm.index()] = next.arms[arm.index()].check_certificate(&nested)?;
@@ -1322,6 +1385,83 @@ impl<'a> ProofBranches<'a> {
             node: Arc::new(ProofNode {
                 parent: Some(self.root.node.clone()),
                 step: Some(Arc::new(step)),
+                depth: self.root.node.depth + 1,
+            }),
+        })
+    }
+}
+
+impl<'a> ProofScope<'a> {
+    #[cfg(test)]
+    pub(super) fn body(&self) -> &Proof<'a> {
+        &self.body
+    }
+
+    /// Applies one ordinary checked step inside the nested body. Failed
+    /// candidates leave the enclosing scope value unchanged.
+    pub(super) fn apply_step(&self, step: SimpleProofStep) -> Result<Self, ClickError> {
+        let mut next = self.clone();
+        next.body = self.body.apply_step(step)?;
+        Ok(next)
+    }
+
+    /// Runs the small shared smart closure search inside the nested proof.
+    /// Every accepted candidate still advances through `Proof::apply_step`.
+    pub(super) fn try_direct_logical_closure(&self) -> Option<Self> {
+        let mut next = self.clone();
+        next.body = self.body.try_direct_logical_closure()?;
+        Some(next)
+    }
+
+    fn check_body_certificate(&self, certificate: &ProofCertificate) -> Result<Self, ClickError> {
+        let mut next = self.clone();
+        for step in certificate.steps() {
+            if matches!(
+                step,
+                SimpleProofStep::Cases { .. }
+                    | SimpleProofStep::If { .. }
+                    | SimpleProofStep::Have { .. }
+            ) {
+                let nested = ProofCertificate::from_steps(vec![step.clone()]);
+                next.body = next.body.check_certificate(&nested)?;
+            } else {
+                next = next.apply_step(step.clone())?;
+            }
+        }
+        Ok(next)
+    }
+
+    /// Closes a completed nested proof and makes its checked proposition
+    /// available in the enclosing proof while retaining the exact body.
+    pub(super) fn join(self) -> Result<Proof<'a>, ClickError> {
+        if !self.body.is_complete() {
+            return Err(self
+                .root
+                .step_error("cannot close `have`: nested proof is incomplete"));
+        }
+        let body = self.body.certificate();
+        let ProofScopeStructure::Have {
+            proposition,
+            kernel,
+        } = self.structure;
+        let mut facts = self.root.state.facts.clone();
+        facts = facts.with_fact(kernel.clone());
+        Ok(Proof {
+            context: self.root.context.clone(),
+            state: Arc::new(ProofState {
+                facts,
+                goal: self.root.state.goal.clone(),
+                complete: false,
+                added_facts: Arc::new(vec![kernel.clone()]),
+                checked_facts: Arc::new(vec![kernel]),
+                execution: None,
+            }),
+            node: Arc::new(ProofNode {
+                parent: Some(self.root.node.clone()),
+                step: Some(Arc::new(SimpleProofStep::Have {
+                    proposition,
+                    proof: Box::new(body),
+                })),
                 depth: self.root.node.depth + 1,
             }),
         })
@@ -1676,6 +1816,73 @@ mod tests {
                 left_proof: Box::new(ProofCertificate::from_steps(vec![SimpleProofStep::Left,])),
                 right_proof: Box::new(ProofCertificate::from_steps(vec![SimpleProofStep::Right,])),
             }]
+        );
+        assert!(!root.is_complete());
+        assert!(root.certificate().steps().is_empty());
+    }
+
+    #[test]
+    fn have_scope_publishes_only_a_completed_checked_body() {
+        let proposition = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let theorem_context = PureTheoremContext {
+            memory: CMemory::new(),
+            values: BTreeMap::new(),
+            array_refs: BTreeMap::new(),
+            requires: Vec::new(),
+        };
+        let kernel = lower_pure_theorem_proposition(
+            "have",
+            &proposition,
+            &theorem_context.values,
+            &theorem_context.array_refs,
+            &theorem_context.memory,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("constant equality should lower");
+        let root = Proof::for_pure_goal(
+            "have",
+            &[],
+            kernel,
+            &theorem_context,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        );
+        let scope = root
+            .begin_have(proposition.clone())
+            .expect("have should open a nested proposition proof");
+        assert!(scope.clone().join().is_err());
+        assert!(scope.apply_step(SimpleProofStep::Intro).is_err());
+        assert!(scope.body().certificate().steps().is_empty());
+
+        let scope = scope
+            .apply_step(SimpleProofStep::Normalize)
+            .expect("constant equality should normalize inside the body");
+        let enclosing = scope.join().expect("completed body should close the scope");
+        assert!(!enclosing.is_complete());
+        assert_eq!(enclosing.added_facts().len(), 1);
+        let complete = enclosing
+            .apply_step(SimpleProofStep::Assumption)
+            .expect("published have fact should close the enclosing goal");
+        assert_eq!(
+            complete.certificate().steps(),
+            &[
+                SimpleProofStep::Have {
+                    proposition,
+                    proof: Box::new(ProofCertificate::from_steps(vec![
+                        SimpleProofStep::Normalize,
+                    ])),
+                },
+                SimpleProofStep::Assumption,
+            ]
         );
         assert!(!root.is_complete());
         assert!(root.certificate().steps().is_empty());

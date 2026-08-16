@@ -897,6 +897,7 @@ fn check_pure_script_with_proof(
                 else_proof,
                 ..
             } => supported(then_proof) && supported(else_proof),
+            SimpleProofStep::Have { proof, .. } => supported(proof),
             _ => false,
         })
     }
@@ -910,13 +911,88 @@ fn check_pure_script_with_proof(
         click_function_environment,
         theorem_environment,
     );
+
+    // The first smart scope path searches inside the owned nested Proof and
+    // retains that checked body directly. It does not first synthesize a
+    // `Have` certificate and replay it.
+    let has_smart_scope = tactics.iter().any(|tactic| {
+        matches!(
+            tactic,
+            ProofTactic::Have(have)
+                if matches!(
+                    &have.proof,
+                    SourceProof::Default
+                        | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp)
+                )
+        )
+    });
+    if has_smart_scope {
+        let mut smart_scope_proof = root.clone();
+        let mut smart_scope_supported = true;
+        for tactic in tactics {
+            match tactic {
+                ProofTactic::Have(have)
+                    if matches!(
+                        &have.proof,
+                        SourceProof::Default
+                            | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp)
+                    ) =>
+                {
+                    let Some(scope) = smart_scope_proof
+                        .begin_have(have.proposition.clone())?
+                        .try_direct_logical_closure()
+                    else {
+                        smart_scope_supported = false;
+                        break;
+                    };
+                    smart_scope_proof = scope.join()?;
+                }
+                tactic if matches!(tactic.class(), TacticClass::Simple(_)) => {
+                    let Ok(certificate) =
+                        ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic))
+                    else {
+                        smart_scope_supported = false;
+                        break;
+                    };
+                    let [step] = certificate.steps() else {
+                        smart_scope_supported = false;
+                        break;
+                    };
+                    if !matches!(
+                        step,
+                        SimpleProofStep::ApplyTheoremUsing { .. }
+                            | SimpleProofStep::Assumption
+                            | SimpleProofStep::Normalize
+                            | SimpleProofStep::Intro
+                            | SimpleProofStep::Split
+                            | SimpleProofStep::Left
+                            | SimpleProofStep::Right
+                            | SimpleProofStep::Enumerate
+                            | SimpleProofStep::Contradiction(_)
+                    ) {
+                        smart_scope_supported = false;
+                        break;
+                    }
+                    smart_scope_proof = smart_scope_proof.apply_step(step.clone())?;
+                }
+                _ => {
+                    smart_scope_supported = false;
+                    break;
+                }
+            }
+        }
+        if smart_scope_supported && smart_scope_proof.is_complete() {
+            return Ok(Some(smart_scope_proof.certificate()));
+        }
+    }
+
     if let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
         && supported(&certificate)
     {
         let Ok(proof) = root.check_certificate(&certificate) else {
-            // Migration is an optimization for successful scripts. Keep the
-            // legacy verifier authoritative for failure diagnostics until
-            // every pure simple step has moved behind `Proof`.
+            // Until every pure simple step uses `Proof`, retain the legacy
+            // verifier's established failure diagnostics for rejected source
+            // scripts. Successful migrated scripts still return directly.
             return Ok(None);
         };
         if !proof.is_complete() {
