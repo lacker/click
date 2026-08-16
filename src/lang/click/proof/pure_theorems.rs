@@ -887,6 +887,7 @@ fn check_pure_script_with_proof(
             | SimpleProofStep::Right
             | SimpleProofStep::Enumerate
             | SimpleProofStep::Rewrite(_)
+            | SimpleProofStep::Extract(_)
             | SimpleProofStep::Contradiction(_) => true,
             SimpleProofStep::Cases {
                 left_proof,
@@ -1002,6 +1003,7 @@ fn check_pure_script_with_proof(
                             | SimpleProofStep::Right
                             | SimpleProofStep::Enumerate
                             | SimpleProofStep::Rewrite(_)
+                            | SimpleProofStep::Extract(_)
                             | SimpleProofStep::Contradiction(_)
                     ) {
                         smart_scope_supported = false;

@@ -129,6 +129,111 @@ pub(super) enum SnapshotBlindPointerOffsetKey {
     Exact(PointerOffsetTerm),
 }
 
+/// One-pass alpha-invariant key for the quantified logical/condition
+/// fragment used by replay premises. Bound variables are represented by
+/// structural ordinals while free variables retain their kernel identities.
+/// Memory snapshots in loads are deliberately omitted, matching the
+/// separately checked canonical-load replay equivalence.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(super) struct QuantifiedReplayKey(AlphaPropositionKey);
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum AlphaPropositionKey {
+    Condition(AlphaConditionKey, bool),
+    And(Box<Self>, Box<Self>),
+    Or(Box<Self>, Box<Self>),
+    Not(Box<Self>),
+    Implies(Box<Self>, Box<Self>),
+    ForAll(Sort, Box<Self>),
+    Exists(Sort, Box<Self>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum AlphaVariableKey {
+    Bound(usize),
+    Free(Variable),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum AlphaBitvectorBinaryOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    ShiftLeft,
+    ArithmeticShiftRight,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum AlphaBitvectorKey {
+    Constant(u32),
+    Variable(AlphaVariableKey),
+    Binary(AlphaBitvectorBinaryOp, Box<Self>, Box<Self>),
+    BitwiseNot(Box<Self>),
+    If {
+        condition: Box<AlphaConditionKey>,
+        then_term: Box<Self>,
+        else_term: Box<Self>,
+    },
+    PureFunctionApplication {
+        name: String,
+        arguments: Vec<Self>,
+    },
+    Load(Box<AlphaPointerKey>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum AlphaPointerOffsetKey {
+    Constant(i64),
+    Variable(AlphaVariableKey),
+    Add(Box<Self>, Box<Self>),
+    Int32Scaled {
+        value: Box<AlphaBitvectorKey>,
+        byte_width: i64,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum AlphaPointerBlockKey {
+    Concrete(String),
+    ExternalArgument,
+    Symbolic(AlphaVariableKey),
+    Heap(u64),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct AlphaPointerKey {
+    block: AlphaPointerBlockKey,
+    offset: AlphaPointerOffsetKey,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum AlphaConditionBinaryOp {
+    SignedLessThan,
+    SignedLessEqual,
+    SignedGreaterThan,
+    SignedGreaterEqual,
+    Equal,
+    AddOverflows,
+    SubtractOverflows,
+    MultiplyOverflows,
+    DivideOverflows,
+    ShiftLeftOverflows,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum AlphaConditionKey {
+    Constant(bool),
+    Variable(AlphaVariableKey),
+    Binary(AlphaConditionBinaryOp, AlphaBitvectorKey, AlphaBitvectorKey),
+    PointerOffsetEqual(AlphaPointerOffsetKey, AlphaPointerOffsetKey),
+    PointerEqual(AlphaPointerKey, AlphaPointerKey),
+}
+
 impl SnapshotBlindPropositionKey {
     pub(super) fn forgets_a_snapshot(&self) -> bool {
         match self {
@@ -934,6 +1039,267 @@ fn normalize_quantified_memory_loads(proposition: &Proposition, depth: usize) ->
     }
 }
 
+fn alpha_variable_key(
+    variable: Variable,
+    bindings: &BTreeMap<Variable, usize>,
+) -> AlphaVariableKey {
+    bindings
+        .get(&variable)
+        .copied()
+        .map(AlphaVariableKey::Bound)
+        .unwrap_or(AlphaVariableKey::Free(variable))
+}
+
+fn alpha_pointer_offset_key(
+    offset: &PointerOffsetTerm,
+    bindings: &BTreeMap<Variable, usize>,
+) -> Option<AlphaPointerOffsetKey> {
+    Some(match offset {
+        PointerOffsetTerm::Constant(value) => AlphaPointerOffsetKey::Constant(*value),
+        PointerOffsetTerm::Variable(variable) => {
+            AlphaPointerOffsetKey::Variable(alpha_variable_key(*variable, bindings))
+        }
+        PointerOffsetTerm::Add(left, right) => AlphaPointerOffsetKey::Add(
+            Box::new(alpha_pointer_offset_key(left, bindings)?),
+            Box::new(alpha_pointer_offset_key(right, bindings)?),
+        ),
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            AlphaPointerOffsetKey::Int32Scaled {
+                value: Box::new(alpha_bitvector_key(value, bindings)?),
+                byte_width: *byte_width,
+            }
+        }
+    })
+}
+
+fn alpha_pointer_key(
+    pointer: &Pointer,
+    bindings: &BTreeMap<Variable, usize>,
+) -> Option<AlphaPointerKey> {
+    let block = match &pointer.block {
+        PointerBlock::Concrete(name) => AlphaPointerBlockKey::Concrete(name.clone()),
+        PointerBlock::ExternalArgument => AlphaPointerBlockKey::ExternalArgument,
+        PointerBlock::Symbolic(variable) => {
+            AlphaPointerBlockKey::Symbolic(alpha_variable_key(*variable, bindings))
+        }
+        PointerBlock::Heap(identity) => AlphaPointerBlockKey::Heap(*identity),
+    };
+    Some(AlphaPointerKey {
+        block,
+        offset: alpha_pointer_offset_key(&pointer.offset, bindings)?,
+    })
+}
+
+fn alpha_bitvector_key(
+    term: &Bitvector32Term,
+    bindings: &BTreeMap<Variable, usize>,
+) -> Option<AlphaBitvectorKey> {
+    let binary =
+        |operator, left: &Bitvector32Term, right: &Bitvector32Term| -> Option<AlphaBitvectorKey> {
+            Some(AlphaBitvectorKey::Binary(
+                operator,
+                Box::new(alpha_bitvector_key(left, bindings)?),
+                Box::new(alpha_bitvector_key(right, bindings)?),
+            ))
+        };
+    Some(match term {
+        Bitvector32Term::Constant(value) => AlphaBitvectorKey::Constant(*value),
+        Bitvector32Term::Variable(variable) => {
+            AlphaBitvectorKey::Variable(alpha_variable_key(*variable, bindings))
+        }
+        Bitvector32Term::Add(left, right) => binary(AlphaBitvectorBinaryOp::Add, left, right)?,
+        Bitvector32Term::Subtract(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Subtract, left, right)?
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Multiply, left, right)?
+        }
+        Bitvector32Term::Divide(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Divide, left, right)?
+        }
+        Bitvector32Term::Remainder(left, right) => {
+            binary(AlphaBitvectorBinaryOp::Remainder, left, right)?
+        }
+        Bitvector32Term::ShiftLeft(left, right) => {
+            binary(AlphaBitvectorBinaryOp::ShiftLeft, left, right)?
+        }
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            binary(AlphaBitvectorBinaryOp::ArithmeticShiftRight, left, right)?
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            binary(AlphaBitvectorBinaryOp::BitwiseAnd, left, right)?
+        }
+        Bitvector32Term::BitwiseOr(left, right) => {
+            binary(AlphaBitvectorBinaryOp::BitwiseOr, left, right)?
+        }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            binary(AlphaBitvectorBinaryOp::BitwiseXor, left, right)?
+        }
+        Bitvector32Term::BitwiseNot(body) => {
+            AlphaBitvectorKey::BitwiseNot(Box::new(alpha_bitvector_key(body, bindings)?))
+        }
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => AlphaBitvectorKey::If {
+            condition: Box::new(alpha_condition_key(condition, bindings)?),
+            then_term: Box::new(alpha_bitvector_key(then_term, bindings)?),
+            else_term: Box::new(alpha_bitvector_key(else_term, bindings)?),
+        },
+        Bitvector32Term::RangeFold { .. } => return None,
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            AlphaBitvectorKey::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| alpha_bitvector_key(argument, bindings))
+                    .collect::<Option<Vec<_>>>()?,
+            }
+        }
+        Bitvector32Term::MemoryLoad(_, pointer) => {
+            AlphaBitvectorKey::Load(Box::new(alpha_pointer_key(pointer, bindings)?))
+        }
+    })
+}
+
+fn alpha_condition_key(
+    condition: &ConditionTerm,
+    bindings: &BTreeMap<Variable, usize>,
+) -> Option<AlphaConditionKey> {
+    let binary =
+        |operator, left: &Bitvector32Term, right: &Bitvector32Term| -> Option<AlphaConditionKey> {
+            Some(AlphaConditionKey::Binary(
+                operator,
+                alpha_bitvector_key(left, bindings)?,
+                alpha_bitvector_key(right, bindings)?,
+            ))
+        };
+    Some(match condition {
+        ConditionTerm::Constant(value) => AlphaConditionKey::Constant(*value),
+        ConditionTerm::Variable(variable) => {
+            AlphaConditionKey::Variable(alpha_variable_key(*variable, bindings))
+        }
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            binary(AlphaConditionBinaryOp::SignedLessThan, left, right)?
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            binary(AlphaConditionBinaryOp::SignedLessEqual, left, right)?
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            binary(AlphaConditionBinaryOp::SignedGreaterThan, left, right)?
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            binary(AlphaConditionBinaryOp::SignedGreaterEqual, left, right)?
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            binary(AlphaConditionBinaryOp::Equal, left, right)?
+        }
+        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+            binary(AlphaConditionBinaryOp::AddOverflows, left, right)?
+        }
+        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+            binary(AlphaConditionBinaryOp::SubtractOverflows, left, right)?
+        }
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
+            binary(AlphaConditionBinaryOp::MultiplyOverflows, left, right)?
+        }
+        ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
+            binary(AlphaConditionBinaryOp::DivideOverflows, left, right)?
+        }
+        ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            binary(AlphaConditionBinaryOp::ShiftLeftOverflows, left, right)?
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => AlphaConditionKey::PointerOffsetEqual(
+            alpha_pointer_offset_key(left, bindings)?,
+            alpha_pointer_offset_key(right, bindings)?,
+        ),
+        ConditionTerm::PointerEqual(left, right) => AlphaConditionKey::PointerEqual(
+            alpha_pointer_key(left, bindings)?,
+            alpha_pointer_key(right, bindings)?,
+        ),
+    })
+}
+
+fn alpha_proposition_key(
+    proposition: &Proposition,
+    bindings: &mut BTreeMap<Variable, usize>,
+    next_binder: &mut usize,
+) -> Option<AlphaPropositionKey> {
+    let binary = |left: &Proposition,
+                  right: &Proposition,
+                  bindings: &mut BTreeMap<Variable, usize>,
+                  next_binder: &mut usize|
+     -> Option<(Box<AlphaPropositionKey>, Box<AlphaPropositionKey>)> {
+        let left = Box::new(alpha_proposition_key(left, bindings, next_binder)?);
+        let right = Box::new(alpha_proposition_key(right, bindings, next_binder)?);
+        Some((left, right))
+    };
+    Some(match proposition {
+        Proposition::ConditionIs(condition, value) => {
+            AlphaPropositionKey::Condition(alpha_condition_key(condition, bindings)?, *value)
+        }
+        Proposition::And(left, right) => {
+            let (left, right) = binary(left, right, bindings, next_binder)?;
+            AlphaPropositionKey::And(left, right)
+        }
+        Proposition::Or(left, right) => {
+            let (left, right) = binary(left, right, bindings, next_binder)?;
+            AlphaPropositionKey::Or(left, right)
+        }
+        Proposition::Implies(left, right) => {
+            let (left, right) = binary(left, right, bindings, next_binder)?;
+            AlphaPropositionKey::Implies(left, right)
+        }
+        Proposition::Not(body) => AlphaPropositionKey::Not(Box::new(alpha_proposition_key(
+            body,
+            bindings,
+            next_binder,
+        )?)),
+        Proposition::ForAll { var, sort, body } => {
+            let ordinal = *next_binder;
+            *next_binder += 1;
+            let prior = bindings.insert(*var, ordinal);
+            let body = alpha_proposition_key(body, bindings, next_binder);
+            if let Some(prior) = prior {
+                bindings.insert(*var, prior);
+            } else {
+                bindings.remove(var);
+            }
+            AlphaPropositionKey::ForAll(sort.clone(), Box::new(body?))
+        }
+        Proposition::Exists {
+            var, sort, body, ..
+        } => {
+            let ordinal = *next_binder;
+            *next_binder += 1;
+            let prior = bindings.insert(*var, ordinal);
+            let body = alpha_proposition_key(body, bindings, next_binder);
+            if let Some(prior) = prior {
+                bindings.insert(*var, prior);
+            } else {
+                bindings.remove(var);
+            }
+            AlphaPropositionKey::Exists(sort.clone(), Box::new(body?))
+        }
+        _ => return None,
+    })
+}
+
+/// Returns a linear-time persistent-index key for a universal in the covered
+/// logical/condition fragment. Unsupported atomic families return `None` and
+/// remain on their legacy replay path rather than being placed in a broad
+/// bucket. Selecting a candidate by this key proves nothing; the quantified
+/// replay judgment still validates it.
+pub(super) fn quantified_replay_index_key(
+    proposition: &Proposition,
+) -> Option<QuantifiedReplayKey> {
+    if !matches!(proposition, Proposition::ForAll { .. }) {
+        return None;
+    }
+    alpha_proposition_key(proposition, &mut BTreeMap::new(), &mut 0).map(QuantifiedReplayKey)
+}
+
 /// Generation-side equality up to assumption-free canonical load spelling.
 /// A selected spelling still has to replay from its own lowered proposition,
 /// so this can broaden candidate recognition without broadening acceptance.
@@ -1613,6 +1979,61 @@ mod tests {
         CMemory, CMemoryRange, CResource, CValue, Pointer, PointerBlock, PointerOffsetTerm,
         Variable, intern_c_memory,
     };
+
+    #[test]
+    fn quantified_replay_key_is_alpha_invariant_and_preserves_free_variables() {
+        let quantified =
+            |outer: Variable, inner: Variable, free: Variable, name: &str| Proposition::ForAll {
+                var: outer,
+                sort: Sort::CInt32,
+                body: Box::new(Proposition::And(
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(Bitvector32Term::Variable(outer)),
+                            Box::new(Bitvector32Term::Variable(free)),
+                        ),
+                        true,
+                    )),
+                    Box::new(Proposition::Exists {
+                        name: name.to_string(),
+                        var: inner,
+                        sort: Sort::CInt32,
+                        body: Box::new(Proposition::ConditionIs(
+                            ConditionTerm::Bitvector32Equal(
+                                Box::new(Bitvector32Term::Variable(inner)),
+                                Box::new(Bitvector32Term::Variable(outer)),
+                            ),
+                            true,
+                        )),
+                    }),
+                )),
+            };
+
+        let left = quantified(Variable(0), Variable(1), Variable(7), "left name");
+        let renamed = quantified(
+            Variable(10_000),
+            Variable(20_000),
+            Variable(7),
+            "right name",
+        );
+        let different_free = quantified(
+            Variable(10_000),
+            Variable(20_000),
+            Variable(8),
+            "right name",
+        );
+
+        assert_eq!(
+            quantified_replay_index_key(&left),
+            quantified_replay_index_key(&renamed),
+            "binder identities and existential display names are not semantic"
+        );
+        assert_ne!(
+            quantified_replay_index_key(&left),
+            quantified_replay_index_key(&different_free),
+            "free variable identities remain part of the key"
+        );
+    }
 
     #[test]
     fn exact_replay_lookup_does_not_build_materialization_index() {

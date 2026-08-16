@@ -217,6 +217,9 @@ pub(super) struct ProofFacts {
     /// indexed lookup instead of scanning every unrelated fact.
     normalized_exact: PersistentSet<Proposition>,
     by_snapshot_blind: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Proposition>>,
+    by_quantified_replay: PersistentMap<QuantifiedReplayKey, PersistentSequence<Proposition>>,
+    implications_by_consequent:
+        PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>>,
     assumptions: PureFactContext,
     implicit_transport_assumptions: PureFactContext,
     direct_lowering_assumptions: PureFactContext,
@@ -229,6 +232,15 @@ pub(super) struct ProofFacts {
 struct PrioritizedProofFacts {
     parent: Option<Arc<PrioritizedProofFacts>>,
     facts: Arc<Vec<Proposition>>,
+}
+
+/// One indexed prefix of an available implication chain. The consequent key
+/// selects this small candidate; checking still validates every antecedent
+/// and the exact/snapshot-equivalent consequent against the current facts.
+#[derive(Clone)]
+struct ImplicationCandidate {
+    antecedents: PersistentSequence<Proposition>,
+    consequent: Proposition,
 }
 
 impl<'a> Proof<'a> {
@@ -1676,9 +1688,14 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("`extract` requires a proposition proof"));
         }
         let proposition = self.lower_surface_proposition(surface, "`extract` proposition")?;
-        if !self.state.facts.contains_proper_conjunct(&proposition) {
+        if !self.state.facts.contains_proper_conjunct(&proposition)
+            && !self
+                .state
+                .facts
+                .contains_discharged_implication_consequent(&proposition)
+        {
             return Err(self.step_error(format!(
-                "`extract` proposition is not a proper conjunct of an exact available fact: {}",
+                "`extract` proposition is not a proper conjunct of an exact available fact or a discharged implication consequent: {}",
                 describe_pure_fact(&proposition, &[], &[])
             )));
         }
@@ -2499,6 +2516,8 @@ impl ProofFacts {
         let mut proper_conjuncts = PersistentSet::default();
         let mut normalized_exact = PersistentSet::default();
         let mut by_snapshot_blind = PersistentMap::default();
+        let mut by_quantified_replay = PersistentMap::default();
+        let mut implications_by_consequent = PersistentMap::default();
         let mut assumptions = PureFactContext::new();
         let mut implicit_transport_assumptions = PureFactContext::new();
         let mut direct_lowering_assumptions = PureFactContext::new();
@@ -2509,6 +2528,9 @@ impl ProofFacts {
             }
             ordered.push(fact.clone());
             top_level_exact = top_level_exact.with_value(fact.clone());
+            by_quantified_replay = index_quantified_replay_fact(by_quantified_replay, fact);
+            implications_by_consequent =
+                index_implication_consequents(implications_by_consequent, fact);
             by_predicate = index_predicate_fact(by_predicate, fact);
             if matches!(fact, Proposition::And(_, _)) {
                 proper_conjuncts = index_proper_conjuncts(proper_conjuncts, fact);
@@ -2546,6 +2568,8 @@ impl ProofFacts {
             proper_conjuncts,
             normalized_exact,
             by_snapshot_blind,
+            by_quantified_replay,
+            implications_by_consequent,
             assumptions,
             implicit_transport_assumptions,
             direct_lowering_assumptions,
@@ -2569,6 +2593,10 @@ impl ProofFacts {
         let mut proper_conjuncts = self.proper_conjuncts.clone();
         let mut normalized_exact = self.normalized_exact.clone();
         let mut by_snapshot_blind = self.by_snapshot_blind.clone();
+        let by_quantified_replay =
+            index_quantified_replay_fact(self.by_quantified_replay.clone(), &fact);
+        let implications_by_consequent =
+            index_implication_consequents(self.implications_by_consequent.clone(), &fact);
         if matches!(fact, Proposition::And(_, _)) {
             proper_conjuncts = index_proper_conjuncts(proper_conjuncts, &fact);
             let mut conjuncts = Vec::new();
@@ -2605,6 +2633,8 @@ impl ProofFacts {
             proper_conjuncts,
             normalized_exact,
             by_snapshot_blind,
+            by_quantified_replay,
+            implications_by_consequent,
             assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
             implicit_transport_assumptions,
             direct_lowering_assumptions,
@@ -2675,7 +2705,47 @@ impl ProofFacts {
         }
 
         let normalized = normalize_direct_atomic_memory_loads(required);
-        self.exact.contains(&normalized) || self.normalized_exact.contains(&normalized)
+        self.exact.contains(&normalized)
+            || self.normalized_exact.contains(&normalized)
+            || self.quantified_replay_available(required)
+    }
+
+    fn quantified_replay_available(&self, required: &Proposition) -> bool {
+        quantified_replay_index_key(required)
+            .and_then(|key| self.by_quantified_replay.get(&key))
+            .into_iter()
+            .flat_map(PersistentSequence::iter)
+            .any(|candidate| {
+                quantified_binder_equivalent(required, candidate)
+                    || quantified_replay_equivalent_available_fact(
+                        required,
+                        std::slice::from_ref(candidate),
+                    )
+                    .is_some()
+            })
+    }
+
+    fn contains_discharged_implication_consequent(&self, required: &Proposition) -> bool {
+        let normalized = normalize_direct_atomic_memory_loads(required);
+        let mut keys = vec![snapshot_blind_proposition_key(required)];
+        let normalized_key = snapshot_blind_proposition_key(&normalized);
+        if !keys.contains(&normalized_key) {
+            keys.push(normalized_key);
+        }
+        keys.into_iter()
+            .filter_map(|key| self.implications_by_consequent.get(&key))
+            .flat_map(PersistentSequence::iter)
+            .any(|candidate| {
+                proposition_candidate_equals_modulo_proven_snapshots(
+                    &candidate.consequent,
+                    required,
+                    &self.assumptions,
+                    &[],
+                ) && candidate
+                    .antecedents
+                    .iter()
+                    .all(|antecedent| self.replay_available_across_effects(antecedent, &[]))
+            })
     }
 
     pub(super) fn exact_available_across_effects(
@@ -2781,6 +2851,49 @@ fn index_snapshot_fact(
         }
     }
     by_snapshot_blind
+}
+
+fn index_quantified_replay_fact(
+    mut index: PersistentMap<QuantifiedReplayKey, PersistentSequence<Proposition>>,
+    fact: &Proposition,
+) -> PersistentMap<QuantifiedReplayKey, PersistentSequence<Proposition>> {
+    let Some(key) = quantified_replay_index_key(fact) else {
+        return index;
+    };
+    let mut bucket = index.get(&key).cloned().unwrap_or_default();
+    if !bucket.iter().any(|candidate| candidate == fact) {
+        bucket.push(fact.clone());
+        index = index.with_inserted(key, bucket);
+    }
+    index
+}
+
+fn index_implication_consequents(
+    mut index: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>>,
+    fact: &Proposition,
+) -> PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>> {
+    let mut antecedents = PersistentSequence::default();
+    let mut current = fact;
+    while let Proposition::Implies(antecedent, consequent) = current {
+        antecedents.push(antecedent.as_ref().clone());
+        let candidate = ImplicationCandidate {
+            antecedents: antecedents.clone(),
+            consequent: consequent.as_ref().clone(),
+        };
+        let normalized = normalize_direct_atomic_memory_loads(consequent);
+        let mut keys = vec![snapshot_blind_proposition_key(consequent)];
+        let normalized_key = snapshot_blind_proposition_key(&normalized);
+        if !keys.contains(&normalized_key) {
+            keys.push(normalized_key);
+        }
+        for key in keys {
+            let mut bucket = index.get(&key).cloned().unwrap_or_default();
+            bucket.push(candidate.clone());
+            index = index.with_inserted(key, bucket);
+        }
+        current = consequent;
+    }
+    index
 }
 
 fn index_proper_conjuncts(
@@ -3722,6 +3835,134 @@ mod tests {
             assert_eq!(extracted.certificate().steps(), &[step]);
             assert_eq!(extracted.added_facts(), std::slice::from_ref(&kernel));
             assert!(extracted.is_complete());
+        }
+    }
+
+    #[test]
+    fn implication_extract_uses_indexed_consequent_and_alpha_equivalent_antecedent() {
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let target_surface = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(1))),
+        };
+        let theorem_context = PureTheoremContext {
+            memory: CMemory::new(),
+            values: BTreeMap::from([(
+                "x".to_string(),
+                CValue::Int32(Bitvector32Term::Variable(Variable(8_000_000))),
+            )]),
+            array_refs: BTreeMap::new(),
+            requires: Vec::new(),
+        };
+        let target = lower_pure_theorem_proposition(
+            "indexed implication extract",
+            &target_surface,
+            &theorem_context.values,
+            &theorem_context.array_refs,
+            &theorem_context.memory,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("target should lower");
+        let universal = |variable| Proposition::ForAll {
+            var: variable,
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(variable)),
+                    Box::new(Bitvector32Term::Variable(variable)),
+                ),
+                true,
+            )),
+        };
+        let required_antecedent = universal(Variable(8_100_000));
+        let available_antecedent = universal(Variable(8_200_000));
+        let selected_implication = Proposition::Implies(
+            Box::new(required_antecedent.clone()),
+            Box::new(target.clone()),
+        );
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size)
+                .map(|index| {
+                    Proposition::Implies(
+                        Box::new(indexed_fact(100_000 + index)),
+                        Box::new(indexed_fact(200_000 + index)),
+                    )
+                })
+                .collect::<Vec<_>>();
+            facts.push(available_antecedent.clone());
+            facts.push(selected_implication.clone());
+            let root = Proof::for_pure_goal(
+                "indexed implication extract",
+                &facts,
+                target.clone(),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_root = root.clone();
+            let target_key = snapshot_blind_proposition_key(&target);
+            assert_eq!(
+                root.state
+                    .facts
+                    .implications_by_consequent
+                    .get(&target_key)
+                    .expect("selected consequent should be indexed")
+                    .len(),
+                1,
+                "unrelated implications must not enter the selected bucket"
+            );
+            let quantified_key = quantified_replay_index_key(&required_antecedent)
+                .expect("a universal has an alpha-invariant key");
+            assert_eq!(
+                root.state
+                    .facts
+                    .by_quantified_replay
+                    .get(&quantified_key)
+                    .expect("alpha-equivalent antecedent should be indexed")
+                    .len(),
+                1
+            );
+
+            let step = SimpleProofStep::Extract(target_surface.clone());
+            let before = fact_node_allocations();
+            let extracted = root
+                .apply_step(step.clone())
+                .expect("the alpha-equivalent antecedent should discharge the implication");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 48 * logarithmic_height + 192;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} implication extract allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+            assert_eq!(extracted.certificate().steps(), &[step]);
+            assert_eq!(extracted.added_facts(), std::slice::from_ref(&target));
+            assert!(extracted.is_complete());
+
+            let missing_antecedent = Proof::for_pure_goal(
+                "missing implication antecedent",
+                std::slice::from_ref(&selected_implication),
+                target.clone(),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            assert!(
+                missing_antecedent
+                    .apply_step(SimpleProofStep::Extract(target_surface.clone()))
+                    .is_err(),
+                "an indexed consequent does not bypass its antecedent"
+            );
+            assert!(missing_antecedent.certificate().steps().is_empty());
         }
     }
 

@@ -617,10 +617,21 @@ extraction retains the named step and promotes the conjunct to a top-level
 fact with logarithmic persistent work. A deterministic 16-through-4096
 regression covers nested conjunctions and distinguishes a proper conjunct from
 an independently available fact. Point certificates using this structural
-case now cross the Proof boundary. Discharged-implication extraction remains
-on the legacy path until it has an indexed candidate lookup preserving the
-existing snapshot and quantified equivalences; moving that vector scan behind
-the new API would only hide the architectural bug.
+case now cross the Proof boundary.
+
+Discharged-implication extraction now has a persistent consequent index as
+well. Each implication chain contributes its explicit antecedent prefixes to
+only the exact snapshot-blind keys of its consequents; `extract` selects that
+bucket, rechecks the consequent with the kernel snapshot judgment, and checks
+each antecedent through indexed replay availability. Independently lowered
+universals in the logical/condition fragment use a one-pass alpha key whose
+bound variables are structural ordinals and whose free variables retain their
+identities. Unsupported quantified atom families produce no broad fallback
+bucket and therefore remain on the legacy proof path until their precise key
+representation is added. A 16-through-4096 regression grows unrelated
+implications while the selected consequent and alpha-equivalent antecedent
+buckets remain singleton, bounds persistent allocation logarithmically, and
+checks missing-antecedent rejection and ancestor transactionality.
 
 Explicit proposition `Rewrite` now advances through `Proof::apply_step` for
 pure and point goals. The rewrite engine accepts an indexed availability
