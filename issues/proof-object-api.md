@@ -769,6 +769,15 @@ retained path (`UnfoldPredicate` plus the selected simple closer); ordinary
 verification does not run the surface-certificate replay gateway. The point
 expansion regression independently reparses and checks that retained output.
 
+Point `have` scripts whose smart search is an explicit `witness`/predicate-
+unfold refinement prefix followed by `simp` use that same path now. Each
+refinement advances the immutable `Proof`, and the direct closer continues
+from that checked successor. In particular, the common
+`witness(...); simp();` form retains `Witness` plus the selected simple closer
+without constructing and replaying another body certificate; its expansion
+regression checks the exact retained path and independently verifies the
+serialized proof.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

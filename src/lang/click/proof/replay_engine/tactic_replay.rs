@@ -492,7 +492,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     enum Plan<'a> {
         DirectSmart,
         BareApply(&'a TheoremApplication),
-        UnfoldThenDirect(&'a [ProofTactic]),
+        RefineThenDirect(ProofCertificate),
         SmartIf(&'a ProofIf),
         SmartCases(&'a ProofCases),
         Explicit(ProofCertificate),
@@ -505,13 +505,8 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
         SourceProof::Script(tactics) => {
             if let [ProofTactic::ApplyTheorem(application)] = tactics.as_slice() {
                 Plan::BareApply(application)
-            } else if matches!(tactics.last(), Some(ProofTactic::Simp))
-                && !tactics[..tactics.len() - 1].is_empty()
-                && tactics[..tactics.len() - 1]
-                    .iter()
-                    .all(|tactic| matches!(tactic, ProofTactic::UnfoldPredicate(_)))
-            {
-                Plan::UnfoldThenDirect(&tactics[..tactics.len() - 1])
+            } else if let Some(prefix) = direct_point_refinement_prefix(tactics) {
+                Plan::RefineThenDirect(prefix)
             } else if let [ProofTactic::If(proof_if)] = tactics.as_slice()
                 && matches!(proof_if.then_tactics.as_slice(), [ProofTactic::Simp])
                 && matches!(proof_if.else_tactics.as_slice(), [ProofTactic::Simp])
@@ -594,13 +589,10 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
             };
             (closed, true)
         }
-        Plan::UnfoldThenDirect(unfolds) => {
+        Plan::RefineThenDirect(prefix) => {
             let mut selected = proof;
-            for tactic in unfolds {
-                let ProofTactic::UnfoldPredicate(name) = tactic else {
-                    unreachable!("the unfold-prefix plan checked every tactic")
-                };
-                selected = selected.apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
+            for step in prefix.steps() {
+                selected = selected.apply_step(step.clone())?;
             }
             let Some(closed) = selected.try_direct_logical_closure() else {
                 return Ok(None);
@@ -653,6 +645,27 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
         }])
     });
     Ok(Some((goal, certificate)))
+}
+
+/// Recognizes a smart point-proof script whose search consists only of
+/// already-migrated goal refinements followed by `simp`. The returned simple
+/// prefix is checked directly against successive `Proof` values; `simp` then
+/// selects its closer from those successors.
+fn direct_point_refinement_prefix(tactics: &[ProofTactic]) -> Option<ProofCertificate> {
+    let (ProofTactic::Simp, prefix) = tactics.split_last()? else {
+        return None;
+    };
+    if prefix.is_empty()
+        || !prefix.iter().all(|tactic| {
+            matches!(
+                tactic,
+                ProofTactic::UnfoldPredicate(_) | ProofTactic::Witness(_)
+            )
+        })
+    {
+        return None;
+    }
+    ProofCertificate::from_proof_tactics(prefix).ok()
 }
 
 #[allow(clippy::too_many_arguments)]

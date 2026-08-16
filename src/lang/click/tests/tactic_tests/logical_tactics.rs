@@ -1093,8 +1093,18 @@ fn mid_execution_witness_simp_have_expands_to_a_simple_certificate() {
             }
         "#;
 
-    let verified = verify_c0_sources(click_source, &[("current_have.c", c_source)])
-        .expect("a witness/simp have should verify");
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("current_have.c", c_source)])
+    });
+    let verified = verified.expect("a witness/simp have should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "current_have.contract" && name == "surface certificate replay"
+        )),
+        "the migrated witness/simp have must retain its checked Proof path: {events:#?}"
+    );
     let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
         panic!(
             "a mid-execution witness/simp have should expand: {:?}",
@@ -1117,8 +1127,35 @@ fn mid_execution_witness_simp_have_expands_to_a_simple_certificate() {
             .any(|tactic| matches!(tactic, ProofTactic::Simp)),
         "the expanded have body should replace its smart simp: {body:?}"
     );
+    assert!(
+        matches!(
+            body.as_slice(),
+            [ProofTactic::Witness(_), ProofTactic::Normalize]
+        ),
+        "the expansion should be the exact checked witness/normalize path: {body:?}"
+    );
     ProofCertificate::from_proof_tactics(&expanded)
         .expect("the witness/simp have expansion should be a surface certificate");
+
+    let have_offset = click_source
+        .find("have exists (j: int32)")
+        .expect("source should contain the selected have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let rewritten =
+        expand_c0_tactic_source_at(click_source, &[("current_have.c", c_source)], line, column)
+            .expect("the checked witness/simp path should expand at its source site");
+    verify_c0_sources(&rewritten, &[("current_have.c", c_source)])
+        .expect("the serialized witness/normalize path should independently verify");
 }
 
 #[test]
