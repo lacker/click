@@ -503,15 +503,9 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
             Plan::DirectSmart
         }
         SourceProof::Script(tactics) => {
-            if let [ProofTactic::If(proof_if)] = tactics.as_slice()
-                && matches!(proof_if.then_tactics.as_slice(), [ProofTactic::Simp])
-                && matches!(proof_if.else_tactics.as_slice(), [ProofTactic::Simp])
-            {
+            if let [ProofTactic::If(proof_if)] = tactics.as_slice() {
                 Plan::SmartIf(proof_if)
-            } else if let [ProofTactic::Cases(proof_cases)] = tactics.as_slice()
-                && matches!(proof_cases.left_tactics.as_slice(), [ProofTactic::Simp])
-                && matches!(proof_cases.right_tactics.as_slice(), [ProofTactic::Simp])
-            {
+            } else if let [ProofTactic::Cases(proof_cases)] = tactics.as_slice() {
                 Plan::SmartCases(proof_cases)
             } else if tactics
                 .iter()
@@ -577,27 +571,37 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
             (closed, true)
         }
         Plan::SmartIf(proof_if) => {
-            let Some(closed) = proof
-                .begin_if(proof_if.condition.clone())
-                .ok()
-                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Left))
-                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Right))
-                .and_then(|branches| branches.join().ok())
+            let Ok(branches) = proof.begin_if(proof_if.condition.clone()) else {
+                return Ok(None);
+            };
+            let Some(branches) =
+                branches.try_linear_smart_script(ProofArm::Left, &proof_if.then_tactics)?
             else {
                 return Ok(None);
             };
+            let Some(branches) =
+                branches.try_linear_smart_script(ProofArm::Right, &proof_if.else_tactics)?
+            else {
+                return Ok(None);
+            };
+            let closed = branches.join()?;
             (closed, true)
         }
         Plan::SmartCases(proof_cases) => {
-            let Some(closed) = proof
-                .begin_cases(proof_cases.disjunction.clone())
-                .ok()
-                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Left))
-                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Right))
-                .and_then(|branches| branches.join().ok())
+            let Ok(branches) = proof.begin_cases(proof_cases.disjunction.clone()) else {
+                return Ok(None);
+            };
+            let Some(branches) =
+                branches.try_linear_smart_script(ProofArm::Left, &proof_cases.left_tactics)?
             else {
                 return Ok(None);
             };
+            let Some(branches) =
+                branches.try_linear_smart_script(ProofArm::Right, &proof_cases.right_tactics)?
+            else {
+                return Ok(None);
+            };
+            let closed = branches.join()?;
             (closed, true)
         }
         Plan::Explicit(certificate) => {

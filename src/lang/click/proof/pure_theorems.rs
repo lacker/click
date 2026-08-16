@@ -912,29 +912,47 @@ fn check_pure_script_with_proof(
         theorem_environment,
     );
 
-    // A one-node smart logical branch searches each arm directly on its
-    // branch-local Proof. Successful arms are joined with their retained
+    // A one-node smart logical branch runs each recognized linear script on
+    // its branch-local Proof. Successful arms are joined with their retained
     // steps; no separately synthesized branch certificate is replayed.
     let direct_branch = match tactics {
-        [ProofTactic::If(proof_if)]
-            if matches!(proof_if.then_tactics.as_slice(), [ProofTactic::Simp])
-                && matches!(proof_if.else_tactics.as_slice(), [ProofTactic::Simp]) =>
-        {
-            root.begin_if(proof_if.condition.clone())
-                .ok()
-                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Left))
-                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Right))
-                .and_then(|branches| branches.join().ok())
+        [ProofTactic::If(proof_if)] => {
+            if let Ok(branches) = root.begin_if(proof_if.condition.clone()) {
+                if let Some(branches) =
+                    branches.try_linear_smart_script(ProofArm::Left, &proof_if.then_tactics)?
+                {
+                    if let Some(branches) =
+                        branches.try_linear_smart_script(ProofArm::Right, &proof_if.else_tactics)?
+                    {
+                        branches.join().ok()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         }
-        [ProofTactic::Cases(proof_cases)]
-            if matches!(proof_cases.left_tactics.as_slice(), [ProofTactic::Simp])
-                && matches!(proof_cases.right_tactics.as_slice(), [ProofTactic::Simp]) =>
-        {
-            root.begin_cases(proof_cases.disjunction.clone())
-                .ok()
-                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Left))
-                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Right))
-                .and_then(|branches| branches.join().ok())
+        [ProofTactic::Cases(proof_cases)] => {
+            if let Ok(branches) = root.begin_cases(proof_cases.disjunction.clone()) {
+                if let Some(branches) =
+                    branches.try_linear_smart_script(ProofArm::Left, &proof_cases.left_tactics)?
+                {
+                    if let Some(branches) = branches
+                        .try_linear_smart_script(ProofArm::Right, &proof_cases.right_tactics)?
+                    {
+                        branches.join().ok()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         }
         _ => None,
     };

@@ -1631,11 +1631,27 @@ fn smart_pure_have_retains_the_checked_scope_body_directly() {
 #[test]
 fn smart_pure_if_retains_checked_arm_proofs_directly() {
     let click_source = r#"
+        theorem equality_case(x: int32) {
+            requires x == 0;
+            ensures x == 0 or not (x == 0) by {
+                left();
+            }
+        }
+
+        theorem inequality_case(x: int32) {
+            requires not (x == 0);
+            ensures x == 0 or not (x == 0) by {
+                right();
+            }
+        }
+
         theorem equality_excluded_middle_smart(x: int32) {
             ensures x == 0 or not (x == 0) by {
                 if x == 0 {
+                    apply(equality_case(x));
                     simp();
                 } else {
+                    apply(inequality_case(x));
                     simp();
                 }
             }
@@ -1704,6 +1720,20 @@ fn smart_point_have_if_retains_checked_arm_proofs_directly() {
         }
     "#;
     let click_source = r#"
+        theorem equality_case(x: int32) {
+            requires x == 0;
+            ensures x == 0 or not (x == 0) by {
+                left();
+            }
+        }
+
+        theorem inequality_case(x: int32) {
+            requires not (x == 0);
+            ensures x == 0 or not (x == 0) by {
+                right();
+            }
+        }
+
         verifying "keep.c";
 
         int32 keep(int32 x) {
@@ -1712,8 +1742,10 @@ fn smart_point_have_if_retains_checked_arm_proofs_directly() {
             execute();
             have x == 0 or not (x == 0) by {
                 if x == 0 {
+                    apply(equality_case(x));
                     simp();
                 } else {
+                    apply(inequality_case(x));
                     simp();
                 }
             }
@@ -1721,8 +1753,42 @@ fn smart_point_have_if_retains_checked_arm_proofs_directly() {
         }
     "#;
 
-    verify_c0_sources(click_source, &[("keep.c", c_source)])
-        .expect("smart point-have arms should retain their checked Proof descendants");
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("keep.c", c_source)])
+    });
+    let verified =
+        verified.expect("smart point-have arms should retain their checked Proof descendants");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "keep.contract" && name == "surface certificate replay"
+        )),
+        "branch-local theorem search must retain its checked Proof paths: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the retained branch-local theorem paths should expand");
+    assert!(
+        format!("{expanded:?}").contains("ApplyTheoremUsing"),
+        "{expanded:#?}"
+    );
+    let expanded_source = expand_c0_claim_source(
+        click_source,
+        &[("keep.c", c_source)],
+        "keep",
+        CProofClaim::Grouped,
+    )
+    .expect("the checked point branch paths should serialize");
+    assert!(
+        expanded_source.contains("apply(equality_case(x)) using {")
+            && expanded_source.contains("apply(inequality_case(x)) using {")
+            && !expanded_source.contains("apply(equality_case(x));")
+            && !expanded_source.contains("apply(inequality_case(x));"),
+        "{expanded_source}"
+    );
+    verify_c0_sources(&expanded_source, &[("keep.c", c_source)])
+        .expect("the serialized point branch paths should independently reverify");
 }
 
 #[test]

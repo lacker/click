@@ -2028,22 +2028,30 @@ pub(super) fn finish_ordered_proof_replay(
                                 // Restricting these facts to hand-written `derive`
                                 // scripts let smart `simp` search succeed and then
                                 // fail when its generated certificate was replayed.
-                                let smart_branch_body = matches!(
+                                let arm_uses_linear_search = |tactics: &[ProofTactic]| {
+                                    tactics.iter().any(|tactic| {
+                                        matches!(
+                                            tactic,
+                                            ProofTactic::ApplyTheorem(_) | ProofTactic::Simp
+                                        )
+                                    })
+                                };
+                                let structured_branch_body = matches!(
                                     &have.proof,
                                     SourceProof::Script(tactics)
                                         if matches!(
                                             tactics.as_slice(),
                                             [ProofTactic::If(proof_if)]
-                                                if matches!(proof_if.then_tactics.as_slice(), [ProofTactic::Simp])
-                                                    && matches!(proof_if.else_tactics.as_slice(), [ProofTactic::Simp])
+                                                if arm_uses_linear_search(&proof_if.then_tactics)
+                                                    && arm_uses_linear_search(&proof_if.else_tactics)
                                         ) || matches!(
                                             tactics.as_slice(),
                                             [ProofTactic::Cases(proof_cases)]
-                                                if matches!(proof_cases.left_tactics.as_slice(), [ProofTactic::Simp])
-                                                    && matches!(proof_cases.right_tactics.as_slice(), [ProofTactic::Simp])
+                                                if arm_uses_linear_search(&proof_cases.left_tactics)
+                                                    && arm_uses_linear_search(&proof_cases.right_tactics)
                                         )
                                 );
-                                let checked_branch_have = if smart_branch_body {
+                                let checked_branch_have = if structured_branch_body {
                                     checked_have_with_proof(
                                         have,
                                         theorem_environment,

@@ -1650,7 +1650,11 @@ impl<'a> Proof<'a> {
             if matches!(normalize_proposition(&requirement), SimpProposition::True) {
                 continue;
             }
-            if !self.state.facts.materialization_available(&requirement) {
+            if !self
+                .state
+                .facts
+                .replay_available_across_effects(&requirement, &[])
+            {
                 return Err(self.step_error(format!(
                     "theorem application `{}` requires an unavailable exact premise: {requirement:?}",
                     application.name
@@ -1676,9 +1680,13 @@ impl<'a> Proof<'a> {
                 .find(|candidate| {
                     self.lower_surface_proposition(candidate, "selected theorem premise")
                         .is_ok_and(|lowered| {
-                            normalize_direct_atomic_memory_loads(&lowered)
+                            (normalize_direct_atomic_memory_loads(&lowered)
                                 == normalize_direct_atomic_memory_loads(&requirement)
-                                && self.state.facts.materialization_available(&lowered)
+                                || condition_polarity_equivalent(&lowered, &requirement))
+                                && self
+                                    .state
+                                    .facts
+                                    .replay_available_across_effects(&lowered, &[])
                         })
                 })
                 .ok_or_else(|| {
@@ -2734,13 +2742,20 @@ impl<'a> ProofBranches<'a> {
         Ok(next)
     }
 
-    /// Runs the shared direct smart closure search in one arm. The selected
-    /// descendant is retained in the branch container; the other arm and the
-    /// common root remain shared.
-    pub(super) fn try_direct_logical_closure(&self, arm: ProofArm) -> Option<Self> {
+    /// Runs a recognized linear smart script against one branch-local Proof.
+    /// The selected descendant retains its exact checked steps; neither the
+    /// sibling arm nor the common root is reconstructed or replayed.
+    pub(super) fn try_linear_smart_script(
+        &self,
+        arm: ProofArm,
+        tactics: &[ProofTactic],
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(checked) = self.arms[arm.index()].try_linear_smart_script(tactics)? else {
+            return Ok(None);
+        };
         let mut next = self.clone();
-        next.arms[arm.index()] = self.arms[arm.index()].try_direct_logical_closure()?;
-        Some(next)
+        next.arms[arm.index()] = checked;
+        Ok(Some(next))
     }
 
     /// Joins two completed arms and records their retained bodies as one

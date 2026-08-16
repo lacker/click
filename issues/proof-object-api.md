@@ -837,6 +837,19 @@ and point expansion regressions independently reverify the retained mixed
 paths, and deterministic 16-through-4096-fact tests bound the complete fixed
 linear script by logarithmic persistent-index allocation.
 
+Audited pure and point `if`/`cases` containers now run that same driver on
+each branch-local `Proof`, replacing the former caller-side restriction that
+both bodies be exactly `[simp]`. A bare theorem application inside an arm
+selects and applies its explicit step against that arm's facts, and `join`
+embeds the already-checked descendant certificates. The deferred
+post-execution `have` drain recognizes the same structural bodies instead of
+requiring their original smart syntax to be a certificate. Point theorem
+selection also uses the explicit replay checker's indexed condition-polarity
+availability, so an `else` arm's `condition == false` fact can select a
+surface `not(condition)` premise without an ambient scan. Pure and point
+regressions check no ordinary construction replay, retained
+`ApplyTheoremUsing` arms, expansion, and independent verification.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

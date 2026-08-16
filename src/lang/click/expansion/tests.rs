@@ -1737,6 +1737,53 @@ fn pure_mixed_linear_smart_script_expands_the_retained_proof_object_path() {
 }
 
 #[test]
+fn pure_branch_local_apply_expands_the_retained_proof_object_paths() {
+    let source = r#"
+        theorem equality_case(x: int32) {
+            requires x == 0;
+            ensures x == 0 or not (x == 0) by {
+                left();
+            }
+        }
+
+        theorem inequality_case(x: int32) {
+            requires not (x == 0);
+            ensures x == 0 or not (x == 0) by {
+                right();
+            }
+        }
+
+        theorem branch_apply(x: int32) {
+            ensures x == 0 or not (x == 0) by {
+                if x == 0 {
+                    apply(equality_case(x));
+                    simp();
+                } else {
+                    apply(inequality_case(x));
+                    simp();
+                }
+            }
+        }
+    "#;
+    let expanded = expand_pure_theorem_source(source, &[], "branch_apply", 0)
+        .expect("the checked branch-local theorem paths should expand");
+    let selected = &expanded[expanded
+        .find("theorem branch_apply")
+        .expect("expanded source should retain the selected theorem")..];
+    assert!(
+        selected.contains("apply(equality_case(x)) using {"),
+        "{selected}"
+    );
+    assert!(
+        selected.contains("apply(inequality_case(x)) using {"),
+        "{selected}"
+    );
+    assert!(!selected.contains("simp();"), "{selected}");
+    verify_click_theorems(&expanded)
+        .expect("the serialized branch-local certificates should independently reverify");
+}
+
+#[test]
 fn expands_qualified_frame_tactic() {
     let c_source = r#"int32 set_cell(int32 p[], int32 value) {
     p[0] = value;
