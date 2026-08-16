@@ -30,6 +30,15 @@ impl<K, V> Default for PersistentMap<K, V> {
 }
 
 impl<K: Ord, V> PersistentMap<K, V> {
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub(crate) fn get(&self, key: &K) -> Option<&V> {
         let mut node = self.root.as_ref();
         while let Some(current) = node {
@@ -54,8 +63,16 @@ impl<K: Ord, V> PersistentMap<K, V> {
         }
     }
 
+    pub(crate) fn without_key(&self, key: &K) -> Self {
+        let (root, removed) = remove_node(self.root.as_ref(), key);
+        Self {
+            root,
+            len: self.len - usize::from(removed),
+        }
+    }
+
     pub(crate) fn iter(&self) -> PersistentMapIter<'_, K, V> {
-        PersistentMapIter::new(self.root.as_deref())
+        PersistentMapIter::new(self.root.as_deref(), self.len)
     }
 
     pub(crate) fn keys(&self) -> impl Iterator<Item = &K> {
@@ -102,20 +119,34 @@ impl<K: Ord + fmt::Debug, V: fmt::Debug> fmt::Debug for PersistentMap<K, V> {
 }
 
 pub(crate) struct PersistentMapIter<'a, K, V> {
-    stack: Vec<&'a Node<K, V>>,
+    front: Vec<&'a Node<K, V>>,
+    back: Vec<&'a Node<K, V>>,
+    remaining: usize,
 }
 
 impl<'a, K, V> PersistentMapIter<'a, K, V> {
-    fn new(root: Option<&'a Node<K, V>>) -> Self {
-        let mut iter = Self { stack: Vec::new() };
-        iter.push_left(root);
+    fn new(root: Option<&'a Node<K, V>>, remaining: usize) -> Self {
+        let mut iter = Self {
+            front: Vec::new(),
+            back: Vec::new(),
+            remaining,
+        };
+        iter.push_front(root);
+        iter.push_back(root);
         iter
     }
 
-    fn push_left(&mut self, mut node: Option<&'a Node<K, V>>) {
+    fn push_front(&mut self, mut node: Option<&'a Node<K, V>>) {
         while let Some(current) = node {
-            self.stack.push(current);
+            self.front.push(current);
             node = current.left.as_deref();
+        }
+    }
+
+    fn push_back(&mut self, mut node: Option<&'a Node<K, V>>) {
+        while let Some(current) = node {
+            self.back.push(current);
+            node = current.right.as_deref();
         }
     }
 }
@@ -124,11 +155,33 @@ impl<'a, K, V> Iterator for PersistentMapIter<'a, K, V> {
     type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let node = self.stack.pop()?;
-        self.push_left(node.right.as_deref());
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        let node = self.front.pop()?;
+        self.push_front(node.right.as_deref());
+        Some((node.key.as_ref(), node.value.as_ref()))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<'a, K, V> DoubleEndedIterator for PersistentMapIter<'a, K, V> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        let node = self.back.pop()?;
+        self.push_back(node.left.as_deref());
         Some((node.key.as_ref(), node.value.as_ref()))
     }
 }
+
+impl<K, V> ExactSizeIterator for PersistentMapIter<'_, K, V> {}
 
 #[derive(Clone)]
 pub(crate) struct PersistentSet<T> {
@@ -295,6 +348,80 @@ fn insert_node<K: Ord, V>(
     }
 }
 
+fn remove_leftmost<K: Ord, V>(node: &Arc<Node<K, V>>) -> (Option<Arc<Node<K, V>>>, Arc<K>, Arc<V>) {
+    let Some(left) = node.left.as_ref() else {
+        return (node.right.clone(), node.key.clone(), node.value.clone());
+    };
+    let (new_left, key, value) = remove_leftmost(left);
+    (
+        Some(balance_node(
+            node.key.clone(),
+            node.value.clone(),
+            new_left,
+            node.right.clone(),
+        )),
+        key,
+        value,
+    )
+}
+
+fn remove_node<K: Ord, V>(
+    node: Option<&Arc<Node<K, V>>>,
+    key: &K,
+) -> (Option<Arc<Node<K, V>>>, bool) {
+    let Some(node) = node else {
+        return (None, false);
+    };
+    match key.cmp(node.key.as_ref()) {
+        Ordering::Less => {
+            let (left, removed) = remove_node(node.left.as_ref(), key);
+            if !removed {
+                return (Some(node.clone()), false);
+            }
+            (
+                Some(balance_node(
+                    node.key.clone(),
+                    node.value.clone(),
+                    left,
+                    node.right.clone(),
+                )),
+                true,
+            )
+        }
+        Ordering::Greater => {
+            let (right, removed) = remove_node(node.right.as_ref(), key);
+            if !removed {
+                return (Some(node.clone()), false);
+            }
+            (
+                Some(balance_node(
+                    node.key.clone(),
+                    node.value.clone(),
+                    node.left.clone(),
+                    right,
+                )),
+                true,
+            )
+        }
+        Ordering::Equal => match (&node.left, &node.right) {
+            (None, _) => (node.right.clone(), true),
+            (_, None) => (node.left.clone(), true),
+            (Some(_), Some(right)) => {
+                let (new_right, successor_key, successor_value) = remove_leftmost(right);
+                (
+                    Some(balance_node(
+                        successor_key,
+                        successor_value,
+                        node.left.clone(),
+                        new_right,
+                    )),
+                    true,
+                )
+            }
+        },
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn persistent_node_allocations() -> usize {
     NODE_ALLOCATIONS.with(std::cell::Cell::get)
@@ -338,6 +465,36 @@ mod tests {
             assert!(update_allocations <= allocation_bound);
             assert_eq!(map.get(&size), Some(&(size * 2)));
             assert_eq!(updated.get(&size), Some(&7));
+        }
+    }
+
+    #[test]
+    fn persistent_map_removal_preserves_ancestor_and_avl_order() {
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut map = PersistentMap::default();
+            for key in 0..size {
+                map = map.with_inserted(key, key * 2);
+            }
+            let ancestor = map.clone();
+            let removed_key = size / 2;
+            let before = persistent_node_allocations();
+            map = map.without_key(&removed_key);
+            let allocations = persistent_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 8 * logarithmic_height + 8;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} removal allocated {allocations} nodes (bound {allocation_bound})"
+            );
+            assert_eq!(ancestor.get(&removed_key), Some(&(removed_key * 2)));
+            assert_eq!(map.get(&removed_key), None);
+            assert_eq!(ancestor.len(), size as usize);
+            assert_eq!(map.len(), size as usize - 1);
+            assert!(map.iter().map(|(key, _)| *key).is_sorted());
+
+            let unchanged = map.without_key(&u32::MAX);
+            assert!(unchanged.shares_root_with(&map));
+            assert_eq!(unchanged.len(), map.len());
         }
     }
 }

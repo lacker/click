@@ -385,7 +385,7 @@ impl PureFactContext {
             candidate.clear_proposition_facts();
             let mut connected_variables = BTreeSet::new();
             collect_proposition_bitvector_variables(proposition, &mut connected_variables);
-            let mut selected = BTreeMap::new();
+            let mut selected = crate::persistent::PersistentMap::default();
             let mut changed = true;
             while changed {
                 changed = false;
@@ -404,12 +404,12 @@ impl PureFactContext {
                         || (!variables.is_empty() && !variables.is_disjoint(&connected_variables))
                     {
                         connected_variables.extend(variables);
-                        selected.insert(condition.clone(), *value);
+                        selected = selected.with_inserted(condition.clone(), *value);
                         changed = true;
                     }
                 }
             }
-            candidate.condition_facts = std::sync::Arc::new(selected);
+            candidate.condition_facts = selected;
             candidate.rebuild_signed_order_bounds();
             candidate.rebuild_memory_load_condition_facts();
             candidate.recompute_content_fingerprint();

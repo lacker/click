@@ -1133,30 +1133,29 @@ impl PureFactContext {
             (left.clone(), (right.clone(), strict, true)),
             (right, (left, strict, false)),
         ] {
-            let index = std::sync::Arc::make_mut(&mut self.signed_order_bounds);
+            let mut bounds = self
+                .signed_order_bounds
+                .get(&endpoint)
+                .cloned()
+                .unwrap_or_default();
+            let count = bounds.get(&bound).copied().unwrap_or(0);
             if insert {
-                *index.entry(endpoint).or_default().entry(bound).or_default() += 1;
-                continue;
-            }
-            let remove_endpoint = if let Some(bounds) = index.get_mut(&endpoint) {
-                if let Some(count) = bounds.get_mut(&bound) {
-                    *count -= 1;
-                    if *count == 0 {
-                        bounds.remove(&bound);
-                    }
-                }
-                bounds.is_empty()
+                bounds = bounds.with_inserted(bound, count + 1);
+            } else if count <= 1 {
+                bounds = bounds.without_key(&bound);
             } else {
-                false
-            };
-            if remove_endpoint {
-                index.remove(&endpoint);
+                bounds = bounds.with_inserted(bound, count - 1);
             }
+            self.signed_order_bounds = if bounds.is_empty() {
+                self.signed_order_bounds.without_key(&endpoint)
+            } else {
+                self.signed_order_bounds.with_inserted(endpoint, bounds)
+            };
         }
     }
 
     pub(super) fn rebuild_signed_order_bounds(&mut self) {
-        self.signed_order_bounds = std::sync::Arc::new(BTreeMap::new());
+        self.signed_order_bounds = crate::persistent::PersistentMap::default();
         let facts = self
             .condition_facts
             .iter()
@@ -1689,7 +1688,11 @@ impl PureFactContext {
 
     #[cfg(test)]
     pub(crate) fn shares_fact_storage_with(&self, other: &Self) -> bool {
-        std::sync::Arc::ptr_eq(&self.condition_facts, &other.condition_facts)
+        self.condition_facts
+            .shares_root_with(&other.condition_facts)
+            && self
+                .signed_order_bounds
+                .shares_root_with(&other.signed_order_bounds)
             && std::sync::Arc::ptr_eq(
                 &self.memory_load_condition_facts,
                 &other.memory_load_condition_facts,
@@ -1876,8 +1879,8 @@ impl PureFactContext {
                 value,
             );
         }
-        let old =
-            std::sync::Arc::make_mut(&mut self.condition_facts).insert(condition.clone(), value);
+        let old = self.condition_facts.get(&condition).copied();
+        self.condition_facts = self.condition_facts.with_inserted(condition.clone(), value);
         self.rebuild_memory_load_condition_facts();
         if let Some(old) = old {
             self.adjust_signed_order_bound(&condition, old, false);
@@ -1924,11 +1927,18 @@ impl PureFactContext {
 
     fn without_free_bitvector_variable(&self, variable: Variable) -> Self {
         let mut assumptions = self.clone();
-        std::sync::Arc::make_mut(&mut assumptions.condition_facts).retain(|condition, _| {
-            let mut variables = BTreeSet::new();
-            collect_condition_bitvector_variables(condition, &mut variables);
-            !variables.contains(&variable)
-        });
+        assumptions.condition_facts = self
+            .condition_facts
+            .iter()
+            .filter(|(condition, _)| {
+                let mut variables = BTreeSet::new();
+                collect_condition_bitvector_variables(condition, &mut variables);
+                !variables.contains(&variable)
+            })
+            .fold(
+                crate::persistent::PersistentMap::default(),
+                |facts, (condition, value)| facts.with_inserted(condition.clone(), *value),
+            );
         assumptions.rebuild_signed_order_bounds();
         assumptions.rebuild_memory_load_condition_facts();
         assumptions.retain_proposition_facts(|proposition| {

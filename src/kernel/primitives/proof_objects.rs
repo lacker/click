@@ -152,8 +152,11 @@ impl PropositionDerivation {
 #[cfg(test)]
 impl PureFactContext {
     pub(crate) fn shares_persistent_storage_with(&self, other: &Self) -> bool {
-        std::sync::Arc::ptr_eq(&self.condition_facts, &other.condition_facts)
-            && std::sync::Arc::ptr_eq(&self.signed_order_bounds, &other.signed_order_bounds)
+        self.condition_facts
+            .shares_root_with(&other.condition_facts)
+            && self
+                .signed_order_bounds
+                .shares_root_with(&other.signed_order_bounds)
             && std::sync::Arc::ptr_eq(
                 &self.memory_load_condition_facts,
                 &other.memory_load_condition_facts,

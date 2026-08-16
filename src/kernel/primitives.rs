@@ -1651,11 +1651,13 @@ pub(super) enum AtomicPropositionDerivationEvidence {
 
 #[derive(Clone, Debug, Default)]
 pub struct PureFactContext {
-    pub(super) condition_facts: std::sync::Arc<BTreeMap<ConditionTerm, bool>>,
+    pub(super) condition_facts: crate::persistent::PersistentMap<ConditionTerm, bool>,
     /// Exact signed-order bounds keyed by either endpoint. Counts preserve
     /// synonymous condition spellings when one source fact is replaced.
-    pub(super) signed_order_bounds:
-        std::sync::Arc<BTreeMap<Bitvector32Term, BTreeMap<(Bitvector32Term, bool, bool), usize>>>,
+    pub(super) signed_order_bounds: crate::persistent::PersistentMap<
+        Bitvector32Term,
+        crate::persistent::PersistentMap<(Bitvector32Term, bool, bool), usize>,
+    >,
     /// Condition facts containing a memory-load atom, indexed by the loaded
     /// pointer's snapshot-blind structural fingerprint. This is derived from
     /// `condition_facts`; it narrows snapshot-aware load-spelling checks

@@ -489,6 +489,17 @@ diagnostic path instead of cloning every owned string, while `push`, join-time
 is diagnostic rather than semantic, but removing it prevents otherwise-cheap
 semantic forks from retaining a hidden path-depth clone.
 
+Execution-condition preparation now has a `ProofFacts`-native checked path.
+It reuses the proof's kernel assumption context, rejects opposite path facts
+through a normalized persistent exact index, and appends only the feasible
+arm's kernel-issued facts. The kernel condition-fact and signed-order indexes
+are persistent AVL maps as well, including real persistent deletion rather
+than tombstones, so one arm-local condition no longer clones a complete map
+hidden beneath `PureFactContext`. Multi-size allocation regressions cover map
+removal, local fact insertion, and a 16-through-4096 condition split. This is
+the semantic arm-input operation for the next execution `Proof` branch
+container; branch entry, body ownership, and join are not yet migrated.
+
 Function-entry execution prerequisites and their kernel derivations now use a
 persistent insertion-ordered set. Exact admission and one local insertion are
 logarithmic, forks share both the AVL index and ordered history, and final

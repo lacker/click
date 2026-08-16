@@ -173,6 +173,10 @@ struct ProofNode {
 pub(super) struct ProofFacts {
     ordered: PersistentSequence<Proposition>,
     exact: PersistentSet<Proposition>,
+    /// Atomic exact facts after the same direct-load normalization used by
+    /// condition replay. This lets a branch reject its opposite path with an
+    /// indexed lookup instead of scanning every unrelated fact.
+    normalized_exact: PersistentSet<Proposition>,
     assumptions: PureFactContext,
     by_predicate: PersistentMap<String, PersistentSequence<Proposition>>,
 }
@@ -1538,6 +1542,7 @@ impl ProofFacts {
     pub(super) fn from_ordered(facts: &[Proposition]) -> Self {
         let mut ordered = PersistentSequence::default();
         let mut exact = PersistentSet::default();
+        let mut normalized_exact = PersistentSet::default();
         let mut assumptions = PureFactContext::new();
         let mut by_predicate = PersistentMap::default();
         for fact in facts {
@@ -1550,8 +1555,13 @@ impl ProofFacts {
                 let mut conjuncts = Vec::new();
                 collect_owned_atomic_conjuncts(fact, &mut conjuncts);
                 for conjunct in conjuncts {
+                    normalized_exact = normalized_exact
+                        .with_value(normalize_direct_atomic_memory_loads(&conjunct));
                     exact = exact.with_value(conjunct);
                 }
+            } else {
+                normalized_exact =
+                    normalized_exact.with_value(normalize_direct_atomic_memory_loads(fact));
             }
             exact = exact.with_value(fact.clone());
             assumptions = assumptions.assume_proposition(fact.clone());
@@ -1559,6 +1569,7 @@ impl ProofFacts {
         Self {
             ordered,
             exact,
+            normalized_exact,
             assumptions,
             by_predicate,
         }
@@ -1573,12 +1584,18 @@ impl ProofFacts {
             return self.clone();
         }
         let mut exact = self.exact.clone();
+        let mut normalized_exact = self.normalized_exact.clone();
         if matches!(fact, Proposition::And(_, _)) {
             let mut conjuncts = Vec::new();
             collect_owned_atomic_conjuncts(&fact, &mut conjuncts);
             for conjunct in conjuncts {
+                normalized_exact =
+                    normalized_exact.with_value(normalize_direct_atomic_memory_loads(&conjunct));
                 exact = exact.with_value(conjunct);
             }
+        } else {
+            normalized_exact =
+                normalized_exact.with_value(normalize_direct_atomic_memory_loads(&fact));
         }
         exact = exact.with_value(fact.clone());
         let mut ordered = self.ordered.clone();
@@ -1586,6 +1603,7 @@ impl ProofFacts {
         Self {
             ordered,
             exact,
+            normalized_exact,
             assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
             by_predicate: index_predicate_fact(self.by_predicate.clone(), &fact),
         }
@@ -1593,6 +1611,14 @@ impl ProofFacts {
 
     pub(super) fn assumptions(&self) -> &PureFactContext {
         &self.assumptions
+    }
+
+    #[allow(dead_code)] // Consumed by the next execution-branch Proof slice.
+    pub(super) fn directly_conflicts_with(&self, fact: &Proposition) -> bool {
+        directly_conflicts_with_normalized_index(
+            &self.normalized_exact,
+            &normalize_direct_atomic_memory_loads(fact),
+        )
     }
 
     fn iter(&self) -> PersistentSequenceIter<'_, Proposition> {
@@ -1613,6 +1639,24 @@ impl ProofFacts {
     #[cfg(test)]
     fn lookup_comparisons(&self, fact: &Proposition) -> usize {
         self.exact.lookup_comparisons(fact)
+    }
+}
+
+#[allow(dead_code)] // Consumed by the next execution-branch Proof slice.
+fn directly_conflicts_with_normalized_index(
+    exact: &PersistentSet<Proposition>,
+    fact: &Proposition,
+) -> bool {
+    match fact {
+        Proposition::And(left, right) => {
+            directly_conflicts_with_normalized_index(exact, left)
+                || directly_conflicts_with_normalized_index(exact, right)
+        }
+        Proposition::ConditionIs(condition, value) => {
+            exact.contains(&Proposition::ConditionIs(condition.clone(), !value))
+        }
+        Proposition::Not(body) => exact.contains(body),
+        other => exact.contains(&Proposition::Not(Box::new(other.clone()))),
     }
 }
 
@@ -1674,6 +1718,16 @@ mod tests {
 
     fn fact_node_allocations() -> usize {
         persistent_node_allocations()
+    }
+
+    fn opposite_atomic_fact(fact: &Proposition) -> Proposition {
+        match fact {
+            Proposition::ConditionIs(condition, value) => {
+                Proposition::ConditionIs(condition.clone(), !value)
+            }
+            Proposition::Not(body) => *body.clone(),
+            other => Proposition::Not(Box::new(other.clone())),
+        }
     }
 
     #[test]
@@ -1982,6 +2036,7 @@ mod tests {
 
     #[test]
     fn proof_fact_forks_share_context_and_local_insertions_are_logarithmic() {
+        let mut allocation_samples = Vec::new();
         for size in [16_u32, 64, 256, 1024, 4096] {
             let initial = (0..size).map(indexed_fact).collect::<Vec<_>>();
             let facts = ProofFacts::from_ordered(&initial);
@@ -1998,14 +2053,26 @@ mod tests {
             let successor = fork.with_fact(added.clone());
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
-            let allocation_bound = 4 * logarithmic_height + 8;
-            assert!(
-                allocations <= allocation_bound,
-                "size {size} local insertion allocated {allocations} fact nodes (bound {allocation_bound})"
-            );
+            allocation_samples.push((size, logarithmic_height, allocations));
             assert!(!facts.contains(&added));
             assert!(successor.contains(&added));
             assert!(successor.assumptions.proves(&added));
+        }
+        let (_, base_height, base_allocations) = allocation_samples[0];
+        assert!(
+            base_allocations <= 48,
+            "small persistent fact insertion allocated {base_allocations} nodes"
+        );
+        for (size, height, allocations) in allocation_samples {
+            // A condition fact updates the exact and normalized indexes, the
+            // kernel condition map, and the two endpoint maps in its signed
+            // order index. Every one is an AVL path copy; adding two tree
+            // levels may therefore add at most 24 nodes.
+            let allocation_bound = base_allocations + 12 * (height - base_height);
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} local insertion allocated {allocations} fact nodes (logarithmic bound {allocation_bound})"
+            );
         }
     }
 
@@ -2263,6 +2330,61 @@ mod tests {
                     .contains(&"selected".to_string())
             );
             assert!(context.pure_facts.len() > size as usize + 1);
+        }
+    }
+
+    #[test]
+    fn proof_condition_split_filters_conflicts_without_rebuilding_facts() {
+        let symbolic = Variable(50_000);
+        let state = CState::new().with_local("x", int32(Bitvector32Term::Variable(symbolic)));
+        let condition = CExpression::LessThan(
+            Box::new(CExpression::Variable("x".to_string())),
+            Box::new(CExpression::Value(int32(0))),
+        );
+        let empty = ProofFacts::default();
+        let unconstrained = certified_proof_condition_transitions(
+            &state,
+            &empty,
+            &condition,
+            "persistent condition split",
+        )
+        .expect("a symbolic comparison should expose both paths");
+        assert_eq!(unconstrained.len(), 2);
+        let rejected_path_fact = unconstrained[0]
+            .path_facts
+            .first()
+            .expect("a symbolic branch path should carry its condition fact")
+            .clone();
+        let selecting_fact = opposite_atomic_fact(&rejected_path_fact);
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut available = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            available.push(selecting_fact.clone());
+            let facts = ProofFacts::from_ordered(&available);
+            assert!(facts.directly_conflicts_with(&rejected_path_fact));
+            let before = fact_node_allocations();
+            let transitions = certified_proof_condition_transitions(
+                &state,
+                &facts,
+                &condition,
+                "persistent condition split",
+            )
+            .expect("the selected condition path should certify");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 24 * logarithmic_height + 64;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} condition split allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert_eq!(transitions.len(), 1);
+            assert_ne!(transitions[0].is_true, unconstrained[0].is_true);
+            assert!(transitions[0].pure_facts.contains(&selecting_fact));
+            assert!(matches!(
+                implication_body(transitions[0].theorem.proposition()),
+                Proposition::CConditionEvaluates { .. }
+            ));
+            assert_eq!(facts.to_vec().len(), size as usize + 1);
         }
     }
 }

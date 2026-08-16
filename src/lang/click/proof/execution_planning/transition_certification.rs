@@ -1,5 +1,91 @@
 use super::*;
 
+#[derive(Clone)]
+#[allow(dead_code)] // Consumed by the next execution-branch Proof slice.
+pub(in crate::lang::click::proof) struct CertifiedProofConditionTransition {
+    pub(in crate::lang::click::proof) is_true: bool,
+    pub(in crate::lang::click::proof) pure_facts: ProofFacts,
+    pub(in crate::lang::click::proof) path_facts: Vec<Proposition>,
+    pub(in crate::lang::click::proof) theorem: Theorem,
+}
+
+/// Checks a condition split directly against the persistent facts owned by a
+/// `Proof`.
+///
+/// This is the non-planning branch operation: it neither minimizes premises
+/// nor reconstructs a certificate. Each feasible path receives only its
+/// kernel-issued path facts, appended persistently to the shared ancestor.
+#[allow(dead_code)] // Consumed by the next execution-branch Proof slice.
+pub(in crate::lang::click::proof) fn certified_proof_condition_transitions(
+    state: &CState,
+    pure_facts: &ProofFacts,
+    condition: &CExpression,
+    context_label: &str,
+) -> Result<Vec<CertifiedProofConditionTransition>, ClickError> {
+    let assumptions = pure_facts.assumptions().clone();
+    let evaluation =
+        prove_symbolic_c_condition_evaluation(state.clone(), condition.clone(), assumptions);
+    if let Some(limit) = evaluation.limit() {
+        if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
+            return Err(ClickError::new(format!(
+                "verification budget exhausted inside {}",
+                crate::instrumentation::deadline_context()
+            )));
+        }
+        return Err(ClickError::new(format!(
+            "{context_label} hit condition execution limit {limit:?}"
+        )));
+    }
+    evaluation
+        .paths()
+        .iter()
+        .filter(|path| {
+            !path
+                .facts()
+                .iter()
+                .any(|fact| pure_facts.directly_conflicts_with(fact.proposition()))
+        })
+        .map(|path| {
+            let mut successor_facts = pure_facts.clone();
+            let mut path_facts = Vec::new();
+            for fact in path.facts() {
+                let proposition = fact.proposition().clone();
+                successor_facts = successor_facts.with_fact(proposition.clone());
+                path_facts.push(proposition);
+            }
+            for obligation in path.obligations() {
+                if !successor_facts
+                    .assumptions()
+                    .proves(obligation.proposition())
+                {
+                    return Err(ClickError::new(format!(
+                        "{context_label} is missing condition prerequisite{}: {:?}",
+                        obligation
+                            .context()
+                            .map(|context| format!(" ({context})"))
+                            .unwrap_or_default(),
+                        obligation.proposition()
+                    )));
+                }
+            }
+            match implication_body(path.theorem().proposition()) {
+                Proposition::CConditionEvaluates {
+                    outcome: CConditionOutcome::Value(is_true),
+                    ..
+                } => Ok(CertifiedProofConditionTransition {
+                    is_true: *is_true,
+                    pure_facts: successor_facts,
+                    path_facts,
+                    theorem: path.theorem().clone(),
+                }),
+                other => Err(ClickError::new(format!(
+                    "{context_label} produced an invalid condition theorem: {other:?}"
+                ))),
+            }
+        })
+        .collect()
+}
+
 pub(in crate::lang::click::proof) fn certified_condition_transitions(
     state: &CState,
     pure_facts: &[Proposition],
