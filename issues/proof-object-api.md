@@ -454,6 +454,15 @@ their existing adapter. A deterministic 16-through-4096 regression proves
 that forks share every assumption-context backing store and one local fact
 insertion allocates only logarithmically many exact-index nodes.
 
+Execution proof-case assumptions are now an append-only persistent sequence.
+Forking a replay state shares the complete enclosing choice history by
+identity, and adding the branch's one local choice allocates one node instead
+of copying every ancestor. Ordered iteration remains output-sensitive, and
+the certificate-merge path restores the original persistent prefix directly.
+This removes the first mutable deep clone from proof-level execution `if`
+while the larger execution semantic state continues to migrate behind
+`Proof`.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

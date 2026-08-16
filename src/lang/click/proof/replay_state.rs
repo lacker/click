@@ -46,7 +46,7 @@ pub(super) struct TacticReplayState {
     /// replayed. Without this the dominant cost of the loop-invariant bundle
     /// carries no class tag at all (`git history (profiler coverage, 2026-07-31)`).
     pub(super) invariant_closer_step: Option<InvariantCloserStep>,
-    pub(super) case_assumptions: Vec<ReplayCaseAssumption>,
+    pub(super) case_assumptions: PersistentSequence<ReplayCaseAssumption>,
     pub(super) effect_facts: Vec<ExecutionPureFact>,
     pub(super) region_proof: bool,
     pub(super) loop_invariant_region: bool,
@@ -123,6 +123,98 @@ pub(super) struct ReplayCaseAssumption {
     pub(super) value: bool,
     pub(super) fact: Option<Proposition>,
     pub(super) at_function_entry: bool,
+}
+
+/// An append-only sequence whose forks share their complete history.
+///
+/// Execution proof branches inherit the enclosing case assumptions and add
+/// one local choice. A `Vec` makes that fork copy every enclosing choice even
+/// though neither branch can edit them. This parent-linked representation
+/// makes both the fork and the local append constant time. Iteration restores
+/// insertion order and therefore costs only the number of entries consumed.
+#[derive(Clone)]
+pub(super) struct PersistentSequence<T> {
+    tail: Option<Arc<PersistentSequenceNode<T>>>,
+    len: usize,
+}
+
+struct PersistentSequenceNode<T> {
+    parent: Option<Arc<PersistentSequenceNode<T>>>,
+    value: T,
+}
+
+impl<T> Default for PersistentSequence<T> {
+    fn default() -> Self {
+        Self { tail: None, len: 0 }
+    }
+}
+
+impl<T> PersistentSequence<T> {
+    pub(super) fn push(&mut self, value: T) {
+        self.tail = Some(Arc::new(PersistentSequenceNode {
+            parent: self.tail.clone(),
+            value,
+        }));
+        self.len += 1;
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.tail = None;
+        self.len = 0;
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.tail.is_none()
+    }
+
+    pub(super) fn iter(&self) -> PersistentSequenceIter<'_, T> {
+        let mut nodes = Vec::with_capacity(self.len);
+        let mut current = self.tail.as_deref();
+        while let Some(node) = current {
+            nodes.push(&node.value);
+            current = node.parent.as_deref();
+        }
+        nodes.reverse();
+        PersistentSequenceIter {
+            entries: nodes.into_iter(),
+        }
+    }
+
+    #[cfg(test)]
+    fn shares_tail_with(&self, other: &Self) -> bool {
+        match (&self.tail, &other.tail) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+pub(super) struct PersistentSequenceIter<'a, T> {
+    entries: std::vec::IntoIter<&'a T>,
+}
+
+impl<'a, T> Iterator for PersistentSequenceIter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.entries.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.entries.size_hint()
+    }
+}
+
+impl<T> ExactSizeIterator for PersistentSequenceIter<'_, T> {}
+
+impl<'a, T> IntoIterator for &'a PersistentSequence<T> {
+    type Item = &'a T;
+    type IntoIter = PersistentSequenceIter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 /// One recorded surface mutation inside a tactic's builder scope, replayed
@@ -1151,6 +1243,29 @@ mod proof_fact_store_tests {
             &cloned.execution_start_facts
         ));
         assert_eq!(cloned.execution_start_facts.len(), 4096);
+    }
+
+    #[test]
+    fn persistent_sequence_forks_share_history_and_preserve_order() {
+        let mut sequence = PersistentSequence::default();
+        for value in 0..4096 {
+            sequence.push(value);
+        }
+        let ancestor = sequence.clone();
+        assert!(sequence.shares_tail_with(&ancestor));
+
+        sequence.push(4096);
+
+        assert_eq!(
+            ancestor.iter().copied().collect::<Vec<_>>(),
+            (0..4096).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            sequence.iter().copied().collect::<Vec<_>>(),
+            (0..=4096).collect::<Vec<_>>()
+        );
+        assert!(!sequence.shares_tail_with(&ancestor));
+        assert_eq!(ancestor.tail.as_ref().map(Arc::strong_count), Some(2));
     }
 }
 

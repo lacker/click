@@ -72,7 +72,7 @@ fn merge_surface_certificate_contexts(
     tactic_index: usize,
     source_index: usize,
     enclosing_branch_path: &[String],
-    enclosing_case_assumptions: &[ReplayCaseAssumption],
+    enclosing_case_assumptions: &PersistentSequence<ReplayCaseAssumption>,
 ) -> Result<ProofReplayContext, ClickError> {
     if completed.is_empty() {
         return Err(ClickError::new(format!(
@@ -150,7 +150,7 @@ fn merge_surface_certificate_contexts(
     let mut merged = completed.remove(0);
     merged.replay.program_point_states = common_program_points;
     merged.replay.frontier.point = ProofExecutionPoint::FunctionExit { execution };
-    merged.replay.case_assumptions = enclosing_case_assumptions.to_vec();
+    merged.replay.case_assumptions = enclosing_case_assumptions.clone();
     merged.state = execution_start_state;
     merged.pure_facts = common_pure_facts;
     merged.branch_path = enclosing_branch_path.to_vec();
