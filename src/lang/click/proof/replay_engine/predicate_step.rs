@@ -1,6 +1,14 @@
 use super::*;
 use crate::kernel::prove_c_function_contract_predicate_unfolding;
 
+pub(in crate::lang::click::proof) struct CheckedPredicateUnfold {
+    pub(in crate::lang::click::proof) facts: ProofFacts,
+    pub(in crate::lang::click::proof) added_facts: Vec<Proposition>,
+    pub(in crate::lang::click::proof) added_function_entry_prerequisites: Vec<Proposition>,
+    pub(in crate::lang::click::proof) added_function_entry_derivations: Vec<Theorem>,
+    pub(in crate::lang::click::proof) added_unfolded_predicates: Vec<String>,
+}
+
 /// Checks the existing deterministic `unfold predicate` transition against
 /// the persistent facts owned by `Proof`.
 #[allow(clippy::too_many_arguments)]
@@ -15,14 +23,16 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
     tactic_index: usize,
-) -> Result<ProofFacts, ClickError> {
+) -> Result<CheckedPredicateUnfold, ClickError> {
     if predicate_environment.get(name).is_none() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: unknown predicate `{name}`"
         )));
     }
+    let mut added_unfolded_predicates = Vec::new();
     if !replay.unfolded_predicates.contains(name) {
         replay.unfolded_predicates.push(name.clone());
+        added_unfolded_predicates.push(name.clone());
     }
     let assumptions = available_pure_facts.assumptions();
     let surface_unfoldings = available_pure_facts
@@ -59,6 +69,7 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
         })
         .collect::<Vec<_>>();
     let mut facts = available_pure_facts.clone();
+    let mut added_facts = Vec::new();
     for proposition in available_pure_facts.mentioning_predicate(name) {
         let unfolded = unfold_predicates_in_proposition(
             predicate_environment,
@@ -70,10 +81,13 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
         .map_err(|message| {
             ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
         })?;
-        if &unfolded != proposition {
-            facts = facts.with_fact(unfolded);
+        if &unfolded != proposition && !facts.contains(&unfolded) {
+            facts = facts.with_fact(unfolded.clone());
+            added_facts.push(unfolded);
         }
     }
+    let mut added_function_entry_prerequisites = Vec::new();
+    let mut added_function_entry_derivations = Vec::new();
     for (predicate, surface, kernel) in surface_unfoldings {
         replay
             .surface_propositions
@@ -95,11 +109,22 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
             })
             .flatten();
         if let Some(derivation) = contract_unfolding {
-            replay
+            if replay
                 .function_entry_execution_prerequisites
-                .insert(kernel.clone());
-            replay.function_entry_derivations.insert(derivation);
+                .insert(kernel.clone())
+            {
+                added_function_entry_prerequisites.push(kernel);
+            }
+            if replay.function_entry_derivations.insert(derivation.clone()) {
+                added_function_entry_derivations.push(derivation);
+            }
         }
     }
-    Ok(facts)
+    Ok(CheckedPredicateUnfold {
+        facts,
+        added_facts,
+        added_function_entry_prerequisites,
+        added_function_entry_derivations,
+        added_unfolded_predicates,
+    })
 }

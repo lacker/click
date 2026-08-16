@@ -17,7 +17,9 @@ fn linear_execution_simple_steps(node: &InternalProofNode) -> Option<Vec<SimpleP
                 };
                 if !matches!(
                     step,
-                    SimpleProofStep::StepUsing(_) | SimpleProofStep::TransportUsing { .. }
+                    SimpleProofStep::StepUsing(_)
+                        | SimpleProofStep::TransportUsing { .. }
+                        | SimpleProofStep::UnfoldPredicate(_)
                 ) {
                     return None;
                 }

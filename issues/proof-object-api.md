@@ -526,9 +526,12 @@ owned statement adapter still rebuilds its complete `ProofFacts` successor
 until statement facts themselves use persistent updates.
 
 The execution branch container now accepts linear arm bodies made only of
-`StepUsing` and `TransportUsing`. Each arm advances through the ordinary
+`StepUsing`, `TransportUsing`, and `UnfoldPredicate`. Each arm advances through the ordinary
 checked `Proof` operation and accumulates only its fact and execution-effect
-deltas. The join embeds each checkpoint suffix directly in the structured
+deltas. Predicate unfold also returns its exact persistent-fact,
+function-entry prerequisite/derivation, and unfolded-name deltas, so the join
+can merge that already-checked metadata without scanning inherited context.
+The join embeds each checkpoint suffix directly in the structured
 `Branch` certificate, intersects common facts by visiting those arm-local
 deltas, unions arm-local certified effects, advances freshness counters, and
 reconstructs the common frontier from the shared root. Replay histories that

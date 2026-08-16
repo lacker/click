@@ -122,14 +122,19 @@ fn linear_frontier_branch_uses_the_checked_structural_join() {
     let click_source = r#"
         verifying "constant.c";
 
+        predicate selected(x: int32) { x == x }
+
         int32 constant(int32 x) {
+            requires selected(x);
             ensures returns_one: result == 1;
         } by {
             branch {
                 then {
+                    unfold(selected);
                     step();
                 }
                 else {
+                    unfold(selected);
                     step();
                 }
             }

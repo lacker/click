@@ -64,6 +64,9 @@ struct ExecutionProofArm<'a> {
     proof: Proof<'a>,
     introduced_facts: PersistentOrderedSet<Proposition>,
     introduced_effect_facts: Vec<ExecutionPureFact>,
+    introduced_function_entry_prerequisites: PersistentOrderedSet<Proposition>,
+    introduced_function_entry_derivations: PersistentOrderedSet<Theorem>,
+    introduced_unfolded_predicates: PersistentOrderedSet<String>,
     condition_theorem: Theorem,
 }
 
@@ -165,6 +168,14 @@ struct ExecutionProofState {
     state: SharedValue<CState>,
     replay: TacticReplayState,
     branch_path: PersistentSequence<String>,
+    last_step_delta: ExecutionProofStepDelta,
+}
+
+#[derive(Clone, Default)]
+struct ExecutionProofStepDelta {
+    function_entry_prerequisites: Vec<Proposition>,
+    function_entry_derivations: Vec<Theorem>,
+    unfolded_predicates: Vec<String>,
 }
 
 /// One unresolved judgment owned by a `Proof`.
@@ -413,6 +424,7 @@ impl<'a> Proof<'a> {
                     state: state.into(),
                     replay,
                     branch_path,
+                    last_step_delta: ExecutionProofStepDelta::default(),
                 }),
             }),
             node: Arc::new(ProofNode {
@@ -878,6 +890,9 @@ impl<'a> Proof<'a> {
                 },
                 introduced_facts,
                 introduced_effect_facts: Vec::new(),
+                introduced_function_entry_prerequisites: PersistentOrderedSet::default(),
+                introduced_function_entry_derivations: PersistentOrderedSet::default(),
+                introduced_unfolded_predicates: PersistentOrderedSet::default(),
                 condition_theorem: transition.theorem,
             };
             arms[usize::from(!take_then)] = Some(arm);
@@ -1038,7 +1053,7 @@ impl<'a> Proof<'a> {
             self.state.execution.clone().ok_or_else(|| {
                 self.step_error("execution-frontier proof lost its semantic state")
             })?;
-        let facts = check_unfold_predicate_facts(
+        let checked = check_unfold_predicate_facts(
             &mut execution.replay,
             &execution.state,
             &self.state.facts,
@@ -1050,12 +1065,17 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
         )?;
+        execution.last_step_delta = ExecutionProofStepDelta {
+            function_entry_prerequisites: checked.added_function_entry_prerequisites,
+            function_entry_derivations: checked.added_function_entry_derivations,
+            unfolded_predicates: checked.added_unfolded_predicates,
+        };
         Ok(ProofState {
-            facts,
+            facts: checked.facts,
             goal: self.state.goal.clone(),
             complete: false,
-            added_facts: Arc::new(Vec::new()),
-            checked_facts: Arc::new(Vec::new()),
+            added_facts: Arc::new(checked.added_facts.clone()),
+            checked_facts: Arc::new(checked.added_facts),
             execution: Some(execution),
         })
     }
@@ -1109,6 +1129,7 @@ impl<'a> Proof<'a> {
             .execution
             .take()
             .ok_or_else(|| step_error("execution-frontier proof lost its owned semantic state"))?;
+        execution.last_step_delta = ExecutionProofStepDelta::default();
         let mut pure_facts = state.facts.to_vec();
         let added_facts = match &step {
             SimpleProofStep::StepUsing(premises) => check_step_using(
@@ -1672,10 +1693,12 @@ impl<'a> ExecutionProofBranches<'a> {
     ) -> Result<Self, ClickError> {
         if !matches!(
             step,
-            SimpleProofStep::StepUsing(_) | SimpleProofStep::TransportUsing { .. }
+            SimpleProofStep::StepUsing(_)
+                | SimpleProofStep::TransportUsing { .. }
+                | SimpleProofStep::UnfoldPredicate(_)
         ) {
             return Err(self.root.step_error(
-                "execution branch arms currently accept only `step using` and `transport using`",
+                "execution branch arms currently accept only `step using`, `transport using`, and `unfold`",
             ));
         }
         let arm_index = usize::from(!take_then);
@@ -1701,18 +1724,32 @@ impl<'a> ExecutionProofBranches<'a> {
         for fact in arm.proof.added_facts() {
             arm.introduced_facts.insert(fact.clone());
         }
-        let effects = &arm
+        let execution = arm
             .proof
             .state
             .execution
             .as_ref()
-            .expect("checked execution step retains semantic state")
+            .expect("checked execution step retains semantic state");
+        for fact in execution
             .replay
-            .effect_facts;
-        for fact in effects.iter().skip(prior_effect_count) {
+            .effect_facts
+            .iter()
+            .skip(prior_effect_count)
+        {
             if !arm.introduced_effect_facts.contains(fact) {
                 arm.introduced_effect_facts.push(fact.clone());
             }
+        }
+        for fact in &execution.last_step_delta.function_entry_prerequisites {
+            arm.introduced_function_entry_prerequisites
+                .insert(fact.clone());
+        }
+        for theorem in &execution.last_step_delta.function_entry_derivations {
+            arm.introduced_function_entry_derivations
+                .insert(theorem.clone());
+        }
+        for name in &execution.last_step_delta.unfolded_predicates {
+            arm.introduced_unfolded_predicates.insert(name.clone());
         }
         self.arms[arm_index] = Some(arm);
         Ok(self)
@@ -1816,14 +1853,17 @@ impl<'a> ExecutionProofBranches<'a> {
                     .replay
                     .function_entry_execution_prerequisites
                     .len()
+                    + arm.introduced_function_entry_prerequisites.len()
                 || replay.function_entry_derivations.len()
                     != root_execution.replay.function_entry_derivations.len()
+                        + arm.introduced_function_entry_derivations.len()
                 || replay.frontier_loop_clauses.len()
                     != root_execution.replay.frontier_loop_clauses.len()
                 || replay.frontier_loop_rules.len()
                     != root_execution.replay.frontier_loop_rules.len()
                 || replay.unfolded_predicates.len()
                     != root_execution.replay.unfolded_predicates.len()
+                        + arm.introduced_unfolded_predicates.len()
                 || replay.planned_statement_transitions.len()
                     != root_execution.replay.planned_statement_transitions.len()
             {
@@ -1875,6 +1915,36 @@ impl<'a> ExecutionProofBranches<'a> {
                 std::slice::from_ref(effect),
             );
         }
+        for fact in then_arm
+            .introduced_function_entry_prerequisites
+            .iter()
+            .chain(&else_arm.introduced_function_entry_prerequisites)
+        {
+            execution
+                .replay
+                .function_entry_execution_prerequisites
+                .insert(fact.clone());
+        }
+        for theorem in then_arm
+            .introduced_function_entry_derivations
+            .iter()
+            .chain(&else_arm.introduced_function_entry_derivations)
+        {
+            execution
+                .replay
+                .function_entry_derivations
+                .insert(theorem.clone());
+        }
+        for name in then_arm
+            .introduced_unfolded_predicates
+            .iter()
+            .chain(&else_arm.introduced_unfolded_predicates)
+        {
+            if !execution.replay.unfolded_predicates.contains(name) {
+                execution.replay.unfolded_predicates.push(name.clone());
+            }
+        }
+        execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path.clear();
         execution.replay.case_assumptions.clear();
         let ProofContext::Execution(context) = self.root.context.as_ref() else {
@@ -2070,7 +2140,7 @@ impl ProofFacts {
         }
     }
 
-    fn contains(&self, fact: &Proposition) -> bool {
+    pub(in crate::lang::click::proof) fn contains(&self, fact: &Proposition) -> bool {
         self.exact.contains(fact)
     }
 
