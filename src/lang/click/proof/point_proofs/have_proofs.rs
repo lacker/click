@@ -124,12 +124,45 @@ pub(in crate::lang::click::proof) fn lower_point_proposition(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
+    let assumptions = assumptions_from_propositions(available);
+    lower_point_proposition_with_assumptions(
+        proposition,
+        &assumptions,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        result,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+/// Lowers one point proposition against an already-indexed fact context.
+///
+/// `Proof` keeps this context persistent and incrementally updated, so a
+/// local step does not rebuild it by scanning every unrelated fact. Legacy
+/// vector callers continue through `lower_point_proposition` above.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn lower_point_proposition_with_assumptions(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
     let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
     let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
-    lower_point_proposition_with_values(
+    lower_point_proposition_with_values_and_assumptions(
         proposition,
-        available,
+        assumptions,
         values,
         &array_refs,
         pre_state,
@@ -145,7 +178,7 @@ pub(in crate::lang::click::proof) fn lower_point_proposition(
 fn lower_point_proposition_with_values(
     proposition: &ClickProposition,
     available: &[Proposition],
-    mut values: BTreeMap<String, CValue>,
+    values: BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     pre_state: &CState,
     state: &CState,
@@ -155,6 +188,33 @@ fn lower_point_proposition_with_values(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
     let assumptions = assumptions_from_propositions(available);
+    lower_point_proposition_with_values_and_assumptions(
+        proposition,
+        &assumptions,
+        values,
+        array_refs,
+        pre_state,
+        state,
+        result,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_point_proposition_with_values_and_assumptions(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    mut values: BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
     let mut next_variable = 2_000_000;
     let mut active_functions = BTreeSet::new();
     lower_outcome_proposition_with_environment(
@@ -163,7 +223,7 @@ fn lower_point_proposition_with_values(
         pre_state,
         state,
         result,
-        &assumptions,
+        assumptions,
         proposition,
         &mut next_variable,
         predicate_environment,

@@ -128,7 +128,7 @@ struct ExecutionProofContext<'a> {
 }
 
 struct ProofState {
-    facts: PersistentFactIndex,
+    facts: ProofFacts,
     goal: Goal,
     complete: bool,
     added_facts: Arc<Vec<Proposition>>,
@@ -161,6 +161,17 @@ struct PersistentFactIndex {
     root: Option<Arc<FactNode>>,
 }
 
+/// Persistent semantic fact state shared by every `Proof` kind.
+///
+/// The exact index serves local simple-step queries and `assumptions` retains
+/// the kernel's incrementally updated reasoning context. Forking shares both;
+/// adding one fact copies only logarithmic index/context paths.
+#[derive(Clone, Default)]
+struct ProofFacts {
+    exact: PersistentFactIndex,
+    assumptions: PureFactContext,
+}
+
 struct FactNode {
     fact: Arc<Proposition>,
     left: Option<Arc<FactNode>>,
@@ -179,10 +190,7 @@ impl<'a> Proof<'a> {
         click_function_environment: &'a ClickFunctionEnvironment,
         theorem_environment: &'a TheoremEnvironment,
     ) -> Self {
-        let mut facts = PersistentFactIndex::default();
-        for fact in requires {
-            facts = facts.with_fact(fact.clone());
-        }
+        let facts = ProofFacts::from_ordered(requires);
         Self {
             context: Arc::new(ProofContext::Pure(PureProofContext {
                 claim_label,
@@ -298,10 +306,7 @@ impl<'a> Proof<'a> {
         unfolded_predicates: &'a [String],
         effect_facts: &'a [ExecutionPureFact],
     ) -> Self {
-        let mut facts = PersistentFactIndex::default();
-        for fact in available {
-            facts = facts.with_fact(fact.clone());
-        }
+        let facts = ProofFacts::from_ordered(available);
         let mut lowering_context = available.to_vec();
         append_resource_context_observable_facts(state.resources(), &mut lowering_context);
         Self {
@@ -368,7 +373,7 @@ impl<'a> Proof<'a> {
                 click_function_environment,
             })),
             state: Arc::new(ProofState {
-                facts: PersistentFactIndex::default(),
+                facts: ProofFacts::default(),
                 goal: Goal::ExecutionFrontier,
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
@@ -793,9 +798,9 @@ impl<'a> Proof<'a> {
                 {
                     return Ok(recorded.clone());
                 }
-                lower_point_proposition(
+                lower_point_proposition_with_assumptions(
                     surface,
-                    context.lowering_context.as_ref(),
+                    self.state.facts.assumptions(),
                     context.parameters,
                     context.arguments,
                     context.pre_state,
@@ -1116,9 +1121,9 @@ impl<'a> Proof<'a> {
                 {
                     return Ok(recorded.clone());
                 }
-                lower_point_proposition(
+                lower_point_proposition_with_assumptions(
                     surface,
-                    context.lowering_context.as_ref(),
+                    self.state.facts.assumptions(),
                     context.parameters,
                     context.arguments,
                     context.pre_state,
@@ -1489,6 +1494,44 @@ impl ProofContext<'_> {
             Self::Point(context) => context.claim_label,
             Self::Execution(context) => context.claim_label,
         }
+    }
+}
+
+impl ProofFacts {
+    fn from_ordered(facts: &[Proposition]) -> Self {
+        let mut exact = PersistentFactIndex::default();
+        let mut assumptions = PureFactContext::new();
+        for fact in facts {
+            if exact.contains(fact) {
+                continue;
+            }
+            exact = exact.with_fact(fact.clone());
+            assumptions = assumptions.assume_proposition(fact.clone());
+        }
+        Self { exact, assumptions }
+    }
+
+    fn contains(&self, fact: &Proposition) -> bool {
+        self.exact.contains(fact)
+    }
+
+    fn with_fact(&self, fact: Proposition) -> Self {
+        if self.contains(&fact) {
+            return self.clone();
+        }
+        Self {
+            exact: self.exact.with_fact(fact.clone()),
+            assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
+        }
+    }
+
+    fn assumptions(&self) -> &PureFactContext {
+        &self.assumptions
+    }
+
+    #[cfg(test)]
+    fn lookup_comparisons(&self, fact: &Proposition) -> usize {
+        self.exact.lookup_comparisons(fact)
     }
 }
 
@@ -1956,6 +1999,41 @@ mod tests {
             ));
             assert!(proof.certificate().steps().is_empty());
             assert_eq!(complete.certificate().steps().len(), 1);
+        }
+    }
+
+    #[test]
+    fn proof_fact_forks_share_context_and_local_insertions_are_logarithmic() {
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let initial = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            let facts = ProofFacts::from_ordered(&initial);
+            let fork = facts.clone();
+            assert!(Arc::ptr_eq(
+                facts.exact.root.as_ref().expect("nonempty fact index"),
+                fork.exact
+                    .root
+                    .as_ref()
+                    .expect("nonempty forked fact index")
+            ));
+            assert!(
+                facts
+                    .assumptions
+                    .shares_persistent_storage_with(&fork.assumptions)
+            );
+
+            let added = indexed_fact(size + 1);
+            let before = fact_node_allocations();
+            let successor = fork.with_fact(added.clone());
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 4 * logarithmic_height + 8;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} local insertion allocated {allocations} fact nodes (bound {allocation_bound})"
+            );
+            assert!(!facts.contains(&added));
+            assert!(successor.contains(&added));
+            assert!(successor.assumptions.proves(&added));
         }
     }
 

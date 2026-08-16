@@ -446,6 +446,14 @@ facts; final certification makes the one owned copy it actually extends. A
 4096-fact identity regression distinguishes this guarantee from a merely
 fast small-corpus clone.
 
+The Proof fact component is now `ProofFacts`: one persistent exact AVL index
+paired with the kernel's persistent `PureFactContext`. Point-Proof lowering
+accepts that already-indexed context directly instead of rebuilding it by
+scanning every available fact for each local step; legacy vector callers keep
+their existing adapter. A deterministic 16-through-4096 regression proves
+that forks share every assumption-context backing store and one local fact
+insertion allocates only logarithmically many exact-index nodes.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

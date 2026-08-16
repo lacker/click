@@ -149,6 +149,37 @@ impl PropositionDerivation {
     }
 }
 
+#[cfg(test)]
+impl PureFactContext {
+    pub(crate) fn shares_persistent_storage_with(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.condition_facts, &other.condition_facts)
+            && std::sync::Arc::ptr_eq(&self.signed_order_bounds, &other.signed_order_bounds)
+            && std::sync::Arc::ptr_eq(
+                &self.memory_load_condition_facts,
+                &other.memory_load_condition_facts,
+            )
+            && std::sync::Arc::ptr_eq(
+                &self.bitvector_equality_facts,
+                &other.bitvector_equality_facts,
+            )
+            && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
+            && std::sync::Arc::ptr_eq(&self.resource_compositions, &other.resource_compositions)
+            && std::sync::Arc::ptr_eq(&self.memory_loadable_facts, &other.memory_loadable_facts)
+            && std::sync::Arc::ptr_eq(
+                &self.memory_loadable_shape_facts,
+                &other.memory_loadable_shape_facts,
+            )
+            && std::sync::Arc::ptr_eq(
+                &self.memory_separation_facts,
+                &other.memory_separation_facts,
+            )
+            && std::sync::Arc::ptr_eq(
+                &self.composition_separation_facts,
+                &other.composition_separation_facts,
+            )
+    }
+}
+
 impl Default for ExecutionBudget {
     fn default() -> Self {
         Self {
