@@ -358,6 +358,10 @@ more `StepUsing` operations now use the same consuming execution `Proof` path.
 The proof owns the whole accepted sequence and exports its retained
 certificate once; mixed and structured plans still fall back.
 
+Linear `execute_until(...)` plans composed entirely of `StepUsing` operations
+also use the owned execution `Proof`, with the same retained-certificate and
+legacy-fallback rules.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

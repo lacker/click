@@ -440,6 +440,49 @@ fn linear_execute_retains_its_checked_execution_proof() {
 }
 
 #[test]
+fn linear_execute_until_retains_its_checked_execution_proof() {
+    let c_source = r#"
+            int32 zero() {
+                int32 value = 0;
+                return value;
+            }
+        "#;
+    let click_source = r#"
+            verifying "zero.c";
+
+            int32 zero() {
+                ensures result == 0;
+            } by {
+                execute_until(statement(2));
+                execute();
+                normalize();
+            }
+        "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("zero.c", c_source)])
+    });
+    let verified = verified.expect("linear execute_until should verify through its checked Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "zero.contract" && name == "surface certificate replay"
+        )),
+        "linear execute_until must not ordinarily replay its retained certificate: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("linear execute_until should retain an expansion");
+    assert!(
+        expanded[..expanded.len() - 1]
+            .iter()
+            .all(|tactic| matches!(tactic, ProofTactic::StepUsing(_)))
+    );
+    assert_eq!(expanded.last(), Some(&ProofTactic::Normalize));
+}
+
+#[test]
 fn execute_step_omits_materialization_only_transport() {
     let c_source = r#"
             int32 set_second_return_first(int32 p[2]) {
