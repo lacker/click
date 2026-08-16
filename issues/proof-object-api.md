@@ -292,6 +292,16 @@ selected premise from the expanded proof is rejected.
 The remaining pure forms, point-level smart forms, and all C-execution tactics
 still use the legacy path and remain migration work.
 
+The third checkpoint introduces an explicit open `ExecutionFrontier` goal and
+an output-sensitive per-step fact delta. Top-level bare `apply` now selects
+candidate premises without applying the theorem, submits the resulting
+`ApplyTheoremUsing` to `Proof::apply_step`, incorporates only the successor's
+new facts, and appends the retained step directly. Ordinary verification no
+longer runs `complete_smart_tactic` for that operation; a regression counts
+one simple apply check in the later whole-certificate replay rather than a
+construction replay plus that final check. Proposition-only closers are
+transactionally rejected on an execution-frontier proof.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

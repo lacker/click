@@ -48,8 +48,20 @@ struct PointProofContext<'a> {
 
 struct ProofState {
     facts: PersistentFactIndex,
-    goal: Arc<Proposition>,
+    goal: Goal,
     complete: bool,
+    added_facts: Arc<Vec<Proposition>>,
+}
+
+/// One unresolved judgment owned by a `Proof`.
+///
+/// A proposition goal can be discharged locally. An execution-frontier goal
+/// remains open while fact-producing point steps advance the enclosing C
+/// proof; later slices will add the frontier transition steps themselves.
+#[derive(Clone)]
+enum Goal {
+    Proposition(Arc<Proposition>),
+    ExecutionFrontier,
 }
 
 /// Private persistent provenance node. Smart tactics can retain a `Proof`,
@@ -98,8 +110,9 @@ impl<'a> Proof<'a> {
             })),
             state: Arc::new(ProofState {
                 facts,
-                goal: Arc::new(goal),
+                goal: Goal::Proposition(Arc::new(goal)),
                 complete: false,
+                added_facts: Arc::new(Vec::new()),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -115,6 +128,75 @@ impl<'a> Proof<'a> {
         tactic_index: usize,
         available: &[Proposition],
         goal: Proposition,
+        parameters: &'a [syntax::C0Parameter],
+        arguments: &'a [CExpression],
+        pre_state: &'a CState,
+        state: &'a CState,
+        program_point_states: &'a ProgramPointStates,
+        surface_propositions: &'a SurfacePropositionMap,
+        predicate_environment: &'a PredicateEnvironment,
+        click_function_environment: &'a ClickFunctionEnvironment,
+        theorem_environment: &'a TheoremEnvironment,
+        unfolded_predicates: &'a [String],
+    ) -> Self {
+        Self::for_point(
+            claim_label,
+            tactic_index,
+            available,
+            Goal::Proposition(Arc::new(goal)),
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            program_point_states,
+            surface_propositions,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            unfolded_predicates,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn for_point_frontier(
+        claim_label: &'a str,
+        tactic_index: usize,
+        available: &[Proposition],
+        parameters: &'a [syntax::C0Parameter],
+        arguments: &'a [CExpression],
+        pre_state: &'a CState,
+        state: &'a CState,
+        program_point_states: &'a ProgramPointStates,
+        surface_propositions: &'a SurfacePropositionMap,
+        predicate_environment: &'a PredicateEnvironment,
+        click_function_environment: &'a ClickFunctionEnvironment,
+        theorem_environment: &'a TheoremEnvironment,
+        unfolded_predicates: &'a [String],
+    ) -> Self {
+        Self::for_point(
+            claim_label,
+            tactic_index,
+            available,
+            Goal::ExecutionFrontier,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            program_point_states,
+            surface_propositions,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            unfolded_predicates,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn for_point(
+        claim_label: &'a str,
+        tactic_index: usize,
+        available: &[Proposition],
+        goal: Goal,
         parameters: &'a [syntax::C0Parameter],
         arguments: &'a [CExpression],
         pre_state: &'a CState,
@@ -150,8 +232,9 @@ impl<'a> Proof<'a> {
             })),
             state: Arc::new(ProofState {
                 facts,
-                goal: Arc::new(goal),
+                goal,
                 complete: false,
+                added_facts: Arc::new(Vec::new()),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -161,8 +244,11 @@ impl<'a> Proof<'a> {
         }
     }
 
-    pub(super) fn goal(&self) -> &Proposition {
-        &self.state.goal
+    pub(super) fn goal(&self) -> Option<&Proposition> {
+        match &self.state.goal {
+            Goal::Proposition(goal) => Some(goal),
+            Goal::ExecutionFrontier => None,
+        }
     }
 
     pub(super) fn is_complete(&self) -> bool {
@@ -185,29 +271,33 @@ impl<'a> Proof<'a> {
                 premises,
             } => self.apply_theorem_using(application, premises)?,
             SimpleProofStep::Assumption => {
-                if !self.state.facts.contains(self.goal()) {
+                let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
+                if !self.state.facts.contains(goal) {
                     return Err(self.step_error(format!(
                         "`assumption` requires the exact current goal as an available fact: {:?}",
-                        self.goal()
+                        goal
                     )));
                 }
                 ProofState {
                     facts: self.state.facts.clone(),
                     goal: self.state.goal.clone(),
                     complete: true,
+                    added_facts: Arc::new(Vec::new()),
                 }
             }
             SimpleProofStep::Normalize => {
-                if !normalizes_context_free(self.goal()) {
+                let goal = self.proposition_goal("`normalize` requires a proposition goal")?;
+                if !normalizes_context_free(goal) {
                     return Err(self.step_error(format!(
                         "`normalize` requires a context-free true goal: {:?}",
-                        self.goal()
+                        goal
                     )));
                 }
                 ProofState {
                     facts: self.state.facts.clone(),
                     goal: self.state.goal.clone(),
                     complete: true,
+                    added_facts: Arc::new(Vec::new()),
                 }
             }
             _ => {
@@ -239,6 +329,13 @@ impl<'a> Proof<'a> {
         }
         steps.reverse();
         ProofCertificate::from_steps(steps)
+    }
+
+    /// Semantic facts introduced by the most recently accepted step.
+    /// Enclosing proof infrastructure can incorporate this output-sensitive
+    /// delta without traversing or cloning the proof's complete fact set.
+    pub(super) fn added_facts(&self) -> &[Proposition] {
+        self.state.added_facts.as_ref()
     }
 
     fn apply_theorem_using(
@@ -314,13 +411,18 @@ impl<'a> Proof<'a> {
         )?;
 
         let mut facts = self.state.facts.clone();
+        let mut added_facts = Vec::new();
         for fact in applied {
+            if !facts.contains(&fact) {
+                added_facts.push(fact.clone());
+            }
             facts = facts.with_fact(fact);
         }
         Ok(ProofState {
             facts,
             goal: self.state.goal.clone(),
             complete: false,
+            added_facts: Arc::new(added_facts),
         })
     }
 
@@ -390,15 +492,24 @@ impl<'a> Proof<'a> {
             Some(context.lowering_context.as_ref()),
         )?;
         let mut facts = self.state.facts.clone();
+        let mut added_facts = Vec::new();
         for fact in applied {
+            if !facts.contains(&fact) {
+                added_facts.push(fact.clone());
+            }
             facts = facts.with_fact(fact);
         }
-        let complete = facts.contains(self.goal());
+        let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
             facts,
             goal: self.state.goal.clone(),
             complete,
+            added_facts: Arc::new(added_facts),
         })
+    }
+
+    fn proposition_goal(&self, message: &str) -> Result<&Proposition, ClickError> {
+        self.goal().ok_or_else(|| self.step_error(message))
     }
 
     fn step_error(&self, message: impl Into<String>) -> ClickError {
@@ -675,5 +786,44 @@ mod tests {
             assert!(proof.certificate().steps().is_empty());
             assert_eq!(complete.certificate().steps().len(), 1);
         }
+    }
+
+    #[test]
+    fn execution_frontier_rejects_proposition_closers_transactionally() {
+        let state = CState::new();
+        let program_point_states = ProgramPointStates::new();
+        let surface_propositions = SurfacePropositionMap::default();
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let root = Proof::for_point_frontier(
+            "frontier",
+            0,
+            &[],
+            &[],
+            &[],
+            &state,
+            &state,
+            &program_point_states,
+            &surface_propositions,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+            &[],
+        );
+        let fork = root.clone();
+        assert!(root.goal().is_none());
+        assert!(Arc::ptr_eq(&root.state, &fork.state));
+        assert!(Arc::ptr_eq(&root.node, &fork.node));
+        for closer in [SimpleProofStep::Assumption, SimpleProofStep::Normalize] {
+            let error = fork
+                .apply_step(closer)
+                .err()
+                .expect("a proposition closer cannot close an execution frontier");
+            assert!(error.message().contains("proposition goal"), "{error:?}");
+        }
+        assert!(!root.is_complete());
+        assert!(root.added_facts().is_empty());
+        assert!(root.certificate().steps().is_empty());
     }
 }

@@ -183,6 +183,27 @@ fn source_expander_makes_theorem_application_premises_explicit() {
             }
         "#;
 
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("increment.c", c_source)])
+    });
+    verified.expect("bare theorem application should verify");
+    let simple_apply_checks = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                crate::instrumentation::VerificationEvent::TacticStarted(tactic)
+                    if tactic.claim == "increment.contract"
+                        && tactic.tactic_name == "apply"
+                        && tactic.class == "simple"
+            )
+        })
+        .count();
+    assert_eq!(
+        simple_apply_checks, 1,
+        "ordinary verification should check the retained apply step only during whole-certificate replay"
+    );
+
     let expanded = expand_c0_claim_source(
         click_source,
         &[("increment.c", c_source)],

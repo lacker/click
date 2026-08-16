@@ -785,7 +785,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     application.name
                 )));
             }
-            let premises = plan_explicit_theorem_application(
+            let premises = select_explicit_theorem_application_premises(
                 theorem_environment,
                 application,
                 claim_label,
@@ -798,44 +798,70 @@ fn replay_linear_tactics_without_frontier_loops(
                 predicate_environment,
                 click_function_environment,
             )?;
-            let proof = ProofCertificate::from_proof_tactics(&[ProofTactic::ApplyTheoremUsing {
-                application: application.clone(),
-                premises,
-            }])
-            .expect("explicit theorem application is a simple tactic");
-            let construction = ProofCertificateBuilder {
-                steps: proof.steps().to_vec(),
-                last_step_entry: replay.proof_certificate_builder.last_step_entry.clone(),
-                ..ProofCertificateBuilder::default()
-            };
-            let result = complete_smart_tactic(
-                ProofReplayContext {
-                    state,
-                    pure_facts: requirement_pure_facts,
-                    replay,
-                    branch_path,
-                },
-                function_block,
-                parsed_function,
-                claims,
+            let pre_state = replay.old_reference_state(&state).clone();
+            let proof = Proof::for_point_frontier(
                 claim_label,
-                function_environment,
+                tactic_index,
+                &requirement_pure_facts,
+                parsed_function.parameters(),
+                arguments,
+                &pre_state,
+                &state,
+                &replay.program_point_states,
+                &replay.surface_propositions,
                 predicate_environment,
                 click_function_environment,
-                resource_environment,
                 theorem_environment,
-                function,
-                arguments,
-                tactic_index,
-                source_index,
-                construction,
-                false,
-                true,
-            )?;
-            state = result.state;
-            requirement_pure_facts = result.pure_facts;
-            replay = result.replay;
-            branch_path = result.branch_path;
+                &replay.unfolded_predicates,
+            );
+            let proof = proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
+                application: application.clone(),
+                premises,
+            })?;
+            for fact in proof.added_facts() {
+                if !requirement_pure_facts.contains(fact) {
+                    requirement_pure_facts.push(fact.clone());
+                }
+            }
+            let mut lowering_facts = requirement_pure_facts.clone();
+            append_resource_context_observable_facts(state.resources(), &mut lowering_facts);
+            if replay
+                .frontier
+                .execution_start_state
+                .as_ref()
+                .is_none_or(|start| start == &state)
+                && let Some(derivation) = kernel_standard_theorem_derivation_at_current_point(
+                    theorem_environment,
+                    application,
+                    parsed_function.parameters(),
+                    arguments,
+                    &pre_state,
+                    &state,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                    &lowering_facts,
+                )?
+            {
+                let mut conclusion = derivation.proposition();
+                while let Proposition::Implies(_, body) = conclusion {
+                    conclusion = body;
+                }
+                if !replay
+                    .function_entry_execution_prerequisites
+                    .contains(conclusion)
+                {
+                    replay
+                        .function_entry_execution_prerequisites
+                        .push(conclusion.clone());
+                }
+                if !replay.function_entry_derivations.contains(&derivation) {
+                    replay.function_entry_derivations.push(derivation);
+                }
+            }
+            for step in proof.certificate().steps() {
+                replay.proof_certificate_builder.push_step(step.clone());
+            }
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
             let slice =
                 end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
