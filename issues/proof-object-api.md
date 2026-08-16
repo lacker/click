@@ -895,6 +895,20 @@ can soundly follow another accepted refinement and retain both operations.
 The copy-segment mdtest and a focused predecessor/transport regression pin
 that nested case.
 
+Top-level post-execution theorem application now crosses the same result-aware
+point boundary. Bare `apply` asks its outcome `Proof` for one
+`ApplyTheoremUsing`, then submits that step once; explicit `apply using`
+submits its source step through the identical checker. The outcome drain
+incorporates only the accepted step's fact delta and serializes its retained
+certificate. The former outcome planner scanned and spelled every available
+fact, repeatedly deleted candidates while re-applying the theorem, then
+replayed the constructed certificate; those three outcome-only helpers have
+been deleted. A 16-through-4096-fact frontier regression records zero
+persistent-index allocations during selection, bounds the checked successor
+logarithmically, rejects omitted named evidence transactionally, and retains
+the exact result-dependent step. The source regression observes no ordinary
+surface-certificate replay and independently verifies its expansion.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

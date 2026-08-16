@@ -759,6 +759,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 arguments,
                 &pre_state,
                 &state,
+                None,
                 &replay.program_point_states,
                 &replay.surface_propositions,
                 predicate_environment,

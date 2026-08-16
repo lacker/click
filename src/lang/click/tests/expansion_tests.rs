@@ -441,6 +441,19 @@ fn selected_post_execution_smart_apply_uses_exact_path_premises() {
                 simp();
             }
         "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("post-execution smart apply should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.contract" && name == "surface certificate replay"
+        )),
+        "the post-execution smart apply must retain its checked Proof: {events:#?}"
+    );
+
     let apply_offset = click_source
         .find("apply(int32")
         .expect("proof should contain the selected apply");

@@ -498,6 +498,7 @@ impl<'a> Proof<'a> {
         arguments: &'a [CExpression],
         pre_state: &'a CState,
         state: &'a CState,
+        result: Option<&'a CValue>,
         program_point_states: &'a ProgramPointStates,
         surface_propositions: &'a SurfacePropositionMap,
         predicate_environment: &'a PredicateEnvironment,
@@ -515,7 +516,7 @@ impl<'a> Proof<'a> {
             arguments,
             pre_state,
             state,
-            None,
+            result,
             program_point_states,
             surface_propositions,
             predicate_environment,
@@ -1763,7 +1764,7 @@ impl<'a> Proof<'a> {
     }
 
     /// Untrusted smart-tactic query for one explicit theorem-application
-    /// candidate at a point proposition goal.
+    /// candidate on a point proof.
     ///
     /// Requirement selection probes the current persistent fact indexes. It
     /// returns only a `SimpleProofStep`; theorem conclusions and provenance
@@ -1774,9 +1775,7 @@ impl<'a> Proof<'a> {
         application: &TheoremApplication,
     ) -> Result<SimpleProofStep, ClickError> {
         let ProofContext::Point(context) = self.context.as_ref() else {
-            return Err(
-                self.step_error("point theorem-application search requires a proposition goal")
-            );
+            return Err(self.step_error("point theorem-application search requires a point proof"));
         };
         let values = parameter_values(context.parameters, context.arguments).map_err(|error| {
             self.step_error(format!(
@@ -4766,6 +4765,7 @@ mod tests {
             &[],
             &state,
             &state,
+            None,
             &program_point_states,
             &surface_propositions,
             &predicate_environment,
@@ -5905,6 +5905,133 @@ mod tests {
                 Some(SimpleProofStep::ApplyTheoremUsing { application, premises })
                     if application.name == "result_reflexive" && premises.is_empty()
             ));
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn result_aware_point_frontier_apply_is_indexed_and_transactional() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 bounded(int32 upper) {
+                    ensures result <= upper;
+                } by {
+                    execute();
+                    apply(int32_lt_implies_le(result, upper)) using {
+                        result < upper;
+                    }
+                    simp();
+                }
+            "#,
+        )
+        .expect("result-aware explicit application should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let SourceProof::Script(tactics) = function_block
+            .grouped_proof()
+            .expect("test function should have a grouped proof")
+        else {
+            panic!("test function should have a proof script");
+        };
+        let (application, surface_premise) = tactics
+            .iter()
+            .find_map(|tactic| match tactic {
+                ProofTactic::ApplyTheoremUsing {
+                    application,
+                    premises,
+                } => Some((application, premises.first()?)),
+                _ => None,
+            })
+            .expect("grouped proof should contain an explicit theorem application");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("int32 bounded(int32 upper) { return upper; }")
+                .expect("test C function should parse");
+        let arguments = vec![CExpression::Value(CValue::Int32(
+            Bitvector32Term::Variable(Variable(8_155_001)),
+        ))];
+        let result = CValue::Int32(Bitvector32Term::Variable(Variable(8_155_000)));
+        let state = CState::new();
+        let program_point_states = ProgramPointStates::new();
+        let kernel_premise = lower_point_proposition_with_assumptions(
+            surface_premise,
+            &PureFactContext::new(),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            Some(&result),
+            &program_point_states,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("the result-aware theorem premise should lower");
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
+            .record_lowering(surface_premise, &kernel_premise)
+            .expect("the selected premise spelling should be recorded");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.push(kernel_premise.clone());
+            let root = Proof::for_point_frontier(
+                "persistent result-aware outcome apply",
+                0,
+                &facts,
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                Some(&result),
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let missing = root
+                .apply_step(SimpleProofStep::ApplyTheoremUsing {
+                    application: application.clone(),
+                    premises: Vec::new(),
+                })
+                .err()
+                .expect("ambient availability must not discharge an omitted premise");
+            assert!(missing.message().contains("required exact fact"));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+
+            let before_query = fact_node_allocations();
+            let step = root
+                .select_point_theorem_application_step(application)
+                .expect("the indexed result-aware premise should be selected");
+            assert_eq!(fact_node_allocations() - before_query, 0);
+            assert_eq!(
+                step,
+                SimpleProofStep::ApplyTheoremUsing {
+                    application: application.clone(),
+                    premises: vec![surface_premise.clone()],
+                }
+            );
+            let before_apply = fact_node_allocations();
+            let applied = root
+                .apply_step(step.clone())
+                .expect("the selected result-aware theorem step should check");
+            let allocations = fact_node_allocations() - before_apply;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 64 * logarithmic_height + 256;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} result-aware frontier apply allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(!applied.is_complete());
+            assert_eq!(applied.certificate().steps(), &[step]);
+            assert_eq!(applied.added_facts().len(), 1);
             assert!(root.certificate().steps().is_empty());
         }
     }

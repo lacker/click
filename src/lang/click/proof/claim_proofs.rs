@@ -1859,55 +1859,38 @@ pub(super) fn finish_ordered_proof_replay(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: theorem application requires a return outcome"
                                     )));
                                 };
-                                let premises = plan_explicit_theorem_application_at_outcome(
-                                    theorem_environment,
-                                    application,
+                                let requirements_before = path_requirements.clone();
+                                let proof = Proof::for_point_frontier(
                                     &proof_label,
-                                    path_index,
                                     *tactic_index,
                                     &path_requirements,
                                     parsed_function.parameters(),
                                     arguments,
                                     pre_state,
                                     post_state,
-                                    result,
-                                    &replay,
+                                    Some(result),
+                                    &replay.program_point_states,
+                                    &outcome_surface_propositions,
                                     predicate_environment,
                                     click_function_environment,
-                                    &unfolded_predicates,
-                                )?;
-                                let surface_tactic = ProofTactic::ApplyTheoremUsing {
-                                    application: application.clone(),
-                                    premises,
-                                };
-                                let certificate = ProofCertificate::from_proof_tactics(
-                                    std::slice::from_ref(&surface_tactic),
-                                )
-                                .expect("post-execution smart apply must lower to a simple tactic");
-                                let requirements_before = path_requirements.clone();
-                                path_requirements = replay_outcome_apply_certificate(
-                                    &certificate,
                                     theorem_environment,
-                                    &proof_label,
-                                    path_index,
-                                    *tactic_index,
-                                    path_requirements,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    post_state,
-                                    result,
-                                    &replay,
-                                    predicate_environment,
-                                    click_function_environment,
                                     &unfolded_predicates,
-                                )?;
-                                // The recorded `apply` tactic is prefixed to every
-                                // claim certificate, so replay holds the theorem's
-                                // conclusions when the closer runs. These facts were
-                                // produced by replaying that very certificate, so
-                                // planning the closer against them is planning
-                                // against exactly the replay context.
+                                    &replay.effect_facts,
+                                );
+                                let step =
+                                    proof.select_point_theorem_application_step(application)?;
+                                let proof = proof.apply_step(step)?;
+                                let added_facts = proof.added_facts().to_vec();
+                                let certificate = proof.certificate();
+                                drop(proof);
+                                for fact in added_facts {
+                                    if !path_requirements.contains(&fact) {
+                                        path_requirements.push(fact);
+                                    }
+                                }
+                                // The retained `apply using` step is prefixed to every
+                                // claim certificate, so independent replay holds the
+                                // same checked conclusions when the closer runs.
                                 record_certificate_facts_from_replay(
                                     &requirements_before,
                                     &path_requirements,
@@ -1939,24 +1922,35 @@ pub(super) fn finish_ordered_proof_replay(
                                     )));
                                 };
                                 let requirements_before = path_requirements.clone();
-                                path_requirements = apply_theorem_using_at_outcome(
-                                    theorem_environment,
-                                    application,
-                                    premises,
+                                let proof = Proof::for_point_frontier(
                                     &proof_label,
-                                    path_index,
                                     *tactic_index,
-                                    path_requirements,
+                                    &path_requirements,
                                     parsed_function.parameters(),
                                     arguments,
                                     pre_state,
                                     post_state,
-                                    result,
-                                    &replay,
+                                    Some(result),
+                                    &replay.program_point_states,
+                                    &outcome_surface_propositions,
                                     predicate_environment,
                                     click_function_environment,
+                                    theorem_environment,
                                     &unfolded_predicates,
-                                )?;
+                                    &replay.effect_facts,
+                                );
+                                let proof =
+                                    proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
+                                        application: application.clone(),
+                                        premises: premises.clone(),
+                                    })?;
+                                let added_facts = proof.added_facts().to_vec();
+                                drop(proof);
+                                for fact in added_facts {
+                                    if !path_requirements.contains(&fact) {
+                                        path_requirements.push(fact);
+                                    }
+                                }
                                 record_certificate_facts_from_replay(
                                     &requirements_before,
                                     &path_requirements,
