@@ -1,5 +1,9 @@
 use super::pure_theorems::{PureTheoremContext, lower_pure_theorem_proposition};
 use super::*;
+use crate::persistent::PersistentSet;
+
+#[cfg(test)]
+use crate::persistent::persistent_node_allocations;
 
 use std::sync::Arc;
 
@@ -1558,7 +1562,7 @@ mod tests {
     }
 
     fn fact_node_allocations() -> usize {
-        persistent_set_node_allocations()
+        persistent_node_allocations()
     }
 
     #[test]

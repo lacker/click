@@ -1,11 +1,8 @@
 use super::*;
-use std::cmp::Ordering;
-use std::sync::Arc;
-
+use crate::persistent::PersistentSet;
 #[cfg(test)]
-thread_local! {
-    static PERSISTENT_SET_NODE_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
+use crate::persistent::persistent_node_allocations;
+use std::sync::Arc;
 
 /// Identifies the `close_invariants` step of a replayed certificate well
 /// enough to emit a `click timing:` line for the work its caller does on its
@@ -240,19 +237,6 @@ pub(super) struct PersistentOrderedSet<T> {
     exact: PersistentSet<T>,
 }
 
-/// A persistent AVL set used by checked proof-state indexes.
-#[derive(Clone)]
-pub(super) struct PersistentSet<T> {
-    root: Option<Arc<PersistentSetNode<T>>>,
-}
-
-struct PersistentSetNode<T> {
-    value: Arc<T>,
-    left: Option<Arc<PersistentSetNode<T>>>,
-    right: Option<Arc<PersistentSetNode<T>>>,
-    height: u16,
-}
-
 impl<T> Default for PersistentOrderedSet<T> {
     fn default() -> Self {
         Self {
@@ -260,64 +244,6 @@ impl<T> Default for PersistentOrderedSet<T> {
             exact: PersistentSet::default(),
         }
     }
-}
-
-impl<T> Default for PersistentSet<T> {
-    fn default() -> Self {
-        Self { root: None }
-    }
-}
-
-impl<T: Ord> PersistentSet<T> {
-    pub(super) fn with_value(&self, value: T) -> Self {
-        Self {
-            root: Some(insert_persistent_set_node(
-                self.root.as_ref(),
-                Arc::new(value),
-            )),
-        }
-    }
-
-    pub(super) fn contains(&self, value: &T) -> bool {
-        let mut node = self.root.as_ref();
-        while let Some(current) = node {
-            match value.cmp(current.value.as_ref()) {
-                Ordering::Less => node = current.left.as_ref(),
-                Ordering::Equal => return true,
-                Ordering::Greater => node = current.right.as_ref(),
-            }
-        }
-        false
-    }
-
-    #[cfg(test)]
-    pub(super) fn lookup_comparisons(&self, value: &T) -> usize {
-        let mut comparisons = 0;
-        let mut node = self.root.as_ref();
-        while let Some(current) = node {
-            comparisons += 1;
-            match value.cmp(current.value.as_ref()) {
-                Ordering::Less => node = current.left.as_ref(),
-                Ordering::Equal => return comparisons,
-                Ordering::Greater => node = current.right.as_ref(),
-            }
-        }
-        comparisons
-    }
-
-    #[cfg(test)]
-    pub(super) fn shares_root_with(&self, other: &Self) -> bool {
-        match (&self.root, &other.root) {
-            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
-            (None, None) => true,
-            _ => false,
-        }
-    }
-}
-
-#[cfg(test)]
-pub(super) fn persistent_set_node_allocations() -> usize {
-    PERSISTENT_SET_NODE_ALLOCATIONS.with(std::cell::Cell::get)
 }
 
 impl<T: Clone + Ord> PersistentOrderedSet<T> {
@@ -350,106 +276,6 @@ impl<'a, T: Clone + Ord> IntoIterator for &'a PersistentOrderedSet<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
-    }
-}
-
-fn persistent_set_node_height<T>(node: Option<&Arc<PersistentSetNode<T>>>) -> u16 {
-    node.map_or(0, |node| node.height)
-}
-
-fn make_persistent_set_node<T>(
-    value: Arc<T>,
-    left: Option<Arc<PersistentSetNode<T>>>,
-    right: Option<Arc<PersistentSetNode<T>>>,
-) -> Arc<PersistentSetNode<T>> {
-    #[cfg(test)]
-    PERSISTENT_SET_NODE_ALLOCATIONS.with(|allocations| allocations.set(allocations.get() + 1));
-    Arc::new(PersistentSetNode {
-        value,
-        height: 1 + persistent_set_node_height(left.as_ref())
-            .max(persistent_set_node_height(right.as_ref())),
-        left,
-        right,
-    })
-}
-
-fn balance_persistent_set_node<T>(
-    value: Arc<T>,
-    left: Option<Arc<PersistentSetNode<T>>>,
-    right: Option<Arc<PersistentSetNode<T>>>,
-) -> Arc<PersistentSetNode<T>> {
-    let left_height = persistent_set_node_height(left.as_ref());
-    let right_height = persistent_set_node_height(right.as_ref());
-    if left_height > right_height + 1 {
-        let left_node = left.as_ref().expect("left-heavy node has a left child");
-        if persistent_set_node_height(left_node.left.as_ref())
-            >= persistent_set_node_height(left_node.right.as_ref())
-        {
-            let new_right = make_persistent_set_node(value, left_node.right.clone(), right);
-            return make_persistent_set_node(
-                left_node.value.clone(),
-                left_node.left.clone(),
-                Some(new_right),
-            );
-        }
-        let middle = left_node
-            .right
-            .as_ref()
-            .expect("left-right-heavy node has a middle child");
-        let new_left = make_persistent_set_node(
-            left_node.value.clone(),
-            left_node.left.clone(),
-            middle.left.clone(),
-        );
-        let new_right = make_persistent_set_node(value, middle.right.clone(), right);
-        return make_persistent_set_node(middle.value.clone(), Some(new_left), Some(new_right));
-    }
-    if right_height > left_height + 1 {
-        let right_node = right.as_ref().expect("right-heavy node has a right child");
-        if persistent_set_node_height(right_node.right.as_ref())
-            >= persistent_set_node_height(right_node.left.as_ref())
-        {
-            let new_left = make_persistent_set_node(value, left, right_node.left.clone());
-            return make_persistent_set_node(
-                right_node.value.clone(),
-                Some(new_left),
-                right_node.right.clone(),
-            );
-        }
-        let middle = right_node
-            .left
-            .as_ref()
-            .expect("right-left-heavy node has a middle child");
-        let new_left = make_persistent_set_node(value, left, middle.left.clone());
-        let new_right = make_persistent_set_node(
-            right_node.value.clone(),
-            middle.right.clone(),
-            right_node.right.clone(),
-        );
-        return make_persistent_set_node(middle.value.clone(), Some(new_left), Some(new_right));
-    }
-    make_persistent_set_node(value, left, right)
-}
-
-fn insert_persistent_set_node<T: Ord>(
-    node: Option<&Arc<PersistentSetNode<T>>>,
-    value: Arc<T>,
-) -> Arc<PersistentSetNode<T>> {
-    let Some(node) = node else {
-        return make_persistent_set_node(value, None, None);
-    };
-    match value.as_ref().cmp(node.value.as_ref()) {
-        Ordering::Less => balance_persistent_set_node(
-            node.value.clone(),
-            Some(insert_persistent_set_node(node.left.as_ref(), value)),
-            node.right.clone(),
-        ),
-        Ordering::Equal => node.clone(),
-        Ordering::Greater => balance_persistent_set_node(
-            node.value.clone(),
-            node.left.clone(),
-            Some(insert_persistent_set_node(node.right.as_ref(), value)),
-        ),
     }
 }
 
@@ -1515,9 +1341,9 @@ mod proof_fact_store_tests {
             assert!(set.exact.shares_root_with(&ancestor.exact));
             assert!(set.ordered.shares_tail_with(&ancestor.ordered));
 
-            let before = PERSISTENT_SET_NODE_ALLOCATIONS.with(std::cell::Cell::get);
+            let before = persistent_node_allocations();
             assert!(set.insert(size));
-            let allocations = PERSISTENT_SET_NODE_ALLOCATIONS.with(std::cell::Cell::get) - before;
+            let allocations = persistent_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
             let allocation_bound = 4 * logarithmic_height + 8;
             assert!(
@@ -1531,12 +1357,9 @@ mod proof_fact_store_tests {
                 (0..=size).collect::<Vec<_>>()
             );
 
-            let before_duplicate = PERSISTENT_SET_NODE_ALLOCATIONS.with(std::cell::Cell::get);
+            let before_duplicate = persistent_node_allocations();
             assert!(!set.insert(size));
-            assert_eq!(
-                PERSISTENT_SET_NODE_ALLOCATIONS.with(std::cell::Cell::get),
-                before_duplicate
-            );
+            assert_eq!(persistent_node_allocations(), before_duplicate);
         }
     }
 }

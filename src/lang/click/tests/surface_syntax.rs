@@ -881,6 +881,43 @@ fn indexed_surface_resolution_ignores_unrelated_available_facts() {
 }
 
 #[test]
+fn surface_lowering_map_forks_and_local_updates_scale_logarithmically() {
+    fn indexed_pair(index: u32) -> (ClickProposition, Proposition) {
+        (
+            ClickProposition::Comparison {
+                left: ContractExpression::CBinding(format!("x{index}")),
+                operator: ComparisonOperator::Equal,
+                right: current_int(index),
+            },
+            Proposition::ConditionIs(ConditionTerm::Variable(Variable(index.into())), true),
+        )
+    }
+
+    for size in [16_u32, 64, 256, 1024, 4096] {
+        let mut spellings = SurfacePropositionMap::default();
+        for index in 0..size {
+            let (surface, kernel) = indexed_pair(index);
+            spellings.record_lowering(&surface, &kernel).unwrap();
+        }
+        let ancestor = spellings.clone();
+        assert!(spellings.shares_persistent_storage_with(&ancestor));
+
+        let (surface, kernel) = indexed_pair(size);
+        let before = crate::persistent::persistent_node_allocations();
+        spellings.record_lowering(&surface, &kernel).unwrap();
+        let allocations = crate::persistent::persistent_node_allocations() - before;
+        let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+        let allocation_bound = 8 * logarithmic_height + 16;
+        assert!(
+            allocations <= allocation_bound,
+            "size {size} surface update allocated {allocations} map nodes (bound {allocation_bound})"
+        );
+        assert!(ancestor.surface(&kernel).is_err());
+        assert_eq!(spellings.surface(&kernel).unwrap(), &surface);
+    }
+}
+
+#[test]
 fn rejects_byte_counting_loadable_syntax() {
     let source = r#"
             verifying "fill.c";

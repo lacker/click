@@ -10,3 +10,4 @@ pub mod cli;
 pub mod instrumentation;
 pub mod kernel;
 pub mod lang;
+mod persistent;

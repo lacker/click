@@ -69,6 +69,7 @@ use crate::kernel::{
     substitute_int32_variable_in_proposition,
 };
 use crate::lang::c::syntax::{self, C0Expression, C0Type};
+use crate::persistent::PersistentMap;
 
 mod checking;
 mod diagnostics;
@@ -425,11 +426,11 @@ pub enum ClickProposition {
 /// to in one proof context.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SurfacePropositionMap {
-    by_kernel: BTreeMap<Proposition, KernelSurfaceSpellings>,
+    by_kernel: PersistentMap<Proposition, KernelSurfaceSpellings>,
     // The debug spelling is a deterministic structural bucket key. Exact
     // equality inside the bucket preserves soundness even if two future
     // syntax variants ever acquire the same debug rendering.
-    by_surface: BTreeMap<String, Vec<(ClickProposition, KernelLowerings)>>,
+    by_surface: PersistentMap<String, Vec<(ClickProposition, KernelLowerings)>>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -464,17 +465,26 @@ impl KernelLowerings {
 }
 
 impl SurfacePropositionMap {
+    #[cfg(test)]
+    pub(crate) fn shares_persistent_storage_with(&self, other: &Self) -> bool {
+        self.by_kernel.shares_root_with(&other.by_kernel)
+            && self.by_surface.shares_root_with(&other.by_surface)
+    }
+
     pub fn record_lowering(
         &mut self,
         surface: &ClickProposition,
         kernel: &Proposition,
     ) -> Result<(), ClickError> {
         let surface_key = format!("{surface:?}");
-        self.by_kernel
-            .entry(kernel.clone())
-            .or_default()
-            .insert(surface, &surface_key);
-        let bucket = self.by_surface.entry(surface_key).or_default();
+        let mut spellings = self.by_kernel.get(kernel).cloned().unwrap_or_default();
+        spellings.insert(surface, &surface_key);
+        self.by_kernel = self.by_kernel.with_inserted(kernel.clone(), spellings);
+        let mut bucket = self
+            .by_surface
+            .get(&surface_key)
+            .cloned()
+            .unwrap_or_default();
         let lowerings = if let Some((_, lowerings)) =
             bucket.iter_mut().find(|(recorded, _)| recorded == surface)
         {
@@ -487,6 +497,7 @@ impl SurfacePropositionMap {
                 .1
         };
         lowerings.insert(kernel);
+        self.by_surface = self.by_surface.with_inserted(surface_key, bucket);
         match (surface, kernel) {
             (ClickProposition::And(surface_left, surface_right), Proposition::And(left, right))
             | (ClickProposition::Or(surface_left, surface_right), Proposition::Or(left, right))

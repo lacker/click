@@ -479,6 +479,15 @@ fact-specific duplicate implementation was removed. A deterministic
 16-through-4096 regression bounds local node allocation and checks ancestor
 isolation, insertion order, and allocation-free duplicate admission.
 
+`SurfacePropositionMap` is persistent as well. Its kernel-to-surface and
+surface-to-kernel indexes now share AVL roots across execution proof forks;
+recording one new lowering replaces only the logarithmic search paths and the
+affected local spelling buckets. The generic `PersistentMap`/`PersistentSet`
+implementation lives below the Click language layer and is shared by surface
+lowerings, `ProofFacts`, and execution artifact sets rather than introducing
+parallel tree implementations. Deterministic 16-through-4096 regressions
+bound both raw map updates and complete two-index surface-map updates.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
