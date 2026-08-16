@@ -403,6 +403,43 @@ fn execute_rest_return_certificate_omits_unused_ambient_facts() {
 }
 
 #[test]
+fn linear_execute_retains_its_checked_execution_proof() {
+    let c_source = r#"
+            int32 zero() {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "zero.c";
+
+            int32 zero() {
+                ensures result == 0;
+            } by {
+                execute();
+                normalize();
+            }
+        "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("zero.c", c_source)])
+    });
+    let verified = verified.expect("linear execute should verify through its checked Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "zero.contract" && name == "surface certificate replay"
+        )),
+        "linear execute must not ordinarily replay its retained certificate: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("linear execute should retain an expansion");
+    assert_eq!(expanded[0], ProofTactic::StepUsing(Vec::new()));
+    assert_eq!(expanded[1], ProofTactic::Normalize);
+}
+
+#[test]
 fn execute_step_omits_materialization_only_transport() {
     let c_source = r#"
             int32 set_second_return_first(int32 p[2]) {

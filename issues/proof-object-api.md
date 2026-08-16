@@ -353,6 +353,11 @@ successor back out, and append the retained step. They no longer use
 `complete_smart_tactic` or ordinary per-tactic replay. Multi-step and
 branching plans remain on the legacy path pending structured proof goals.
 
+Linear `execute()` and `execute_all_paths()` plans composed entirely of one or
+more `StepUsing` operations now use the same consuming execution `Proof` path.
+The proof owns the whole accepted sequence and exports its retained
+certificate once; mixed and structured plans still fall back.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

@@ -1275,6 +1275,57 @@ fn replay_linear_tactics_without_frontier_loops(
                     )?;
                 }
                 let construction = std::mem::take(&mut planning_replay.proof_certificate_builder);
+                if construction.blocker.is_none()
+                    && !construction.steps.is_empty()
+                    && construction
+                        .steps
+                        .iter()
+                        .all(|step| matches!(step, SimpleProofStep::StepUsing(_)))
+                {
+                    let mut proof = Proof::for_execution_frontier(
+                        claim_label,
+                        tactic_index,
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        function_block,
+                        function,
+                        parsed_function,
+                        arguments,
+                        function_environment,
+                        predicate_environment,
+                        click_function_environment,
+                    );
+                    for step in &construction.steps {
+                        proof = proof.apply_owned_execution_step(step.clone())?;
+                    }
+                    let certificate = proof.certificate();
+                    let result = proof.into_execution_context()?;
+                    state = result.state;
+                    requirement_pure_facts = result.pure_facts;
+                    replay = result.replay;
+                    branch_path = result.branch_path;
+                    for step in certificate.steps() {
+                        replay.proof_certificate_builder.push_step(step.clone());
+                    }
+                    replay.proof_certificate_builder.last_step_entry = construction.last_step_entry;
+                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                    let slice = end_tactic_surface_scope(
+                        &mut replay,
+                        scope.take().expect("tactic scope is open"),
+                    );
+                    if capture_this_tactic {
+                        finish_tactic_expansion_capture(
+                            expansion_capture.as_deref_mut(),
+                            &slice,
+                            false,
+                        );
+                    }
+                    continue;
+                }
                 let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,
