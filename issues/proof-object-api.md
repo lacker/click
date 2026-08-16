@@ -277,8 +277,20 @@ with checked `ApplyTheoremUsing`, `Assumption`, and `Normalize` steps. Pure
 scripts of the exact form `apply(...); assumption();` now select the applied
 theorem's instantiated premises and advance only through `Proof::apply_step`;
 they export the retained certificate without the ordinary construction/replay
-gateway. The remaining pure forms and all C-execution tactics still use the
-legacy path and remain migration work.
+gateway.
+
+The second checkpoint extends the same private `Proof` core to point-level
+goals and migrates `have proposition by { apply(theorem); }`. Premise search is
+now a selection-only query; the chosen `ApplyTheoremUsing` is checked once by
+`Proof::apply_step`, which closes the point goal when the theorem's checked
+conclusion is exact. The retained nested certificate is appended directly to
+the enclosing proof, while `click expand` still prints and independently
+verifies it. A regression verifies that ordinary construction emits no
+`surface certificate replay` event for the migrated claim and that deleting a
+selected premise from the expanded proof is rejected.
+
+The remaining pure forms, point-level smart forms, and all C-execution tactics
+still use the legacy path and remain migration work.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

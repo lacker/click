@@ -466,6 +466,97 @@ fn replay_frontier_local_loop_tactic(
     })
 }
 
+/// Migrates the smallest point-proof smart path onto the checked proof
+/// object: a bare theorem application whose conclusion closes the `have`.
+///
+/// The premise planner is only a query. The theorem application advances
+/// through `Proof::apply_step`, so the returned certificate is the provenance
+/// of the semantic work already performed, not a second representation that
+/// ordinary verification must replay.
+#[allow(clippy::too_many_arguments)]
+fn checked_bare_apply_have(
+    have: &ProofHave,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    replay: &TacticReplayState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Option<(Proposition, ProofCertificate)>, ClickError> {
+    let SourceProof::Script(tactics) = &have.proof else {
+        return Ok(None);
+    };
+    let [ProofTactic::ApplyTheorem(application)] = tactics.as_slice() else {
+        return Ok(None);
+    };
+    let goal = lower_point_proposition(
+        &have.proposition,
+        &facts_for_simple_goal_lowering(available),
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        None,
+        &replay.program_point_states,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` have proof {tactic_index}: could not lower pure goal: {message}"
+        ))
+    })?;
+    let premises = select_explicit_theorem_application_premises(
+        theorem_environment,
+        application,
+        claim_label,
+        tactic_index,
+        available,
+        parameters,
+        arguments,
+        replay,
+        state,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let proof = Proof::for_point_goal(
+        claim_label,
+        tactic_index,
+        available,
+        goal.clone(),
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        &replay.program_point_states,
+        &replay.surface_propositions,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+        &replay.unfolded_predicates,
+    );
+    let proof = proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
+        application: application.clone(),
+        premises,
+    })?;
+    if !proof.is_complete() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` have proof {tactic_index}: checked proof retained an open goal"
+        )));
+    }
+    let body = proof.certificate();
+    let certificate = ProofCertificate::from_steps(vec![SimpleProofStep::Have {
+        proposition: have.proposition.clone(),
+        proof: Box::new(body),
+    }]);
+    Ok(Some((goal, certificate)))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn replay_linear_tactics_without_frontier_loops(
     context: ProofReplayContext,
@@ -2342,12 +2433,27 @@ fn replay_linear_tactics_without_frontier_loops(
                         have_facts.push(fact.clone());
                     }
                 }
+                let checked_proof_result = checked_bare_apply_have(
+                    have,
+                    theorem_environment,
+                    claim_label,
+                    tactic_index,
+                    &have_facts,
+                    parsed_function.parameters(),
+                    arguments,
+                    replay.old_reference_state(&state),
+                    &state,
+                    &replay,
+                    predicate_environment,
+                    click_function_environment,
+                )?;
                 let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
                 // Smart search and certificate construction are one event:
                 // the goal is proved exactly when its evidence has been
                 // spelled as a replayable ProofCertificate.
-                let smart_result = match &smart_unfolds {
-                    Some(unfolded_predicates) => Some(construct_smart_have_certificate(
+                let smart_result = match (&checked_proof_result, &smart_unfolds) {
+                    (Some(_), _) => None,
+                    (None, Some(unfolded_predicates)) => Some(construct_smart_have_certificate(
                         &mut replay,
                         &state,
                         &have_facts,
@@ -2360,45 +2466,47 @@ fn replay_linear_tactics_without_frontier_loops(
                         tactic_index,
                         unfolded_predicates,
                     )?),
-                    None => None,
+                    (None, None) => None,
                 };
-                let (fact, surface_certificate) = match smart_result {
-                    Some((fact, certificate)) => (fact, Some(certificate)),
-                    None => {
-                        let fact = prove_have_at_current_point(
-                            have,
-                            theorem_environment,
-                            claim_label,
-                            tactic_index,
-                            &have_facts,
-                            &replay.effect_facts,
-                            parsed_function.parameters(),
-                            arguments,
-                            replay.old_reference_state(&state),
-                            &state,
-                            &replay.program_point_states,
-                            &replay.surface_propositions,
-                            predicate_environment,
-                            click_function_environment,
-                            function_block.requires(),
-                        )?;
-                        let certificate = surface_smart_apply_have_certificate(
-                            &mut replay,
-                            &state,
-                            &have_facts,
-                            parsed_function.parameters(),
-                            arguments,
-                            predicate_environment,
-                            click_function_environment,
-                            theorem_environment,
-                            claim_label,
-                            tactic_index,
-                            have,
-                            &fact,
-                        )?;
-                        (fact, certificate)
-                    }
-                };
+                let (fact, surface_certificate, certificate_already_checked) =
+                    match (checked_proof_result, smart_result) {
+                        (Some((fact, certificate)), _) => (fact, Some(certificate), true),
+                        (None, Some((fact, certificate))) => (fact, Some(certificate), false),
+                        (None, None) => {
+                            let fact = prove_have_at_current_point(
+                                have,
+                                theorem_environment,
+                                claim_label,
+                                tactic_index,
+                                &have_facts,
+                                &replay.effect_facts,
+                                parsed_function.parameters(),
+                                arguments,
+                                replay.old_reference_state(&state),
+                                &state,
+                                &replay.program_point_states,
+                                &replay.surface_propositions,
+                                predicate_environment,
+                                click_function_environment,
+                                function_block.requires(),
+                            )?;
+                            let certificate = surface_smart_apply_have_certificate(
+                                &mut replay,
+                                &state,
+                                &have_facts,
+                                parsed_function.parameters(),
+                                arguments,
+                                predicate_environment,
+                                click_function_environment,
+                                theorem_environment,
+                                claim_label,
+                                tactic_index,
+                                have,
+                                &fact,
+                            )?;
+                            (fact, certificate, false)
+                        }
+                    };
                 // A body that is neither simple nor covered by the smart
                 // lowerings above (a `witness`/`choose` prefix before `simp`,
                 // or a proof-level `if` closing its cases by `simp`) must
@@ -2432,41 +2540,43 @@ fn replay_linear_tactics_without_frontier_loops(
                     None => None,
                 };
                 if let Some(certificate) = surface_certificate {
-                    let replay_certificate = |certificate: &ProofCertificate| {
-                        replay_proof_certificate(
-                            ProofReplayContext {
-                                state: state.clone(),
-                                // Replay from the same certified context
-                                // used to plan the smart `have`. In
-                                // particular, field-derived loadability may
-                                // depend on previously established surface
-                                // facts or exact execution effects that are
-                                // not part of the function's requirements.
-                                pure_facts: have_facts.clone(),
-                                replay: replay.clone(),
-                                branch_path: branch_path.clone(),
-                            },
-                            function_block,
-                            parsed_function,
-                            claims,
+                    if !certificate_already_checked {
+                        let replay_certificate = |certificate: &ProofCertificate| {
+                            replay_proof_certificate(
+                                ProofReplayContext {
+                                    state: state.clone(),
+                                    // Replay from the same certified context
+                                    // used to plan the smart `have`. In
+                                    // particular, field-derived loadability may
+                                    // depend on previously established surface
+                                    // facts or exact execution effects that are
+                                    // not part of the function's requirements.
+                                    pure_facts: have_facts.clone(),
+                                    replay: replay.clone(),
+                                    branch_path: branch_path.clone(),
+                                },
+                                function_block,
+                                parsed_function,
+                                claims,
+                                claim_label,
+                                function_environment,
+                                predicate_environment,
+                                click_function_environment,
+                                resource_environment,
+                                theorem_environment,
+                                function,
+                                arguments,
+                                tactic_index,
+                                source_index,
+                                certificate,
+                            )
+                        };
+                        pure_goal_proof_certificate_gateway(
                             claim_label,
-                            function_environment,
-                            predicate_environment,
-                            click_function_environment,
-                            resource_environment,
-                            theorem_environment,
-                            function,
-                            arguments,
-                            tactic_index,
-                            source_index,
-                            certificate,
-                        )
-                    };
-                    pure_goal_proof_certificate_gateway(
-                        claim_label,
-                        || Ok(certificate.clone()),
-                        replay_certificate,
-                    )?;
+                            || Ok(certificate.clone()),
+                            replay_certificate,
+                        )?;
+                    }
                     for step in certificate.steps() {
                         replay.proof_certificate_builder.push_step(step.clone());
                     }

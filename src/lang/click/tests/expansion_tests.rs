@@ -2711,6 +2711,89 @@ fn source_expander_lowers_smart_apply_inside_have() {
 }
 
 #[test]
+fn point_have_bare_apply_retains_and_checks_its_exact_premise() {
+    let c_source = r#"
+            int32 choose_second(int32 first, int32 second) {
+                return second;
+            }
+        "#;
+    let click_source = r#"
+            theorem equality_symmetric(first: int32, second: int32) {
+                requires first == second;
+                ensures second == first by {
+                    simp() using { first == second; }
+                }
+            }
+
+            verifying "choose.c";
+
+            int32 choose_second(int32 first, int32 second) {
+                requires first == second;
+                ensures second == first;
+            } by {
+                have second == first by {
+                    apply(equality_symmetric(first, second));
+                }
+                step();
+                assumption();
+            }
+        "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("choose.c", c_source)])
+    });
+    verified.expect("checked point apply should verify without ordinary certificate replay");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "choose_second.contract" && name == "surface certificate replay"
+        )),
+        "the migrated smart point proof must not pass through the ordinary construction/replay gateway: {events:#?}"
+    );
+    let have_offset = click_source
+        .find("have second == first")
+        .expect("proof should contain the selected have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("choose.c", c_source)], line, column)
+            .expect("checked point apply should expand");
+    let apply_offset = expanded
+        .find("apply(equality_symmetric(first, second)) using {")
+        .expect("expansion should retain the selected explicit step");
+    let premise_relative = expanded[apply_offset..]
+        .find("first == second;")
+        .expect("explicit step should retain the theorem premise");
+    let premise_offset = apply_offset + premise_relative;
+    verify_c0_sources(&expanded, &[("choose.c", c_source)])
+        .expect("the retained point proof should independently replay");
+
+    let mut corrupted = expanded.clone();
+    corrupted.replace_range(
+        premise_offset..premise_offset + "first == second;".len(),
+        "",
+    );
+    let error = verify_c0_sources(&corrupted, &[("choose.c", c_source)])
+        .expect_err("omitting the selected premise must invalidate the explicit proof");
+    assert!(
+        error.message().contains("required exact fact")
+            || error.message().contains("unavailable exact premise"),
+        "unexpected corrupted-certificate error: {}",
+        error.message()
+    );
+}
+
+#[test]
 fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {

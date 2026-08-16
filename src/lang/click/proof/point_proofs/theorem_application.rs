@@ -233,7 +233,7 @@ pub(in crate::lang::click::proof) fn lower_theorem_application_requirements(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn plan_explicit_theorem_application(
+fn select_explicit_theorem_application_premises_with_kernel(
     theorem_environment: &TheoremEnvironment,
     application: &TheoremApplication,
     claim_label: &str,
@@ -245,7 +245,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_theorem_application(
     state: &CState,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-) -> Result<Vec<ClickProposition>, ClickError> {
+) -> Result<Vec<(Proposition, ClickProposition)>, ClickError> {
     let pre_state = replay.old_reference_state(state);
     let values = parameter_values(parameters, arguments).map_err(|error| {
         ClickError::new(format!(
@@ -342,6 +342,74 @@ pub(in crate::lang::click::proof) fn plan_explicit_theorem_application(
             selected.push((matched, surface));
         }
     }
+    Ok(selected)
+}
+
+/// Untrusted search query for a candidate explicit theorem-application step.
+///
+/// This selects spellings only. It deliberately does not apply the theorem;
+/// a caller using the checked proof-object path must submit the resulting
+/// `ApplyTheoremUsing` to `Proof::apply_step`.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn select_explicit_theorem_application_premises(
+    theorem_environment: &TheoremEnvironment,
+    application: &TheoremApplication,
+    claim_label: &str,
+    tactic_index: usize,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    replay: &TacticReplayState,
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<ClickProposition>, ClickError> {
+    select_explicit_theorem_application_premises_with_kernel(
+        theorem_environment,
+        application,
+        claim_label,
+        tactic_index,
+        available,
+        parameters,
+        arguments,
+        replay,
+        state,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map(|selected| selected.into_iter().map(|(_, surface)| surface).collect())
+}
+
+/// Legacy validated planner retained for callers that have not yet moved
+/// their semantic transition onto `Proof::apply_step`.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn plan_explicit_theorem_application(
+    theorem_environment: &TheoremEnvironment,
+    application: &TheoremApplication,
+    claim_label: &str,
+    tactic_index: usize,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    replay: &TacticReplayState,
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<ClickProposition>, ClickError> {
+    let selected = select_explicit_theorem_application_premises_with_kernel(
+        theorem_environment,
+        application,
+        claim_label,
+        tactic_index,
+        available,
+        parameters,
+        arguments,
+        replay,
+        state,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let pre_state = replay.old_reference_state(state);
     let application_replays = |selected: &[(Proposition, ClickProposition)]| {
         let mut lowering_facts = available.to_vec();
         append_resource_context_observable_facts(state.resources(), &mut lowering_facts);

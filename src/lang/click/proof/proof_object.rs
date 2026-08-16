@@ -12,9 +12,14 @@ use std::sync::Arc;
 /// many fact-index nodes plus the step's own semantic delta.
 #[derive(Clone)]
 pub(super) struct Proof<'a> {
-    context: Arc<PureProofContext<'a>>,
-    state: Arc<PureProofState>,
+    context: Arc<ProofContext<'a>>,
+    state: Arc<ProofState>,
     node: Arc<ProofNode>,
+}
+
+enum ProofContext<'a> {
+    Pure(PureProofContext<'a>),
+    Point(PointProofContext<'a>),
 }
 
 struct PureProofContext<'a> {
@@ -25,7 +30,23 @@ struct PureProofContext<'a> {
     theorem_environment: &'a TheoremEnvironment,
 }
 
-struct PureProofState {
+struct PointProofContext<'a> {
+    claim_label: &'a str,
+    tactic_index: usize,
+    parameters: &'a [syntax::C0Parameter],
+    arguments: &'a [CExpression],
+    pre_state: &'a CState,
+    state: &'a CState,
+    program_point_states: &'a ProgramPointStates,
+    surface_propositions: &'a SurfacePropositionMap,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    unfolded_predicates: &'a [String],
+    lowering_context: Arc<Vec<Proposition>>,
+}
+
+struct ProofState {
     facts: PersistentFactIndex,
     goal: Arc<Proposition>,
     complete: bool,
@@ -68,14 +89,66 @@ impl<'a> Proof<'a> {
             facts = facts.with_fact(fact.clone());
         }
         Self {
-            context: Arc::new(PureProofContext {
+            context: Arc::new(ProofContext::Pure(PureProofContext {
                 claim_label,
                 theorem_context,
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
+            })),
+            state: Arc::new(ProofState {
+                facts,
+                goal: Arc::new(goal),
+                complete: false,
             }),
-            state: Arc::new(PureProofState {
+            node: Arc::new(ProofNode {
+                parent: None,
+                step: None,
+                depth: 0,
+            }),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn for_point_goal(
+        claim_label: &'a str,
+        tactic_index: usize,
+        available: &[Proposition],
+        goal: Proposition,
+        parameters: &'a [syntax::C0Parameter],
+        arguments: &'a [CExpression],
+        pre_state: &'a CState,
+        state: &'a CState,
+        program_point_states: &'a ProgramPointStates,
+        surface_propositions: &'a SurfacePropositionMap,
+        predicate_environment: &'a PredicateEnvironment,
+        click_function_environment: &'a ClickFunctionEnvironment,
+        theorem_environment: &'a TheoremEnvironment,
+        unfolded_predicates: &'a [String],
+    ) -> Self {
+        let mut facts = PersistentFactIndex::default();
+        for fact in available {
+            facts = facts.with_fact(fact.clone());
+        }
+        let mut lowering_context = available.to_vec();
+        append_resource_context_observable_facts(state.resources(), &mut lowering_context);
+        Self {
+            context: Arc::new(ProofContext::Point(PointProofContext {
+                claim_label,
+                tactic_index,
+                parameters,
+                arguments,
+                pre_state,
+                state,
+                program_point_states,
+                surface_propositions,
+                predicate_environment,
+                click_function_environment,
+                theorem_environment,
+                unfolded_predicates,
+                lowering_context: Arc::new(lowering_context),
+            })),
+            state: Arc::new(ProofState {
                 facts,
                 goal: Arc::new(goal),
                 complete: false,
@@ -118,7 +191,7 @@ impl<'a> Proof<'a> {
                         self.goal()
                     )));
                 }
-                PureProofState {
+                ProofState {
                     facts: self.state.facts.clone(),
                     goal: self.state.goal.clone(),
                     complete: true,
@@ -131,7 +204,7 @@ impl<'a> Proof<'a> {
                         self.goal()
                     )));
                 }
-                PureProofState {
+                ProofState {
                     facts: self.state.facts.clone(),
                     goal: self.state.goal.clone(),
                     complete: true,
@@ -172,8 +245,23 @@ impl<'a> Proof<'a> {
         &self,
         application: &TheoremApplication,
         surface_premises: &[ClickProposition],
-    ) -> Result<PureProofState, ClickError> {
-        let context = self.context.as_ref();
+    ) -> Result<ProofState, ClickError> {
+        match self.context.as_ref() {
+            ProofContext::Pure(context) => {
+                self.apply_pure_theorem_using(context, application, surface_premises)
+            }
+            ProofContext::Point(context) => {
+                self.apply_point_theorem_using(context, application, surface_premises)
+            }
+        }
+    }
+
+    fn apply_pure_theorem_using(
+        &self,
+        context: &PureProofContext<'_>,
+        application: &TheoremApplication,
+        surface_premises: &[ClickProposition],
+    ) -> Result<ProofState, ClickError> {
         let explicit_premises = surface_premises
             .iter()
             .map(|premise| {
@@ -229,17 +317,94 @@ impl<'a> Proof<'a> {
         for fact in applied {
             facts = facts.with_fact(fact);
         }
-        Ok(PureProofState {
+        Ok(ProofState {
             facts,
             goal: self.state.goal.clone(),
             complete: false,
         })
     }
 
+    fn apply_point_theorem_using(
+        &self,
+        context: &PointProofContext<'_>,
+        application: &TheoremApplication,
+        surface_premises: &[ClickProposition],
+    ) -> Result<ProofState, ClickError> {
+        // The first point-proof migration is intentionally linear: a single
+        // theorem application that closes the selected goal. This prevents
+        // an accidental partial API from becoming a second mutable point
+        // prover while later point steps move over one by one.
+        if self.node.depth != 0 {
+            return Err(self.step_error("point `apply using` currently requires the root proof"));
+        }
+        let explicit_premises = surface_premises
+            .iter()
+            .map(|surface| {
+                if let Some(recorded) = context
+                    .surface_propositions
+                    .available_kernel(surface, context.lowering_context.as_ref())
+                {
+                    return Ok(recorded.clone());
+                }
+                lower_point_proposition(
+                    surface,
+                    context.lowering_context.as_ref(),
+                    context.parameters,
+                    context.arguments,
+                    context.pre_state,
+                    context.state,
+                    None,
+                    context.program_point_states,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+                .map_err(|message| {
+                    self.step_error(format!(
+                        "could not lower `apply using` premise `{}`: {message}",
+                        describe_click_proposition(surface)
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for premise in &explicit_premises {
+            if !self.state.facts.contains(premise) {
+                return Err(self.step_error(format!(
+                    "`apply using` requires an unavailable exact premise: {premise:?}"
+                )));
+            }
+        }
+        let applied = apply_theorem_at_current_point(
+            context.theorem_environment,
+            application,
+            context.claim_label,
+            context.tactic_index,
+            explicit_premises,
+            context.parameters,
+            context.arguments,
+            context.pre_state,
+            context.state,
+            context.program_point_states,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.unfolded_predicates,
+            Some(context.lowering_context.as_ref()),
+        )?;
+        let mut facts = self.state.facts.clone();
+        for fact in applied {
+            facts = facts.with_fact(fact);
+        }
+        let complete = facts.contains(self.goal());
+        Ok(ProofState {
+            facts,
+            goal: self.state.goal.clone(),
+            complete,
+        })
+    }
+
     fn step_error(&self, message: impl Into<String>) -> ClickError {
         ClickError::new(format!(
             "`{}` proof step {}: {}",
-            self.context.claim_label,
+            self.context.claim_label(),
             self.node.depth,
             message.into()
         ))
@@ -248,6 +413,15 @@ impl<'a> Proof<'a> {
     #[cfg(test)]
     fn fact_lookup_comparisons(&self, fact: &Proposition) -> usize {
         self.state.facts.lookup_comparisons(fact)
+    }
+}
+
+impl ProofContext<'_> {
+    fn claim_label(&self) -> &str {
+        match self {
+            Self::Pure(context) => context.claim_label,
+            Self::Point(context) => context.claim_label,
+        }
     }
 }
 
