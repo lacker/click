@@ -382,6 +382,16 @@ proportional to its output. Linear execution uses this path now; branch joins
 can use the same primitive to embed each arm without inferring it from final
 semantic state or making an owned execution frontier shared.
 
+The first audited structural branch is `cases`. `Proof::begin_cases` requires
+an exact available disjunction and creates an immutable `ProofBranches` value
+whose arms receive only their respective disjunct. Arm steps still go through
+`Proof::apply_step`; `join` refuses incomplete arms and embeds each arm's exact
+checkpoint suffix in one `SimpleProofStep::Cases`. Explicit pure `cases`
+scripts using the migrated simple vocabulary now check through this path, and
+regressions cover transactional failed candidates, arm isolation, exact-root
+identity, structured certificate output, and expansion through the ordinary
+source verifier.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

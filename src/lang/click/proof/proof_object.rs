@@ -28,6 +28,39 @@ pub(super) struct ProofCheckpoint<'a> {
     node: Arc<ProofNode>,
 }
 
+/// Two open proposition branches owned by one audited structural operation.
+///
+/// Branch-local assumptions exist only inside this container. The enclosing
+/// `Proof` advances when both arms are complete and `join` records their exact
+/// retained certificates in one structured simple step.
+#[derive(Clone)]
+pub(super) struct ProofBranches<'a> {
+    root: Proof<'a>,
+    root_checkpoint: ProofCheckpoint<'a>,
+    structure: ProofBranchStructure,
+    arms: [Proof<'a>; 2],
+}
+
+#[derive(Clone)]
+enum ProofBranchStructure {
+    Cases { disjunction: ClickProposition },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ProofArm {
+    Left,
+    Right,
+}
+
+impl ProofArm {
+    fn index(self) -> usize {
+        match self {
+            Self::Left => 0,
+            Self::Right => 1,
+        }
+    }
+}
+
 enum ProofContext<'a> {
     Pure(PureProofContext<'a>),
     Point(PointProofContext<'a>),
@@ -532,6 +565,64 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Opens an exact disjunction into two immutable proof branches.
+    ///
+    /// This is a structural kernel operation, not a smart tactic: it accepts
+    /// no derived or ambiently provable disjunction. Each arm receives only
+    /// its corresponding exact disjunct in addition to the shared facts.
+    pub(super) fn begin_cases(
+        &self,
+        disjunction: ClickProposition,
+    ) -> Result<ProofBranches<'a>, ClickError> {
+        if self.state.complete {
+            return Err(self.step_error("`cases` follows a completed proof"));
+        }
+        self.proposition_goal("`cases` requires a proposition goal")?;
+        let kernel = self.lower_surface_proposition(&disjunction, "`cases` disjunction")?;
+        if !self.state.facts.contains(&kernel) {
+            return Err(self.step_error(format!(
+                "`cases` requires its exact disjunction as an available fact: {kernel:?}"
+            )));
+        }
+        let Proposition::Or(left, right) = kernel else {
+            return Err(self.step_error(format!("`cases` requires a disjunction, got {kernel:?}")));
+        };
+        let root_checkpoint = self.checkpoint();
+        Ok(ProofBranches {
+            root: self.clone(),
+            root_checkpoint,
+            structure: ProofBranchStructure::Cases { disjunction },
+            arms: [self.with_branch_fact(*left), self.with_branch_fact(*right)],
+        })
+    }
+
+    /// Independently checks an already-serialized simple certificate.
+    ///
+    /// This is for explicit source verification and expansion/audit, where
+    /// replay is intentional. Smart tactics instead search with `apply_step`
+    /// and the structural branch operations directly.
+    pub(super) fn check_certificate(
+        &self,
+        certificate: &ProofCertificate,
+    ) -> Result<Self, ClickError> {
+        let mut proof = self.clone();
+        for step in certificate.steps() {
+            proof = match step {
+                SimpleProofStep::Cases {
+                    disjunction,
+                    left_proof,
+                    right_proof,
+                } => proof
+                    .begin_cases(disjunction.clone())?
+                    .check_arm_certificate(ProofArm::Left, left_proof)?
+                    .check_arm_certificate(ProofArm::Right, right_proof)?
+                    .join()?,
+                _ => proof.apply_step(step.clone())?,
+            };
+        }
+        Ok(proof)
+    }
+
     fn certificate_after_node(
         &self,
         ancestor: Option<&Arc<ProofNode>>,
@@ -554,6 +645,72 @@ impl<'a> Proof<'a> {
         }
         steps.reverse();
         Ok(ProofCertificate::from_steps(steps))
+    }
+
+    fn with_branch_fact(&self, fact: Proposition) -> Self {
+        let mut facts = self.state.facts.clone();
+        facts = facts.with_fact(fact.clone());
+        Self {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                facts,
+                goal: self.state.goal.clone(),
+                complete: false,
+                added_facts: Arc::new(vec![fact.clone()]),
+                checked_facts: Arc::new(vec![fact]),
+                execution: None,
+            }),
+            // The structural step is retained once at join. Arm certificates
+            // begin after the shared root and contain only their checked body.
+            node: self.node.clone(),
+        }
+    }
+
+    fn lower_surface_proposition(
+        &self,
+        surface: &ClickProposition,
+        description: &str,
+    ) -> Result<Proposition, ClickError> {
+        match self.context.as_ref() {
+            ProofContext::Pure(context) => lower_pure_theorem_proposition(
+                context.claim_label,
+                surface,
+                &context.theorem_context.values,
+                &context.theorem_context.array_refs,
+                &context.theorem_context.memory,
+                context.predicate_environment,
+                context.click_function_environment,
+            )
+            .map_err(|message| {
+                self.step_error(format!("could not lower {description}: {message}"))
+            }),
+            ProofContext::Point(context) => {
+                if let Some(recorded) = context
+                    .surface_propositions
+                    .available_kernel(surface, context.lowering_context.as_ref())
+                {
+                    return Ok(recorded.clone());
+                }
+                lower_point_proposition(
+                    surface,
+                    context.lowering_context.as_ref(),
+                    context.parameters,
+                    context.arguments,
+                    context.pre_state,
+                    context.state,
+                    None,
+                    context.program_point_states,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+                .map_err(|message| {
+                    self.step_error(format!("could not lower {description}: {message}"))
+                })
+            }
+            ProofContext::Execution(_) => {
+                Err(self.step_error("`cases` is not an execution-frontier operation"))
+            }
+        }
     }
 
     /// Applies one selected execution step by consuming the uniquely owned
@@ -1061,6 +1218,72 @@ impl<'a> Proof<'a> {
     }
 }
 
+impl<'a> ProofBranches<'a> {
+    #[cfg(test)]
+    pub(super) fn arm(&self, arm: ProofArm) -> &Proof<'a> {
+        &self.arms[arm.index()]
+    }
+
+    /// Applies one ordinary checked step inside one arm while preserving the
+    /// other arm and the shared root. Failed candidates leave `self` intact.
+    pub(super) fn apply_step(
+        &self,
+        arm: ProofArm,
+        step: SimpleProofStep,
+    ) -> Result<Self, ClickError> {
+        let mut next = self.clone();
+        next.arms[arm.index()] = self.arms[arm.index()].apply_step(step)?;
+        Ok(next)
+    }
+
+    fn check_arm_certificate(
+        &self,
+        arm: ProofArm,
+        certificate: &ProofCertificate,
+    ) -> Result<Self, ClickError> {
+        let mut next = self.clone();
+        for step in certificate.steps() {
+            if matches!(step, SimpleProofStep::Cases { .. }) {
+                let nested = ProofCertificate::from_steps(vec![step.clone()]);
+                next.arms[arm.index()] = next.arms[arm.index()].check_certificate(&nested)?;
+            } else {
+                next = next.apply_step(arm, step.clone())?;
+            }
+        }
+        Ok(next)
+    }
+
+    /// Joins two completed arms and records their retained bodies as one
+    /// structured simple step on the shared root.
+    pub(super) fn join(self) -> Result<Proof<'a>, ClickError> {
+        for (name, arm) in [("left", &self.arms[0]), ("right", &self.arms[1])] {
+            if !arm.is_complete() {
+                return Err(self
+                    .root
+                    .step_error(format!("cannot join `cases`: {name} arm is incomplete")));
+            }
+        }
+        let left_proof = self.arms[0].certificate_since(&self.root_checkpoint)?;
+        let right_proof = self.arms[1].certificate_since(&self.root_checkpoint)?;
+        let step = match self.structure {
+            ProofBranchStructure::Cases { disjunction } => SimpleProofStep::Cases {
+                disjunction,
+                left_proof: Box::new(left_proof),
+                right_proof: Box::new(right_proof),
+            },
+        };
+        Ok(Proof {
+            context: self.root.context.clone(),
+            state: Arc::new(self.root.closed_state()),
+            node: Arc::new(ProofNode {
+                parent: Some(self.root.node.clone()),
+                step: Some(Arc::new(step)),
+                depth: self.root.node.depth + 1,
+            }),
+        })
+    }
+}
+
 impl ProofContext<'_> {
     fn claim_label(&self) -> &str {
         match self {
@@ -1335,6 +1558,83 @@ mod tests {
             complete.certificate_since(&unrelated.checkpoint()).is_err(),
             "a structurally identical but separately rooted proof cannot be spliced"
         );
+    }
+
+    #[test]
+    fn cases_branches_join_only_completed_checked_arm_proofs() {
+        let equality = |value| ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(value))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(value))),
+        };
+        let disjunction = ClickProposition::Or(Box::new(equality(0)), Box::new(equality(1)));
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let theorem_context = PureTheoremContext {
+            memory: CMemory::new(),
+            values: BTreeMap::new(),
+            array_refs: BTreeMap::new(),
+            requires: Vec::new(),
+        };
+        let kernel_disjunction = lower_pure_theorem_proposition(
+            "cases",
+            &disjunction,
+            &theorem_context.values,
+            &theorem_context.array_refs,
+            &theorem_context.memory,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("constant disjunction should lower");
+        assert!(matches!(kernel_disjunction, Proposition::Or(_, _)));
+        let root = Proof::for_pure_goal(
+            "cases",
+            std::slice::from_ref(&kernel_disjunction),
+            kernel_disjunction.clone(),
+            &theorem_context,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        );
+        let branches = root
+            .begin_cases(disjunction.clone())
+            .expect("the exact disjunction should open two cases");
+        assert!(branches.clone().join().is_err());
+        assert!(
+            branches
+                .apply_step(ProofArm::Left, SimpleProofStep::Intro)
+                .is_err(),
+            "a rejected arm candidate must not mutate the branch set"
+        );
+        assert!(
+            branches
+                .arm(ProofArm::Left)
+                .certificate()
+                .steps()
+                .is_empty()
+        );
+
+        let branches = branches
+            .apply_step(ProofArm::Left, SimpleProofStep::Left)
+            .expect("left disjunct should close the left arm");
+        assert!(branches.arm(ProofArm::Left).is_complete());
+        assert!(!branches.arm(ProofArm::Right).is_complete());
+        let branches = branches
+            .apply_step(ProofArm::Right, SimpleProofStep::Right)
+            .expect("right disjunct should close the right arm");
+        let joined = branches.join().expect("both checked arms should join");
+        assert!(joined.is_complete());
+        assert_eq!(
+            joined.certificate().steps(),
+            &[SimpleProofStep::Cases {
+                disjunction,
+                left_proof: Box::new(ProofCertificate::from_steps(vec![SimpleProofStep::Left,])),
+                right_proof: Box::new(ProofCertificate::from_steps(vec![SimpleProofStep::Right,])),
+            }]
+        );
+        assert!(!root.is_complete());
+        assert!(root.certificate().steps().is_empty());
     }
 
     #[test]

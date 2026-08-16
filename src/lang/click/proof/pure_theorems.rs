@@ -506,7 +506,7 @@ fn verify_theorem_ensure(
             let (tactics, induction_setup) =
                 prepare_pure_induction_tactics(theorem, surface_goal, tactics)?;
             checked_certificate = if induction_setup.is_none() {
-                check_linear_pure_script_with_proof(
+                check_pure_script_with_proof(
                     theorem,
                     claim_label,
                     context,
@@ -857,15 +857,16 @@ fn verify_kernel_standard_theorem_axiom(
     })
 }
 
-/// Checks the linear pure-script subset already supported by the proof object.
+/// Checks the pure-script subset already supported by the proof object.
 ///
 /// Fully explicit `apply using`, `assumption`, and `normalize` scripts advance
 /// directly through `Proof::apply_step`. The one supported smart form is a
 /// single bare theorem application followed by `assumption`: search only
 /// selects the applied theorem's exact source premises, then submits the
-/// explicit `ApplyTheoremUsing` to the same checked path.
+/// explicit `ApplyTheoremUsing` to the same checked path. Explicit `cases`
+/// certificates use the audited branch/open/join operations recursively.
 #[allow(clippy::too_many_arguments)]
-fn check_linear_pure_script_with_proof(
+fn check_pure_script_with_proof(
     theorem: &TheoremDefinition,
     claim_label: &str,
     context: &PureTheoremContext,
@@ -875,6 +876,26 @@ fn check_linear_pure_script_with_proof(
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Option<ProofCertificate>, ClickError> {
+    fn supported(certificate: &ProofCertificate) -> bool {
+        certificate.steps().iter().all(|step| match step {
+            SimpleProofStep::ApplyTheoremUsing { .. }
+            | SimpleProofStep::Assumption
+            | SimpleProofStep::Normalize
+            | SimpleProofStep::Intro
+            | SimpleProofStep::Split
+            | SimpleProofStep::Left
+            | SimpleProofStep::Right
+            | SimpleProofStep::Enumerate
+            | SimpleProofStep::Contradiction(_) => true,
+            SimpleProofStep::Cases {
+                left_proof,
+                right_proof,
+                ..
+            } => supported(left_proof) && supported(right_proof),
+            _ => false,
+        })
+    }
+
     let root = Proof::for_pure_goal(
         claim_label,
         &context.requires,
@@ -885,31 +906,14 @@ fn check_linear_pure_script_with_proof(
         theorem_environment,
     );
     if let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
-        && certificate.steps().iter().all(|step| {
-            matches!(
-                step,
-                SimpleProofStep::ApplyTheoremUsing { .. }
-                    | SimpleProofStep::Assumption
-                    | SimpleProofStep::Normalize
-                    | SimpleProofStep::Intro
-                    | SimpleProofStep::Split
-                    | SimpleProofStep::Left
-                    | SimpleProofStep::Right
-                    | SimpleProofStep::Enumerate
-                    | SimpleProofStep::Contradiction(_)
-            )
-        })
+        && supported(&certificate)
     {
-        let mut proof = root.clone();
-        for step in certificate.steps() {
-            let Ok(next) = proof.apply_step(step.clone()) else {
-                // Migration is an optimization for successful scripts. Keep
-                // the legacy verifier authoritative for failure diagnostics
-                // until every pure simple step has moved behind `Proof`.
-                return Ok(None);
-            };
-            proof = next;
-        }
+        let Ok(proof) = root.check_certificate(&certificate) else {
+            // Migration is an optimization for successful scripts. Keep the
+            // legacy verifier authoritative for failure diagnostics until
+            // every pure simple step has moved behind `Proof`.
+            return Ok(None);
+        };
         if !proof.is_complete() {
             return Ok(None);
         }

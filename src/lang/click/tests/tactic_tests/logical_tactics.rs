@@ -1380,6 +1380,26 @@ fn cases_checks_each_branch_under_exactly_its_own_disjunct() {
 }
 
 #[test]
+fn pure_cases_certificate_uses_checked_proof_branches() {
+    let click_source = r#"
+        theorem retain_sign_case(x: int32) {
+            requires sign: x <= 0 or x > 0;
+
+            ensures x <= 0 or x > 0 by {
+                cases (x <= 0 or x > 0) {
+                    left();
+                } {
+                    right();
+                }
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect("both exact case branches should join through the checked Proof API");
+}
+
+#[test]
 fn enumerate_closes_a_constant_bounded_universal_goal() {
     let c_source = r#"
         int32 keep(int32 x) {
