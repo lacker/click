@@ -292,6 +292,14 @@ fn pure_bare_apply_builds_a_checked_proof_object_certificate() {
                 assumption();
             }
         }
+
+        theorem use_equality_from_conjunction(first: int32, second: int32) {
+            requires (first == second) and (second == second);
+            ensures second == first by {
+                apply(equality_symmetric(first, second));
+                assumption();
+            }
+        }
     "#;
 
     let verified = verify_click_theorems(source).expect("bare apply should verify");
@@ -301,6 +309,14 @@ fn pure_bare_apply_builds_a_checked_proof_object_certificate() {
             ProofTactic::ApplyTheoremUsing { application, premises },
             ProofTactic::Assumption,
         ]) if application.name == "equality_symmetric" && premises.len() == 1
+    ));
+    assert!(matches!(
+        verified[2].proof_tactics().as_deref(),
+        Some([
+            ProofTactic::ApplyTheoremUsing { application, premises },
+            ProofTactic::Assumption,
+        ]) if application.name == "equality_symmetric"
+            && matches!(premises.as_slice(), [ClickProposition::Comparison { .. }])
     ));
 
     let explicit = source.replace(

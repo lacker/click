@@ -1306,6 +1306,14 @@ mod certificate_tests {
                     }
                 }
 
+                theorem applied_then_simp(x: int32) {
+                    requires x >= 0;
+                    ensures (x >= 0) and (x >= 0) by {
+                        apply(required(x));
+                        simp();
+                    }
+                }
+
                 theorem implication(x: int32) {
                     ensures (x >= 0) implies (x >= 0) by {
                         intro();
@@ -1361,20 +1369,27 @@ mod certificate_tests {
                 ProofTactic::Assumption
             ])
         ));
-        assert_eq!(
+        assert!(matches!(
             verified[3].proof_tactics().as_deref(),
+            Some([
+                ProofTactic::ApplyTheoremUsing { application, premises },
+                ProofTactic::Split,
+            ]) if application.name == "required" && premises.len() == 1
+        ));
+        assert_eq!(
+            verified[4].proof_tactics().as_deref(),
             Some([ProofTactic::Intro, ProofTactic::Assumption].as_slice())
         );
         assert_eq!(
-            verified[4].proof_tactics().as_deref(),
+            verified[5].proof_tactics().as_deref(),
             Some([ProofTactic::Split].as_slice())
         );
         assert_eq!(
-            verified[5].proof_tactics().as_deref(),
+            verified[6].proof_tactics().as_deref(),
             Some([ProofTactic::Left].as_slice())
         );
         assert!(matches!(
-            verified[6].proof_tactics().as_deref(),
+            verified[7].proof_tactics().as_deref(),
             Some([ProofTactic::Contradiction(_)])
         ));
         assert!(
@@ -1386,6 +1401,7 @@ mod certificate_tests {
                         "required.ensures_0"
                             | "reflexive.ensures_0"
                             | "applied.ensures_0"
+                            | "applied_then_simp.ensures_0"
                             | "implication.ensures_0"
                             | "conjunction.ensures_0"
                             | "disjunction.ensures_0"

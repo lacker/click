@@ -809,6 +809,21 @@ path. The source regression confirms that ordinary verification performs no
 surface-certificate replay and that expansion independently reverifies the
 serialized steps.
 
+Pure smart theorem application uses the same capability boundary now. The
+`Proof` query instantiates the applied theorem's own Surface Click requirement
+clauses, lowers only those explicit candidates against its persistent
+assumptions, probes their availability through `ProofFacts`, and returns one
+`ApplyTheoremUsing` without advancing state. This also fixes the former
+search/certificate disagreement for a required fact available as a conjunct:
+the selected certificate now names the instantiated atomic requirement rather
+than the ambient conjunction that happened to contain it. Both
+`apply(...); assumption()` and `apply(...); simp()` submit that step once and
+continue on its checked successor; the linear scan over every ambient theorem
+requirement has been deleted. A deterministic 16-through-4096 regression
+records zero persistent-index allocations during selection, and focused
+no-replay plus expansion regressions check the retained
+`ApplyTheoremUsing`/closer path and independently reverify its serialization.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

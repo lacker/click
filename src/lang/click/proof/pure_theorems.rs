@@ -507,7 +507,6 @@ fn verify_theorem_ensure(
                 prepare_pure_induction_tactics(theorem, surface_goal, tactics)?;
             checked_certificate = if induction_setup.is_none() {
                 check_pure_script_with_proof(
-                    theorem,
                     claim_label,
                     context,
                     &goal,
@@ -860,14 +859,13 @@ fn verify_kernel_standard_theorem_axiom(
 /// Checks the pure-script subset already supported by the proof object.
 ///
 /// Fully explicit `apply using`, `assumption`, and `normalize` scripts advance
-/// directly through `Proof::apply_step`. The one supported smart form is a
-/// single bare theorem application followed by `assumption`: search only
-/// selects the applied theorem's exact source premises, then submits the
-/// explicit `ApplyTheoremUsing` to the same checked path. Explicit `cases`
-/// certificates use the audited branch/open/join operations recursively.
+/// directly through `Proof::apply_step`. Bare theorem application followed by
+/// `assumption` or `simp` asks the `Proof` for an explicit
+/// `ApplyTheoremUsing`, submits it to the same checked path, and continues from
+/// that successor. Explicit `cases` certificates use the audited
+/// branch/open/join operations recursively.
 #[allow(clippy::too_many_arguments)]
 fn check_pure_script_with_proof(
-    theorem: &TheoremDefinition,
     claim_label: &str,
     context: &PureTheoremContext,
     goal: &Proposition,
@@ -1067,82 +1065,25 @@ fn check_pure_script_with_proof(
         return Ok(Some(proof.certificate()));
     }
 
-    let [
-        ProofTactic::ApplyTheorem(application),
-        ProofTactic::Assumption,
-    ] = tactics
-    else {
+    let [ProofTactic::ApplyTheorem(application), closer] = tactics else {
         return Ok(None);
     };
-
-    let state = CState::new().with_memory(context.memory.clone());
-    let program_point_states = ProgramPointStates::new();
-    let application_context = TheoremApplicationContext {
-        values: &context.values,
-        array_refs: &context.array_refs,
-        pre_state: &state,
-        post_state: &state,
-        result: None,
-        program_point_states: &program_point_states,
+    let step = root.select_pure_theorem_application_step(application)?;
+    let selected = root.apply_step(step)?;
+    let proof = match closer {
+        ProofTactic::Assumption => selected.apply_step(SimpleProofStep::Assumption)?,
+        ProofTactic::Simp if selected.is_complete() => selected,
+        ProofTactic::Simp => {
+            let Some(closed) = selected.try_direct_logical_closure() else {
+                return Ok(None);
+            };
+            closed
+        }
+        _ => return Ok(None),
     };
-    let requirements = lower_theorem_application_requirements(
-        theorem_environment,
-        application,
-        &application_context,
-        &context.requires,
-        predicate_environment,
-        click_function_environment,
-        &[],
-    )
-    .map_err(|message| {
-        ClickError::new(format!(
-            "`{claim_label}` tactic 0: could not lower theorem requirements: {message}"
-        ))
-    })?;
-    let mut premises = Vec::new();
-    for requirement in requirements {
-        if normalizes_context_free(&requirement) {
-            continue;
-        }
-        let source_index = context
-            .requires
-            .iter()
-            .position(|available| {
-                available == &requirement
-                    || condition_polarity_equivalent(available, &requirement)
-                    || materialization_equivalent_available_fact(
-                        &requirement,
-                        std::slice::from_ref(available),
-                    )
-                    .is_some()
-            })
-            .ok_or_else(|| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic 0: required exact fact for theorem `{}` is unavailable: {requirement:?}",
-                    application.name,
-                ))
-            })?;
-        let source = theorem
-            .requires()
-            .get(source_index)
-            .and_then(Requirement::proposition)
-            .ok_or_else(|| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic 0: selected theorem premise has no source proposition"
-                ))
-            })?
-            .clone();
-        if !premises.contains(&source) {
-            premises.push(source);
-        }
+    if !proof.is_complete() {
+        return Ok(None);
     }
-
-    let proof = root.apply_step(SimpleProofStep::ApplyTheoremUsing {
-        application: application.clone(),
-        premises,
-    })?;
-    let proof = proof.apply_step(SimpleProofStep::Assumption)?;
-    debug_assert!(proof.is_complete());
     Ok(Some(proof.certificate()))
 }
 

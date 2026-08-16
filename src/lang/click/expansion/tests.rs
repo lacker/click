@@ -1702,6 +1702,39 @@ fn pure_theorem_expansion_is_certificate_backed_and_idempotent() {
 }
 
 #[test]
+fn pure_apply_then_simp_expands_the_retained_proof_object_path() {
+    let source = r#"
+        theorem required(x: int32) {
+            requires x >= 0;
+            ensures x >= 0 by auto;
+        }
+
+        theorem applied_then_simp(x: int32) {
+            requires x >= 0;
+            ensures (x >= 0) and (x >= 0) by {
+                apply(required(x));
+                simp();
+            }
+        }
+    "#;
+    let expanded = expand_pure_theorem_source(source, &[], "applied_then_simp", 0)
+        .expect("the checked pure theorem path should expand");
+    let selected = &expanded[expanded
+        .find("theorem applied_then_simp")
+        .expect("expanded source should retain the selected theorem")..];
+    assert!(
+        selected.contains("apply(required(x)) using {"),
+        "{selected}"
+    );
+    assert!(selected.contains("x >= 0;"), "{selected}");
+    assert!(selected.contains("split();"), "{selected}");
+    assert!(!selected.contains("apply(required(x));"), "{selected}");
+    assert!(!selected.contains("simp();"), "{selected}");
+    verify_click_theorems(&expanded)
+        .expect("the serialized pure theorem certificate should independently reverify");
+}
+
+#[test]
 fn expands_qualified_frame_tactic() {
     let c_source = r#"int32 set_cell(int32 p[], int32 value) {
     p[0] = value;

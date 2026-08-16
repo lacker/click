@@ -1592,6 +1592,87 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Untrusted pure smart-tactic query for one explicit theorem step.
+    /// This instantiates the applied theorem's own requirement spellings and
+    /// probes their lowered forms through the current persistent fact index;
+    /// it cannot advance the proof or add the theorem's conclusion.
+    pub(super) fn select_pure_theorem_application_step(
+        &self,
+        application: &TheoremApplication,
+    ) -> Result<SimpleProofStep, ClickError> {
+        let ProofContext::Pure(context) = self.context.as_ref() else {
+            return Err(
+                self.step_error("pure theorem-application search requires a proposition goal")
+            );
+        };
+        let state = CState::new().with_memory(context.theorem_context.memory.clone());
+        let program_point_states = ProgramPointStates::new();
+        let application_context = TheoremApplicationContext {
+            values: &context.theorem_context.values,
+            array_refs: &context.theorem_context.array_refs,
+            pre_state: &state,
+            post_state: &state,
+            result: None,
+            program_point_states: &program_point_states,
+        };
+        let unfolded_predicates = self.active_unfolded_predicates();
+        let requirements = lower_theorem_application_requirements_with_assumptions(
+            context.theorem_environment,
+            application,
+            &application_context,
+            self.state.facts.assumptions(),
+            context.predicate_environment,
+            context.click_function_environment,
+            &unfolded_predicates,
+        )
+        .map_err(|message| {
+            self.step_error(format!("could not lower theorem requirements: {message}"))
+        })?;
+        let theorem = context
+            .theorem_environment
+            .get(&application.name)
+            .ok_or_else(|| self.step_error(format!("unknown theorem `{}`", application.name)))?;
+        let substitutions = theorem
+            .parameters()
+            .iter()
+            .map(FunctionParameter::name)
+            .map(str::to_string)
+            .zip(application.arguments.iter().cloned())
+            .collect::<BTreeMap<_, _>>();
+
+        let mut premises = Vec::new();
+        for (requirement, source_requirement) in requirements.into_iter().zip(theorem.requires()) {
+            if normalizes_context_free(&requirement) {
+                continue;
+            }
+            let source_surface = source_requirement.proposition().ok_or_else(|| {
+                self.step_error(format!(
+                    "theorem application `{}` has a non-proposition requirement",
+                    application.name
+                ))
+            })?;
+            let surface = substitute_click_proposition(source_surface, &substitutions)
+                .map_err(|message| self.step_error(message))?;
+            let lowered = self.lower_surface_proposition(&surface, "selected theorem premise")?;
+            if normalize_direct_atomic_memory_loads(&lowered)
+                != normalize_direct_atomic_memory_loads(&requirement)
+                || !self.state.facts.contains(&lowered)
+            {
+                return Err(self.step_error(format!(
+                    "required exact fact for theorem `{}` is unavailable: {requirement:?}",
+                    application.name
+                )));
+            }
+            if !premises.contains(&surface) {
+                premises.push(surface);
+            }
+        }
+        Ok(SimpleProofStep::ApplyTheoremUsing {
+            application: application.clone(),
+            premises,
+        })
+    }
+
     fn apply_theorem_using(
         &self,
         application: &TheoremApplication,
@@ -5056,7 +5137,6 @@ mod tests {
                 ContractExpression::CFragment(CExpression::Value(right)),
             ],
         };
-
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
             pure_facts.push(kernel_premise.clone());
@@ -5302,6 +5382,119 @@ mod tests {
                 Some(&SimpleProofStep::Extract(premise.clone()))
             );
             assert_eq!(complete.certificate().steps().get(1), Some(&step));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let memory = CMemory::new();
+        let left = CValue::Int32(Bitvector32Term::Variable(Variable(8_200_000)));
+        let right = CValue::Int32(Bitvector32Term::Variable(Variable(8_200_001)));
+        let premise = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(left.clone())),
+            operator: ComparisonOperator::LessThan,
+            right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+        };
+        let conclusion = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(left.clone())),
+            operator: ComparisonOperator::LessEqual,
+            right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+        };
+        let kernel_premise = lower_pure_theorem_proposition(
+            "persistent pure theorem search",
+            &premise,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &memory,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("the exact pure premise should lower");
+        let kernel_conclusion = lower_pure_theorem_proposition(
+            "persistent pure theorem search",
+            &conclusion,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &memory,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("the pure theorem conclusion should lower");
+        let application = TheoremApplication {
+            name: "int32_lt_implies_le".to_string(),
+            arguments: vec![
+                ContractExpression::CFragment(CExpression::Value(left)),
+                ContractExpression::CFragment(CExpression::Value(right)),
+            ],
+        };
+        let missing_application = TheoremApplication {
+            name: "int32_lt_implies_le".to_string(),
+            arguments: application.arguments.iter().cloned().rev().collect(),
+        };
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut requires = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            requires.push(kernel_premise.clone());
+            let theorem_context = PureTheoremContext {
+                memory: memory.clone(),
+                values: BTreeMap::new(),
+                array_refs: BTreeMap::new(),
+                requires: requires.clone(),
+            };
+            let goal = Proposition::And(
+                Box::new(kernel_conclusion.clone()),
+                Box::new(kernel_premise.clone()),
+            );
+            let root = Proof::for_pure_goal(
+                "persistent pure theorem search",
+                &requires,
+                goal,
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_root = root.clone();
+            let missing = root
+                .select_pure_theorem_application_step(&missing_application)
+                .err()
+                .expect("an unavailable instantiated requirement must reject the candidate");
+            assert!(missing.message().contains("required exact fact"));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+            let before_query = fact_node_allocations();
+            let step = root
+                .select_pure_theorem_application_step(&application)
+                .expect("smart pure search should select the indexed source requirement");
+            let query_allocations = fact_node_allocations() - before_query;
+            assert_eq!(
+                query_allocations, 0,
+                "size {size} pure theorem selection must not rebuild persistent fact indexes"
+            );
+            assert_eq!(
+                step,
+                SimpleProofStep::ApplyTheoremUsing {
+                    application: application.clone(),
+                    premises: vec![premise.clone()],
+                }
+            );
+            let applied = root
+                .apply_step(step.clone())
+                .expect("the selected pure theorem step should check once");
+            let complete = applied
+                .try_direct_logical_closure()
+                .expect("the checked conclusion should close the conjunction");
+            assert!(complete.is_complete());
+            assert_eq!(complete.certificate().steps().first(), Some(&step));
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());
         }
