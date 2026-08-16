@@ -339,6 +339,13 @@ Explicit `contradiction(fact)` is also checked by `Proof`: the named fact and
 its exact negation or opposite condition polarity must both be present in the
 persistent fact index before the goal closes.
 
+The explicit `StepUsing` implementation is now one named
+`check_step_using` operation rather than an inline tactic-dispatch branch. It
+owns premise lowering, exact/effect availability checks, selected fact
+transport, statement execution, and the resulting frontier/fact update. This
+is the shared audited transition the execution-goal `Proof` slice will call;
+explicit source replay already delegates to it.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
