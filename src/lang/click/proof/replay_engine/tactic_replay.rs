@@ -89,7 +89,7 @@ fn execute_frontier_local_loop(
         )));
     }
     let function_with_prior_loops =
-        function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses);
+        function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses.to_vec());
     let bound_function_block =
         function_with_prior_loops.with_frontier_loop_clause(loop_template, loop_index);
     validate_region_proof_clauses(&bound_function_block, parsed_function)?;
@@ -1851,7 +1851,8 @@ fn replay_linear_tactics_without_frontier_loops(
                 // frontier-local `loop` tactics earlier in this proof; bind
                 // them so region resolution and validation see them.
                 let frame_function_block = (!replay.frontier_loop_clauses.is_empty()).then(|| {
-                    function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses)
+                    function_block
+                        .with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses.to_vec())
                 });
                 let frame_function_block = frame_function_block.as_ref().unwrap_or(function_block);
                 let code_region = region_ref
@@ -1904,7 +1905,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         }
                     };
                     replay.defer_post_execution(tactic_index, source_index, deferred);
-                    replay.frames.insert(region_ref.clone());
                     end_tactic_surface_scope(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
@@ -1963,7 +1963,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         PostExecutionTactic::FrameRegion(region),
                     );
                 }
-                replay.frames.insert(region_ref.clone());
             }
             ProofTactic::UnfoldPredicate(name) => {
                 if replay.ordered_finalization && replay.is_at_function_exit() {

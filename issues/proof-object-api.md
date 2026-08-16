@@ -496,6 +496,13 @@ path. Legacy certificate construction materializes a contiguous vector at its
 explicit adapter boundary, making the remaining full-context work visible
 until that path is replaced by `Proof` queries.
 
+Frontier-local verified loop clauses and rules are persistent append-only
+histories too, so a proof branch after several checked loops shares those
+kernel artifacts rather than cloning them. The few legacy APIs requiring
+contiguous slices materialize only at loop binding/final export. The old
+`frames` set was removed instead of migrated: an audit found that it was
+write-only bookkeeping with no semantic or diagnostic reader.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

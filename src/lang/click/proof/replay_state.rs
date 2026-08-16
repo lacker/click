@@ -29,7 +29,6 @@ pub(super) struct TacticReplayState {
     /// `branch_path`, this excludes pure proof-level `if` diagnostics and can
     /// therefore distinguish an already selected C path at function exit.
     pub(super) has_structured_branch_history: bool,
-    pub(super) frames: BTreeSet<Option<CodeRegionRef>>,
     pub(super) unfolded_predicates: Vec<String>,
     pub(super) post_execution_tactics: Vec<DeferredPostExecutionTactic>,
     pub(super) region_simp: Option<(usize, usize)>,
@@ -74,8 +73,8 @@ pub(super) struct TacticReplayState {
     /// Frontier-local loop proofs become part of the checked function proof,
     /// not temporary tactic state.  Final kernel certification rebuilds the
     /// annotated function from these bound clauses and reuses these rules.
-    pub(super) frontier_loop_clauses: Vec<StructuralClause>,
-    pub(super) frontier_loop_rules: Vec<CVerifiedLoopRule>,
+    pub(super) frontier_loop_clauses: PersistentSequence<StructuralClause>,
+    pub(super) frontier_loop_rules: PersistentSequence<CVerifiedLoopRule>,
     /// The snapshot that `old(...)` — and `at(function.entry, ...)`, which is
     /// the same reference under another spelling — names in this region.
     ///
@@ -181,6 +180,13 @@ impl<T> PersistentSequence<T> {
         PersistentSequenceIter {
             entries: nodes.into_iter(),
         }
+    }
+
+    pub(super) fn to_vec(&self) -> Vec<T>
+    where
+        T: Clone,
+    {
+        self.iter().cloned().collect()
     }
 
     #[cfg(test)]

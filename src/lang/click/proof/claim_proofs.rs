@@ -1016,8 +1016,9 @@ pub(super) fn finish_ordered_proof_replay(
         function_claim_label(function_block.signature().name(), &claims[0])
     };
     let pre_state = replay.execution_start_state(&state);
-    let frontier_function_block = (!replay.frontier_loop_clauses.is_empty())
-        .then(|| function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses));
+    let frontier_function_block = (!replay.frontier_loop_clauses.is_empty()).then(|| {
+        function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses.to_vec())
+    });
     let frontier_function = frontier_function_block
         .as_ref()
         .map(|frontier_function_block| {
@@ -1036,7 +1037,7 @@ pub(super) fn finish_ordered_proof_replay(
     let frontier_function_environment = (!replay.frontier_loop_rules.is_empty()).then(|| {
         function_environment
             .clone()
-            .with_verified_loop_rules(replay.frontier_loop_rules.clone())
+            .with_verified_loop_rules(replay.frontier_loop_rules.to_vec())
     });
     let function = frontier_function.as_ref().unwrap_or(function);
     let function_environment = frontier_function_environment
@@ -3563,8 +3564,8 @@ pub(super) fn finish_ordered_proof_replay(
                             specification: specification.clone(),
                             theorem: theorem.clone(),
                             concrete_loop_execution: replay.concrete_loop_execution,
-                            frontier_loop_clauses: replay.frontier_loop_clauses.clone(),
-                            frontier_loop_rules: replay.frontier_loop_rules.clone(),
+                            frontier_loop_clauses: replay.frontier_loop_clauses.to_vec(),
+                            frontier_loop_rules: replay.frontier_loop_rules.to_vec(),
                             checked_execution: certified_execution.clone(),
                         });
                     }
