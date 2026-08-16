@@ -879,6 +879,7 @@ fn check_pure_script_with_proof(
     fn supported(certificate: &ProofCertificate) -> bool {
         certificate.steps().iter().all(|step| match step {
             SimpleProofStep::ApplyTheoremUsing { .. }
+            | SimpleProofStep::UnfoldPredicate(_)
             | SimpleProofStep::Assumption
             | SimpleProofStep::Normalize
             | SimpleProofStep::Intro
@@ -913,6 +914,34 @@ fn check_pure_script_with_proof(
         click_function_environment,
         theorem_environment,
     );
+
+    // A smart closure after explicit predicate selection searches directly on
+    // the successor Proof. The selected unfolds and final simple closer are
+    // retained as one checked path; no generated body certificate is replayed
+    // during ordinary verification.
+    if matches!(tactics.last(), Some(ProofTactic::Simp))
+        && !tactics[..tactics.len() - 1].is_empty()
+        && tactics[..tactics.len() - 1]
+            .iter()
+            .all(|tactic| matches!(tactic, ProofTactic::UnfoldPredicate(_)))
+    {
+        let mut selected = Some(root.clone());
+        for tactic in &tactics[..tactics.len() - 1] {
+            let ProofTactic::UnfoldPredicate(name) = tactic else {
+                unreachable!("the unfold-prefix path checked every tactic")
+            };
+            selected = selected.and_then(|proof| {
+                proof
+                    .apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))
+                    .ok()
+            });
+        }
+        if let Some(complete) = selected.and_then(|proof| proof.try_direct_logical_closure())
+            && complete.is_complete()
+        {
+            return Ok(Some(complete.certificate()));
+        }
+    }
 
     // A one-node smart logical branch searches each arm directly on its
     // branch-local Proof. Successful arms are joined with their retained
@@ -995,6 +1024,7 @@ fn check_pure_script_with_proof(
                     if !matches!(
                         step,
                         SimpleProofStep::ApplyTheoremUsing { .. }
+                            | SimpleProofStep::UnfoldPredicate(_)
                             | SimpleProofStep::Assumption
                             | SimpleProofStep::Normalize
                             | SimpleProofStep::Intro

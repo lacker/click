@@ -2905,6 +2905,18 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
                 simp();
             }
         "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("the unfold-then-simp have should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.contract" && name == "surface certificate replay"
+        )),
+        "the migrated unfold-then-simp path must retain its checked Proof: {events:#?}"
+    );
     let have_offset = click_source
         .find("have reflexive(x)")
         .expect("proof should contain the selected have");

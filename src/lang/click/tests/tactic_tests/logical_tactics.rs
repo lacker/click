@@ -1474,6 +1474,25 @@ fn pure_have_certificate_uses_checked_proof_scope() {
 }
 
 #[test]
+fn pure_unfold_then_simp_retains_the_checked_proof_path() {
+    let click_source = r#"
+        predicate reflexive(x: int32) {
+            x == x
+        }
+
+        theorem unfold_reflexive(x: int32) {
+            ensures reflexive(x) by {
+                unfold(reflexive);
+                simp();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect("pure unfold-then-simp should search on the unfolded Proof successor");
+}
+
+#[test]
 fn smart_pure_have_retains_the_checked_scope_body_directly() {
     let click_source = r#"
         theorem retain_zero_smart(x: int32) {

@@ -152,6 +152,11 @@ struct ExecutionProofContext<'a> {
 #[derive(Clone)]
 struct ProofState {
     facts: ProofFacts,
+    /// Predicate definitions activated by accepted proof-local unfold steps.
+    /// Inherited point/execution names remain in their shared context; this is
+    /// only the local delta, so creating a root never rebuilds proof history.
+    /// Forks share both the insertion order and exact-membership index.
+    unfolded_predicates: PersistentOrderedSet<String>,
     goal: Goal,
     complete: bool,
     added_facts: Arc<Vec<Proposition>>,
@@ -265,6 +270,7 @@ impl<'a> Proof<'a> {
             })),
             state: Arc::new(ProofState {
                 facts,
+                unfolded_predicates: PersistentOrderedSet::default(),
                 goal: Goal::Proposition(Arc::new(goal)),
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
@@ -392,6 +398,7 @@ impl<'a> Proof<'a> {
             })),
             state: Arc::new(ProofState {
                 facts,
+                unfolded_predicates: PersistentOrderedSet::default(),
                 goal,
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
@@ -443,6 +450,7 @@ impl<'a> Proof<'a> {
             })),
             state: Arc::new(ProofState {
                 facts: ProofFacts::from_ordered(&pure_facts),
+                unfolded_predicates: PersistentOrderedSet::default(),
                 goal: Goal::ExecutionFrontier,
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
@@ -473,6 +481,27 @@ impl<'a> Proof<'a> {
         self.state.complete
     }
 
+    fn active_unfolded_predicates(&self) -> Vec<String> {
+        let inherited = match self.context.as_ref() {
+            ProofContext::Pure(_) => &[][..],
+            ProofContext::Point(context) => context.unfolded_predicates,
+            ProofContext::Execution(_) => self
+                .state
+                .execution
+                .as_ref()
+                .map(|execution| execution.replay.unfolded_predicates.as_slice())
+                .unwrap_or(&[]),
+        };
+        let mut names = inherited.to_vec();
+        let mut seen = inherited.iter().cloned().collect::<BTreeSet<_>>();
+        for name in &self.state.unfolded_predicates {
+            if seen.insert(name.clone()) {
+                names.push(name.clone());
+            }
+        }
+        names
+    }
+
     /// Checks one explicit simple step and atomically returns the checked
     /// successor with that exact step retained as provenance.
     ///
@@ -495,7 +524,7 @@ impl<'a> Proof<'a> {
                 target,
                 premises,
             } => self.apply_transport_using(source, target, premises),
-            SimpleProofStep::UnfoldPredicate(name) => self.apply_execution_unfold(name),
+            SimpleProofStep::UnfoldPredicate(name) => self.apply_predicate_unfold(name),
             SimpleProofStep::Witness(witness) => self.apply_point_witness(witness),
             SimpleProofStep::InstantiateUsing {
                 quantified,
@@ -579,6 +608,7 @@ impl<'a> Proof<'a> {
         }
         Ok(ProofState {
             facts,
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: Goal::Proposition(Arc::new(goal)),
             complete: false,
             checked_facts: Arc::new(added_facts.clone()),
@@ -757,6 +787,7 @@ impl<'a> Proof<'a> {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 facts: self.state.facts.clone(),
+                unfolded_predicates: self.state.unfolded_predicates.clone(),
                 goal: Goal::Proposition(Arc::new(kernel.clone())),
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
@@ -922,6 +953,7 @@ impl<'a> Proof<'a> {
                     context: self.context.clone(),
                     state: Arc::new(ProofState {
                         facts: transition.pure_facts,
+                        unfolded_predicates: self.state.unfolded_predicates.clone(),
                         goal: Goal::ExecutionFrontier,
                         complete: false,
                         added_facts: Arc::new(transition.path_facts.clone()),
@@ -1104,6 +1136,7 @@ impl<'a> Proof<'a> {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 facts,
+                unfolded_predicates: self.state.unfolded_predicates.clone(),
                 goal: self.state.goal.clone(),
                 complete: false,
                 added_facts: Arc::new(vec![fact.clone()]),
@@ -1163,6 +1196,65 @@ impl<'a> Proof<'a> {
         }
     }
 
+    fn apply_predicate_unfold(&self, name: &String) -> Result<ProofState, ClickError> {
+        match self.context.as_ref() {
+            ProofContext::Pure(context) => self.apply_proposition_predicate_unfold(
+                name,
+                context.predicate_environment,
+                context.click_function_environment,
+                context.claim_label,
+                self.node.depth,
+            ),
+            ProofContext::Point(context) => self.apply_proposition_predicate_unfold(
+                name,
+                context.predicate_environment,
+                context.click_function_environment,
+                context.claim_label,
+                context.tactic_index,
+            ),
+            ProofContext::Execution(_) => self.apply_execution_unfold(name),
+        }
+    }
+
+    fn apply_proposition_predicate_unfold(
+        &self,
+        name: &String,
+        predicate_environment: &PredicateEnvironment,
+        click_function_environment: &ClickFunctionEnvironment,
+        claim_label: &str,
+        tactic_index: usize,
+    ) -> Result<ProofState, ClickError> {
+        let goal =
+            self.proposition_goal("`unfold` requires a proposition or execution-frontier proof")?;
+        let checked = check_unfold_predicate_in_facts(
+            &self.state.facts,
+            name,
+            predicate_environment,
+            click_function_environment,
+            claim_label,
+            tactic_index,
+        )?;
+        let goal = unfold_predicates_in_proposition(
+            predicate_environment,
+            click_function_environment,
+            std::slice::from_ref(name),
+            goal,
+            checked.facts.assumptions(),
+        )
+        .map_err(|message| self.step_error(message))?;
+        let mut unfolded_predicates = self.state.unfolded_predicates.clone();
+        unfolded_predicates.insert(name.clone());
+        Ok(ProofState {
+            facts: checked.facts,
+            unfolded_predicates,
+            goal: Goal::Proposition(Arc::new(goal)),
+            complete: false,
+            added_facts: Arc::new(checked.added_facts.clone()),
+            checked_facts: Arc::new(checked.added_facts),
+            execution: None,
+        })
+    }
+
     fn apply_execution_unfold(&self, name: &String) -> Result<ProofState, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`unfold` requires an execution-frontier proof"));
@@ -1183,6 +1275,10 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
         )?;
+        let mut unfolded_predicates = self.state.unfolded_predicates.clone();
+        for name in &checked.added_unfolded_predicates {
+            unfolded_predicates.insert(name.clone());
+        }
         execution.last_step_delta = ExecutionProofStepDelta {
             function_entry_prerequisites: checked.added_function_entry_prerequisites,
             function_entry_derivations: checked.added_function_entry_derivations,
@@ -1190,6 +1286,7 @@ impl<'a> Proof<'a> {
         };
         Ok(ProofState {
             facts: checked.facts,
+            unfolded_predicates,
             goal: self.state.goal.clone(),
             complete: false,
             added_facts: Arc::new(checked.added_facts.clone()),
@@ -1323,6 +1420,7 @@ impl<'a> Proof<'a> {
             result: None,
             program_point_states: &program_point_states,
         };
+        let unfolded_predicates = self.active_unfolded_predicates();
         let applied = apply_theorem_applications_to_available(
             context.theorem_environment,
             &[(self.node.depth, application.clone())],
@@ -1332,7 +1430,7 @@ impl<'a> Proof<'a> {
             &application_context,
             context.predicate_environment,
             context.click_function_environment,
-            &[],
+            &unfolded_predicates,
         )?;
 
         let mut facts = self.state.facts.clone();
@@ -1345,6 +1443,7 @@ impl<'a> Proof<'a> {
         }
         Ok(ProofState {
             facts,
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
             checked_facts: Arc::new(added_facts.clone()),
@@ -1402,6 +1501,7 @@ impl<'a> Proof<'a> {
                 )));
             }
         }
+        let unfolded_predicates = self.active_unfolded_predicates();
         let applied = apply_theorem_at_current_point(
             context.theorem_environment,
             application,
@@ -1415,7 +1515,7 @@ impl<'a> Proof<'a> {
             context.program_point_states,
             context.predicate_environment,
             context.click_function_environment,
-            context.unfolded_predicates,
+            &unfolded_predicates,
             Some(context.lowering_context.as_ref()),
         )?;
         let mut facts = self.state.facts.clone();
@@ -1429,6 +1529,7 @@ impl<'a> Proof<'a> {
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
             facts,
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete,
             checked_facts: Arc::new(added_facts.clone()),
@@ -1506,6 +1607,7 @@ impl<'a> Proof<'a> {
         }
         Ok(ProofState {
             facts: checked.facts,
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
             added_facts: Arc::new(checked.added_facts.clone()),
@@ -1521,10 +1623,11 @@ impl<'a> Proof<'a> {
         let goal = self
             .proposition_goal("`witness` requires a proposition goal")?
             .clone();
+        let unfolded_predicates = self.active_unfolded_predicates();
         let goal = unfold_predicates_in_proposition(
             context.predicate_environment,
             context.click_function_environment,
-            context.unfolded_predicates,
+            &unfolded_predicates,
             &goal,
             self.state.facts.assumptions(),
         )
@@ -1560,6 +1663,7 @@ impl<'a> Proof<'a> {
         )?;
         Ok(ProofState {
             facts: self.state.facts.clone(),
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: Goal::Proposition(Arc::new(goal)),
             complete: false,
             added_facts: Arc::new(Vec::new()),
@@ -1653,6 +1757,7 @@ impl<'a> Proof<'a> {
         let added_facts = added.then_some(conclusion).into_iter().collect::<Vec<_>>();
         Ok(ProofState {
             facts,
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete,
             added_facts: Arc::new(added_facts.clone()),
@@ -1773,6 +1878,7 @@ impl<'a> Proof<'a> {
             .map_err(|message| self.step_error(message))?;
         Ok(ProofState {
             facts: self.state.facts.clone(),
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: Goal::Proposition(Arc::new(rewritten)),
             complete: false,
             added_facts: Arc::new(Vec::new()),
@@ -1805,6 +1911,7 @@ impl<'a> Proof<'a> {
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
             facts,
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete,
             added_facts: Arc::new(added_facts.clone()),
@@ -1872,6 +1979,7 @@ impl<'a> Proof<'a> {
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
             facts,
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete,
             added_facts: Arc::new(added_facts),
@@ -1930,6 +2038,7 @@ impl<'a> Proof<'a> {
         facts = facts.with_fact(checked.target);
         Ok(ProofState {
             facts,
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
             added_facts: Arc::new(added_facts.clone()),
@@ -1967,6 +2076,7 @@ impl<'a> Proof<'a> {
         )?;
         Ok(ProofState {
             facts: checked.facts,
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
             added_facts: Arc::new(checked.added_facts.clone()),
@@ -1997,6 +2107,7 @@ impl<'a> Proof<'a> {
         execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             facts: self.state.facts.clone(),
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
             added_facts: Arc::new(Vec::new()),
@@ -2027,6 +2138,7 @@ impl<'a> Proof<'a> {
         execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             facts: self.state.facts.clone(),
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
             added_facts: Arc::new(Vec::new()),
@@ -2104,6 +2216,7 @@ impl<'a> Proof<'a> {
     fn closed_state(&self) -> ProofState {
         ProofState {
             facts: self.state.facts.clone(),
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: true,
             added_facts: Arc::new(Vec::new()),
@@ -2517,10 +2630,19 @@ impl<'a> ExecutionProofBranches<'a> {
             then_proof: Box::new(then_proof),
             else_proof: Box::new(else_proof),
         };
+        let mut unfolded_predicates = self.root.state.unfolded_predicates.clone();
+        for name in then_arm
+            .introduced_unfolded_predicates
+            .iter()
+            .chain(&else_arm.introduced_unfolded_predicates)
+        {
+            unfolded_predicates.insert(name.clone());
+        }
         Ok(Proof {
             context: self.root.context.clone(),
             state: Arc::new(ProofState {
                 facts,
+                unfolded_predicates,
                 goal: Goal::ExecutionFrontier,
                 complete: false,
                 added_facts: Arc::new(common_added_facts.clone()),
@@ -2578,6 +2700,7 @@ impl<'a> ProofScope<'a> {
             context: self.root.context.clone(),
             state: Arc::new(ProofState {
                 facts,
+                unfolded_predicates: self.root.state.unfolded_predicates.clone(),
                 goal: self.root.state.goal.clone(),
                 complete: false,
                 added_facts: Arc::new(vec![kernel.clone()]),
@@ -3538,6 +3661,238 @@ mod tests {
                 vec![&predicate]
             );
         }
+    }
+
+    #[test]
+    fn proposition_unfold_uses_indexed_facts_and_persistent_local_state() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                predicate selected(x: int32) { x == x }
+                int32 identity(int32 x) {
+                    ensures returns_x: result == x by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test predicate should parse");
+        let predicate_environment = PredicateEnvironment::new(click_file.predicate_definitions());
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let predicate_surface = ClickProposition::PredicateCall {
+            name: "selected".to_string(),
+            arguments: vec![ContractExpression::CFragment(CExpression::Value(int32(7)))],
+        };
+        let goal_surface = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(7))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(7))),
+        };
+        let base_context = PureTheoremContext {
+            memory: CMemory::new(),
+            values: BTreeMap::new(),
+            array_refs: BTreeMap::new(),
+            requires: Vec::new(),
+        };
+        let lower = |surface: &ClickProposition| {
+            lower_pure_theorem_proposition(
+                "persistent proposition unfold",
+                surface,
+                &base_context.values,
+                &base_context.array_refs,
+                &base_context.memory,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("test proposition should lower")
+        };
+        let predicate = lower(&predicate_surface);
+        let goal = lower(&goal_surface);
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut requires = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            requires.push(predicate.clone());
+            let theorem_context = PureTheoremContext {
+                requires: requires.clone(),
+                ..base_context.clone()
+            };
+            let root = Proof::for_pure_goal(
+                "persistent proposition unfold",
+                &requires,
+                goal.clone(),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_root = root.clone();
+            assert_eq!(
+                root.state
+                    .facts
+                    .mentioning_predicate(&"selected".to_string())
+                    .collect::<Vec<_>>(),
+                vec![&predicate],
+                "unrelated facts must not enter the selected predicate bucket"
+            );
+            assert!(
+                root.apply_step(SimpleProofStep::UnfoldPredicate("missing".to_string()))
+                    .is_err(),
+                "an unknown predicate must reject transactionally"
+            );
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+
+            let unfold = SimpleProofStep::UnfoldPredicate("selected".to_string());
+            let before = fact_node_allocations();
+            let unfolded = root
+                .apply_step(unfold.clone())
+                .expect("the selected predicate fact and goal should unfold");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 40 * logarithmic_height + 160;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} proposition unfold allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(unfolded.state.facts.contains(&goal));
+            assert!(
+                unfolded
+                    .state
+                    .unfolded_predicates
+                    .contains(&"selected".to_string())
+            );
+            let complete = unfolded
+                .apply_step(SimpleProofStep::Assumption)
+                .expect("the unfolded predicate fact should close the unfolded goal");
+            assert!(complete.is_complete());
+            assert_eq!(
+                complete.certificate().steps(),
+                &[unfold.clone(), SimpleProofStep::Assumption]
+            );
+
+            let certificate =
+                ProofCertificate::from_steps(vec![unfold.clone(), SimpleProofStep::Assumption]);
+            let checked = root
+                .check_certificate(&certificate)
+                .expect("an explicit proposition unfold certificate should check through Proof");
+            assert!(checked.is_complete());
+            assert_eq!(checked.certificate(), certificate);
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn point_proposition_unfold_checks_the_same_retained_step() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                predicate selected(x: int32) { x == x }
+                int32 identity(int32 x) {
+                    ensures returns_x: result == x by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test predicate should parse");
+        let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+            .expect("test function should parse");
+        let predicate_environment = PredicateEnvironment::new(click_file.predicate_definitions());
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let state = CState::new();
+        let arguments = vec![CExpression::Value(int32(7))];
+        let program_point_states = ProgramPointStates::new();
+        let predicate_surface = ClickProposition::PredicateCall {
+            name: "selected".to_string(),
+            arguments: vec![ContractExpression::CFragment(CExpression::Value(int32(7)))],
+        };
+        let goal_surface = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(7))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(7))),
+        };
+        let lower = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("point proposition should lower")
+        };
+        let predicate = lower(&predicate_surface);
+        let goal = lower(&goal_surface);
+        let surface_propositions = SurfacePropositionMap::default();
+        let root = Proof::for_point_goal(
+            "point proposition unfold",
+            0,
+            std::slice::from_ref(&predicate),
+            goal,
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            &program_point_states,
+            &surface_propositions,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+            &[],
+            &[],
+        );
+        let certificate = ProofCertificate::from_steps(vec![
+            SimpleProofStep::UnfoldPredicate("selected".to_string()),
+            SimpleProofStep::Assumption,
+        ]);
+        let checked = root
+            .check_certificate(&certificate)
+            .expect("point unfold should use the shared predicate transition");
+        assert!(checked.is_complete());
+        assert_eq!(checked.certificate(), certificate);
+        assert!(root.certificate().steps().is_empty());
+    }
+
+    #[test]
+    fn point_proof_root_borrows_inherited_unfold_history_without_reindexing_it() {
+        let inherited = (0..4096)
+            .map(|index| format!("predicate_{index}"))
+            .collect::<Vec<_>>();
+        let state = CState::new();
+        let program_point_states = ProgramPointStates::new();
+        let surface_propositions = SurfacePropositionMap::default();
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let goal = indexed_fact(7);
+        let before = fact_node_allocations();
+        let root = Proof::for_point_goal(
+            "borrowed unfold history",
+            0,
+            &[],
+            goal,
+            &[],
+            &[],
+            &state,
+            &state,
+            &program_point_states,
+            &surface_propositions,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+            &inherited,
+            &[],
+        );
+        let allocations = fact_node_allocations() - before;
+        assert_eq!(
+            allocations, 0,
+            "creating a point Proof must not rebuild inherited unfold history"
+        );
+        assert_eq!(root.state.unfolded_predicates.len(), 0);
+        assert_eq!(root.active_unfolded_predicates(), inherited);
     }
 
     #[test]

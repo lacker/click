@@ -745,6 +745,30 @@ of unrelated facts, the ancestor remains unchanged, the retained certificate
 is exactly `UnfoldPredicate`, unchanged bulk storage shares identity, and the
 local persistent-node work remains logarithmically bounded.
 
+Predicate unfolding now uses that same semantic core for proposition goals,
+not only execution frontiers. `ProofState` owns a persistent insertion-ordered
+delta of proof-local unfolded predicate names, while inherited point and
+execution names remain borrowed from their already-shared contexts. Forks
+therefore share the definition environment without rebuilding its history,
+and one accepted `UnfoldPredicate` updates only the local delta and the facts
+in the selected predicate bucket.
+Pure and point goals unfold through `Proof::apply_step`, retain the exact
+surface step, and can close from the resulting indexed fact without the
+legacy mutable fact vector. The existing execution transition delegates its
+fact work to this shared checker and keeps its function-entry artifacts in the
+execution wrapper. A 16-through-4096 regression checks singleton candidate
+selection, bounded persistent allocation, transactional unknown-name failure,
+explicit-certificate checking, and ancestor isolation; a focused point-goal
+regression exercises the same retained transition.
+A 4096-name regression separately proves that constructing a point `Proof`
+allocates no persistent nodes for inherited unfold history.
+Point and pure scripts whose smart search is an explicit predicate-unfold
+prefix followed by `simp` now apply those unfolds to the same `Proof` and run
+the direct logical closer on its successor. The resulting certificate is the
+retained path (`UnfoldPredicate` plus the selected simple closer); ordinary
+verification does not run the surface-certificate replay gateway. The point
+expansion regression independently reparses and checks that retained output.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

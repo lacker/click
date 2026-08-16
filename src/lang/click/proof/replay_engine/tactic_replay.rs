@@ -492,6 +492,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     enum Plan<'a> {
         DirectSmart,
         BareApply(&'a TheoremApplication),
+        UnfoldThenDirect(&'a [ProofTactic]),
         SmartIf(&'a ProofIf),
         SmartCases(&'a ProofCases),
         Explicit(ProofCertificate),
@@ -504,6 +505,13 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
         SourceProof::Script(tactics) => {
             if let [ProofTactic::ApplyTheorem(application)] = tactics.as_slice() {
                 Plan::BareApply(application)
+            } else if matches!(tactics.last(), Some(ProofTactic::Simp))
+                && !tactics[..tactics.len() - 1].is_empty()
+                && tactics[..tactics.len() - 1]
+                    .iter()
+                    .all(|tactic| matches!(tactic, ProofTactic::UnfoldPredicate(_)))
+            {
+                Plan::UnfoldThenDirect(&tactics[..tactics.len() - 1])
             } else if let [ProofTactic::If(proof_if)] = tactics.as_slice()
                 && matches!(proof_if.then_tactics.as_slice(), [ProofTactic::Simp])
                 && matches!(proof_if.else_tactics.as_slice(), [ProofTactic::Simp])
@@ -582,6 +590,19 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
         }
         Plan::DirectSmart => {
             let Some(closed) = proof.try_direct_logical_closure() else {
+                return Ok(None);
+            };
+            (closed, true)
+        }
+        Plan::UnfoldThenDirect(unfolds) => {
+            let mut selected = proof;
+            for tactic in unfolds {
+                let ProofTactic::UnfoldPredicate(name) = tactic else {
+                    unreachable!("the unfold-prefix plan checked every tactic")
+                };
+                selected = selected.apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
+            }
+            let Some(closed) = selected.try_direct_logical_closure() else {
                 return Ok(None);
             };
             (closed, true)
