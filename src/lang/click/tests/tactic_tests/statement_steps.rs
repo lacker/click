@@ -305,8 +305,18 @@ fn execute_step_records_a_point_checked_surface_expansion() {
             }
         "#;
 
-    let verified = verify_c0_sources(click_source, &[("increment.c", c_source)])
-        .expect("the smart execution step should verify");
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("increment.c", c_source)])
+    });
+    let verified = verified.expect("the smart execution step should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "increment.contract" && name == "surface certificate replay"
+        )),
+        "a linear smart step must retain its checked Proof instead of ordinarily replaying it: {events:#?}"
+    );
     let expanded = verified[0]
         .expanded_proof_tactics()
         .expect("the linear smart step should have a surface expansion");

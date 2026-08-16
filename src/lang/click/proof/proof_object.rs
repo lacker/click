@@ -20,6 +20,7 @@ pub(super) struct Proof<'a> {
 enum ProofContext<'a> {
     Pure(PureProofContext<'a>),
     Point(PointProofContext<'a>),
+    Execution(ExecutionProofContext<'a>),
 }
 
 struct PureProofContext<'a> {
@@ -48,12 +49,25 @@ struct PointProofContext<'a> {
     lowering_context: Arc<Vec<Proposition>>,
 }
 
+struct ExecutionProofContext<'a> {
+    claim_label: &'a str,
+    tactic_index: usize,
+    function_block: &'a FunctionBlock,
+    function: &'a CFunction,
+    parsed_function: &'a syntax::C0Function,
+    arguments: &'a [CExpression],
+    function_environment: &'a CExecutionEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+}
+
 struct ProofState {
     facts: PersistentFactIndex,
     goal: Goal,
     complete: bool,
     added_facts: Arc<Vec<Proposition>>,
     checked_facts: Arc<Vec<Proposition>>,
+    execution: Option<ProofReplayContext>,
 }
 
 /// One unresolved judgment owned by a `Proof`.
@@ -117,6 +131,7 @@ impl<'a> Proof<'a> {
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
+                execution: None,
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -247,6 +262,52 @@ impl<'a> Proof<'a> {
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
+                execution: None,
+            }),
+            node: Arc::new(ProofNode {
+                parent: None,
+                step: None,
+                depth: 0,
+            }),
+        }
+    }
+
+    /// Creates a uniquely owned execution-frontier proof without cloning the
+    /// mutable replay history. The accepted linear statement step consumes
+    /// this root and returns its owned successor; cheap forkable execution
+    /// state will arrive with the branch representation.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn for_execution_frontier(
+        claim_label: &'a str,
+        tactic_index: usize,
+        execution: ProofReplayContext,
+        function_block: &'a FunctionBlock,
+        function: &'a CFunction,
+        parsed_function: &'a syntax::C0Function,
+        arguments: &'a [CExpression],
+        function_environment: &'a CExecutionEnvironment,
+        predicate_environment: &'a PredicateEnvironment,
+        click_function_environment: &'a ClickFunctionEnvironment,
+    ) -> Self {
+        Self {
+            context: Arc::new(ProofContext::Execution(ExecutionProofContext {
+                claim_label,
+                tactic_index,
+                function_block,
+                function,
+                parsed_function,
+                arguments,
+                function_environment,
+                predicate_environment,
+                click_function_environment,
+            })),
+            state: Arc::new(ProofState {
+                facts: PersistentFactIndex::default(),
+                goal: Goal::ExecutionFrontier,
+                complete: false,
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+                execution: Some(execution),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -301,6 +362,7 @@ impl<'a> Proof<'a> {
                     complete: true,
                     added_facts: Arc::new(Vec::new()),
                     checked_facts: Arc::new(Vec::new()),
+                    execution: None,
                 }
             }
             SimpleProofStep::Normalize => {
@@ -317,6 +379,7 @@ impl<'a> Proof<'a> {
                     complete: true,
                     added_facts: Arc::new(Vec::new()),
                     checked_facts: Arc::new(Vec::new()),
+                    execution: None,
                 }
             }
             SimpleProofStep::Intro => {
@@ -349,6 +412,7 @@ impl<'a> Proof<'a> {
                     complete: false,
                     checked_facts: Arc::new(added_facts.clone()),
                     added_facts: Arc::new(added_facts),
+                    execution: None,
                 }
             }
             SimpleProofStep::Split => {
@@ -439,6 +503,98 @@ impl<'a> Proof<'a> {
         ProofCertificate::from_steps(steps)
     }
 
+    /// Applies one selected execution step by consuming the uniquely owned
+    /// frontier state. This is deliberately separate from forkable local
+    /// proposition steps until execution replay state itself is persistent.
+    pub(super) fn apply_owned_execution_step(
+        self,
+        step: SimpleProofStep,
+    ) -> Result<Self, ClickError> {
+        let Proof {
+            context: proof_context,
+            state: proof_state,
+            node,
+        } = self;
+        let ProofContext::Execution(context) = proof_context.as_ref() else {
+            return Err(ClickError::new(
+                "`step using` requires an execution-frontier proof",
+            ));
+        };
+        let step_error = |message: &str| {
+            ClickError::new(format!(
+                "`{}` proof step {}: {message}",
+                context.claim_label, node.depth
+            ))
+        };
+        if proof_state.complete {
+            return Err(step_error(
+                "a tactic follows a completed execution frontier",
+            ));
+        }
+        let SimpleProofStep::StepUsing(premises) = &step else {
+            return Err(step_error(
+                "owned execution proof currently accepts only `step using`",
+            ));
+        };
+        let mut state = Arc::try_unwrap(proof_state).map_err(|_| {
+            step_error(
+                "execution-frontier state was forked before its persistent representation exists",
+            )
+        })?;
+        let mut execution = state
+            .execution
+            .take()
+            .ok_or_else(|| step_error("execution-frontier proof lost its owned semantic state"))?;
+        check_step_using(
+            &mut execution.replay,
+            &mut execution.state,
+            &mut execution.pure_facts,
+            premises,
+            context.function_block,
+            context.function,
+            context.parsed_function,
+            context.arguments,
+            context.function_environment,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.claim_label,
+            context.tactic_index,
+        )?;
+        state.execution = Some(execution);
+        state.added_facts = Arc::new(Vec::new());
+        state.checked_facts = Arc::new(Vec::new());
+        Ok(Self {
+            context: proof_context,
+            state: Arc::new(state),
+            node: Arc::new(ProofNode {
+                parent: Some(node.clone()),
+                step: Some(Arc::new(step)),
+                depth: node.depth + 1,
+            }),
+        })
+    }
+
+    pub(super) fn into_execution_context(self) -> Result<ProofReplayContext, ClickError> {
+        if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
+            return Err(self.step_error("proof does not own an execution frontier"));
+        }
+        let error = format!(
+            "`{}` proof step {}: execution-frontier successor is still shared",
+            self.context.claim_label(),
+            self.node.depth
+        );
+        let missing = format!(
+            "`{}` proof step {}: execution-frontier successor lost its semantic state",
+            self.context.claim_label(),
+            self.node.depth
+        );
+        let mut state = Arc::try_unwrap(self.state).map_err(|_| ClickError::new(error))?;
+        state
+            .execution
+            .take()
+            .ok_or_else(|| ClickError::new(missing))
+    }
+
     /// Semantic facts introduced by the most recently accepted step.
     /// Enclosing proof infrastructure can incorporate this output-sensitive
     /// delta without traversing or cloning the proof's complete fact set.
@@ -486,6 +642,9 @@ impl<'a> Proof<'a> {
             }
             ProofContext::Point(context) => {
                 self.apply_point_theorem_using(context, application, surface_premises)
+            }
+            ProofContext::Execution(_) => {
+                Err(self.step_error("`apply using` requires a proposition or point proof"))
             }
         }
     }
@@ -561,6 +720,7 @@ impl<'a> Proof<'a> {
             complete: false,
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
+            execution: None,
         })
     }
 
@@ -644,6 +804,7 @@ impl<'a> Proof<'a> {
             complete,
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
+            execution: None,
         })
     }
 
@@ -693,6 +854,7 @@ impl<'a> Proof<'a> {
             complete,
             added_facts: Arc::new(added_facts),
             checked_facts: Arc::new(checked_facts),
+            execution: None,
         })
     }
 
@@ -734,6 +896,9 @@ impl<'a> Proof<'a> {
                     })?
                 }
             }
+            ProofContext::Execution(_) => {
+                return Err(self.step_error("`contradiction` requires a proposition goal"));
+            }
         };
         let negated = Proposition::Not(Box::new(fact.clone()));
         let opposite_condition = match &fact {
@@ -766,6 +931,7 @@ impl<'a> Proof<'a> {
             complete: true,
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
+            execution: None,
         }
     }
 
@@ -789,6 +955,7 @@ impl ProofContext<'_> {
         match self {
             Self::Pure(context) => context.claim_label,
             Self::Point(context) => context.claim_label,
+            Self::Execution(context) => context.claim_label,
         }
     }
 }

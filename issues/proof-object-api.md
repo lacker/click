@@ -346,6 +346,13 @@ transport, statement execution, and the resulting frontier/fact update. This
 is the shared audited transition the execution-goal `Proof` slice will call;
 explicit source replay already delegates to it.
 
+Linear smart `step()` plans that select exactly one `StepUsing` now move the
+outer execution context into an execution-frontier `Proof`, consume that
+uniquely owned proof while applying the shared checker, move the checked
+successor back out, and append the retained step. They no longer use
+`complete_smart_tactic` or ordinary per-tactic replay. Multi-step and
+branching plans remain on the legacy path pending structured proof goals.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
