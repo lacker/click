@@ -1146,7 +1146,9 @@ fn replay_linear_tactics_without_frontier_loops(
                     && construction.steps.iter().all(|step| {
                         matches!(
                             step,
-                            SimpleProofStep::TransportUsing { .. } | SimpleProofStep::StepUsing(_)
+                            SimpleProofStep::UnfoldPredicate(_)
+                                | SimpleProofStep::TransportUsing { .. }
+                                | SimpleProofStep::StepUsing(_)
                         )
                     })
                 {
@@ -1167,10 +1169,11 @@ fn replay_linear_tactics_without_frontier_loops(
                         predicate_environment,
                         click_function_environment,
                     );
+                    let checkpoint = proof.checkpoint();
                     for step in &construction.steps {
                         proof = proof.apply_owned_execution_step(step.clone())?;
                     }
-                    let certificate = proof.certificate();
+                    let certificate = proof.certificate_since(&checkpoint)?;
                     let result = proof.into_execution_context()?;
                     state = result.state;
                     requirement_pure_facts = result.pure_facts;
@@ -1285,7 +1288,9 @@ fn replay_linear_tactics_without_frontier_loops(
                     && construction.steps.iter().all(|step| {
                         matches!(
                             step,
-                            SimpleProofStep::TransportUsing { .. } | SimpleProofStep::StepUsing(_)
+                            SimpleProofStep::UnfoldPredicate(_)
+                                | SimpleProofStep::TransportUsing { .. }
+                                | SimpleProofStep::StepUsing(_)
                         )
                     })
                     && construction
@@ -1310,10 +1315,11 @@ fn replay_linear_tactics_without_frontier_loops(
                         predicate_environment,
                         click_function_environment,
                     );
+                    let checkpoint = proof.checkpoint();
                     for step in &construction.steps {
                         proof = proof.apply_owned_execution_step(step.clone())?;
                     }
-                    let certificate = proof.certificate();
+                    let certificate = proof.certificate_since(&checkpoint)?;
                     let result = proof.into_execution_context()?;
                     state = result.state;
                     requirement_pure_facts = result.pure_facts;
@@ -1408,7 +1414,9 @@ fn replay_linear_tactics_without_frontier_loops(
                     && construction.steps.iter().all(|step| {
                         matches!(
                             step,
-                            SimpleProofStep::TransportUsing { .. } | SimpleProofStep::StepUsing(_)
+                            SimpleProofStep::UnfoldPredicate(_)
+                                | SimpleProofStep::TransportUsing { .. }
+                                | SimpleProofStep::StepUsing(_)
                         )
                     })
                     && construction
@@ -1433,10 +1441,11 @@ fn replay_linear_tactics_without_frontier_loops(
                         predicate_environment,
                         click_function_environment,
                     );
+                    let checkpoint = proof.checkpoint();
                     for step in &construction.steps {
                         proof = proof.apply_owned_execution_step(step.clone())?;
                     }
-                    let certificate = proof.certificate();
+                    let certificate = proof.certificate_since(&checkpoint)?;
                     let result = proof.into_execution_context()?;
                     state = result.state;
                     requirement_pure_facts = result.pure_facts;
@@ -1957,18 +1966,30 @@ fn replay_linear_tactics_without_frontier_loops(
                     );
                     continue;
                 }
-                check_unfold_predicate(
-                    &mut replay,
-                    &state,
-                    &mut requirement_pure_facts,
-                    name,
-                    function,
-                    arguments,
-                    predicate_environment,
-                    click_function_environment,
+                let proof = Proof::for_execution_frontier(
                     claim_label,
                     tactic_index,
-                )?;
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    function,
+                    parsed_function,
+                    arguments,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                );
+                let proof = proof
+                    .apply_owned_execution_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
+                let result = proof.into_execution_context()?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::ApplyTheorem(application) => {

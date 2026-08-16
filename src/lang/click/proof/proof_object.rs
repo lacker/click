@@ -17,6 +17,17 @@ pub(super) struct Proof<'a> {
     node: Arc<ProofNode>,
 }
 
+/// An opaque position in one `Proof` derivation.
+///
+/// This retains no semantic state, so an owned execution proof can remember a
+/// branch root without making its frontier state shared. Structured joins use
+/// it to extract only the already-checked descendant steps for an arm.
+#[derive(Clone)]
+pub(super) struct ProofCheckpoint<'a> {
+    context: Arc<ProofContext<'a>>,
+    node: Arc<ProofNode>,
+}
+
 enum ProofContext<'a> {
     Pure(PureProofContext<'a>),
     Point(PointProofContext<'a>),
@@ -491,16 +502,58 @@ impl<'a> Proof<'a> {
     }
 
     pub(super) fn certificate(&self) -> ProofCertificate {
-        let mut steps = Vec::with_capacity(self.node.depth);
-        let mut node = Some(self.node.as_ref());
+        self.certificate_after_node(None)
+            .expect("a complete proof derivation reaches its own root")
+    }
+
+    /// Retains an output-sensitive certificate suffix from an exact ancestor.
+    ///
+    /// Pointer identity, rather than structural equality, proves ancestry.
+    /// A similarly shaped proof from another root or checking context cannot
+    /// be spliced into this derivation.
+    pub(super) fn certificate_since(
+        &self,
+        checkpoint: &ProofCheckpoint<'a>,
+    ) -> Result<ProofCertificate, ClickError> {
+        if !Arc::ptr_eq(&self.context, &checkpoint.context) {
+            return Err(
+                self.step_error("certificate checkpoint belongs to a different proof context")
+            );
+        }
+        self.certificate_after_node(Some(&checkpoint.node))
+    }
+
+    /// Captures the current provenance position without sharing semantic
+    /// execution state.
+    pub(super) fn checkpoint(&self) -> ProofCheckpoint<'a> {
+        ProofCheckpoint {
+            context: self.context.clone(),
+            node: self.node.clone(),
+        }
+    }
+
+    fn certificate_after_node(
+        &self,
+        ancestor: Option<&Arc<ProofNode>>,
+    ) -> Result<ProofCertificate, ClickError> {
+        let expected_depth = ancestor.map_or(0, |node| node.depth);
+        let mut steps = Vec::with_capacity(self.node.depth.saturating_sub(expected_depth));
+        let mut node = Some(self.node.clone());
         while let Some(current) = node {
+            if ancestor.is_some_and(|ancestor| Arc::ptr_eq(ancestor, &current)) {
+                steps.reverse();
+                return Ok(ProofCertificate::from_steps(steps));
+            }
             if let Some(step) = &current.step {
                 steps.push(step.as_ref().clone());
             }
-            node = current.parent.as_deref();
+            node = current.parent.clone();
+        }
+        if ancestor.is_some() {
+            return Err(self.step_error("certificate checkpoint is not an ancestor of this proof"));
         }
         steps.reverse();
-        ProofCertificate::from_steps(steps)
+        Ok(ProofCertificate::from_steps(steps))
     }
 
     /// Applies one selected execution step by consuming the uniquely owned
@@ -533,10 +586,12 @@ impl<'a> Proof<'a> {
         }
         if !matches!(
             step,
-            SimpleProofStep::StepUsing(_) | SimpleProofStep::TransportUsing { .. }
+            SimpleProofStep::StepUsing(_)
+                | SimpleProofStep::TransportUsing { .. }
+                | SimpleProofStep::UnfoldPredicate(_)
         ) {
             return Err(step_error(
-                "owned execution proof currently accepts only `transport using` and `step using`",
+                "owned execution proof currently accepts only `unfold`, `transport using`, and `step using`",
             ));
         }
         let mut state = Arc::try_unwrap(proof_state).map_err(|_| {
@@ -602,6 +657,18 @@ impl<'a> Proof<'a> {
                     execution.pure_facts.push(checked.target);
                 }
             }
+            SimpleProofStep::UnfoldPredicate(name) => check_unfold_predicate(
+                &mut execution.replay,
+                &execution.state,
+                &mut execution.pure_facts,
+                name,
+                context.function,
+                context.arguments,
+                context.predicate_environment,
+                context.click_function_environment,
+                context.claim_label,
+                context.tactic_index,
+            )?,
             _ => unreachable!("checked above"),
         }
         state.execution = Some(execution);
@@ -1203,6 +1270,71 @@ mod tests {
         );
         assert!(!root.is_complete());
         assert!(root.certificate().steps().is_empty());
+    }
+
+    #[test]
+    fn certificate_suffix_requires_an_exact_shared_ancestor() {
+        let fact = indexed_fact(7);
+        let goal = Proposition::Implies(Box::new(fact.clone()), Box::new(fact));
+        let theorem_context = PureTheoremContext {
+            memory: CMemory::new(),
+            values: BTreeMap::new(),
+            array_refs: BTreeMap::new(),
+            requires: Vec::new(),
+        };
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let root = Proof::for_pure_goal(
+            "suffix",
+            &[],
+            goal.clone(),
+            &theorem_context,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        );
+        let root_checkpoint = root.checkpoint();
+        let introduced = root
+            .apply_step(SimpleProofStep::Intro)
+            .expect("intro should create the exact antecedent fact");
+        let introduced_checkpoint = introduced.checkpoint();
+        let complete = introduced
+            .apply_step(SimpleProofStep::Assumption)
+            .expect("the introduced fact should close the consequent");
+
+        assert_eq!(
+            complete
+                .certificate_since(&root_checkpoint)
+                .expect("root is an ancestor")
+                .steps(),
+            &[SimpleProofStep::Intro, SimpleProofStep::Assumption]
+        );
+        assert_eq!(
+            complete
+                .certificate_since(&introduced_checkpoint)
+                .expect("introduced proof is an ancestor")
+                .steps(),
+            &[SimpleProofStep::Assumption]
+        );
+        assert!(
+            root.certificate_since(&introduced_checkpoint).is_err(),
+            "a descendant cannot be used as an ancestor checkpoint"
+        );
+
+        let unrelated = Proof::for_pure_goal(
+            "suffix",
+            &[],
+            goal,
+            &theorem_context,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        );
+        assert!(
+            complete.certificate_since(&unrelated.checkpoint()).is_err(),
+            "a structurally identical but separately rooted proof cannot be spliced"
+        );
     }
 
     #[test]

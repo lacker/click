@@ -370,9 +370,17 @@ transports and statement steps; structured steps remain the fallback boundary.
 The existing execution-point `UnfoldPredicate` judgment is now one named
 `check_unfold_predicate` operation rather than an inline dispatcher branch.
 It preserves the current fact rewriting, surface lowering, and contract-entry
-derivation behavior. Explicit source replay already uses this shared checker;
-admitting the same operation through execution-frontier `Proof` is the next
-small transition migration.
+derivation behavior. Execution-frontier `Proof` now admits that exact shared
+operation, and explicit source replay reaches it through `Proof` as well.
+Linear smart execution constructions containing predicate unfolds can retain
+them alongside transports and statement steps without an ordinary replay.
+
+`ProofCheckpoint` is an opaque provenance position that retains no semantic
+execution state. `certificate_since` accepts only pointer-identical ancestors
+from the same checking context and extracts the already-checked suffix in work
+proportional to its output. Linear execution uses this path now; branch joins
+can use the same primitive to embed each arm without inferring it from final
+semantic state or making an owned execution frontier shared.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
