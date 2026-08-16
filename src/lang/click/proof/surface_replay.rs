@@ -545,12 +545,13 @@ pub(super) fn construct_simple_step_for_planned_operation(
 ) {
     let mut builder = std::mem::take(&mut replay.proof_certificate_builder);
     let available = std::mem::take(&mut builder.certificate_facts);
+    let available_facts = available.to_vec();
     {
         let mut context = ProofCertificateConstructionContext::new(replay, &mut builder);
         append_simple_proof_step_for_operation(
             &mut context,
             state,
-            &available,
+            &available_facts,
             function_block,
             parameters,
             arguments,

@@ -317,10 +317,10 @@ pub(super) struct ProofCertificateBuilder {
 /// Certificate emission and diagnostics retain insertion order, while a
 /// named premise never scans unrelated earlier facts. All mutation stays
 /// behind this type so the two views cannot diverge.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Default)]
 pub(super) struct ProofFactStore {
-    ordered: Vec<Proposition>,
-    exact: BTreeSet<Proposition>,
+    ordered: PersistentSequence<Proposition>,
+    exact: PersistentSet<Proposition>,
 }
 
 impl ProofFactStore {
@@ -333,28 +333,39 @@ impl ProofFactStore {
     }
 
     pub(super) fn insert(&mut self, fact: Proposition) -> bool {
-        if !self.exact.insert(fact.clone()) {
+        if self.exact.contains(&fact) {
             return false;
         }
+        self.exact = self.exact.with_value(fact.clone());
         self.ordered.push(fact);
         true
     }
 
     pub(super) fn retain(&mut self, mut keep: impl FnMut(&Proposition) -> bool) {
-        self.ordered.retain(|fact| keep(fact));
-        self.exact = self.ordered.iter().cloned().collect();
+        let mut retained = Self::default();
+        for fact in self.ordered.iter() {
+            if keep(fact) {
+                retained.insert(fact.clone());
+            }
+        }
+        *self = retained;
     }
 
-    pub(super) fn as_slice(&self) -> &[Proposition] {
-        &self.ordered
+    pub(super) fn contains(&self, fact: &Proposition) -> bool {
+        self.exact.contains(fact)
     }
-}
 
-impl std::ops::Deref for ProofFactStore {
-    type Target = [Proposition];
+    pub(super) fn iter(&self) -> PersistentSequenceIter<'_, Proposition> {
+        self.ordered.iter()
+    }
 
-    fn deref(&self) -> &Self::Target {
-        self.as_slice()
+    pub(super) fn to_vec(&self) -> Vec<Proposition> {
+        self.iter().cloned().collect()
+    }
+
+    #[cfg(test)]
+    fn shares_persistent_storage_with(&self, other: &Self) -> bool {
+        self.ordered.shares_tail_with(&other.ordered) && self.exact.shares_root_with(&other.exact)
     }
 }
 
@@ -1272,13 +1283,34 @@ mod proof_fact_store_tests {
         assert!(facts.insert(first.clone()));
         assert!(facts.insert(second.clone()));
         assert!(!facts.insert(first.clone()));
-        assert_eq!(facts.as_slice(), &[first.clone(), second.clone()]);
+        assert_eq!(facts.to_vec(), &[first.clone(), second.clone()]);
         assert!(facts.exact.contains(&first));
 
         facts.retain(|candidate| candidate != &first);
-        assert_eq!(facts.as_slice(), std::slice::from_ref(&second));
+        assert_eq!(facts.to_vec(), std::slice::from_ref(&second));
         assert!(!facts.exact.contains(&first));
         assert!(facts.exact.contains(&second));
+    }
+
+    #[test]
+    fn proof_fact_store_forks_share_certificate_history() {
+        let mut facts = ProofFactStore::default();
+        for index in 0..4096 {
+            facts.insert(Proposition::ConditionIs(
+                ConditionTerm::Variable(Variable(index)),
+                true,
+            ));
+        }
+        let ancestor = facts.clone();
+        assert!(facts.shares_persistent_storage_with(&ancestor));
+
+        let added = Proposition::ConditionIs(ConditionTerm::Variable(Variable(4096)), true);
+        facts.insert(added.clone());
+
+        assert!(!ancestor.contains(&added));
+        assert!(facts.contains(&added));
+        assert_eq!(ancestor.iter().count(), 4096);
+        assert_eq!(facts.iter().count(), 4097);
     }
 
     #[test]

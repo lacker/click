@@ -488,6 +488,14 @@ lowerings, `ProofFacts`, and execution artifact sets rather than introducing
 parallel tree implementations. Deterministic 16-through-4096 regressions
 bound both raw map updates and complete two-index surface-map updates.
 
+The certificate builder's replay-visible `ProofFactStore` now uses the same
+persistent ordered-history plus AVL-index representation. Planning forks share
+the complete certificate fact context rather than cloning its vector and tree;
+one local insert changes only its persistent suffix and logarithmic index
+path. Legacy certificate construction materializes a contiguous vector at its
+explicit adapter boundary, making the remaining full-context work visible
+until that path is replaced by `Proof` queries.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
