@@ -26,5 +26,8 @@ when evidence exposes one.
   landed relief ordering.
 - [Push contract path dropped by laundered inconsistency](push-contract-path-dropped-by-laundered-inconsistency.md):
   the silent sibling-path drop now has a structural guard; honest
-  `allocated_vector_push.contract` verification still stalls on giant-term
-  memory-resolution cost, so owned-vector remains quarantined.
+  `allocated_vector_push.contract` verification still stalls in giant-term
+  verified-call ensure lowering during independent kernel certification, so
+  owned-vector remains quarantined. A generated-step deadline was separately
+  isolated as outer smart expansion-validation attribution, not a slow simple
+  checker.

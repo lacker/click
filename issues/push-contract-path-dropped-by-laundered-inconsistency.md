@@ -111,6 +111,35 @@ closes the silent-path-drop soundness hole; it does not remove the
 owned-vector quarantine because honest verification still hits the
 giant-memory-term performance wall described above.
 
+## Current-master isolation (2026-08-15)
+
+The first failure on `baace5ab` initially looked like a slow simple proof:
+a smart `step()` constructed a `SimpleProof`, then reported that independent
+replay exceeded the two-second smart deadline while checking the generated
+`step() using { ... }`. Replacing only that smart site with the exact printed
+`step() using` disproves that diagnosis. The source-level simple step checks
+normally; profiling the modified proof reports all 48 simple C steps at about
+15 ms average and 128 ms maximum. Verification advances to the equivalent
+smart site in the sibling branch.
+
+The per-tactic diagnostic is therefore deadline attribution, not evidence of
+a slow simple checker. Smart construction and its independent expansion
+validation share the outer smart wall-clock deadline; construction consumes
+most of it, and expiration is observed inside the generated step. Call this
+phase **expansion validation**, distinct from ordinary **proof checking** and
+from local retained-evidence verification. The diagnostic should name the
+outer smart operation and its expansion-validation phase rather than imply
+that the generated simple step itself exceeded a simple-tactic budget.
+
+A separate scale blocker remains after replacing the site. The profile reaches
+whole-proof **independent kernel certification**, where one
+`allocated_vector_push` path takes roughly 23 seconds; about 22 seconds are in
+`vector_push` verified-call ensure lowering over deeply nested memory terms.
+That is the current giant-representation reproduction. Fixing or removing
+per-smart-tactic expansion validation may avoid duplicate work, but it will
+not by itself make owned-vector green: final kernel certification must also
+stop rebuilding/traversing those giant terms.
+
 ## Acceptance criteria
 
 - A structural guard makes silently-dropped paths impossible: each
@@ -123,3 +152,9 @@ giant-memory-term performance wall described above.
   raises), including the compositional data-preservation forall.
 - `examples/owned-vector` leaves quarantine and the full gate
   (`scripts/check.sh`) is green.
+- An exact generated `step() using` remains an ordinary fast simple step when
+  written directly; expansion-validation deadline failures are attributed to
+  the enclosing smart operation and phase.
+- Independent kernel certification of the completed claim avoids
+  path-wide reconstruction of deeply nested memory spellings and stays below
+  the ordinary per-path certification budget.
