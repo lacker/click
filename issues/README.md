@@ -20,6 +20,11 @@ when evidence exposes one.
 
 ## Open
 
+- [Proof object API](proof-object-api.md): smart tactics need one immutable,
+  cheaply forkable checked `Proof` interface where applying a
+  `SimpleProofStep` atomically advances semantic state and retains the exact
+  structured certificate, eliminating after-the-fact reconstruction and
+  ordinary per-tactic replay.
 - [Atomic derivation returns premises, not steps](atomic-derivation-returns-premises-not-steps.md):
   smart search discards how it proved its goal, so certificate construction
   re-searches; measured at 97 percent of one tactic's budget before the
