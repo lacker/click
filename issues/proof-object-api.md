@@ -508,10 +508,18 @@ from each predicate name to only the propositions that mention it. The
 canonical `check_unfold_predicate_facts` judgment consumes this state directly:
 it reuses the persistent kernel assumption context, visits only facts indexed
 for the requested predicate, and appends unfolded conclusions persistently.
-Legacy vector replay delegates through an explicit adapter. A deterministic
-16-through-4096 regression confirms that one selected predicate fact is found
-without mixing in thousands of unrelated facts and that all fact/index roots
-remain shared across a fork.
+The execution-frontier `Proof` now owns these facts directly instead of hiding
+a second mutable `Vec` in `ProofReplayContext`. `UnfoldPredicate` is the first
+ordinary forkable execution step: `Proof::apply_step(&self, ...)` checks it
+against the indexed facts and returns a successor without consuming or
+uniquely owning the ancestor. Unchanged C state, certificate-builder history,
+effect facts, planning records, and other legacy replay collections use
+explicit clone-on-write sharing while their individual semantic deltas migrate
+to persistent representations. A deterministic 16-through-4096 regression
+confirms that one selected predicate fact is found without mixing in thousands
+of unrelated facts, the ancestor remains unchanged, the retained certificate
+is exactly `UnfoldPredicate`, unchanged bulk storage shares identity, and the
+local persistent-node work remains logarithmically bounded.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

@@ -1,41 +1,8 @@
 use super::*;
 use crate::kernel::prove_c_function_contract_predicate_unfolding;
 
-/// Checks the existing deterministic `unfold predicate` transition.
-///
-/// Keeping this judgment outside tactic dispatch gives explicit source replay
-/// and the checked Proof API one operation to audit. This extraction does not
-/// change which facts or contract-entry derivations the transition accepts.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn check_unfold_predicate(
-    replay: &mut TacticReplayState,
-    state: &CState,
-    available_pure_facts: &mut Vec<Proposition>,
-    name: &String,
-    function: &CFunction,
-    arguments: &[CExpression],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
-) -> Result<(), ClickError> {
-    let facts = ProofFacts::from_ordered(available_pure_facts);
-    let facts = check_unfold_predicate_facts(
-        replay,
-        state,
-        &facts,
-        name,
-        function,
-        arguments,
-        predicate_environment,
-        click_function_environment,
-        claim_label,
-        tactic_index,
-    )?;
-    *available_pure_facts = facts.to_vec();
-    Ok(())
-}
-
+/// Checks the existing deterministic `unfold predicate` transition against
+/// the persistent facts owned by `Proof`.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
     replay: &mut TacticReplayState,

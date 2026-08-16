@@ -14,6 +14,105 @@ pub(super) struct InvariantCloserStep {
     pub(super) statement_index: usize,
 }
 
+/// Clone-on-write storage for legacy replay collections.
+///
+/// This makes a read-only proof-state fork constant time. A legacy mutation
+/// still pays for its complete vector and remains an explicit migration
+/// target; migrated `Proof` steps avoid that mutable path altogether.
+#[derive(Clone)]
+pub(super) struct SharedVec<T>(Arc<Vec<T>>);
+
+impl<T> Default for SharedVec<T> {
+    fn default() -> Self {
+        Self(Arc::new(Vec::new()))
+    }
+}
+
+impl<T> std::ops::Deref for SharedVec<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
+impl<T: Clone> std::ops::DerefMut for SharedVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl<T> From<Vec<T>> for SharedVec<T> {
+    fn from(value: Vec<T>) -> Self {
+        Self(Arc::new(value))
+    }
+}
+
+impl<'a, T> IntoIterator for &'a SharedVec<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<T: Clone> SharedVec<T> {
+    pub(super) fn into_vec(self) -> Vec<T> {
+        Arc::try_unwrap(self.0).unwrap_or_else(|shared| shared.as_ref().clone())
+    }
+
+    #[cfg(test)]
+    pub(super) fn shares_storage_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// Clone-on-write storage for one legacy replay value.
+///
+/// `Proof` successors can share replay metadata they do not modify. Legacy
+/// code still receives ordinary references through `Deref`, and the first
+/// mutation makes the old complete-value copy explicit at that boundary.
+#[derive(Clone)]
+pub(super) struct SharedValue<T>(Arc<T>);
+
+impl<T: Default> Default for SharedValue<T> {
+    fn default() -> Self {
+        Self(Arc::new(T::default()))
+    }
+}
+
+impl<T> std::ops::Deref for SharedValue<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
+impl<T: Clone> std::ops::DerefMut for SharedValue<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl<T> From<T> for SharedValue<T> {
+    fn from(value: T) -> Self {
+        Self(Arc::new(value))
+    }
+}
+
+impl<T: Clone> SharedValue<T> {
+    pub(super) fn into_value(self) -> T {
+        Arc::try_unwrap(self.0).unwrap_or_else(|shared| shared.as_ref().clone())
+    }
+
+    #[cfg(test)]
+    pub(super) fn shares_storage_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 #[derive(Clone, Default)]
 pub(super) struct TacticReplayState {
     pub(super) proof_site: Option<ProofSite>,
@@ -24,13 +123,13 @@ pub(super) struct TacticReplayState {
     /// C `if` regions completed by the most recent execution transition.
     /// A frontier-local `branch` uses this edge-local record to distinguish
     /// reaching its join from executing past it in a later tactic.
-    pub(super) completed_branch_regions: Vec<usize>,
+    pub(super) completed_branch_regions: SharedVec<usize>,
     /// This proof path has passed through a frontier-local `branch`. Unlike
     /// `branch_path`, this excludes pure proof-level `if` diagnostics and can
     /// therefore distinguish an already selected C path at function exit.
     pub(super) has_structured_branch_history: bool,
-    pub(super) unfolded_predicates: Vec<String>,
-    pub(super) post_execution_tactics: Vec<DeferredPostExecutionTactic>,
+    pub(super) unfolded_predicates: SharedVec<String>,
+    pub(super) post_execution_tactics: SharedVec<DeferredPostExecutionTactic>,
     pub(super) region_simp: Option<(usize, usize)>,
     /// Depth of enclosing `open { ... }` blocks. Surface steps recorded while
     /// an open block is active are captured into its nested `Open` proof, so
@@ -49,7 +148,7 @@ pub(super) struct TacticReplayState {
     /// carries no class tag at all (`git history (profiler coverage, 2026-07-31)`).
     pub(super) invariant_closer_step: Option<InvariantCloserStep>,
     pub(super) case_assumptions: PersistentSequence<ReplayCaseAssumption>,
-    pub(super) effect_facts: Vec<ExecutionPureFact>,
+    pub(super) effect_facts: SharedVec<ExecutionPureFact>,
     pub(super) region_proof: bool,
     pub(super) loop_invariant_region: bool,
     pub(super) ordered_finalization: bool,
@@ -100,15 +199,15 @@ pub(super) struct TacticReplayState {
     /// constructed for a statement move can consult the certified transition.
     /// It is deliberately separate from `ProofTactic` so internal execution
     /// artifacts cannot masquerade as proof steps.
-    pub(super) planned_statement_transitions: Vec<PlannedStatementTransition>,
+    pub(super) planned_statement_transitions: SharedVec<PlannedStatementTransition>,
     pub(super) surface_propositions: SurfacePropositionMap,
-    pub(super) proof_certificate_builder: ProofCertificateBuilder,
+    pub(super) proof_certificate_builder: SharedValue<ProofCertificateBuilder>,
     pub(super) deferred_tactic_capture: Option<DeferredTacticCapture>,
     /// C branch choices enclosing a selected tactic in their common
     /// continuation. Deferred post-execution expansion is finalized after
     /// `execute_internal_proof` has returned one context per path, so it must
     /// retain this typed path rather than reconstructing it from diagnostics.
-    pub(super) deferred_expansion_path_choices: Vec<SurfacePathChoice>,
+    pub(super) deferred_expansion_path_choices: SharedVec<SurfacePathChoice>,
 }
 
 #[derive(Clone)]
@@ -791,7 +890,7 @@ fn uniform_surface_leaf_suffix(steps: &[SimpleProofStep]) -> Option<Vec<SimplePr
 
 /// The enclosing builder saved while one tactic runs against a scoped view.
 pub(super) struct TacticSurfaceScope {
-    saved: ProofCertificateBuilder,
+    saved: SharedValue<ProofCertificateBuilder>,
 }
 
 /// Starts a builder scope for one source tactic: the tactic constructs its
@@ -810,7 +909,8 @@ pub(super) fn begin_tactic_surface_scope(replay: &mut TacticReplayState) -> Tact
         last_step_entry: saved.last_step_entry.clone(),
         scope_ops: Some(Vec::new()),
         ..ProofCertificateBuilder::default()
-    };
+    }
+    .into();
     TacticSurfaceScope { saved }
 }
 
@@ -851,7 +951,7 @@ pub(super) fn end_tactic_surface_scope(
     {
         enclosing.block(blocker.clone());
     }
-    slice
+    slice.into_value()
 }
 
 pub(super) fn record_post_execution_surface_tactic(
@@ -1444,7 +1544,7 @@ pub(super) struct ExecutionFrontier {
     pub(super) point: ProofExecutionPoint,
     pub(super) execution_start_state: Option<CState>,
     pub(super) next_statement_index: usize,
-    pub(super) continuations: Vec<ProofExecutionContinuation>,
+    pub(super) continuations: SharedVec<ProofExecutionContinuation>,
 }
 
 #[derive(Clone)]

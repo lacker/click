@@ -383,10 +383,8 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                             .steps()[0]
                             .clone();
                     for _ in 0..entry_steps {
-                        builder.steps.insert(
-                            branch_surface_start.min(builder.steps.len()),
-                            entry_step.clone(),
-                        );
+                        let insertion = branch_surface_start.min(builder.steps.len());
+                        builder.steps.insert(insertion, entry_step.clone());
                     }
                 };
             let mut completed_contexts = Vec::new();
@@ -544,7 +542,8 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 let mut merged = continuing_contexts[0]
                     .replay
                     .proof_certificate_builder
-                    .clone();
+                    .clone()
+                    .into_value();
                 merged.steps.truncate(branch_surface_start);
                 merged.path_choices.truncate(prior_choice_count);
                 if let Some(message) = arm_blocker {
@@ -585,7 +584,13 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 (continuing_contexts.len() > 1).then(|| {
                     let builders = continuing_contexts
                         .iter()
-                        .map(|context| context.replay.proof_certificate_builder.clone())
+                        .map(|context| {
+                            context
+                                .replay
+                                .proof_certificate_builder
+                                .clone()
+                                .into_value()
+                        })
                         .collect::<Vec<_>>();
                     let mut merged = builders[0].clone();
                     merged.path_choices.truncate(prior_choice_count);
@@ -726,7 +731,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 joined
             };
             if let Some(builder) = joined_surface_builder {
-                joined_context.replay.proof_certificate_builder = builder;
+                joined_context.replay.proof_certificate_builder = builder.into();
             }
             // Branch abstraction discards source-boundary snapshots, but the
             // recorded surface branch choice is spelled against the branch

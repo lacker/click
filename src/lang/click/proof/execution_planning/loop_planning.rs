@@ -553,7 +553,7 @@ fn verify_structural_effect_proof(
         check: check.clone(),
         closed: false,
     });
-    replay.proof_certificate_builder = ProofCertificateBuilder::default();
+    replay.proof_certificate_builder = ProofCertificateBuilder::default().into();
     let replayed = execute_internal_proof(
         &program,
         ProofReplayContext {

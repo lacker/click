@@ -2062,7 +2062,13 @@ pub(super) fn bounded_execute_from_execution_point(
     let synthesized_paths = base_builder.map(|base| {
         let paths = completed
             .iter()
-            .map(|frontier| frontier.replay.proof_certificate_builder.clone())
+            .map(|frontier| {
+                frontier
+                    .replay
+                    .proof_certificate_builder
+                    .clone()
+                    .into_value()
+            })
             .collect::<Vec<_>>();
         (base, synthesize_surface_alternatives(paths))
     });

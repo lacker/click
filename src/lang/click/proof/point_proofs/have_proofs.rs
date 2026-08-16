@@ -2137,7 +2137,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
                     })?
                     .steps()
                     .to_vec(),
-                path_choices,
+                path_choices: path_choices.into_vec(),
                 ..ProofCertificateBuilder::default()
             });
         }

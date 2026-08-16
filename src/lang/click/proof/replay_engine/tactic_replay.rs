@@ -1124,7 +1124,8 @@ fn replay_linear_tactics_without_frontier_loops(
                     last_step_entry: replay.proof_certificate_builder.last_step_entry.clone(),
                     certificate_facts: ProofFactStore::from_ordered(requirement_pure_facts.clone()),
                     ..ProofCertificateBuilder::default()
-                };
+                }
+                .into();
                 let mut planning_state = state.clone();
                 let mut planning_facts = requirement_pure_facts.clone();
                 execute_step_from_execution_point(
@@ -1148,7 +1149,8 @@ fn replay_linear_tactics_without_frontier_loops(
                         click_function_environment,
                     }),
                 )?;
-                let construction = std::mem::take(&mut planning_replay.proof_certificate_builder);
+                let construction =
+                    std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
                 if construction.blocker.is_none()
                     && !construction.steps.is_empty()
                     && matches!(
@@ -1253,7 +1255,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 let mut planning_replay = replay.clone();
                 planning_replay.planned_statement_transitions.clear();
                 planning_replay.proof_certificate_builder =
-                    planning_builder(&requirement_pure_facts);
+                    planning_builder(&requirement_pure_facts).into();
                 let mut planning_state = state.clone();
                 let mut planning_facts = requirement_pure_facts.clone();
                 let force_all_paths = matches!(tactic, ProofTactic::SmartExecuteAllPaths);
@@ -1276,7 +1278,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     planning_replay = replay.clone();
                     planning_replay.planned_statement_transitions.clear();
                     planning_replay.proof_certificate_builder =
-                        planning_builder(&requirement_pure_facts);
+                        planning_builder(&requirement_pure_facts).into();
                     planning_state = state.clone();
                     planning_facts = requirement_pure_facts.clone();
                     bounded_execute_from_execution_point(
@@ -1294,7 +1296,8 @@ fn replay_linear_tactics_without_frontier_loops(
                         construction_environments,
                     )?;
                 }
-                let construction = std::mem::take(&mut planning_replay.proof_certificate_builder);
+                let construction =
+                    std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
                 if construction.blocker.is_none()
                     && !construction.steps.is_empty()
                     && construction.steps.iter().all(|step| {
@@ -1399,7 +1402,8 @@ fn replay_linear_tactics_without_frontier_loops(
                     last_step_entry: replay.proof_certificate_builder.last_step_entry.clone(),
                     certificate_facts: ProofFactStore::from_ordered(requirement_pure_facts.clone()),
                     ..ProofCertificateBuilder::default()
-                };
+                }
+                .into();
                 let mut planning_state = state.clone();
                 let mut planning_facts = requirement_pure_facts.clone();
                 execute_until_statement(
@@ -1420,7 +1424,8 @@ fn replay_linear_tactics_without_frontier_loops(
                         click_function_environment,
                     }),
                 )?;
-                let construction = std::mem::take(&mut planning_replay.proof_certificate_builder);
+                let construction =
+                    std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
                 if construction.blocker.is_none()
                     && !construction.steps.is_empty()
                     && construction.steps.iter().all(|step| {
@@ -1670,7 +1675,8 @@ fn replay_linear_tactics_without_frontier_loops(
                     last_step_entry: replay.proof_certificate_builder.last_step_entry.clone(),
                     certificate_facts: ProofFactStore::from_ordered(requirement_pure_facts.clone()),
                     ..ProofCertificateBuilder::default()
-                };
+                }
+                .into();
                 construct_simple_step_for_planned_operation(
                     &mut construction_replay,
                     &state,
@@ -1684,7 +1690,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     &ConstructionEvidence::CertifiedFrame(path_derivations),
                 );
                 let construction =
-                    std::mem::take(&mut construction_replay.proof_certificate_builder);
+                    std::mem::take(&mut construction_replay.proof_certificate_builder).into_value();
                 // A branched contextual frame merges its synthesized branch
                 // with the existing surface branch here, and a frame inside
                 // an `open { ... }` block merges so its steps are captured

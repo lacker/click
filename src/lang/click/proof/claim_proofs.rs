@@ -731,7 +731,7 @@ mod exit_claim {
             // The goal was proved with the drain's unfold set active; the
             // certificate must re-lower the surface goal under the same
             // unfolds or the two spellings cannot match.
-            certificate_replay.unfolded_predicates = self.unfolded_predicates.to_vec();
+            certificate_replay.unfolded_predicates = self.unfolded_predicates.to_vec().into();
             certificate_replay
         }
 
@@ -3637,7 +3637,8 @@ pub(super) fn finish_ordered_proof_replay(
             // tying builders to produced theorems silently dropped such arms
             // (and duplicated builders when a context certified many paths).
             for claim in claims {
-                claim_surface_builders.push((claim.verified_claim(), expanded.clone()));
+                claim_surface_builders
+                    .push((claim.verified_claim(), expanded.clone().into_value()));
             }
         } else {
             for (claim_index, claim) in claims.iter().enumerate() {
@@ -3670,7 +3671,7 @@ pub(super) fn finish_ordered_proof_replay(
                         theorem.expansion_blocker = expanded.blocker.clone();
                     }
                 }
-                claim_surface_builders.push((verified_claim, expanded));
+                claim_surface_builders.push((verified_claim, expanded.into_value()));
             }
         }
         if tactic_expansion_capture_is_active(expansion_capture.as_deref()) {

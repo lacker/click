@@ -4462,6 +4462,7 @@ pub(super) fn lower_outcome_simp_proof(
                 ));
             };
             let mut tactics = surface_names
+                .into_vec()
                 .into_iter()
                 .map(ProofTactic::UnfoldPredicate)
                 .collect::<Vec<_>>();

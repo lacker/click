@@ -131,7 +131,17 @@ struct ProofState {
     complete: bool,
     added_facts: Arc<Vec<Proposition>>,
     checked_facts: Arc<Vec<Proposition>>,
-    execution: Option<ProofReplayContext>,
+    execution: Option<ExecutionProofState>,
+}
+
+/// Execution data whose unchanged pieces can be shared by checked `Proof`
+/// successors. Pure facts live in `ProofState::facts`; this contains only the
+/// frontier state, legacy replay metadata, and persistent branch provenance.
+#[derive(Clone)]
+struct ExecutionProofState {
+    state: SharedValue<CState>,
+    replay: TacticReplayState,
+    branch_path: PersistentSequence<String>,
 }
 
 /// One unresolved judgment owned by a `Proof`.
@@ -348,6 +358,12 @@ impl<'a> Proof<'a> {
         predicate_environment: &'a PredicateEnvironment,
         click_function_environment: &'a ClickFunctionEnvironment,
     ) -> Self {
+        let ProofReplayContext {
+            state,
+            pure_facts,
+            replay,
+            branch_path,
+        } = execution;
         Self {
             context: Arc::new(ProofContext::Execution(ExecutionProofContext {
                 claim_label,
@@ -361,12 +377,16 @@ impl<'a> Proof<'a> {
                 click_function_environment,
             })),
             state: Arc::new(ProofState {
-                facts: ProofFacts::default(),
+                facts: ProofFacts::from_ordered(&pure_facts),
                 goal: Goal::ExecutionFrontier,
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
-                execution: Some(execution),
+                execution: Some(ExecutionProofState {
+                    state: state.into(),
+                    replay,
+                    branch_path,
+                }),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -407,6 +427,7 @@ impl<'a> Proof<'a> {
                 target,
                 premises,
             } => self.apply_transport_using(source, target, premises)?,
+            SimpleProofStep::UnfoldPredicate(name) => self.apply_execution_unfold(name)?,
             SimpleProofStep::Assumption => {
                 let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
                 if !self.state.facts.contains(goal) {
@@ -808,13 +829,47 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Applies one selected execution step by consuming the uniquely owned
-    /// frontier state. This is deliberately separate from forkable local
-    /// proposition steps until execution replay state itself is persistent.
+    fn apply_execution_unfold(&self, name: &String) -> Result<ProofState, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("`unfold` requires an execution-frontier proof"));
+        };
+        let mut execution =
+            self.state.execution.clone().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+        let facts = check_unfold_predicate_facts(
+            &mut execution.replay,
+            &execution.state,
+            &self.state.facts,
+            name,
+            context.function,
+            context.arguments,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.claim_label,
+            context.tactic_index,
+        )?;
+        Ok(ProofState {
+            facts,
+            goal: self.state.goal.clone(),
+            complete: false,
+            added_facts: Arc::new(Vec::new()),
+            checked_facts: Arc::new(Vec::new()),
+            execution: Some(execution),
+        })
+    }
+
+    /// Applies a still-mutable execution transition by consuming its current
+    /// frontier. Predicate unfold has migrated to ordinary forkable
+    /// `apply_step`; statement movement and transport retain this transitional
+    /// owned adapter until their semantic deltas are persistent too.
     pub(super) fn apply_owned_execution_step(
         self,
         step: SimpleProofStep,
     ) -> Result<Self, ClickError> {
+        if matches!(step, SimpleProofStep::UnfoldPredicate(_)) {
+            return self.apply_step(step);
+        }
         let Proof {
             context: proof_context,
             state: proof_state,
@@ -838,12 +893,10 @@ impl<'a> Proof<'a> {
         }
         if !matches!(
             step,
-            SimpleProofStep::StepUsing(_)
-                | SimpleProofStep::TransportUsing { .. }
-                | SimpleProofStep::UnfoldPredicate(_)
+            SimpleProofStep::StepUsing(_) | SimpleProofStep::TransportUsing { .. }
         ) {
             return Err(step_error(
-                "owned execution proof currently accepts only `unfold`, `transport using`, and `step using`",
+                "owned execution proof currently accepts only `transport using` and `step using`",
             ));
         }
         let mut state = Arc::try_unwrap(proof_state).map_err(|_| {
@@ -855,11 +908,12 @@ impl<'a> Proof<'a> {
             .execution
             .take()
             .ok_or_else(|| step_error("execution-frontier proof lost its owned semantic state"))?;
+        let mut pure_facts = state.facts.to_vec();
         match &step {
             SimpleProofStep::StepUsing(premises) => check_step_using(
                 &mut execution.replay,
                 &mut execution.state,
-                &mut execution.pure_facts,
+                &mut pure_facts,
                 premises,
                 context.function_block,
                 context.function,
@@ -886,7 +940,7 @@ impl<'a> Proof<'a> {
                     premises,
                     context.claim_label,
                     context.tactic_index,
-                    &execution.pure_facts,
+                    &pure_facts,
                     &execution.replay.effect_facts,
                     context.parsed_function.parameters(),
                     context.arguments,
@@ -905,24 +959,13 @@ impl<'a> Proof<'a> {
                     .replay
                     .surface_propositions
                     .record_lowering(target, &checked.target)?;
-                if !execution.pure_facts.contains(&checked.target) {
-                    execution.pure_facts.push(checked.target);
+                if !pure_facts.contains(&checked.target) {
+                    pure_facts.push(checked.target);
                 }
             }
-            SimpleProofStep::UnfoldPredicate(name) => check_unfold_predicate(
-                &mut execution.replay,
-                &execution.state,
-                &mut execution.pure_facts,
-                name,
-                context.function,
-                context.arguments,
-                context.predicate_environment,
-                context.click_function_environment,
-                context.claim_label,
-                context.tactic_index,
-            )?,
             _ => unreachable!("checked above"),
         }
+        state.facts = ProofFacts::from_ordered(&pure_facts);
         state.execution = Some(execution);
         state.added_facts = Arc::new(Vec::new());
         state.checked_facts = Arc::new(Vec::new());
@@ -952,10 +995,16 @@ impl<'a> Proof<'a> {
             self.node.depth
         );
         let mut state = Arc::try_unwrap(self.state).map_err(|_| ClickError::new(error))?;
-        state
+        let execution = state
             .execution
             .take()
-            .ok_or_else(|| ClickError::new(missing))
+            .ok_or_else(|| ClickError::new(missing))?;
+        Ok(ProofReplayContext {
+            state: execution.state.into_value(),
+            pure_facts: state.facts.to_vec(),
+            replay: execution.replay,
+            branch_path: execution.branch_path,
+        })
     }
 
     /// Semantic facts introduced by the most recently accepted step.
@@ -2095,5 +2144,125 @@ mod tests {
         assert!(!root.is_complete());
         assert!(root.added_facts().is_empty());
         assert!(root.certificate().steps().is_empty());
+    }
+
+    #[test]
+    fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                predicate selected(x: int32) { x == x }
+                int32 identity(int32 x) {
+                    ensures returns_x: result == x by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test predicate and function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(click_file.predicate_definitions());
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+            .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let function_environment = CExecutionEnvironment::new();
+        let state = CState::new();
+        let argument = CExpression::Value(CValue::Int32(Bitvector32Term::Constant(7)));
+        let arguments = vec![argument.clone()];
+        let surface = ClickProposition::PredicateCall {
+            name: "selected".to_string(),
+            arguments: vec![ContractExpression::CFragment(argument)],
+        };
+        let predicate = Proposition::Predicate {
+            name: "selected".to_string(),
+            arguments: vec![
+                Term::CState(state.clone()),
+                Term::CValue(CValue::Int32(Bitvector32Term::Constant(7))),
+            ],
+        };
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            pure_facts.push(predicate.clone());
+            let mut replay = TacticReplayState::default();
+            replay
+                .surface_propositions
+                .record_lowering(&surface, &predicate)
+                .expect("the selected predicate spelling should be recorded");
+            let root = Proof::for_execution_frontier(
+                "persistent unfold",
+                0,
+                ProofReplayContext {
+                    state: state.clone(),
+                    pure_facts,
+                    replay,
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &predicate_environment,
+                &click_function_environment,
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let successor = root
+                .apply_step(SimpleProofStep::UnfoldPredicate("selected".to_string()))
+                .expect("the exact selected predicate should unfold");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 32 * logarithmic_height + 128;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} unfold allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert_eq!(root.state.facts.to_vec().len(), size as usize + 1);
+            assert_eq!(root.certificate().steps(), &[]);
+            assert_eq!(
+                successor.certificate().steps(),
+                &[SimpleProofStep::UnfoldPredicate("selected".to_string())]
+            );
+            assert!(successor.state.facts.to_vec().len() > root.state.facts.to_vec().len());
+            let root_execution = root.state.execution.as_ref().expect("root execution state");
+            let successor_execution = successor
+                .state
+                .execution
+                .as_ref()
+                .expect("successor execution state");
+            assert!(
+                root_execution
+                    .state
+                    .shares_storage_with(&successor_execution.state),
+                "unfold does not alter the C frontier"
+            );
+            assert!(
+                root_execution
+                    .replay
+                    .proof_certificate_builder
+                    .shares_storage_with(&successor_execution.replay.proof_certificate_builder),
+                "unfold does not copy unrelated certificate history"
+            );
+            assert!(
+                root_execution
+                    .replay
+                    .effect_facts
+                    .shares_storage_with(&successor_execution.replay.effect_facts),
+                "unfold does not copy unrelated effect history"
+            );
+
+            let context = successor
+                .into_execution_context()
+                .expect("a sole successor should materialize its legacy boundary context");
+            assert!(
+                context
+                    .replay
+                    .unfolded_predicates
+                    .contains(&"selected".to_string())
+            );
+            assert!(context.pure_facts.len() > size as usize + 1);
+        }
     }
 }
