@@ -503,6 +503,40 @@ fn grouped_post_execution_closers_use_independent_checked_proofs() {
 }
 
 #[test]
+fn post_execution_rewrite_retains_its_checked_proof_step() {
+    let c_source = r#"
+        int32 identity(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "identity.c";
+
+        int32 identity(int32 x) {
+            requires zero: x == 0;
+            ensures successor: x + 1 == 1;
+        } by {
+            execute();
+            rewrite(x == 0);
+            normalize();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("outcome rewrite should advance its focused Proof goal");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.contract" && name == "surface certificate replay"
+        )),
+        "outcome rewrite must retain its checked Proof step: {events:#?}"
+    );
+}
+
+#[test]
 fn selected_post_execution_smart_apply_uses_exact_path_premises() {
     let c_source = r#"
             int32 identity(int32 x) {

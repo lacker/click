@@ -2869,25 +2869,27 @@ pub(super) fn finish_ordered_proof_replay(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: `rewrite` requires a return outcome"
                                     )));
                                 };
-                                let equality = lower_outcome_proposition_with_program_points(
-                            parsed_function.parameters(),
-                            arguments,
-                            pre_state,
-                            post_state,
-                            result,
-                            &path_requirements,
-                            surface_equality,
-                            predicate_environment,
-                            click_function_environment,
-                            &replay.program_point_states,
-                        )
-                        .map_err(|message| {
-                            ClickError::new(format!(
-                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `rewrite` could not lower equality: {message}"
-                            ))
-                        })?;
+                                let transition_facts = path.execution_facts();
+                                let point_root = Proof::for_point_frontier(
+                                    &proof_label,
+                                    *tactic_index,
+                                    &path_requirements,
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    post_state,
+                                    Some(result),
+                                    &replay.program_point_states,
+                                    &outcome_surface_propositions,
+                                    predicate_environment,
+                                    click_function_environment,
+                                    theorem_environment,
+                                    &unfolded_predicates,
+                                    &transition_facts,
+                                );
                                 let mut rewrote_any = false;
                                 let mut first_error = None;
+                                let mut retained_certificate = None;
                                 for (claim_index, claim) in claims.iter().enumerate() {
                                     if closures[claim_index].is_closed() {
                                         continue;
@@ -2900,36 +2902,43 @@ pub(super) fn finish_ordered_proof_replay(
                                         continue;
                                     };
                                     let goal = match &rewritten_claim_goals[claim_index] {
-                                Some(goal) => goal.clone(),
-                                None => lower_ensure_proposition_goal(
-                                    &path_requirements,
-                                    surface_goal,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    &outcome,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    &replay.program_point_states,
-                                    &unfolded_predicates,
-                                )
-                                .map_err(|message| {
-                                    ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: `rewrite` could not lower goal: {message}"
-                                    ))
-                                })?,
-                            };
-                                    match rewrite_proposition_by_exact_equality(
-                                        &goal,
-                                        &equality,
-                                        &path_requirements,
+                                        Some(goal) => goal.clone(),
+                                        None => lower_ensure_proposition_goal(
+                                            &path_requirements,
+                                            surface_goal,
+                                            parsed_function.parameters(),
+                                            arguments,
+                                            pre_state,
+                                            &outcome,
+                                            predicate_environment,
+                                            click_function_environment,
+                                            &replay.program_point_states,
+                                            &unfolded_predicates,
+                                        )
+                                        .map_err(|message| {
+                                            ClickError::new(format!(
+                                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `rewrite` could not lower goal: {message}"
+                                            ))
+                                        })?,
+                                    };
+                                    match point_root.focus_point_goal(goal)?.apply_step(
+                                        SimpleProofStep::Rewrite(surface_equality.clone()),
                                     ) {
-                                        Ok(rewritten) => {
+                                        Ok(proof) => {
+                                            let rewritten = proof.goal().cloned().ok_or_else(|| {
+                                                ClickError::new(format!(
+                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: checked `rewrite` lost its proposition goal"
+                                                ))
+                                            })?;
+                                            retained_certificate
+                                                .get_or_insert_with(|| proof.certificate());
                                             rewritten_claim_goals[claim_index] = Some(rewritten);
                                             rewrote_any = true;
                                         }
-                                        Err(message) => {
-                                            first_error.get_or_insert(message);
+                                        Err(error) => {
+                                            check_verification_deadline()?;
+                                            first_error
+                                                .get_or_insert_with(|| error.message().to_string());
                                         }
                                     }
                                 }
@@ -2941,15 +2950,20 @@ pub(super) fn finish_ordered_proof_replay(
                                         })
                                     )));
                                 }
-                                record_post_execution_surface_tactic(
-                                    deferred.surface_recorded,
-                                    &mut path_surface_post_tactics,
-                                    &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
-                                    post_execution_index,
-                                    *tactic_index,
-                                    ProofTactic::Rewrite(surface_equality.clone()),
-                                );
+                                for tactic in retained_certificate
+                                    .expect("a successful rewrite retains its checked Proof")
+                                    .to_proof_tactics()
+                                {
+                                    record_post_execution_surface_tactic(
+                                        deferred.surface_recorded,
+                                        &mut path_surface_post_tactics,
+                                        &mut path_deferred_capture_tactics,
+                                        replay.deferred_tactic_capture.as_ref(),
+                                        post_execution_index,
+                                        *tactic_index,
+                                        tactic,
+                                    );
+                                }
                             }
                             PostExecutionTactic::FrameRegion(_region) => {
                                 for (claim_index, goal) in frame_certified_ensure_goals(

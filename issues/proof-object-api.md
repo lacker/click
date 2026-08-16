@@ -954,6 +954,16 @@ sharing and logarithmic local lookup, while a grouped contract regression
 requires the two closers to discharge different postconditions without an
 ordinary surface-certificate replay.
 
+Outcome `rewrite` now uses those same focused proposition roots. Each open
+postcondition submits the named equality as `SimpleProofStep::Rewrite`; only
+the accepted successor's rewritten goal is returned to grouped finalization,
+and the retained certificate supplies the serialized tactic. The former path
+lowered an equality and called the rewrite kernel directly outside `Proof`.
+The existing 16-through-4096 equality-index regression pins zero fact-index
+mutation and transactional rejection, and a result-finalization regression
+checks the retained rewrite/normalize path without ordinary certificate
+replay.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses
