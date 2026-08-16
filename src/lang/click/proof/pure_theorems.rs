@@ -892,6 +892,11 @@ fn check_pure_script_with_proof(
                 right_proof,
                 ..
             } => supported(left_proof) && supported(right_proof),
+            SimpleProofStep::If {
+                then_proof,
+                else_proof,
+                ..
+            } => supported(then_proof) && supported(else_proof),
             _ => false,
         })
     }

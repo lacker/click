@@ -392,6 +392,13 @@ regressions cover transactional failed candidates, arm isolation, exact-root
 identity, structured certificate output, and expansion through the ordinary
 source verifier.
 
+Proof `if` now uses the same branch container. `begin_if` lowers the condition
+and its explicit Surface Click negation into isolated arm facts without
+requiring either fact beforehand; `join` records one structured `If` step.
+Explicit pure `if` certificates over the migrated arm vocabulary recursively
+check through `Proof`, including the ordinary independently checked source
+path.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

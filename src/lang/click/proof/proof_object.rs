@@ -44,6 +44,7 @@ pub(super) struct ProofBranches<'a> {
 #[derive(Clone)]
 enum ProofBranchStructure {
     Cases { disjunction: ClickProposition },
+    If { condition: ClickProposition },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -596,6 +597,32 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Opens a proposition proof under a condition and its exact surface
+    /// negation. Unlike `cases`, proof `if` is an audited logical split and
+    /// does not require the condition to be an available fact beforehand.
+    pub(super) fn begin_if(
+        &self,
+        condition: ClickProposition,
+    ) -> Result<ProofBranches<'a>, ClickError> {
+        if self.state.complete {
+            return Err(self.step_error("`if` follows a completed proof"));
+        }
+        self.proposition_goal("proof `if` requires a proposition goal")?;
+        let then_fact = self.lower_surface_proposition(&condition, "proof `if` condition")?;
+        let else_surface = ClickProposition::Not(Box::new(condition.clone()));
+        let else_fact = self.lower_surface_proposition(&else_surface, "proof `if` negation")?;
+        let root_checkpoint = self.checkpoint();
+        Ok(ProofBranches {
+            root: self.clone(),
+            root_checkpoint,
+            structure: ProofBranchStructure::If { condition },
+            arms: [
+                self.with_branch_fact(then_fact),
+                self.with_branch_fact(else_fact),
+            ],
+        })
+    }
+
     /// Independently checks an already-serialized simple certificate.
     ///
     /// This is for explicit source verification and expansion/audit, where
@@ -616,6 +643,15 @@ impl<'a> Proof<'a> {
                     .begin_cases(disjunction.clone())?
                     .check_arm_certificate(ProofArm::Left, left_proof)?
                     .check_arm_certificate(ProofArm::Right, right_proof)?
+                    .join()?,
+                SimpleProofStep::If {
+                    condition,
+                    then_proof,
+                    else_proof,
+                } => proof
+                    .begin_if(condition.clone())?
+                    .check_arm_certificate(ProofArm::Left, then_proof)?
+                    .check_arm_certificate(ProofArm::Right, else_proof)?
                     .join()?,
                 _ => proof.apply_step(step.clone())?,
             };
@@ -1243,7 +1279,10 @@ impl<'a> ProofBranches<'a> {
     ) -> Result<Self, ClickError> {
         let mut next = self.clone();
         for step in certificate.steps() {
-            if matches!(step, SimpleProofStep::Cases { .. }) {
+            if matches!(
+                step,
+                SimpleProofStep::Cases { .. } | SimpleProofStep::If { .. }
+            ) {
                 let nested = ProofCertificate::from_steps(vec![step.clone()]);
                 next.arms[arm.index()] = next.arms[arm.index()].check_certificate(&nested)?;
             } else {
@@ -1270,6 +1309,11 @@ impl<'a> ProofBranches<'a> {
                 disjunction,
                 left_proof: Box::new(left_proof),
                 right_proof: Box::new(right_proof),
+            },
+            ProofBranchStructure::If { condition } => SimpleProofStep::If {
+                condition,
+                then_proof: Box::new(left_proof),
+                else_proof: Box::new(right_proof),
             },
         };
         Ok(Proof {

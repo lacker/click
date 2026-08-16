@@ -1400,6 +1400,24 @@ fn pure_cases_certificate_uses_checked_proof_branches() {
 }
 
 #[test]
+fn pure_if_certificate_uses_checked_proof_branches() {
+    let click_source = r#"
+        theorem equality_excluded_middle(x: int32) {
+            ensures x == 0 or not (x == 0) by {
+                if x == 0 {
+                    left();
+                } else {
+                    right();
+                }
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect("a proof condition and its exact negation should join through the Proof API");
+}
+
+#[test]
 fn enumerate_closes_a_constant_bounded_universal_goal() {
     let c_source = r#"
         int32 keep(int32 x) {
