@@ -197,9 +197,10 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
     // Lowering memory expressions may use the validated ambient context, but
     // the proof itself remains restricted to explicit premises, resource
     // observations, and certified frame/effect facts.
-    let source = if let Some(recorded) = surface_propositions
+    let recorded_source = surface_propositions
         .available_kernel_matching(surface_source, |kernel| available.contains(kernel))
-    {
+        .cloned();
+    let ordinary_source = if let Some(recorded) = &recorded_source {
         recorded.clone()
     } else {
         lower_point_proposition_with_assumptions(
@@ -218,7 +219,37 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
             ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: could not lower `transport` source: {message}"
             ))
-        })?
+            })?
+    };
+    let concrete_source_is_true = matches!(
+        normalize_proposition(&ordinary_source),
+        SimpProposition::True
+    );
+    let source = if recorded_source.is_none()
+        && concrete_source_is_true
+        && (proposition_contains_at_expression(surface_source)
+            || proposition_contains_old_expression(surface_source))
+    {
+        let symbolic_assumptions = available
+            .assumptions()
+            .clone()
+            .allow_symbolic_contract_loads()
+            .force_symbolic_external_loads();
+        lower_point_proposition_with_assumptions(
+            surface_source,
+            &symbolic_assumptions,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            result,
+            program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )
+        .unwrap_or(ordinary_source)
+    } else {
+        ordinary_source
     };
     let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
     let resource_facts = state
@@ -232,7 +263,14 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
             available.implicit_transport_assumptions().clone(),
             |assumptions, fact| assumptions.assume_proposition(fact),
         );
-    if !exact_fact_is_available(&source, &explicit_premises)
+    // At a completed return outcome, the source is its own checked slot in
+    // `transport(source, target)`: it may name an exact result-path fact
+    // without being duplicated in `using`. Mid-execution transport retains
+    // the stricter rule that `using` must establish its logical source. A
+    // selected outcome snapshot that materializes to true likewise checks the
+    // equivalent symbolic source used for frame transport.
+    if !(result.is_some() && (available.contains(&source) || concrete_source_is_true))
+        && !exact_fact_is_available(&source, &explicit_premises)
         && !snapshot_bridged_fact_is_available_under(
             &source,
             &explicit_premises,
@@ -356,283 +394,13 @@ pub(in crate::lang::click::proof) fn fact_transport_planning_failure(
     )
 }
 
+/// Produces surface spellings that an outcome-level smart transport may try
+/// as explicit auxiliary premises. This is heuristic discovery only: the
+/// returned spellings carry no authority until `Proof::apply_step` accepts a
+/// `TransportUsing` step containing them.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn replay_fact_transport_at_outcome(
-    surface_source: &ClickProposition,
-    surface_target: &ClickProposition,
-    surface_premises: Option<&[ClickProposition]>,
-    function_name: &str,
-    claim_label: &str,
-    path_index: usize,
-    tactic_index: usize,
-    available: &mut Vec<Proposition>,
-    surface_propositions: &mut SurfacePropositionMap,
-    transition_facts: &[ExecutionPureFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    post_state: &CState,
-    result: &CValue,
-    replay: &TacticReplayState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-) -> Result<ProofTactic, ClickError> {
-    let lower = |surface: &ClickProposition, facts: &[Proposition]| {
-        lower_outcome_proposition_with_program_points(
-            parameters,
-            arguments,
-            pre_state,
-            post_state,
-            result,
-            facts,
-            surface,
-            predicate_environment,
-            click_function_environment,
-            &replay.program_point_states,
-        )
-    };
-    let recorded_or_lowered = |surface: &ClickProposition,
-                               facts: &[Proposition],
-                               recorded_surfaces: &SurfacePropositionMap|
-     -> Result<Proposition, ClickError> {
-        if let Some(recorded) = recorded_surfaces.available_kernel(surface, facts) {
-            Ok(recorded.clone())
-        } else {
-            lower(surface, facts).map_err(ClickError::new)
-        }
-    };
-
-    for equation in crate::kernel::certified_store_equations(transition_facts) {
-        if surface_propositions.surfaces(&equation).next().is_some()
-            && !available.contains(&equation)
-        {
-            available.push(equation);
-        }
-    }
-
-    let mut explicit_premises = Vec::new();
-    let premise_timing = crate::instrumentation::OperationTiming::new(
-        function_name,
-        claim_label,
-        "fact transport explicit premise lowering",
-    );
-    if let Some(surface_premises) = surface_premises {
-        for surface_premise in surface_premises {
-            let premise =
-                recorded_or_lowered(surface_premise, available, surface_propositions).map_err(
-                    |error| {
-                        ClickError::new(format!(
-                            "`{claim_label}` path {path_index}, tactic {tactic_index}: could not lower `transport using` premise: {}",
-                            error.message()
-                        ))
-                    },
-                )?;
-            if !exact_fact_is_available(&premise, available) {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` path {path_index}, tactic {tactic_index}: `transport using` requires an exact premise: {premise:?}"
-                )));
-            }
-            surface_propositions.record_lowering(surface_premise, &premise)?;
-            if !explicit_premises.contains(&premise) {
-                explicit_premises.push(premise);
-            }
-        }
-    }
-    drop(premise_timing);
-
-    let source_timing = crate::instrumentation::OperationTiming::new(
-        function_name,
-        claim_label,
-        "fact transport source lowering",
-    );
-    let recorded_source = surface_propositions
-        .available_kernel(surface_source, available)
-        .cloned();
-    let ordinary_source = recorded_or_lowered(surface_source, available, surface_propositions)
-        .map_err(|error| {
-            ClickError::new(format!(
-                "`{claim_label}` path {path_index}, tactic {tactic_index}: could not lower `transport` source: {}",
-                error.message()
-            ))
-        })?;
-    let concrete_source =
-        lower(surface_source, available).unwrap_or_else(|_| ordinary_source.clone());
-    let source = if recorded_source.is_some() {
-        ordinary_source.clone()
-    } else if proposition_contains_at_expression(surface_source) {
-        lower_outcome_proposition_symbolically_with_program_points(
-            parameters,
-            arguments,
-            pre_state,
-            post_state,
-            result,
-            available,
-            surface_source,
-            predicate_environment,
-            click_function_environment,
-            &replay.program_point_states,
-        )
-        .unwrap_or_else(|_| ordinary_source.clone())
-    } else {
-        ordinary_source.clone()
-    };
-    if matches!(
-        normalize_proposition(&concrete_source),
-        SimpProposition::True
-    ) && !available.contains(&source)
-    {
-        // The selected snapshot materialized this load to a concrete value.
-        // Keep the equivalent symbolic spelling as a checked fact so frame
-        // transport can retain its memory identity.
-        available.push(source.clone());
-    }
-    surface_propositions.record_lowering(surface_source, &source)?;
-    drop(source_timing);
-    let selected_assumptions = crate::instrumentation::measure_operation(
-        function_name,
-        claim_label,
-        "fact transport assumption selection",
-        || {
-            let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
-            if surface_premises.is_some() {
-                let resource_facts = post_state
-                    .resources()
-                    .observable_facts_assuming_valid(&explicit_assumptions);
-                available
-                    .iter()
-                    .filter(|fact| is_implicit_fact_transport_context(fact))
-                    .cloned()
-                    .chain(resource_facts)
-                    .fold(explicit_assumptions, |assumptions, fact| {
-                        assumptions.assume_proposition(fact)
-                    })
-            } else {
-                assumptions_from_propositions(available)
-            }
-        },
-    );
-    // The source occupies its own checked slot in `transport(source, target)`.
-    // It may therefore come from the recorded execution history; `using`
-    // names only the auxiliary facts needed to replay the transport.
-    if !exact_fact_is_available(&source, available)
-        && !exact_fact_is_available(&source, &explicit_premises)
-        && !snapshot_bridged_fact_is_available(&source, &explicit_premises, transition_facts)
-        && selected_assumptions
-            .derive_atomic_proposition(&source)
-            .is_none()
-    {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` path {path_index}, tactic {tactic_index}: `transport{}` requires a source derivable from its {}facts: {source:?}",
-            if surface_premises.is_some() {
-                " using"
-            } else {
-                ""
-            },
-            if surface_premises.is_some() {
-                "explicit "
-            } else {
-                "ambient "
-            },
-        )));
-    }
-
-    let mut direct_lowering_facts = facts_for_direct_surface_lowering(available);
-    for premise in &explicit_premises {
-        if !direct_lowering_facts.contains(premise) {
-            direct_lowering_facts.push(premise.clone());
-        }
-    }
-    let target_timing = crate::instrumentation::OperationTiming::new(
-        function_name,
-        claim_label,
-        "fact transport target lowering",
-    );
-    let target = lower(surface_target, &direct_lowering_facts).map_err(|message| {
-        ClickError::new(format!(
-            "`{claim_label}` path {path_index}, tactic {tactic_index}: could not lower `transport` target: {message}"
-        ))
-    })?;
-    surface_propositions.record_lowering(surface_target, &target)?;
-    drop(target_timing);
-    let certificate_available = surface_premises.is_none().then(|| available.clone());
-
-    if exact_fact_is_available(&target, available)
-        || materialization_equivalent_available_fact(&target, available).is_some()
-    {
-        if !available.contains(&target) {
-            available.push(target.clone());
-        }
-    } else {
-        let transport_assumptions = transition_facts
-            .iter()
-            .fold(selected_assumptions, |assumptions, fact| {
-                assumptions.assume_proposition(fact.proposition().clone())
-            })
-            .assume_proposition(source.clone());
-        let reaches = crate::instrumentation::measure_operation(
-            function_name,
-            claim_label,
-            "certified fact transport reachability",
-            || {
-                certified_fact_transport_reaches(
-                    &source,
-                    &target,
-                    post_state.memory(),
-                    &transport_assumptions,
-                )
-            },
-        );
-        if !reaches {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` path {path_index}, tactic {tactic_index}: no certified frame transport applies to the exact source fact"
-            )));
-        }
-        available.push(target.clone());
-    }
-
-    let emitted_premises = if surface_premises.is_some() {
-        None
-    } else {
-        Some(plan_explicit_fact_transport_at_outcome(
-            surface_source,
-            &source,
-            &target,
-            certificate_available
-                .as_deref()
-                .expect("smart transport retained its pre-transport facts"),
-            transition_facts,
-            parameters,
-            arguments,
-            pre_state,
-            post_state,
-            result,
-            replay,
-            predicate_environment,
-            click_function_environment,
-        )?)
-    };
-
-    Ok(match emitted_premises {
-        Some(premises) => ProofTactic::TransportUsing {
-            source: surface_source.clone(),
-            target: surface_target.clone(),
-            premises,
-        },
-        None => ProofTactic::TransportUsing {
-            source: surface_source.clone(),
-            target: surface_target.clone(),
-            premises: surface_premises.unwrap_or_default().to_vec(),
-        },
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn plan_explicit_fact_transport_at_outcome(
-    _surface_source: &ClickProposition,
-    source: &Proposition,
-    target: &Proposition,
+pub(in crate::lang::click::proof) fn fact_transport_candidates_at_outcome(
     available: &[Proposition],
-    transition_facts: &[ExecutionPureFact],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -642,88 +410,27 @@ fn plan_explicit_fact_transport_at_outcome(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<ClickProposition>, ClickError> {
-    let mut candidates = available
-        .iter()
-        .filter_map(|kernel| {
-            checked_surface_fact_at_outcome(
-                replay,
-                kernel,
-                SurfaceFactMatch::CanonicalExact,
-                available,
-                parameters,
-                arguments,
-                pre_state,
-                post_state,
-                result,
-                predicate_environment,
-                click_function_environment,
-            )
-            .ok()
-            .map(|surface| (kernel.clone(), surface))
-        })
-        .collect::<Vec<_>>();
-    candidates.retain(|(kernel, _)| kernel != source);
-    let mut selected = Vec::new();
-    let replays = |selected: &[(Proposition, ClickProposition)]| {
-        let explicit = selected
-            .iter()
-            .map(|(kernel, _)| kernel.clone())
-            .collect::<Vec<_>>();
-        let explicit_assumptions = assumptions_from_propositions(&explicit);
-        let resource_facts = post_state
-            .resources()
-            .observable_facts_assuming_valid(&explicit_assumptions);
-        let selected_assumptions = available
-            .iter()
-            .filter(|fact| is_implicit_fact_transport_context(fact))
-            .cloned()
-            .chain(resource_facts)
-            .fold(explicit_assumptions, |assumptions, fact| {
-                assumptions.assume_proposition(fact)
-            })
-            .assume_proposition(source.clone());
-        if selected_assumptions.derive_proposition(target).is_some() {
-            return true;
-        }
-        let transport_assumptions = transition_facts
-            .iter()
-            .fold(selected_assumptions, |assumptions, fact| {
-                assumptions.assume_proposition(fact.proposition().clone())
-            })
-            .assume_proposition(source.clone());
-        certified_fact_transport_reaches(
-            source,
-            target,
-            post_state.memory(),
-            &transport_assumptions,
-        )
-    };
-    if !replays(&selected) {
-        for pair in candidates {
-            if !selected.contains(&pair) {
-                selected.push(pair);
-                if replays(&selected) {
-                    break;
-                }
-            }
+    let mut candidates = Vec::new();
+    for kernel in available {
+        check_verification_deadline()?;
+        if let Ok(surface) = checked_surface_fact_at_outcome(
+            replay,
+            kernel,
+            SurfaceFactMatch::CanonicalExact,
+            available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            predicate_environment,
+            click_function_environment,
+        ) && !candidates.contains(&surface)
+        {
+            candidates.push(surface);
         }
     }
-    if !replays(&selected) {
-        return Err(ClickError::new(
-            "post-execution fact transport has no explicit surface-premise certificate",
-        ));
-    }
-    let mut index = 0;
-    while index < selected.len() {
-        let mut reduced = selected.clone();
-        reduced.remove(index);
-        if replays(&reduced) {
-            selected = reduced;
-        } else {
-            index += 1;
-        }
-    }
-    Ok(selected.into_iter().map(|(_, surface)| surface).collect())
+    Ok(candidates)
 }
 
 /// Erases every embedded memory snapshot from a comparison proposition so

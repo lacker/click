@@ -393,6 +393,19 @@ fn selected_post_execution_transport_emits_an_explicit_certificate() {
                 assumption();
             }
         "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("checked post-execution transport should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.contract" && name == "surface certificate replay"
+        )),
+        "the smart transport must retain its checked Proof: {events:#?}"
+    );
+
     let transport_offset = click_source
         .find("transport(")
         .expect("proof should contain the selected transport");

@@ -909,6 +909,27 @@ logarithmically, rejects omitted named evidence transactionally, and retains
 the exact result-dependent step. The source regression observes no ordinary
 surface-certificate replay and independently verifies its expansion.
 
+Top-level post-execution fact transport now crosses that boundary as well.
+Outcome-specific premise discovery produces only Surface Click candidates;
+bare `transport` tries the corresponding `TransportUsing` steps against one
+immutable root and retains the successful deletion-minimized `Proof`
+descendant, while explicit `transport using` submits its source step directly.
+The outcome drain records the checker-owned source/target lowerings, consumes
+only the accepted target delta, and serializes that proof's retained step. The
+former outcome helper separately mutated a vector fact context, implemented
+transport reachability, inferred premises, and then reran itself to validate
+the generated certificate; it and its duplicate planner have been deleted.
+The shared checker preserves the deliberate source policy: mid-execution
+`using` must establish its logical source explicitly, whereas a completed
+return outcome may use the dedicated source slot without duplicating an exact
+path fact in `using`. Snapshot materialization now retains its symbolic load
+identity by configuring the existing persistent assumption context instead
+of scanning or cloning every ambient fact. Regressions cover no ordinary
+certificate replay, independent expansion, marked snapshots, certified store
+equations, preceding outcome facts, transactional rejection, and logarithmic
+persistent allocation for a fixed explicit result-aware transport across 16
+through 4096 unrelated facts.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

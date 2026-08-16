@@ -1763,6 +1763,85 @@ impl<'a> Proof<'a> {
         source_proof_contains_linear_search(proof) && source_proof_is_supported(proof)
     }
 
+    /// Searches explicit premise spellings for one point fact transport.
+    ///
+    /// Every candidate is checked by applying the corresponding simple step
+    /// to this immutable root. Failed descendants are discarded; the
+    /// returned `Proof` is the already-checked, deletion-minimized success,
+    /// so callers never reconstruct or replay the selected certificate.
+    pub(super) fn search_point_fact_transport(
+        &self,
+        source: &ClickProposition,
+        target: &ClickProposition,
+        candidates: impl IntoIterator<Item = ClickProposition>,
+    ) -> Result<Self, ClickError> {
+        if !matches!(self.context.as_ref(), ProofContext::Point(_)) {
+            return Err(self.step_error("fact-transport search requires a point proof"));
+        }
+        let apply = |premises: Vec<ClickProposition>| {
+            self.apply_step(SimpleProofStep::TransportUsing {
+                source: source.clone(),
+                target: target.clone(),
+                premises,
+            })
+        };
+        let mut selected = Vec::new();
+        let mut last_error = None;
+        let mut selected_proof = match apply(Vec::new()) {
+            Ok(proof) => Some(proof),
+            Err(error) => {
+                last_error = Some(error);
+                check_verification_deadline()?;
+                None
+            }
+        };
+        if selected_proof.is_none() {
+            for candidate in candidates {
+                check_verification_deadline()?;
+                if selected.contains(&candidate) {
+                    continue;
+                }
+                selected.push(candidate);
+                match apply(selected.clone()) {
+                    Ok(proof) => {
+                        selected_proof = Some(proof);
+                        break;
+                    }
+                    Err(error) => {
+                        last_error = Some(error);
+                        check_verification_deadline()?;
+                    }
+                }
+            }
+        }
+        let Some(mut selected_proof) = selected_proof else {
+            return Err(self.step_error(format!(
+                "post-execution fact transport has no explicit surface-premise certificate: {}",
+                last_error
+                    .as_ref()
+                    .map(|error| error.message())
+                    .unwrap_or("no candidate was checked")
+            )));
+        };
+        let mut index = 0;
+        while index < selected.len() {
+            check_verification_deadline()?;
+            let mut reduced = selected.clone();
+            reduced.remove(index);
+            match apply(reduced.clone()) {
+                Ok(proof) => {
+                    selected = reduced;
+                    selected_proof = proof;
+                }
+                Err(_) => {
+                    check_verification_deadline()?;
+                    index += 1;
+                }
+            }
+        }
+        Ok(selected_proof)
+    }
+
     /// Untrusted smart-tactic query for one explicit theorem-application
     /// candidate on a point proof.
     ///
@@ -6066,6 +6145,15 @@ mod tests {
                 Bitvector32Term::Variable(Variable(8_160_003)),
             ))),
         };
+        let missing = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(Variable(8_160_006)),
+            ))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(Variable(8_160_007)),
+            ))),
+        };
         let program_point_states = ProgramPointStates::new();
         let lower = |surface: &ClickProposition| {
             lower_point_proposition_with_assumptions(
@@ -6084,48 +6172,67 @@ mod tests {
         };
         let kernel_source = lower(&source);
         let kernel_extracted = lower(&extracted);
-        let facts = vec![
-            kernel_source.clone(),
-            Proposition::And(
-                Box::new(kernel_extracted),
-                Box::new(indexed_fact(8_160_004)),
-            ),
-        ];
         let surface_propositions = SurfacePropositionMap::default();
-        let root = Proof::for_point_goal(
-            "nested point transport",
-            0,
-            &facts,
-            indexed_fact(8_160_005),
-            parsed_function.parameters(),
-            &[],
-            &state,
-            &state,
-            &program_point_states,
-            &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
-            &theorem_environment,
-            &[],
-            &[],
-        );
-        let refined = root
-            .apply_step(SimpleProofStep::Extract(extracted.clone()))
-            .expect("the predecessor should advance the proof");
-        let transport = SimpleProofStep::TransportUsing {
-            source: source.clone(),
-            target: source.clone(),
-            premises: vec![source],
-        };
-        let transported = refined
-            .apply_step(transport.clone())
-            .expect("transport should be valid after an accepted predecessor");
-        assert_eq!(
-            transported.certificate().steps(),
-            &[SimpleProofStep::Extract(extracted), transport,]
-        );
-        assert_eq!(transported.added_facts(), &[]);
-        assert_eq!(root.certificate().steps(), &[]);
+        let result = int32(0);
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.push(kernel_source.clone());
+            facts.push(Proposition::And(
+                Box::new(kernel_extracted.clone()),
+                Box::new(indexed_fact(8_160_004)),
+            ));
+            let root = Proof::for_point_frontier(
+                "nested result-aware point transport",
+                0,
+                &facts,
+                parsed_function.parameters(),
+                &[],
+                &state,
+                &state,
+                Some(&result),
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let refined = root
+                .apply_step(SimpleProofStep::Extract(extracted.clone()))
+                .expect("the predecessor should advance the proof");
+            let retained_refined = refined.clone();
+            let rejected = refined.apply_step(SimpleProofStep::TransportUsing {
+                source: source.clone(),
+                target: missing.clone(),
+                premises: Vec::new(),
+            });
+            assert!(rejected.is_err());
+            assert!(Arc::ptr_eq(&refined.state, &retained_refined.state));
+
+            let transport = SimpleProofStep::TransportUsing {
+                source: source.clone(),
+                target: source.clone(),
+                premises: Vec::new(),
+            };
+            let before = fact_node_allocations();
+            let transported = refined
+                .apply_step(transport.clone())
+                .expect("the exact ambient source should occupy its own checked slot");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 16 * logarithmic_height + 64;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} point transport allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert_eq!(
+                transported.certificate().steps(),
+                &[SimpleProofStep::Extract(extracted.clone()), transport,]
+            );
+            assert_eq!(transported.added_facts(), &[]);
+            assert_eq!(root.certificate().steps(), &[]);
+        }
     }
 
     #[test]

@@ -2471,85 +2471,101 @@ pub(super) fn finish_ordered_proof_replay(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: `transport` requires a return outcome"
                                     )));
                                 };
-                                let certificate_context = premises.is_none().then(|| {
-                                    (
-                                        path_requirements.clone(),
-                                        outcome_surface_propositions.clone(),
-                                    )
-                                });
-                                let surface_tactic = replay_fact_transport_at_outcome(
-                                    source,
-                                    target,
-                                    premises.as_deref(),
-                                    function_block.signature().name(),
+                                let requirements_before = path_requirements.clone();
+                                let transition_facts = path.execution_facts();
+                                let mut transport_available = path_requirements.clone();
+                                for equation in
+                                    crate::kernel::certified_store_equations(&transition_facts)
+                                {
+                                    if outcome_surface_propositions
+                                        .surfaces(&equation)
+                                        .next()
+                                        .is_some()
+                                        && !transport_available.contains(&equation)
+                                    {
+                                        transport_available.push(equation);
+                                    }
+                                }
+                                let candidates = if premises.is_none() {
+                                    Some(fact_transport_candidates_at_outcome(
+                                        &transport_available,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        post_state,
+                                        result,
+                                        &replay,
+                                        predicate_environment,
+                                        click_function_environment,
+                                    )?)
+                                } else {
+                                    None
+                                };
+                                let proof = Proof::for_point_frontier(
                                     &proof_label,
-                                    path_index,
                                     *tactic_index,
-                                    &mut path_requirements,
-                                    &mut outcome_surface_propositions,
-                                    &path.execution_facts(),
+                                    &transport_available,
                                     parsed_function.parameters(),
                                     arguments,
                                     pre_state,
                                     post_state,
-                                    result,
-                                    &replay,
+                                    Some(result),
+                                    &replay.program_point_states,
+                                    &outcome_surface_propositions,
                                     predicate_environment,
                                     click_function_environment,
-                                )?;
-                                if let Some((mut certificate_facts, mut certificate_surfaces)) =
-                                    certificate_context
-                                {
-                                    let ProofTactic::TransportUsing {
-                                        source,
-                                        target,
-                                        premises,
-                                    } = &surface_tactic
-                                    else {
-                                        unreachable!(
-                                            "smart post-execution transport must emit explicit premises"
-                                        )
-                                    };
-                                    ProofCertificate::from_proof_tactics(std::slice::from_ref(
-                                        &surface_tactic,
-                                    ))
-                                    .expect("explicit fact transport must be a simple certificate");
-                                    replay_fact_transport_at_outcome(
-                                        source,
-                                        target,
-                                        Some(premises),
-                                        function_block.signature().name(),
-                                        &proof_label,
-                                path_index,
-                                *tactic_index,
-                                &mut certificate_facts,
-                                &mut certificate_surfaces,
-                                &path.execution_facts(),
-                                parsed_function.parameters(),
-                                arguments,
-                                pre_state,
-                                post_state,
-                                result,
-                                &replay,
-                                predicate_environment,
-                                click_function_environment,
-                            )
-                            .map_err(|error| {
-                                ClickError::new(format!(
-                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: post-execution `transport` certificate failed replay: {}",
-                                    error.message()
-                                ))
-                            })?;
-                                }
-                                record_post_execution_surface_tactic(
-                                    deferred.surface_recorded,
-                                    &mut path_surface_post_tactics,
-                                    &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
-                                    post_execution_index,
-                                    *tactic_index,
-                                    surface_tactic,
+                                    theorem_environment,
+                                    &unfolded_predicates,
+                                    &transition_facts,
                                 );
+                                let proof = if let Some(premises) = premises {
+                                    proof.apply_step(SimpleProofStep::TransportUsing {
+                                        source: source.clone(),
+                                        target: target.clone(),
+                                        premises: premises.clone(),
+                                    })?
+                                } else {
+                                    proof.search_point_fact_transport(
+                                        source,
+                                        target,
+                                        candidates.expect("smart transport gathered candidates"),
+                                    )?
+                                };
+                                let added_facts = proof.added_facts().to_vec();
+                                let checked_facts = proof.checked_facts().to_vec();
+                                let certificate = proof.certificate();
+                                drop(proof);
+                                let [checked_source, checked_target] = checked_facts.as_slice()
+                                else {
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: checked transport did not retain its source and target"
+                                    )));
+                                };
+                                outcome_surface_propositions
+                                    .record_lowering(source, checked_source)?;
+                                outcome_surface_propositions
+                                    .record_lowering(target, checked_target)?;
+                                for fact in added_facts {
+                                    if !path_requirements.contains(&fact) {
+                                        path_requirements.push(fact);
+                                    }
+                                }
+                                record_certificate_facts_from_replay(
+                                    &requirements_before,
+                                    &path_requirements,
+                                    &mut surface_certificate_facts,
+                                );
+                                for tactic in certificate.to_proof_tactics() {
+                                    record_post_execution_surface_tactic(
+                                        deferred.surface_recorded,
+                                        &mut path_surface_post_tactics,
+                                        &mut path_deferred_capture_tactics,
+                                        replay.deferred_tactic_capture.as_ref(),
+                                        post_execution_index,
+                                        *tactic_index,
+                                        tactic.clone(),
+                                    );
+                                }
                             }
                             PostExecutionTactic::Choose(choice) => {
                                 existence_tactics.push(ProofTactic::Choose(choice.clone()));
