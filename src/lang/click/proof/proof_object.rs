@@ -1491,6 +1491,112 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Runs the linear proposition-script subset already represented by
+    /// checked `Proof` transitions.
+    ///
+    /// Bare `apply` and `simp` remain untrusted search operations: they may
+    /// inspect the current proof, but each selected simple step advances only
+    /// through `apply_step`. Explicit simple tactics in the same script use
+    /// that identical path, so a successful search already owns its complete
+    /// expandable derivation rather than reconstructing one afterward.
+    pub(super) fn try_linear_smart_script(
+        &self,
+        tactics: &[ProofTactic],
+    ) -> Result<Option<Self>, ClickError> {
+        fn explicit_linear_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
+            let certificate =
+                ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).ok()?;
+            let [step] = certificate.steps() else {
+                return None;
+            };
+            matches!(
+                step,
+                SimpleProofStep::ApplyTheoremUsing { .. }
+                    | SimpleProofStep::UnfoldPredicate(_)
+                    | SimpleProofStep::Witness(_)
+                    | SimpleProofStep::Choose(_)
+                    | SimpleProofStep::Assumption
+                    | SimpleProofStep::Extract(_)
+                    | SimpleProofStep::Normalize
+                    | SimpleProofStep::Intro
+                    | SimpleProofStep::Split
+                    | SimpleProofStep::Left
+                    | SimpleProofStep::Right
+                    | SimpleProofStep::Enumerate
+                    | SimpleProofStep::Contradiction(_)
+                    | SimpleProofStep::Rewrite(_)
+                    | SimpleProofStep::TransportUsing { .. }
+                    | SimpleProofStep::InstantiateUsing { .. }
+            )
+            .then(|| step.clone())
+        }
+
+        let contains_search = tactics
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::ApplyTheorem(_) | ProofTactic::Simp));
+        if !contains_search || tactics.is_empty() {
+            return Ok(None);
+        }
+
+        // Recognize the complete path before doing any search. `simp` closes
+        // the remaining goal and is therefore meaningful only at the end.
+        if tactics
+            .iter()
+            .enumerate()
+            .any(|(index, tactic)| match tactic {
+                ProofTactic::ApplyTheorem(_) => false,
+                ProofTactic::Simp => index + 1 != tactics.len(),
+                tactic => explicit_linear_step(tactic).is_none(),
+            })
+        {
+            return Ok(None);
+        }
+
+        let mut proof = self.clone();
+        for tactic in tactics {
+            if proof.is_complete() {
+                // A final `simp` after an exact theorem conclusion is a
+                // harmless search no-op and emits no redundant certificate
+                // step, matching direct smart closure behavior.
+                if matches!(tactic, ProofTactic::Simp) {
+                    continue;
+                }
+                // Let the established explicit/source checker diagnose an
+                // invalid suffix after closure. This path has produced no
+                // externally visible mutation, and its source-level wording
+                // remains part of the diagnostic contract.
+                return Ok(None);
+            }
+            match tactic {
+                ProofTactic::ApplyTheorem(application) => {
+                    let step = match proof.context.as_ref() {
+                        ProofContext::Pure(_) => {
+                            proof.select_pure_theorem_application_step(application)?
+                        }
+                        ProofContext::Point(_) => {
+                            proof.select_point_theorem_application_step(application)?
+                        }
+                        ProofContext::Execution(_) => return Ok(None),
+                    };
+                    proof = proof.apply_step(step)?;
+                }
+                ProofTactic::Simp => {
+                    let Some(closed) = proof.try_direct_logical_closure() else {
+                        return Ok(None);
+                    };
+                    proof = closed;
+                }
+                tactic => {
+                    let step = explicit_linear_step(tactic)
+                        .expect("the linear script was recognized before execution");
+                    proof = proof.apply_step(step)?;
+                }
+            }
+        }
+
+        Ok(proof.is_complete().then_some(proof))
+    }
+
     /// Untrusted smart-tactic query for one explicit theorem-application
     /// candidate at a point proposition goal.
     ///
@@ -5361,20 +5467,22 @@ mod tests {
                     premises: vec![premise.clone()],
                 }
             );
+            let tactics = [
+                ProofTactic::Extract(premise.clone()),
+                ProofTactic::ApplyTheorem(application.clone()),
+                ProofTactic::Simp,
+            ];
             let before_apply = fact_node_allocations();
-            let applied = extracted
-                .apply_step(step.clone())
-                .expect("the selected explicit step should be checked once");
+            let complete = root
+                .try_linear_smart_script(&tactics)
+                .expect("mixed linear search should not fail")
+                .expect("extract, smart apply, and simp should close the goal");
             let allocations = fact_node_allocations() - before_apply;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
-            let allocation_bound = 32 * logarithmic_height + 128;
+            let allocation_bound = 64 * logarithmic_height + 256;
             assert!(
                 allocations <= allocation_bound,
-                "size {size} point theorem application allocated {allocations} persistent nodes (bound {allocation_bound})"
-            );
-            assert!(!applied.is_complete());
-            let complete = applied.try_direct_logical_closure().expect(
-                "the checked conclusion and inherited premise should close the conjunction",
+                "size {size} mixed point script allocated {allocations} persistent nodes (bound {allocation_bound})"
             );
             assert!(complete.is_complete());
             assert_eq!(
@@ -5487,12 +5595,21 @@ mod tests {
                     premises: vec![premise.clone()],
                 }
             );
-            let applied = root
-                .apply_step(step.clone())
-                .expect("the selected pure theorem step should check once");
-            let complete = applied
-                .try_direct_logical_closure()
+            let before_script = fact_node_allocations();
+            let complete = root
+                .try_linear_smart_script(&[
+                    ProofTactic::ApplyTheorem(application.clone()),
+                    ProofTactic::Simp,
+                ])
+                .expect("linear pure search should not fail")
                 .expect("the checked conclusion should close the conjunction");
+            let script_allocations = fact_node_allocations() - before_script;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 64 * logarithmic_height + 256;
+            assert!(
+                script_allocations <= allocation_bound,
+                "size {size} pure linear script allocated {script_allocations} persistent nodes (bound {allocation_bound})"
+            );
             assert!(complete.is_complete());
             assert_eq!(complete.certificate().steps().first(), Some(&step));
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));

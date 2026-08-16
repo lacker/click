@@ -824,6 +824,19 @@ records zero persistent-index allocations during selection, and focused
 no-replay plus expansion regressions check the retained
 `ApplyTheoremUsing`/closer path and independently reverify its serialization.
 
+Pure and point proposition proofs now share one linear smart-script driver on
+`Proof` instead of maintaining tactic-shape recognizers in their callers. The
+driver pre-recognizes scripts composed of already-admitted explicit
+proposition steps, bare `apply`, and a final `simp`; each explicit or selected
+step advances the same immutable `Proof` through `apply_step`. This permits a
+search to continue across mixed paths such as
+`extract(...); apply(...); simp();` without reconstructing intermediate
+semantic state or replaying a generated body certificate. Unsupported
+structural, execution, and resource scripts remain outside this driver. Pure
+and point expansion regressions independently reverify the retained mixed
+paths, and deterministic 16-through-4096-fact tests bound the complete fixed
+linear script by logarithmic persistent-index allocation.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

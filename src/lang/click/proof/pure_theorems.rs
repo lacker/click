@@ -858,12 +858,11 @@ fn verify_kernel_standard_theorem_axiom(
 
 /// Checks the pure-script subset already supported by the proof object.
 ///
-/// Fully explicit `apply using`, `assumption`, and `normalize` scripts advance
-/// directly through `Proof::apply_step`. Bare theorem application followed by
-/// `assumption` or `simp` asks the `Proof` for an explicit
-/// `ApplyTheoremUsing`, submits it to the same checked path, and continues from
-/// that successor. Explicit `cases` certificates use the audited
-/// branch/open/join operations recursively.
+/// Fully explicit proposition scripts advance directly through
+/// `Proof::apply_step`. Linear scripts may interleave those checked steps with
+/// bare theorem application and a final `simp`; both smart operations select
+/// simple steps against the current `Proof`. Explicit `cases` certificates use
+/// the audited branch/open/join operations recursively.
 #[allow(clippy::too_many_arguments)]
 fn check_pure_script_with_proof(
     claim_label: &str,
@@ -912,34 +911,6 @@ fn check_pure_script_with_proof(
         click_function_environment,
         theorem_environment,
     );
-
-    // A smart closure after explicit predicate selection searches directly on
-    // the successor Proof. The selected unfolds and final simple closer are
-    // retained as one checked path; no generated body certificate is replayed
-    // during ordinary verification.
-    if matches!(tactics.last(), Some(ProofTactic::Simp))
-        && !tactics[..tactics.len() - 1].is_empty()
-        && tactics[..tactics.len() - 1]
-            .iter()
-            .all(|tactic| matches!(tactic, ProofTactic::UnfoldPredicate(_)))
-    {
-        let mut selected = Some(root.clone());
-        for tactic in &tactics[..tactics.len() - 1] {
-            let ProofTactic::UnfoldPredicate(name) = tactic else {
-                unreachable!("the unfold-prefix path checked every tactic")
-            };
-            selected = selected.and_then(|proof| {
-                proof
-                    .apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))
-                    .ok()
-            });
-        }
-        if let Some(complete) = selected.and_then(|proof| proof.try_direct_logical_closure())
-            && complete.is_complete()
-        {
-            return Ok(Some(complete.certificate()));
-        }
-    }
 
     // A one-node smart logical branch searches each arm directly on its
     // branch-local Proof. Successful arms are joined with their retained
@@ -1050,6 +1021,10 @@ fn check_pure_script_with_proof(
         }
     }
 
+    if let Some(proof) = root.try_linear_smart_script(tactics)? {
+        return Ok(Some(proof.certificate()));
+    }
+
     if let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
         && supported(&certificate)
     {
@@ -1065,26 +1040,7 @@ fn check_pure_script_with_proof(
         return Ok(Some(proof.certificate()));
     }
 
-    let [ProofTactic::ApplyTheorem(application), closer] = tactics else {
-        return Ok(None);
-    };
-    let step = root.select_pure_theorem_application_step(application)?;
-    let selected = root.apply_step(step)?;
-    let proof = match closer {
-        ProofTactic::Assumption => selected.apply_step(SimpleProofStep::Assumption)?,
-        ProofTactic::Simp if selected.is_complete() => selected,
-        ProofTactic::Simp => {
-            let Some(closed) = selected.try_direct_logical_closure() else {
-                return Ok(None);
-            };
-            closed
-        }
-        _ => return Ok(None),
-    };
-    if !proof.is_complete() {
-        return Ok(None);
-    }
-    Ok(Some(proof.certificate()))
+    Ok(None)
 }
 
 fn pure_theorem_surface_certificate(

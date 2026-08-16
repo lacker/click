@@ -1702,7 +1702,7 @@ fn pure_theorem_expansion_is_certificate_backed_and_idempotent() {
 }
 
 #[test]
-fn pure_apply_then_simp_expands_the_retained_proof_object_path() {
+fn pure_mixed_linear_smart_script_expands_the_retained_proof_object_path() {
     let source = r#"
         theorem required(x: int32) {
             requires x >= 0;
@@ -1710,8 +1710,9 @@ fn pure_apply_then_simp_expands_the_retained_proof_object_path() {
         }
 
         theorem applied_then_simp(x: int32) {
-            requires x >= 0;
+            requires (x >= 0) and (x <= 10);
             ensures (x >= 0) and (x >= 0) by {
+                extract(x >= 0);
                 apply(required(x));
                 simp();
             }
@@ -1727,6 +1728,7 @@ fn pure_apply_then_simp_expands_the_retained_proof_object_path() {
         "{selected}"
     );
     assert!(selected.contains("x >= 0;"), "{selected}");
+    assert!(selected.contains("extract(x >= 0);"), "{selected}");
     assert!(selected.contains("split();"), "{selected}");
     assert!(!selected.contains("apply(required(x));"), "{selected}");
     assert!(!selected.contains("simp();"), "{selected}");

@@ -2811,7 +2811,7 @@ fn point_have_bare_apply_retains_and_checks_its_exact_premise() {
 }
 
 #[test]
-fn point_have_smart_apply_continues_on_the_checked_successor() {
+fn point_have_mixed_linear_smart_script_continues_on_checked_successors() {
     let c_source = r#"
             int32 choose_second(int32 first, int32 second) {
                 return second;
@@ -2828,10 +2828,11 @@ fn point_have_smart_apply_continues_on_the_checked_successor() {
             verifying "choose.c";
 
             int32 choose_second(int32 first, int32 second) {
-                requires first == second;
+                requires (first == second) and (first >= 0);
                 ensures result == second;
             } by {
                 have second == first and first == second by {
+                    extract(first == second);
                     apply(equality_symmetric(first, second));
                     simp();
                 }
@@ -2878,6 +2879,10 @@ fn point_have_smart_apply_continues_on_the_checked_successor() {
             .expect("expanded proof should retain its suffix")];
     assert!(
         expanded_have.contains("apply(equality_symmetric(first, second)) using {"),
+        "{expanded_have}"
+    );
+    assert!(
+        expanded_have.contains("extract(first == second);"),
         "{expanded_have}"
     );
     assert!(
