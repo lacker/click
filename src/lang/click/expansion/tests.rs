@@ -1784,6 +1784,43 @@ fn pure_branch_local_apply_expands_the_retained_proof_object_paths() {
 }
 
 #[test]
+fn pure_nested_have_apply_expands_the_retained_proof_object_scope() {
+    let source = r#"
+        theorem restate_zero(x: int32) {
+            requires x == 0;
+            ensures x == 0 by {
+                assumption();
+            }
+        }
+
+        theorem nested_apply(x: int32) {
+            requires x == 0;
+            ensures x == 0 by {
+                have x == 0 by {
+                    apply(restate_zero(x));
+                    simp();
+                }
+                assumption();
+            }
+        }
+    "#;
+    let expanded = expand_pure_theorem_source(source, &[], "nested_apply", 0)
+        .expect("the checked nested theorem path should expand");
+    let selected = &expanded[expanded
+        .find("theorem nested_apply")
+        .expect("expanded source should retain the selected theorem")..];
+    assert!(selected.contains("have x == 0 by {"), "{selected}");
+    assert!(
+        selected.contains("apply(restate_zero(x)) using {"),
+        "{selected}"
+    );
+    assert!(!selected.contains("apply(restate_zero(x));"), "{selected}");
+    assert!(!selected.contains("simp();"), "{selected}");
+    verify_click_theorems(&expanded)
+        .expect("the serialized nested pure scope should independently reverify");
+}
+
+#[test]
 fn expands_qualified_frame_tactic() {
     let c_source = r#"int32 set_cell(int32 p[], int32 value) {
     p[0] = value;

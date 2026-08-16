@@ -492,10 +492,9 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
 ) -> Result<Option<(Proposition, Option<ProofCertificate>)>, ClickError> {
     enum Plan<'a> {
         DirectSmart,
-        LinearSmart(&'a [ProofTactic]),
+        Script(&'a [ProofTactic]),
         SmartIf(&'a ProofIf),
         SmartCases(&'a ProofCases),
-        Explicit(ProofCertificate),
     }
 
     let plan = match &have.proof {
@@ -507,16 +506,8 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
                 Plan::SmartIf(proof_if)
             } else if let [ProofTactic::Cases(proof_cases)] = tactics.as_slice() {
                 Plan::SmartCases(proof_cases)
-            } else if tactics
-                .iter()
-                .any(|tactic| matches!(tactic, ProofTactic::ApplyTheorem(_) | ProofTactic::Simp))
-            {
-                Plan::LinearSmart(tactics)
             } else {
-                let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics) else {
-                    return Ok(None);
-                };
-                Plan::Explicit(certificate)
+                Plan::Script(tactics)
             }
         }
         SourceProof::Tactic(SmartTactic::Frame) => return Ok(None),
@@ -558,11 +549,21 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
         requirement_label_indices,
     );
     let (proof, append_certificate) = match plan {
-        Plan::LinearSmart(tactics) => {
-            let Some(checked) = proof.try_linear_smart_script(tactics)? else {
-                return Ok(None);
-            };
-            (checked, true)
+        Plan::Script(tactics) => {
+            if let Some(checked) = proof.try_linear_smart_script(tactics)? {
+                (checked, true)
+            } else {
+                let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics) else {
+                    return Ok(None);
+                };
+                // Preserve legacy failure diagnostics for certificate
+                // operations not yet admitted by Proof, or for a rejected
+                // source script.
+                let Ok(checked) = proof.check_certificate(&certificate) else {
+                    return Ok(None);
+                };
+                (checked, false)
+            }
         }
         Plan::DirectSmart => {
             let Some(closed) = proof.try_direct_logical_closure() else {
@@ -603,14 +604,6 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
             };
             let closed = branches.join()?;
             (closed, true)
-        }
-        Plan::Explicit(certificate) => {
-            // Preserve legacy failure diagnostics for certificate operations
-            // not yet admitted by Proof, or for a rejected source script.
-            let Ok(checked) = proof.check_certificate(&certificate) else {
-                return Ok(None);
-            };
-            (checked, false)
         }
     };
     if !proof.is_complete() {

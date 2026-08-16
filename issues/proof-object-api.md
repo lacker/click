@@ -850,6 +850,20 @@ surface `not(condition)` premise without an ambient scan. Pure and point
 regressions check no ordinary construction replay, retained
 `ApplyTheoremUsing` arms, expansion, and independent verification.
 
+Audited nested `have` scopes now use the linear driver as well. Search inside
+the body advances the scope-owned `Proof`; `join` publishes only the checked
+proposition and embeds that descendant's exact certificate. The former pure
+caller-side loop for “smart have plus selected simple outer steps” has been
+deleted, and point proofs use the same path, including recursively nested
+smart `have` bodies. An already-simple body inside a surrounding smart script
+is checked through the scope's `Proof` rather than treated as planner
+metadata. Pure and point regressions retain nested `ApplyTheoremUsing` steps,
+observe no ordinary construction replay, serialize the nested scopes, and
+independently verify them. A deterministic 16-through-4096-fact regression
+holds the smart body fixed, bounds scope search/join/outer closure by
+logarithmic persistent-node allocation, and checks that rejected nested
+search leaves the original scope untouched.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

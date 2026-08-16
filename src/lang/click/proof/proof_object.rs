@@ -1531,24 +1531,59 @@ impl<'a> Proof<'a> {
             .then(|| step.clone())
         }
 
-        let contains_search = tactics
-            .iter()
-            .any(|tactic| matches!(tactic, ProofTactic::ApplyTheorem(_) | ProofTactic::Simp));
+        fn source_proof_contains_linear_search(proof: &SourceProof) -> bool {
+            match proof {
+                SourceProof::Default
+                | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
+                SourceProof::Script(tactics) => script_contains_linear_search(tactics),
+                SourceProof::Tactic(SmartTactic::Frame) => false,
+            }
+        }
+
+        fn script_contains_linear_search(tactics: &[ProofTactic]) -> bool {
+            tactics.iter().any(|tactic| match tactic {
+                ProofTactic::ApplyTheorem(_) | ProofTactic::Simp => true,
+                ProofTactic::Have(have) => source_proof_contains_linear_search(&have.proof),
+                _ => false,
+            })
+        }
+
+        fn source_proof_is_supported(proof: &SourceProof) -> bool {
+            match proof {
+                SourceProof::Default
+                | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
+                SourceProof::Script(tactics) => {
+                    if script_contains_linear_search(tactics) {
+                        linear_script_is_supported(tactics)
+                    } else {
+                        ProofCertificate::from_proof_tactics(tactics).is_ok()
+                    }
+                }
+                SourceProof::Tactic(SmartTactic::Frame) => false,
+            }
+        }
+
+        fn linear_script_is_supported(tactics: &[ProofTactic]) -> bool {
+            !tactics.is_empty()
+                && tactics
+                    .iter()
+                    .enumerate()
+                    .all(|(index, tactic)| match tactic {
+                        ProofTactic::ApplyTheorem(_) => true,
+                        ProofTactic::Simp => index + 1 == tactics.len(),
+                        ProofTactic::Have(have) => source_proof_is_supported(&have.proof),
+                        tactic => explicit_linear_step(tactic).is_some(),
+                    })
+        }
+
+        let contains_search = script_contains_linear_search(tactics);
         if !contains_search || tactics.is_empty() {
             return Ok(None);
         }
 
         // Recognize the complete path before doing any search. `simp` closes
         // the remaining goal and is therefore meaningful only at the end.
-        if tactics
-            .iter()
-            .enumerate()
-            .any(|(index, tactic)| match tactic {
-                ProofTactic::ApplyTheorem(_) => false,
-                ProofTactic::Simp => index + 1 != tactics.len(),
-                tactic => explicit_linear_step(tactic).is_none(),
-            })
-        {
+        if !linear_script_is_supported(tactics) {
             return Ok(None);
         }
 
@@ -1585,6 +1620,29 @@ impl<'a> Proof<'a> {
                         return Ok(None);
                     };
                     proof = closed;
+                }
+                ProofTactic::Have(have) => {
+                    let scope = proof.begin_have(have.proposition.clone())?;
+                    let selected = match &have.proof {
+                        SourceProof::Default
+                        | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
+                            scope.try_direct_logical_closure()
+                        }
+                        SourceProof::Script(body) if script_contains_linear_search(body) => {
+                            scope.try_linear_smart_script(body)?
+                        }
+                        SourceProof::Script(body) => {
+                            let Ok(certificate) = ProofCertificate::from_proof_tactics(body) else {
+                                return Ok(None);
+                            };
+                            scope.check_certificate(&certificate).ok()
+                        }
+                        SourceProof::Tactic(SmartTactic::Frame) => None,
+                    };
+                    let Some(selected) = selected else {
+                        return Ok(None);
+                    };
+                    proof = selected.join()?;
                 }
                 tactic => {
                     let step = explicit_linear_step(tactic)
@@ -3172,6 +3230,28 @@ impl<'a> ProofScope<'a> {
         Some(next)
     }
 
+    /// Runs one supported smart script inside the owned nested body and
+    /// retains its already-checked descendant.
+    pub(super) fn try_linear_smart_script(
+        &self,
+        tactics: &[ProofTactic],
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self.body.try_linear_smart_script(tactics)? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
+    }
+
+    /// Checks an already-simple nested body through the same Proof API. This
+    /// is used only when a surrounding smart script also owns search steps.
+    fn check_certificate(&self, certificate: &ProofCertificate) -> Result<Self, ClickError> {
+        let mut next = self.clone();
+        next.body = self.body.check_certificate(certificate)?;
+        Ok(next)
+    }
+
     /// Closes a completed nested proof and makes its checked proposition
     /// available in the enclosing proof while retaining the exact body.
     pub(super) fn join(self) -> Result<Proof<'a>, ClickError> {
@@ -3984,6 +4064,97 @@ mod tests {
         );
         assert!(!root.is_complete());
         assert!(root.certificate().steps().is_empty());
+    }
+
+    #[test]
+    fn smart_have_scope_scales_with_local_output_and_is_transactional() {
+        let proposition = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let memory = CMemory::new();
+        let kernel = lower_pure_theorem_proposition(
+            "smart have scaling",
+            &proposition,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &memory,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("constant equality should lower");
+        let smart_body = [ProofTactic::Simp];
+        let missing_body = [
+            ProofTactic::ApplyTheorem(TheoremApplication {
+                name: "missing".to_string(),
+                arguments: Vec::new(),
+            }),
+            ProofTactic::Simp,
+        ];
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let requires = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            let theorem_context = PureTheoremContext {
+                memory: memory.clone(),
+                values: BTreeMap::new(),
+                array_refs: BTreeMap::new(),
+                requires: requires.clone(),
+            };
+            let root = Proof::for_pure_goal(
+                "smart have scaling",
+                &requires,
+                kernel.clone(),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let scope = root
+                .begin_have(proposition.clone())
+                .expect("have should open a nested proof");
+            let missing = match scope.try_linear_smart_script(&missing_body) {
+                Err(error) => error,
+                Ok(_) => panic!("an unknown theorem must reject nested search"),
+            };
+            assert!(missing.message().contains("unknown theorem"), "{missing:?}");
+            assert!(scope.body().certificate().steps().is_empty());
+
+            let before = fact_node_allocations();
+            let selected = scope
+                .try_linear_smart_script(&smart_body)
+                .expect("nested smart search should not fail")
+                .expect("simp should close the constant equality");
+            let enclosing = selected
+                .join()
+                .expect("the completed nested proof should join");
+            let complete = enclosing
+                .apply_step(SimpleProofStep::Assumption)
+                .expect("the published have fact should close the outer goal");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 64 * logarithmic_height + 256;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} smart scope allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert_eq!(
+                complete.certificate().steps(),
+                &[
+                    SimpleProofStep::Have {
+                        proposition: proposition.clone(),
+                        proof: Box::new(ProofCertificate::from_steps(vec![
+                            SimpleProofStep::Normalize,
+                        ])),
+                    },
+                    SimpleProofStep::Assumption,
+                ]
+            );
+            assert!(root.certificate().steps().is_empty());
+        }
     }
 
     #[test]

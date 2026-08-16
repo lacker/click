@@ -1612,20 +1612,104 @@ fn pure_unfold_then_simp_retains_the_checked_proof_path() {
 }
 
 #[test]
-fn smart_pure_have_retains_the_checked_scope_body_directly() {
+fn smart_pure_have_theorem_search_retains_the_checked_scope_body_directly() {
     let click_source = r#"
+        theorem restate_zero(x: int32) {
+            requires x == 0;
+            ensures x == 0 by {
+                assumption();
+            }
+        }
+
         theorem retain_zero_smart(x: int32) {
             requires zero: x == 0;
 
             ensures x == 0 by {
-                have x == 0 by simp;
+                have x == 0 by {
+                    apply(restate_zero(x));
+                    simp();
+                }
                 assumption();
             }
         }
     "#;
 
     verify_c0_sources(click_source, &[])
-        .expect("smart have should search by applying steps to its nested Proof");
+        .expect("smart have should apply theorem steps to its nested Proof");
+}
+
+#[test]
+fn smart_point_nested_have_theorem_search_retains_checked_scopes() {
+    let c_source = r#"
+        int32 keep(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        theorem restate_zero(x: int32) {
+            requires x == 0;
+            ensures x == 0 by {
+                assumption();
+            }
+        }
+
+        verifying "keep.c";
+
+        int32 keep(int32 x) {
+            requires zero: x == 0;
+            ensures result == 0;
+        } by {
+            have x == 0 by {
+                have x == 0 by {
+                    apply(restate_zero(x));
+                    simp();
+                }
+                assumption();
+            }
+            execute();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("keep.c", c_source)])
+    });
+    let verified = verified.expect("nested point have search should verify through Proof scopes");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "keep.contract" && name == "surface certificate replay"
+        )),
+        "nested point scope search must not reconstruct and replay a body: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("nested checked scopes should expose a certificate");
+    let expanded_debug = format!("{expanded:#?}");
+    assert!(
+        expanded_debug.matches("Have").count() >= 2,
+        "{expanded_debug}"
+    );
+    assert!(
+        expanded_debug.contains("ApplyTheoremUsing"),
+        "{expanded_debug}"
+    );
+
+    let expanded_source = expand_c0_claim_source(
+        click_source,
+        &[("keep.c", c_source)],
+        "keep",
+        CProofClaim::Grouped,
+    )
+    .expect("nested checked scopes should serialize");
+    assert!(
+        expanded_source.contains("apply(restate_zero(x)) using {")
+            && !expanded_source.contains("apply(restate_zero(x));"),
+        "{expanded_source}"
+    );
+    verify_c0_sources(&expanded_source, &[("keep.c", c_source)])
+        .expect("the serialized nested point scopes should independently reverify");
 }
 
 #[test]
