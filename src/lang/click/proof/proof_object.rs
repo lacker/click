@@ -1460,8 +1460,6 @@ impl<'a> Proof<'a> {
         claim_label: &str,
         tactic_index: usize,
     ) -> Result<ProofState, ClickError> {
-        let goal =
-            self.proposition_goal("`unfold` requires a proposition or execution-frontier proof")?;
         let checked = check_unfold_predicate_in_facts(
             &self.state.facts,
             name,
@@ -1470,21 +1468,26 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
         )?;
-        let goal = unfold_predicates_in_proposition(
-            predicate_environment,
-            click_function_environment,
-            std::slice::from_ref(name),
-            goal,
-            checked.facts.assumptions(),
-        )
-        .map_err(|message| self.step_error(message))?;
+        let goal = match &self.state.goal {
+            Goal::Proposition(goal) => Goal::Proposition(Arc::new(
+                unfold_predicates_in_proposition(
+                    predicate_environment,
+                    click_function_environment,
+                    std::slice::from_ref(name),
+                    goal,
+                    checked.facts.assumptions(),
+                )
+                .map_err(|message| self.step_error(message))?,
+            )),
+            Goal::ExecutionFrontier => Goal::ExecutionFrontier,
+        };
         let mut unfolded_predicates = self.state.unfolded_predicates.clone();
         unfolded_predicates.insert(name.clone());
         Ok(ProofState {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates,
-            goal: Goal::Proposition(Arc::new(goal)),
+            goal,
             complete: false,
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
@@ -4691,7 +4694,7 @@ mod tests {
             "point proposition unfold",
             0,
             std::slice::from_ref(&predicate),
-            goal,
+            goal.clone(),
             parsed_function.parameters(),
             &arguments,
             &state,
@@ -4714,6 +4717,51 @@ mod tests {
         assert!(checked.is_complete());
         assert_eq!(checked.certificate(), certificate);
         assert!(root.certificate().steps().is_empty());
+
+        let result = int32(7);
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.push(predicate.clone());
+            let root = Proof::for_point_frontier(
+                "result-aware point-frontier unfold",
+                0,
+                &facts,
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                Some(&result),
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            assert!(
+                root.apply_step(SimpleProofStep::UnfoldPredicate("missing".to_string()))
+                    .is_err()
+            );
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+
+            let step = SimpleProofStep::UnfoldPredicate("selected".to_string());
+            let before = fact_node_allocations();
+            let unfolded = root
+                .apply_step(step.clone())
+                .expect("a point frontier should accept a facts-only predicate unfold");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 40 * logarithmic_height + 160;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} result-aware frontier unfold allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert_eq!(unfolded.certificate().steps(), &[step]);
+            assert_eq!(unfolded.added_facts(), std::slice::from_ref(&goal));
+            assert!(root.certificate().steps().is_empty());
+        }
     }
 
     #[test]

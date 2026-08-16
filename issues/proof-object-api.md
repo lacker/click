@@ -930,6 +930,19 @@ equations, preceding outcome facts, transactional rejection, and logarithmic
 persistent allocation for a fixed explicit result-aware transport across 16
 through 4096 unrelated facts.
 
+Post-execution predicate unfolding now uses the same result-aware point
+frontier instead of mutating the outcome fact vector and separately recording
+an `UnfoldPredicate` tactic. The proposition-level unfold transition accepts
+an execution-frontier goal as a facts-only refinement, updates only the
+predicate-indexed `ProofFacts` delta, retains the exact simple step, and
+leaves proposition goals' existing goal-unfolding behavior unchanged. The
+outcome drain consumes that checked delta and certificate, while its inherited
+unfold-name list remains surface bookkeeping rather than proof authority. A
+grouped outcome regression observes no ordinary surface-certificate replay,
+and a 16-through-4096 unrelated-fact curve covers result-aware frontier
+unfolding, transactional unknown-predicate rejection, logarithmic persistent
+allocation, and ancestor isolation.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

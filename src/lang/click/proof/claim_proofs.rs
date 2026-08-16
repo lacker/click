@@ -1825,29 +1825,63 @@ pub(super) fn finish_ordered_proof_replay(
                                 )?;
                             }
                             PostExecutionTactic::UnfoldPredicate(name) => {
+                                let CFunctionOutcome::Return {
+                                    value: result,
+                                    state: post_state,
+                                } = &outcome
+                                else {
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: predicate unfolding requires a return outcome"
+                                    )));
+                                };
+                                let requirements_before = path_requirements.clone();
+                                let transition_facts = path.execution_facts();
+                                let proof = Proof::for_point_frontier(
+                                    &proof_label,
+                                    *tactic_index,
+                                    &path_requirements,
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    post_state,
+                                    Some(result),
+                                    &replay.program_point_states,
+                                    &outcome_surface_propositions,
+                                    predicate_environment,
+                                    click_function_environment,
+                                    theorem_environment,
+                                    &unfolded_predicates,
+                                    &transition_facts,
+                                );
+                                let proof = proof
+                                    .apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
+                                let added_facts = proof.added_facts().to_vec();
+                                let certificate = proof.certificate();
+                                drop(proof);
                                 if !unfolded_predicates.contains(name) {
                                     unfolded_predicates.push(name.clone());
                                 }
-                                path_requirements = unfold_available_predicate_facts(
-                            predicate_environment,
-                            click_function_environment,
-                            std::slice::from_ref(name),
-                            &path_requirements,
-                        )
-                        .map_err(|message| {
-                            ClickError::new(format!(
-                                "`{proof_label}` path {path_index}, tactic {tactic_index}: {message}"
-                            ))
-                        })?;
-                                record_post_execution_surface_tactic(
-                                    deferred.surface_recorded,
-                                    &mut path_surface_post_tactics,
-                                    &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
-                                    post_execution_index,
-                                    *tactic_index,
-                                    ProofTactic::UnfoldPredicate(name.clone()),
+                                for fact in added_facts {
+                                    if !path_requirements.contains(&fact) {
+                                        path_requirements.push(fact);
+                                    }
+                                }
+                                record_certificate_facts_from_replay(
+                                    &requirements_before,
+                                    &path_requirements,
+                                    &mut surface_certificate_facts,
                                 );
+                                for tactic in certificate.to_proof_tactics() {
+                                    record_post_execution_surface_tactic(
+                                        deferred.surface_recorded,
+                                        &mut path_surface_post_tactics,
+                                        &mut path_deferred_capture_tactics,
+                                        replay.deferred_tactic_capture.as_ref(),
+                                        post_execution_index,
+                                        *tactic_index,
+                                        tactic.clone(),
+                                    );
+                                }
                             }
                             PostExecutionTactic::Apply(application) => {
                                 let CFunctionOutcome::Return {

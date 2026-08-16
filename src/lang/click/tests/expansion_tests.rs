@@ -430,6 +430,44 @@ fn selected_post_execution_transport_emits_an_explicit_certificate() {
 }
 
 #[test]
+fn grouped_post_execution_unfold_retains_its_checked_proof_step() {
+    let c_source = r#"
+        int32 identity(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        predicate selected(x: int32) {
+            x == x
+        }
+
+        verifying "identity.c";
+
+        int32 identity(int32 x) {
+            requires selected(x);
+            ensures selected(x);
+        } by {
+            execute();
+            unfold(selected);
+            assumption();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("the grouped outcome unfold should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.contract" && name == "surface certificate replay"
+        )),
+        "the grouped outcome unfold must retain its checked Proof: {events:#?}"
+    );
+}
+
+#[test]
 fn selected_post_execution_smart_apply_uses_exact_path_premises() {
     let c_source = r#"
             int32 identity(int32 x) {
