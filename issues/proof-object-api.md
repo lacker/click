@@ -335,6 +335,10 @@ operations. Direct pure and point smart closures share a small combinator that
 tries these candidates only through `apply_step`; a nonterminal `intro`
 strictly removes one outer goal connective.
 
+Explicit `contradiction(fact)` is also checked by `Proof`: the named fact and
+its exact negation or opposite condition polarity must both be present in the
+persistent fact index before the goal closes.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

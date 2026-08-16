@@ -1276,6 +1276,14 @@ mod certificate_tests {
                     requires x >= 0;
                     ensures (x >= 0) or (x < 0) by auto;
                 }
+
+                theorem impossible(x: int32) {
+                    requires x >= 0;
+                    requires not (x >= 0);
+                    ensures x == 0 by {
+                        contradiction(x >= 0);
+                    }
+                }
             "#,
         )
         .expect("theorems should parse");
@@ -1318,6 +1326,10 @@ mod certificate_tests {
             verified[5].proof_tactics().as_deref(),
             Some([ProofTactic::Left].as_slice())
         );
+        assert!(matches!(
+            verified[6].proof_tactics().as_deref(),
+            Some([ProofTactic::Contradiction(_)])
+        ));
         assert!(
             events.iter().all(|event| !matches!(
                 event,
@@ -1330,6 +1342,7 @@ mod certificate_tests {
                             | "implication.ensures_0"
                             | "conjunction.ensures_0"
                             | "disjunction.ensures_0"
+                            | "impossible.ensures_0"
                     )
                         && name == "surface certificate replay"
             )),

@@ -519,6 +519,7 @@ fn checked_linear_have(
                         | SimpleProofStep::Left
                         | SimpleProofStep::Right
                         | SimpleProofStep::Enumerate
+                        | SimpleProofStep::Contradiction(_)
                 ) {
                     return Ok(None);
                 }

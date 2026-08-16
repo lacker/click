@@ -407,6 +407,7 @@ impl<'a> Proof<'a> {
                 }
                 self.closed_state()
             }
+            SimpleProofStep::Contradiction(surface) => self.apply_contradiction(surface)?,
             _ => {
                 return Err(self.step_error(
                     "this simple step has not yet migrated to the checked `Proof` API",
@@ -693,6 +694,65 @@ impl<'a> Proof<'a> {
             added_facts: Arc::new(added_facts),
             checked_facts: Arc::new(checked_facts),
         })
+    }
+
+    fn apply_contradiction(&self, surface: &ClickProposition) -> Result<ProofState, ClickError> {
+        let fact = match self.context.as_ref() {
+            ProofContext::Pure(context) => lower_pure_theorem_proposition(
+                context.claim_label,
+                surface,
+                &context.theorem_context.values,
+                &context.theorem_context.array_refs,
+                &context.theorem_context.memory,
+                context.predicate_environment,
+                context.click_function_environment,
+            )
+            .map_err(|message| {
+                self.step_error(format!("could not lower `contradiction` fact: {message}"))
+            })?,
+            ProofContext::Point(context) => {
+                if let Some(recorded) = context
+                    .surface_propositions
+                    .available_kernel(surface, context.lowering_context.as_ref())
+                {
+                    recorded.clone()
+                } else {
+                    lower_point_proposition(
+                        surface,
+                        context.lowering_context.as_ref(),
+                        context.parameters,
+                        context.arguments,
+                        context.pre_state,
+                        context.state,
+                        None,
+                        context.program_point_states,
+                        context.predicate_environment,
+                        context.click_function_environment,
+                    )
+                    .map_err(|message| {
+                        self.step_error(format!("could not lower `contradiction` fact: {message}"))
+                    })?
+                }
+            }
+        };
+        let negated = Proposition::Not(Box::new(fact.clone()));
+        let opposite_condition = match &fact {
+            Proposition::ConditionIs(condition, value) => {
+                Some(Proposition::ConditionIs(condition.clone(), !value))
+            }
+            _ => None,
+        };
+        if !self.state.facts.contains(&fact)
+            || (!self.state.facts.contains(&negated)
+                && !opposite_condition
+                    .as_ref()
+                    .is_some_and(|opposite| self.state.facts.contains(opposite)))
+        {
+            return Err(self.step_error(format!(
+                "`contradiction` requires an exact fact and its exact negation or opposite condition polarity: {fact:?}"
+            )));
+        }
+        Ok(self.closed_state())
     }
 
     fn proposition_goal(&self, message: &str) -> Result<&Proposition, ClickError> {

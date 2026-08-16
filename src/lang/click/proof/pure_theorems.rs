@@ -896,6 +896,7 @@ fn check_linear_pure_script_with_proof(
                     | SimpleProofStep::Left
                     | SimpleProofStep::Right
                     | SimpleProofStep::Enumerate
+                    | SimpleProofStep::Contradiction(_)
             )
         })
     {
