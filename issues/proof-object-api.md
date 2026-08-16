@@ -540,6 +540,18 @@ fixed explicit statement and retained certificate under unrelated facts with
 the original logarithmic allocation bounds; the complete library expansion
 suite pins polarity, snapshot, compound-fact, and successor-order behavior.
 
+`TransportUsing` now uses the same persistent boundary. `ProofFacts` retains
+incrementally built restricted contexts for implicit frame facts and direct
+surface lowering, so checking one explicit transport neither scans the
+ambient fact sequence nor rebuilds a kernel assumption context. Exact premise
+selection and target availability use the persistent replay indexes; only a
+failing diagnostic materializes the ambient facts. The checked target is
+inserted as the operation's local delta, and the now-unused vector checker and
+duplicate point-context fact slice were removed. The existing deterministic
+explicit-transport curve over increasing unrelated ambient facts now exercises
+this `Proof` path directly, while the focused snapshot, materialization,
+resource, and expansion tests preserve the transport judgment's semantics.
+
 The execution branch container now accepts linear arm bodies made only of
 `StepUsing`, `TransportUsing`, and `UnfoldPredicate`. Each arm advances through the ordinary
 checked `Proof` operation and accumulates only its fact and execution-effect

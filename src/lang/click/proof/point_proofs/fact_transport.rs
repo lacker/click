@@ -132,13 +132,13 @@ pub(in crate::lang::click::proof) struct CheckedPointFactTransport {
 /// It does not mutate surface bookkeeping or proof provenance; it returns the
 /// exact checked source and target for those owners to record atomically.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn check_point_fact_transport_using(
+pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
     surface_source: &ClickProposition,
     surface_target: &ClickProposition,
     surface_premises: &[ClickProposition],
     claim_label: &str,
     tactic_index: usize,
-    available: &[Proposition],
+    available: &ProofFacts,
     effect_facts: &[ExecutionPureFact],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -151,14 +151,14 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using(
 ) -> Result<CheckedPointFactTransport, ClickError> {
     let mut explicit_premises = Vec::new();
     for surface_premise in surface_premises {
-        let premise = if let Some(recorded) =
-            surface_propositions.available_kernel(surface_premise, available)
+        let premise = if let Some(recorded) = surface_propositions
+            .available_kernel_matching(surface_premise, |kernel| available.contains(kernel))
         {
             recorded.clone()
         } else {
-            lower_point_proposition(
+            lower_point_proposition_with_assumptions(
                 surface_premise,
-                available,
+                available.assumptions(),
                 parameters,
                 arguments,
                 pre_state,
@@ -174,12 +174,13 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using(
                 ))
             })?
         };
-        if !exact_fact_is_available(&premise, available) {
+        if !available.exact_available_across_effects(&premise, &[]) {
+            let available = available.to_vec();
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `transport using` requires an exact premise: {}",
                 describe_missing_pure_fact(
                     &premise,
-                    available,
+                    &available,
                     state.resources().facts(),
                     parameters,
                     arguments,
@@ -195,14 +196,14 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using(
     // Lowering memory expressions may use the validated ambient context, but
     // the proof itself remains restricted to explicit premises, resource
     // observations, and certified frame/effect facts.
-    let source = if let Some(recorded) =
-        surface_propositions.available_kernel(surface_source, available)
+    let source = if let Some(recorded) = surface_propositions
+        .available_kernel_matching(surface_source, |kernel| available.contains(kernel))
     {
         recorded.clone()
     } else {
-        lower_point_proposition(
+        lower_point_proposition_with_assumptions(
             surface_source,
-            available,
+            available.assumptions(),
             parameters,
             arguments,
             pre_state,
@@ -222,14 +223,14 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using(
     let resource_facts = state
         .resources()
         .observable_facts_assuming_valid(&explicit_assumptions);
-    let selected_assumptions = available
+    let selected_assumptions = explicit_premises
         .iter()
-        .filter(|fact| is_implicit_fact_transport_context(fact))
         .cloned()
         .chain(resource_facts)
-        .fold(explicit_assumptions, |assumptions, fact| {
-            assumptions.assume_proposition(fact)
-        });
+        .fold(
+            available.implicit_transport_assumptions().clone(),
+            |assumptions, fact| assumptions.assume_proposition(fact),
+        );
     if !exact_fact_is_available(&source, &explicit_premises)
         && !snapshot_bridged_fact_is_available_under(
             &source,
@@ -241,11 +242,12 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using(
             .derive_atomic_proposition(&source)
             .is_none()
     {
+        let available = available.to_vec();
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `transport using` requires a source derivable from its explicit facts: {}",
             describe_missing_pure_fact(
                 &source,
-                available,
+                &available,
                 state.resources().facts(),
                 parameters,
                 arguments,
@@ -254,17 +256,15 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using(
         )));
     }
 
-    let mut direct_lowering_facts = facts_for_direct_surface_lowering(available);
-    for premise in &explicit_premises {
-        if !direct_lowering_facts.contains(premise) {
-            direct_lowering_facts.push(premise.clone());
-        }
-    }
+    let direct_lowering_assumptions = explicit_premises.iter().cloned().fold(
+        available.direct_lowering_assumptions().clone(),
+        |assumptions, premise| assumptions.assume_proposition(premise),
+    );
     // Never resolve the target through the recorded surface map: the same
     // surface spelling may deliberately name an older source snapshot.
-    let target = lower_point_proposition(
+    let target = lower_point_proposition_with_assumptions(
         surface_target,
-        &direct_lowering_facts,
+        &direct_lowering_assumptions,
         parameters,
         arguments,
         pre_state,
@@ -279,9 +279,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using(
             "`{claim_label}` tactic {tactic_index}: could not lower `transport` target: {message}"
         ))
     })?;
-    if !exact_fact_is_available_across_effects(&target, available, effect_facts)
-        && materialization_equivalent_available_fact(&target, available).is_none()
-    {
+    if !available.replay_available_across_effects(&target, effect_facts) {
         let transition_facts = fact_transport_transition_facts(effect_facts, &source);
         let transport_assumptions = transition_facts
             .iter()

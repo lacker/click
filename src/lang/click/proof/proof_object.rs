@@ -134,7 +134,6 @@ struct PointProofContext<'a> {
     click_function_environment: &'a ClickFunctionEnvironment,
     theorem_environment: &'a TheoremEnvironment,
     unfolded_predicates: &'a [String],
-    available: &'a [Proposition],
     effect_facts: &'a [ExecutionPureFact],
     lowering_context: Arc<Vec<Proposition>>,
 }
@@ -215,6 +214,8 @@ pub(super) struct ProofFacts {
     normalized_exact: PersistentSet<Proposition>,
     by_snapshot_blind: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Proposition>>,
     assumptions: PureFactContext,
+    implicit_transport_assumptions: PureFactContext,
+    direct_lowering_assumptions: PureFactContext,
     by_predicate: PersistentMap<String, PersistentSequence<Proposition>>,
 }
 
@@ -370,7 +371,6 @@ impl<'a> Proof<'a> {
                 click_function_environment,
                 theorem_environment,
                 unfolded_predicates,
-                available,
                 effect_facts,
                 lowering_context: Arc::new(lowering_context),
             })),
@@ -1091,10 +1091,10 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// Applies a still-mutable execution transition by consuming its current
-    /// frontier. Predicate unfold has migrated to ordinary forkable
-    /// `apply_step`; statement movement and transport retain this transitional
-    /// owned adapter until their semantic deltas are persistent too.
+    /// Applies a C-frontier transition by consuming its current execution
+    /// state. Fact state and provenance are persistent; the owned boundary now
+    /// remains only because the underlying C state has not migrated to a
+    /// forkable semantic representation.
     pub(super) fn apply_owned_execution_step(
         self,
         step: SimpleProofStep,
@@ -1165,18 +1165,17 @@ impl<'a> Proof<'a> {
                 target,
                 premises,
             } => {
-                let mut pure_facts = state.facts.to_vec();
                 let pre_state = execution
                     .replay
                     .old_reference_state(&execution.state)
                     .clone();
-                let checked = check_point_fact_transport_using(
+                let checked = check_point_fact_transport_using_facts(
                     source,
                     target,
                     premises,
                     context.claim_label,
                     context.tactic_index,
-                    &pure_facts,
+                    &state.facts,
                     &execution.replay.effect_facts,
                     context.parsed_function.parameters(),
                     context.arguments,
@@ -1196,11 +1195,12 @@ impl<'a> Proof<'a> {
                     .surface_propositions
                     .record_lowering(target, &checked.target)?;
                 let mut added_facts = Vec::new();
-                if !pure_facts.contains(&checked.target) {
+                let mut facts = state.facts.clone();
+                if !facts.contains(&checked.target) {
                     added_facts.push(checked.target.clone());
-                    pure_facts.push(checked.target);
                 }
-                (ProofFacts::from_ordered(&pure_facts), added_facts)
+                facts = facts.with_fact(checked.target);
+                (facts, added_facts)
             }
             _ => unreachable!("checked above"),
         };
@@ -1473,13 +1473,13 @@ impl<'a> Proof<'a> {
                 self.step_error("point `transport using` currently requires the root proof")
             );
         }
-        let checked = check_point_fact_transport_using(
+        let checked = check_point_fact_transport_using_facts(
             source,
             target,
             premises,
             context.claim_label,
             context.tactic_index,
-            context.available,
+            &self.state.facts,
             context.effect_facts,
             context.parameters,
             context.arguments,
@@ -2125,6 +2125,8 @@ impl ProofFacts {
         let mut normalized_exact = PersistentSet::default();
         let mut by_snapshot_blind = PersistentMap::default();
         let mut assumptions = PureFactContext::new();
+        let mut implicit_transport_assumptions = PureFactContext::new();
+        let mut direct_lowering_assumptions = PureFactContext::new();
         let mut by_predicate = PersistentMap::default();
         for fact in facts {
             if top_level_exact.contains(fact) {
@@ -2153,6 +2155,12 @@ impl ProofFacts {
             by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact);
             exact = exact.with_value(fact.clone());
             assumptions = assumptions.assume_proposition(fact.clone());
+            (implicit_transport_assumptions, direct_lowering_assumptions) =
+                index_transport_contexts(
+                    implicit_transport_assumptions,
+                    direct_lowering_assumptions,
+                    fact,
+                );
         }
         Self {
             ordered,
@@ -2162,6 +2170,8 @@ impl ProofFacts {
             normalized_exact,
             by_snapshot_blind,
             assumptions,
+            implicit_transport_assumptions,
+            direct_lowering_assumptions,
             by_predicate,
         }
     }
@@ -2198,6 +2208,12 @@ impl ProofFacts {
         exact = exact.with_value(fact.clone());
         let mut ordered = self.ordered.clone();
         ordered.push(fact.clone());
+        let (implicit_transport_assumptions, direct_lowering_assumptions) =
+            index_transport_contexts(
+                self.implicit_transport_assumptions.clone(),
+                self.direct_lowering_assumptions.clone(),
+                &fact,
+            );
         Self {
             ordered,
             prioritized: self.prioritized.clone(),
@@ -2206,12 +2222,22 @@ impl ProofFacts {
             normalized_exact,
             by_snapshot_blind,
             assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
+            implicit_transport_assumptions,
+            direct_lowering_assumptions,
             by_predicate: index_predicate_fact(self.by_predicate.clone(), &fact),
         }
     }
 
     pub(super) fn assumptions(&self) -> &PureFactContext {
         &self.assumptions
+    }
+
+    pub(super) fn implicit_transport_assumptions(&self) -> &PureFactContext {
+        &self.implicit_transport_assumptions
+    }
+
+    pub(super) fn direct_lowering_assumptions(&self) -> &PureFactContext {
+        &self.direct_lowering_assumptions
     }
 
     /// Adds one statement's selected successor context while retaining the
@@ -2240,11 +2266,20 @@ impl ProofFacts {
         required: &Proposition,
         framing: &[ExecutionPureFact],
     ) -> bool {
+        if self.exact_available_across_effects(required, framing) {
+            return true;
+        }
+
+        let normalized = normalize_direct_atomic_memory_loads(required);
+        self.exact.contains(&normalized) || self.normalized_exact.contains(&normalized)
+    }
+
+    pub(super) fn exact_available_across_effects(
+        &self,
+        required: &Proposition,
+        framing: &[ExecutionPureFact],
+    ) -> bool {
         if self.contains(required)
-            || {
-                let normalized = normalize_direct_atomic_memory_loads(required);
-                self.exact.contains(&normalized) || self.normalized_exact.contains(&normalized)
-            }
             || condition_polarity_spellings(required)
                 .iter()
                 .any(|spelling| self.exact.contains(spelling))
@@ -2342,6 +2377,24 @@ fn index_snapshot_fact(
         }
     }
     by_snapshot_blind
+}
+
+fn index_transport_contexts(
+    mut implicit: PureFactContext,
+    mut direct_lowering: PureFactContext,
+    fact: &Proposition,
+) -> (PureFactContext, PureFactContext) {
+    if is_implicit_fact_transport_context(fact) {
+        implicit = implicit.assume_proposition(fact.clone());
+    }
+    let mut conjuncts = Vec::new();
+    collect_owned_atomic_conjuncts(fact, &mut conjuncts);
+    for conjunct in conjuncts {
+        if is_direct_surface_lowering_fact(&conjunct) {
+            direct_lowering = direct_lowering.assume_proposition(conjunct);
+        }
+    }
+    (implicit, direct_lowering)
 }
 
 fn directly_conflicts_with_normalized_index(

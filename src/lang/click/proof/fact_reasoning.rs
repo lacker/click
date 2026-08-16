@@ -1465,25 +1465,27 @@ pub(super) fn facts_for_direct_surface_lowering(propositions: &[Proposition]) ->
         facts.extend(
             conjuncts
                 .into_iter()
-                .filter(|&proposition| {
-                    matches!(
-                        proposition,
-                        Proposition::CMemoryLoadable { .. }
-                            | Proposition::CMemoryCanStore { .. }
-                            | Proposition::CMemoryDisjoint { .. }
-                            | Proposition::CResourceSeparate { .. }
-                            | Proposition::CResourceContains { .. }
-                            | Proposition::CMemoryMutatesOnly { .. }
-                            | Proposition::CMemoryEffectSummary { .. }
-                            | Proposition::CHeapLifetimeRetired { .. }
-                    )
-                })
+                .filter(|&proposition| is_direct_surface_lowering_fact(proposition))
                 .cloned(),
         );
     }
     facts.sort();
     facts.dedup();
     facts
+}
+
+pub(super) fn is_direct_surface_lowering_fact(proposition: &Proposition) -> bool {
+    matches!(
+        proposition,
+        Proposition::CMemoryLoadable { .. }
+            | Proposition::CMemoryCanStore { .. }
+            | Proposition::CMemoryDisjoint { .. }
+            | Proposition::CResourceSeparate { .. }
+            | Proposition::CResourceContains { .. }
+            | Proposition::CMemoryMutatesOnly { .. }
+            | Proposition::CMemoryEffectSummary { .. }
+            | Proposition::CHeapLifetimeRetired { .. }
+    )
 }
 
 pub(super) fn facts_for_direct_derivation_lowering(
