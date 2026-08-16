@@ -575,7 +575,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                 },
             );
             restore_construction_point_view(replay, restore);
-            let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
+            let certificate_facts = &mut replay.proof_certificate_builder.certificate_facts;
             for fact in &condition_transition.path_facts {
                 certificate_facts.insert(fact.clone());
             }
@@ -1843,7 +1843,7 @@ pub(super) fn execute_step_from_execution_point(
                     operation,
                 );
             }
-            let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
+            let certificate_facts = &mut replay.proof_certificate_builder.certificate_facts;
             match operation {
                 ConstructionEvidence::CertifiedFactTransport { target, .. } => {
                     certificate_facts.insert(target.clone());
@@ -1971,10 +1971,10 @@ pub(super) fn bounded_execute_from_execution_point(
     // path starts from the replay-visible certificate facts at this point.
     let base_builder = construction
         .is_some()
-        .then(|| std::mem::take(&mut replay.simple_proof_builder));
+        .then(|| std::mem::take(&mut replay.proof_certificate_builder));
     if let Some(base) = &base_builder {
-        replay.simple_proof_builder.certificate_facts = base.certificate_facts.clone();
-        replay.simple_proof_builder.last_step_entry = base.last_step_entry.clone();
+        replay.proof_certificate_builder.certificate_facts = base.certificate_facts.clone();
+        replay.proof_certificate_builder.last_step_entry = base.last_step_entry.clone();
     }
     let mut pending = vec![BoundedProofFrontier {
         replay: replay.clone(),
@@ -2065,7 +2065,7 @@ pub(super) fn bounded_execute_from_execution_point(
     let synthesized_paths = base_builder.map(|base| {
         let paths = completed
             .iter()
-            .map(|frontier| frontier.replay.simple_proof_builder.clone())
+            .map(|frontier| frontier.replay.proof_certificate_builder.clone())
             .collect::<Vec<_>>();
         (base, synthesize_surface_alternatives(paths))
     });
@@ -2090,7 +2090,7 @@ pub(super) fn bounded_execute_from_execution_point(
                 "could not lower certified branch alternatives: {message}"
             )),
         }
-        replay.simple_proof_builder = base;
+        replay.proof_certificate_builder = base;
     }
     Ok(())
 }

@@ -625,7 +625,7 @@ impl AnnotationLowerer<'_> {
                     .into_iter()
                     .chain(clause.preserve_proof())
             })
-            .flat_map(Proof::unfold_tactic_names)
+            .flat_map(SourceProof::unfold_tactic_names)
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();

@@ -301,7 +301,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     // memory and reaches a later `have` as an exact current-state assumption.
     let restricted_simp = matches!(
         &have.proof,
-        Proof::Script(tactics)
+        SourceProof::Script(tactics)
             if matches!(tactics.last(), Some(ProofTactic::SimpUsing(_)))
     );
     // Restricted simplification must reason from its named equalities; goal
@@ -398,7 +398,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
         ))
     })?;
     let restricted_surfaces = match &have.proof {
-        Proof::Script(tactics) => tactics.last().and_then(|tactic| match tactic {
+        SourceProof::Script(tactics) => tactics.last().and_then(|tactic| match tactic {
             ProofTactic::SimpUsing(simp) => Some(&simp.premises),
             _ => None,
         }),
@@ -591,7 +591,7 @@ pub(in crate::lang::click::proof) fn prove_have_at_point(
 pub(in crate::lang::click::proof) fn prove_pure_proposition_at_point(
     proposition: &ClickProposition,
     prelowered_goal: Option<&Proposition>,
-    proof: &Proof,
+    proof: &SourceProof,
     proof_name: &str,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
@@ -611,15 +611,15 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_at_point(
     path_index: Option<usize>,
 ) -> Result<Proposition, ClickError> {
     let (proof_cases, tactic_simp) = match proof {
-        Proof::Script(tactics) => (expand_proof_if_cases(tactics)?, false),
-        Proof::Default | Proof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => (
+        SourceProof::Script(tactics) => (expand_proof_if_cases(tactics)?, false),
+        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => (
             vec![ExpandedProofCase {
                 tactics: Vec::new(),
                 assumptions: Vec::new(),
             }],
             true,
         ),
-        Proof::Tactic(SmartTactic::Frame) => {
+        SourceProof::Tactic(SmartTactic::Frame) => {
             return Err(ClickError::new(format!(
                 "`{claim_label}` {proof_name} proof {outer_tactic_index}: `frame` is not available in a pure proof"
             )));
@@ -2008,7 +2008,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
     let mut certification_cache = Vec::new();
     let mut captured_paths = Vec::new();
     let mut context_count = 0;
-    let mut claim_surface_builders: Vec<(VerifiedClaim, Vec<SimpleProofBuilder>)> = Vec::new();
+    let mut claim_surface_builders: Vec<(VerifiedClaim, Vec<ProofCertificateBuilder>)> = Vec::new();
     for context in contexts {
         context_count += 1;
         let path_choices = context.replay.deferred_expansion_path_choices.clone();
@@ -2068,8 +2068,8 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
                 .is_some_and(|capture| capture.result.is_some());
         if path_finished_capture {
             let captured = take_path_tactic_expansion_capture(expansion_capture.as_deref_mut())?;
-            captured_paths.push(SimpleProofBuilder {
-                steps: SimpleProof::from_proof_tactics(&captured)
+            captured_paths.push(ProofCertificateBuilder {
+                steps: ProofCertificate::from_proof_tactics(&captured)
                     .map_err(|error| {
                         ClickError::new(format!(
                             "captured branch expansion was not a simple proof: {error:?}"
@@ -2078,7 +2078,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
                     .steps()
                     .to_vec(),
                 path_choices,
-                ..SimpleProofBuilder::default()
+                ..ProofCertificateBuilder::default()
             });
         }
     }
@@ -2116,7 +2116,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
                         match &merged {
                             Ok(steps) => {
                                 theorem.expanded_proof =
-                                    Some(SimpleProof::from_steps(steps.clone()));
+                                    Some(ProofCertificate::from_steps(steps.clone()));
                                 theorem.expansion_blocker = None;
                             }
                             Err(message) => {
@@ -2147,9 +2147,9 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
         let allow_empty = tactics.is_empty();
         finish_tactic_expansion_capture(
             expansion_capture,
-            &SimpleProofBuilder {
+            &ProofCertificateBuilder {
                 steps: tactics,
-                ..SimpleProofBuilder::default()
+                ..ProofCertificateBuilder::default()
             },
             allow_empty,
         );

@@ -494,24 +494,24 @@ pub(super) fn checked_surface_comparison_fact_at_point(
     )))
 }
 
-pub(super) struct SimpleProofConstructionContext<'a> {
+pub(super) struct ProofCertificateConstructionContext<'a> {
     replay: &'a mut TacticReplayState,
-    pub(super) simple_proof_builder: &'a mut SimpleProofBuilder,
+    pub(super) proof_certificate_builder: &'a mut ProofCertificateBuilder,
 }
 
-impl<'a> SimpleProofConstructionContext<'a> {
+impl<'a> ProofCertificateConstructionContext<'a> {
     pub(super) fn new(
         replay: &'a mut TacticReplayState,
-        simple_proof_builder: &'a mut SimpleProofBuilder,
+        proof_certificate_builder: &'a mut ProofCertificateBuilder,
     ) -> Self {
         Self {
             replay,
-            simple_proof_builder,
+            proof_certificate_builder,
         }
     }
 }
 
-impl std::ops::Deref for SimpleProofConstructionContext<'_> {
+impl std::ops::Deref for ProofCertificateConstructionContext<'_> {
     type Target = TacticReplayState;
 
     fn deref(&self) -> &Self::Target {
@@ -519,17 +519,17 @@ impl std::ops::Deref for SimpleProofConstructionContext<'_> {
     }
 }
 
-impl std::ops::DerefMut for SimpleProofConstructionContext<'_> {
+impl std::ops::DerefMut for ProofCertificateConstructionContext<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.replay
     }
 }
 
 /// Constructs the surface step(s) for one planned operation directly into the
-/// planning replay's own [`SimpleProofBuilder`]. This is the plan-time
+/// planning replay's own [`ProofCertificateBuilder`]. This is the plan-time
 /// counterpart of the old plan-lowering replay: search commits to a move and
 /// immediately records how that move is spelled in Surface Click, so a smart
-/// tactic's result is a [`SimpleProof`] value rather than a private operation
+/// tactic's result is a [`ProofCertificate`] value rather than a private operation
 /// program that must be re-executed to discover its spelling.
 ///
 /// Premises are spelled against the builder's replay-visible
@@ -543,10 +543,10 @@ pub(super) fn construct_simple_step_for_planned_operation(
     environments: ConstructionEnvironments<'_>,
     operation: &ConstructionEvidence,
 ) {
-    let mut builder = std::mem::take(&mut replay.simple_proof_builder);
+    let mut builder = std::mem::take(&mut replay.proof_certificate_builder);
     let available = std::mem::take(&mut builder.certificate_facts);
     {
-        let mut context = SimpleProofConstructionContext::new(replay, &mut builder);
+        let mut context = ProofCertificateConstructionContext::new(replay, &mut builder);
         append_simple_proof_step_for_operation(
             &mut context,
             state,
@@ -562,12 +562,12 @@ pub(super) fn construct_simple_step_for_planned_operation(
         );
     }
     builder.certificate_facts = available;
-    replay.simple_proof_builder = builder;
+    replay.proof_certificate_builder = builder;
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn append_simple_proof_step_for_operation(
-    replay: &mut SimpleProofConstructionContext<'_>,
+    replay: &mut ProofCertificateConstructionContext<'_>,
     state: &CState,
     available: &[Proposition],
     function_block: &FunctionBlock,
@@ -579,11 +579,11 @@ pub(super) fn append_simple_proof_step_for_operation(
     internal_operation: Option<&ConstructionEvidence>,
     _statement_uses_memory_context: Option<bool>,
 ) {
-    if replay.simple_proof_builder.blocker.is_some() {
+    if replay.proof_certificate_builder.blocker.is_some() {
         return;
     }
     if let Err(error) = check_verification_deadline() {
-        replay.simple_proof_builder.block(error.message());
+        replay.proof_certificate_builder.block(error.message());
         return;
     }
     match (surface_tactic, internal_operation) {
@@ -594,14 +594,14 @@ pub(super) fn append_simple_proof_step_for_operation(
                 exact_premises,
                 planned_transition: Some(planned_transition),
             }),
-        ) if !replay.simple_proof_builder.lowering_planned_transition
+        ) if !replay.proof_certificate_builder.lowering_planned_transition
             && replay
                 .planned_statement_transitions
                 .get(*planned_transition)
                 .is_some() =>
         {
             let evidence = replay.planned_statement_transitions[*planned_transition].clone();
-            replay.simple_proof_builder.lowering_planned_transition = true;
+            replay.proof_certificate_builder.lowering_planned_transition = true;
             append_simple_proof_step_for_operation(
                 replay,
                 state,
@@ -619,7 +619,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }),
                 None,
             );
-            replay.simple_proof_builder.lowering_planned_transition = false;
+            replay.proof_certificate_builder.lowering_planned_transition = false;
             let post_state = match &evidence.transition.outcome {
                 CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
                     Some(state)
@@ -651,15 +651,15 @@ pub(super) fn append_simple_proof_step_for_operation(
                         })
                     });
                 let Some(surface) = surface else {
-                    replay.simple_proof_builder.block(format!(
+                    replay.proof_certificate_builder.block(format!(
                         "statement-local frame witness has no checked Click spelling: {:?}",
                         transport.target
                     ));
                     continue;
                 };
                 replay
-                    .simple_proof_builder
-                    .push_have(surface, Proof::Script(vec![ProofTactic::Normalize]));
+                    .proof_certificate_builder
+                    .push_have(surface, SourceProof::Script(vec![ProofTactic::Normalize]));
             }
             // A verified call's postconditions are public, but CallAssign's
             // result identity is only useful to Surface Click after the value
@@ -707,7 +707,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         .surface_propositions
                         .record_lowering(&surface, &lowered)
                     {
-                        replay.simple_proof_builder.block(format!(
+                        replay.proof_certificate_builder.block(format!(
                             "public opaque-call result fact has no stable Surface Click spelling: {}",
                             error.message()
                         ));
@@ -715,8 +715,8 @@ pub(super) fn append_simple_proof_step_for_operation(
                     }
                     emitted.push(surface.clone());
                     replay
-                        .simple_proof_builder
-                        .push_have(surface, Proof::Script(vec![ProofTactic::Assumption]));
+                        .proof_certificate_builder
+                        .push_have(surface, SourceProof::Script(vec![ProofTactic::Assumption]));
                 }
             }
         }
@@ -727,13 +727,13 @@ pub(super) fn append_simple_proof_step_for_operation(
                 exact_premises,
                 planned_transition: Some(planned_transition),
             }),
-        ) if !replay.simple_proof_builder.lowering_planned_transition
+        ) if !replay.proof_certificate_builder.lowering_planned_transition
             && replay
                 .planned_statement_transitions
                 .get(*planned_transition)
                 .is_some() =>
         {
-            replay.simple_proof_builder.lowering_planned_transition = true;
+            replay.proof_certificate_builder.lowering_planned_transition = true;
             append_simple_proof_step_for_operation(
                 replay,
                 state,
@@ -751,7 +751,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }),
                 _statement_uses_memory_context,
             );
-            replay.simple_proof_builder.lowering_planned_transition = false;
+            replay.proof_certificate_builder.lowering_planned_transition = false;
         }
         (
             None,
@@ -761,7 +761,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 ..
             }),
         ) => {
-            replay.simple_proof_builder.last_step_entry = Some(ProgramPointRef {
+            replay.proof_certificate_builder.last_step_entry = Some(ProgramPointRef {
                 region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
                 kind: ProgramPointKind::Entry,
             });
@@ -862,15 +862,15 @@ pub(super) fn append_simple_proof_step_for_operation(
                     .surface_propositions
                     .record_lowering(&surface, &kernel)
                 {
-                    replay.simple_proof_builder.block(format!(
+                    replay.proof_certificate_builder.block(format!(
                         "could not record local predicate-unfold prerequisite: {}",
                         error.message()
                     ));
                     return;
                 }
-                replay.simple_proof_builder.push_have(
+                replay.proof_certificate_builder.push_have(
                     surface,
-                    Proof::Script(vec![
+                    SourceProof::Script(vec![
                         ProofTactic::UnfoldPredicate(name),
                         ProofTactic::Assumption,
                     ]),
@@ -1085,9 +1085,9 @@ pub(super) fn append_simple_proof_step_for_operation(
             })();
             match premises {
                 Ok(premises) => replay
-                    .simple_proof_builder
+                    .proof_certificate_builder
                     .push_step(SimpleProofStep::StepUsing(premises)),
-                Err(error) => replay.simple_proof_builder.block(format!(
+                Err(error) => replay.proof_certificate_builder.block(format!(
                     "could not express a statement-step premise at the current proof point: {}",
                     error.message()
                 )),
@@ -1110,11 +1110,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                 });
             let Some(loop_index) = loop_index else {
                 replay
-                    .simple_proof_builder
+                    .proof_certificate_builder
                     .block("certified loop-summary replay is not at a source loop entry");
                 return;
             };
-            replay.simple_proof_builder.last_step_entry = Some(ProgramPointRef {
+            replay.proof_certificate_builder.last_step_entry = Some(ProgramPointRef {
                 region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
                 kind: ProgramPointKind::Entry,
             });
@@ -1208,7 +1208,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         }
                     }
                     replay
-                        .simple_proof_builder
+                        .proof_certificate_builder
                         .push_step(SimpleProofStep::UnfoldPredicate(name));
                 }
                 let current_loadable_haves = surface_available
@@ -1228,7 +1228,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             proposition: ClickProposition::Loadable {
                                 segment: current_segment,
                             },
-                            proof: Proof::Tactic(SmartTactic::Simp),
+                            proof: SourceProof::Tactic(SmartTactic::Simp),
                         })
                     })
                     .collect::<Vec<_>>();
@@ -1280,10 +1280,10 @@ pub(super) fn append_simple_proof_step_for_operation(
                         &[],
                     ) {
                         Ok(certificate) => replay
-                            .simple_proof_builder
+                            .proof_certificate_builder
                             .steps
                             .extend(certificate.steps().iter().cloned()),
-                        Err(error) => replay.simple_proof_builder.block(error.message()),
+                        Err(error) => replay.proof_certificate_builder.block(error.message()),
                     }
                     surface_available.push(fact);
                 }
@@ -1310,7 +1310,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 for invariant in invariants {
                     let have = ProofHave {
                         proposition: invariant,
-                        proof: Proof::Tactic(SmartTactic::Simp),
+                        proof: SourceProof::Tactic(SmartTactic::Simp),
                     };
                     let planned = plan_smart_have_at_current_point(
                         &have,
@@ -1343,7 +1343,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             .surface_propositions
                             .record_lowering(&have.proposition, &fact)
                         {
-                            replay.simple_proof_builder.block(format!(
+                            replay.proof_certificate_builder.block(format!(
                                 "could not record a loop invariant for its surface certificate: {}",
                                 error.message()
                             ));
@@ -1362,10 +1362,10 @@ pub(super) fn append_simple_proof_step_for_operation(
                             &[],
                         ) {
                             Ok(certificate) => replay
-                                .simple_proof_builder
+                                .proof_certificate_builder
                                 .steps
                                 .extend(certificate.steps().iter().cloned()),
-                            Err(error) => replay.simple_proof_builder.block(error.message()),
+                            Err(error) => replay.proof_certificate_builder.block(error.message()),
                         }
                         surface_available.push(fact);
                     }
@@ -1387,7 +1387,9 @@ pub(super) fn append_simple_proof_step_for_operation(
                     predicate_environment,
                     click_function_environment,
                 ) {
-                    replay.simple_proof_builder.push_have(conclusion, proof);
+                    replay
+                        .proof_certificate_builder
+                        .push_have(conclusion, proof);
                     surface_available.push(derivation.conclusion().clone());
                 }
             }
@@ -1475,7 +1477,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
                 premises
             });
-            replay.simple_proof_builder.block(match premises {
+            replay.proof_certificate_builder.block(match premises {
                 Ok(_) => "a detached loop-summary certificate has no surface spelling; use a frontier-local `loop { ... }` tactic".to_string(),
                 Err(error) => format!(
                     "could not express a loop-summary premise at the current proof point: {}",
@@ -1484,9 +1486,9 @@ pub(super) fn append_simple_proof_step_for_operation(
             });
         }
         (None, Some(ConstructionEvidence::CertifiedFactTransport { source, target, .. })) => {
-            let Some(step_entry) = replay.simple_proof_builder.last_step_entry.clone() else {
+            let Some(step_entry) = replay.proof_certificate_builder.last_step_entry.clone() else {
                 replay
-                    .simple_proof_builder
+                    .proof_certificate_builder
                     .block("fact transport has no preceding statement-entry snapshot");
                 return;
             };
@@ -1530,7 +1532,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
             }
             if base_surfaces.is_empty() {
-                replay.simple_proof_builder.block(format!(
+                replay.proof_certificate_builder.block(format!(
                     "fact transport has no recorded or synthesized Click comparison spelling\n  source: {source:?}\n  target: {target:?}"
                 ));
                 return;
@@ -1615,7 +1617,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 None
             };
             let selected_by_preceding_step = replay
-                .simple_proof_builder
+                .proof_certificate_builder
                 .steps
                 .iter()
                 .rev()
@@ -1664,7 +1666,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     .surface_propositions
                     .record_lowering(&surface_target, target)
                 {
-                    replay.simple_proof_builder.block(format!(
+                    replay.proof_certificate_builder.block(format!(
                         "could not retain the selected statement transport target spelling: {}",
                         error.message()
                     ));
@@ -1680,7 +1682,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         .surface_propositions
                         .record_lowering(&surface_target, &lowered_surface_target)
                     {
-                        replay.simple_proof_builder.block(format!(
+                        replay.proof_certificate_builder.block(format!(
                             "could not retain the certified fact transport target spelling: {}",
                             error.message()
                         ));
@@ -1706,7 +1708,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         click_function_environment,
                     ) {
                         Ok(premises) => {
-                            replay.simple_proof_builder.push_step(SimpleProofStep::TransportUsing {
+                            replay.proof_certificate_builder.push_step(SimpleProofStep::TransportUsing {
                                 source: surface_source,
                                 target: surface_target.clone(),
                                 premises,
@@ -1715,7 +1717,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 .surface_propositions
                                 .record_lowering(&surface_target, &lowered_surface_target)
                             {
-                                replay.simple_proof_builder.block(format!(
+                                replay.proof_certificate_builder.block(format!(
                                     "could not retain the certified fact transport target spelling: {}",
                                     error.message()
                                 ));
@@ -1729,7 +1731,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             // Selected transport replays it as part of the
                             // statement certificate itself.
                             let attached = replay
-                                .simple_proof_builder
+                                .proof_certificate_builder
                                 .steps
                                 .iter_mut()
                                 .rev()
@@ -1755,13 +1757,13 @@ pub(super) fn append_simple_proof_step_for_operation(
                                         )
                                     })
                                 {
-                                    replay.simple_proof_builder.block(format!(
+                                    replay.proof_certificate_builder.block(format!(
                                         "could not retain the statement-attached fact transport spelling: {}",
                                         record_error.message()
                                     ));
                                 }
                             } else {
-                                replay.simple_proof_builder.block(fact_transport_planning_failure(
+                                replay.proof_certificate_builder.block(fact_transport_planning_failure(
                                     &surface_source,
                                     &surface_target,
                                     &replay.unfolded_predicates,
@@ -1771,7 +1773,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         }
                     }
                 }
-                _ => replay.simple_proof_builder.block(format!(
+                _ => replay.proof_certificate_builder.block(format!(
                     "no placement of the comparison operands at the {} recorded program points lowered to the certified fact transport\n  certified source: {source:?}\n  certified target: {target:?}",
                     points.len()
                 )),
@@ -1822,7 +1824,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         .surface_propositions
                         .record_lowering(&surface_fact, certified_fact)
                     {
-                        replay.simple_proof_builder.block(format!(
+                        replay.proof_certificate_builder.block(format!(
                             "could not retain the certified path-condition spelling: {}",
                             error.message()
                         ));
@@ -1830,13 +1832,13 @@ pub(super) fn append_simple_proof_step_for_operation(
                     }
                 }
                 Ok(kernel_fact) => {
-                    replay.simple_proof_builder.block(format!(
+                    replay.proof_certificate_builder.block(format!(
                         "surface branch condition did not lower to a certified path fact\n  lowered: {kernel_fact:?}\n  certified facts: {facts:?}"
                     ));
                     return;
                 }
                 Err(error) => {
-                    replay.simple_proof_builder.block(format!(
+                    replay.proof_certificate_builder.block(format!(
                         "could not lower the certified path condition: {}",
                         error.message()
                     ));
@@ -1844,19 +1846,19 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
             }
             replay
-                .simple_proof_builder
+                .proof_certificate_builder
                 .path_choices
                 .push(SurfacePathChoice {
                     occurrence: *occurrence,
                     condition,
                     value: *value,
-                    tactic_offset: replay.simple_proof_builder.steps.len(),
+                    tactic_offset: replay.proof_certificate_builder.steps.len(),
                 });
         }
         (Some(tactic @ ProofTactic::Have(_)), None) => {
-            match SimpleProof::from_proof_tactics(std::slice::from_ref(tactic)) {
+            match ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)) {
                 Ok(_) => replay
-                    .simple_proof_builder
+                    .proof_certificate_builder
                     .push_source_tactic(tactic.clone()),
                 Err(_) => {
                     // A `have` with a smart body records nothing here. The
@@ -1961,13 +1963,13 @@ pub(super) fn append_simple_proof_step_for_operation(
             match lowered {
                 Ok(path_tactics) => {
                     if let Err(message) = append_surface_tactics_by_leaf(
-                        &mut replay.simple_proof_builder.steps,
+                        &mut replay.proof_certificate_builder.steps,
                         &path_tactics,
                     ) {
-                        replay.simple_proof_builder.block(message);
+                        replay.proof_certificate_builder.block(message);
                     }
                 }
-                Err(error) => replay.simple_proof_builder.block(format!(
+                Err(error) => replay.proof_certificate_builder.block(format!(
                     "could not lower contextual frame certificate: {}",
                     error.message()
                 )),
@@ -1980,15 +1982,15 @@ pub(super) fn append_simple_proof_step_for_operation(
         (Some(ProofTactic::Loop(_)), None) => {}
         (Some(tactic), None) => match tactic.class() {
             TacticClass::Simple(_) => replay
-                .simple_proof_builder
+                .proof_certificate_builder
                 .push_source_tactic(tactic.clone()),
             TacticClass::ControlFlow(_) => {
-                match SimpleProof::from_proof_tactics(std::slice::from_ref(tactic)) {
+                match ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)) {
                     Ok(_) => replay
-                        .simple_proof_builder
+                        .proof_certificate_builder
                         .push_source_tactic(tactic.clone()),
                     Err(error) => replay
-                        .simple_proof_builder
+                        .proof_certificate_builder
                         .block(format!("could not lower control-flow tactic: {error:?}")),
                 }
             }
@@ -2022,22 +2024,22 @@ pub(super) fn statement_step_permission_needs_surface_premise(
         && !exact_fact_is_available(fact, projected_resource_facts)
 }
 
-fn have_proof_is_smart_simp(proof: &Proof) -> bool {
+fn have_proof_is_smart_simp(proof: &SourceProof) -> bool {
     match proof {
-        Proof::Default | Proof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
-        Proof::Script(tactics) => matches!(
+        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
+        SourceProof::Script(tactics) => matches!(
             tactics.as_slice(),
             [ProofTactic::Simp] | [ProofTactic::SimpUsing(_)]
         ),
-        Proof::Tactic(SmartTactic::Frame) => false,
+        SourceProof::Tactic(SmartTactic::Frame) => false,
     }
 }
 
-pub(super) fn smart_simp_unfold_prefix(proof: &Proof) -> Option<Vec<String>> {
+pub(super) fn smart_simp_unfold_prefix(proof: &SourceProof) -> Option<Vec<String>> {
     if have_proof_is_smart_simp(proof) {
         return Some(Vec::new());
     }
-    let Proof::Script(tactics) = proof else {
+    let SourceProof::Script(tactics) = proof else {
         return None;
     };
     let (last, prefix) = tactics.split_last()?;
@@ -2082,7 +2084,7 @@ pub(super) fn lower_smart_simp_suffix_have(
     function_requires: &[Requirement],
     path_index: usize,
 ) -> Option<ProofHave> {
-    let Proof::Script(tactics) = &have.proof else {
+    let SourceProof::Script(tactics) = &have.proof else {
         return None;
     };
     let (last, prefix) = tactics.split_last()?;
@@ -2112,9 +2114,9 @@ pub(super) fn lower_smart_simp_suffix_have(
         candidate_tactics.extend(closer);
         let candidate = ProofHave {
             proposition: have.proposition.clone(),
-            proof: Proof::Script(candidate_tactics),
+            proof: SourceProof::Script(candidate_tactics),
         };
-        if SimpleProof::from_proof_tactics(std::slice::from_ref(&ProofTactic::Have(
+        if ProofCertificate::from_proof_tactics(std::slice::from_ref(&ProofTactic::Have(
             candidate.clone(),
         )))
         .is_err()
@@ -2231,8 +2233,8 @@ pub(super) fn certify_general_smart_have(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     function_requires: &[Requirement],
-) -> Result<SimpleProof, ClickError> {
-    let Proof::Script(tactics) = &have.proof else {
+) -> Result<ProofCertificate, ClickError> {
+    let SourceProof::Script(tactics) = &have.proof else {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: smart `have` succeeded, but its non-script body has no simple certificate"
         )));
@@ -2240,11 +2242,11 @@ pub(super) fn certify_general_smart_have(
     for candidate_tactics in simple_have_body_candidates(tactics) {
         let candidate = ProofHave {
             proposition: have.proposition.clone(),
-            proof: Proof::Script(candidate_tactics),
+            proof: SourceProof::Script(candidate_tactics),
         };
-        let Ok(proof) = SimpleProof::from_proof_tactics(std::slice::from_ref(&ProofTactic::Have(
-            candidate.clone(),
-        ))) else {
+        let Ok(proof) = ProofCertificate::from_proof_tactics(std::slice::from_ref(
+            &ProofTactic::Have(candidate.clone()),
+        )) else {
             continue;
         };
         let replayed = prove_have_at_current_point(
@@ -2274,8 +2276,8 @@ pub(super) fn certify_general_smart_have(
     )))
 }
 
-fn have_proof_contains_smart_apply(proof: &Proof) -> bool {
-    let Proof::Script(tactics) = proof else {
+fn have_proof_contains_smart_apply(proof: &SourceProof) -> bool {
+    let SourceProof::Script(tactics) = proof else {
         return false;
     };
     tactics
@@ -2295,7 +2297,7 @@ pub(super) fn surface_simp_plan_proof(
     surface_goal: &ClickProposition,
     plan: &SimpEvidence,
     unfolded_predicates: &[String],
-) -> Result<Proof, ClickError> {
+) -> Result<SourceProof, ClickError> {
     let active_surface_goal = if unfolded_predicates.is_empty() {
         surface_goal.clone()
     } else {
@@ -2311,8 +2313,8 @@ pub(super) fn surface_simp_plan_proof(
         })?
     };
     let proof = match plan {
-        SimpEvidence::Assumption => Proof::Script(vec![ProofTactic::Assumption]),
-        SimpEvidence::Normalize => Proof::Script(vec![ProofTactic::Normalize]),
+        SimpEvidence::Assumption => SourceProof::Script(vec![ProofTactic::Assumption]),
+        SimpEvidence::Normalize => SourceProof::Script(vec![ProofTactic::Normalize]),
         SimpEvidence::Derivation(derivation) => {
             let (_, proof) = lower_surface_atomic_derivation(
                 replay,
@@ -2343,13 +2345,13 @@ pub(super) fn surface_simp_plan_proof(
         .cloned()
         .map(ProofTactic::UnfoldPredicate)
         .collect::<Vec<_>>();
-    let Proof::Script(suffix) = proof else {
+    let SourceProof::Script(suffix) = proof else {
         return Err(ClickError::new(
             "planned smart proof certificate was not a tactic script",
         ));
     };
     tactics.extend(suffix);
-    Ok(Proof::Script(tactics))
+    Ok(SourceProof::Script(tactics))
 }
 
 /// How a restricted-`simp` premise's certificate spelling relates to the
@@ -2391,7 +2393,7 @@ fn reflexive_snapshot_transport_source(surface: &ClickProposition) -> Option<Cli
 
 /// The single construction event for a smart `have`/`simp` at the current
 /// proof point: kernel search selects its evidence and the same call spells
-/// that evidence as a replayable [`SimpleProof`]. Search may only succeed
+/// that evidence as a replayable [`ProofCertificate`]. Search may only succeed
 /// through derivations the surface vocabulary can spell; there is no retained
 /// plan between the two, and no separate lowering pass to disagree with the
 /// search that already succeeded.
@@ -2408,7 +2410,7 @@ pub(super) fn construct_smart_have_certificate(
     claim_label: &str,
     tactic_index: usize,
     unfolded_predicates: &[String],
-) -> Result<(Proposition, SimpleProof), ClickError> {
+) -> Result<(Proposition, ProofCertificate), ClickError> {
     let planning_span =
         crate::instrumentation::OperationTiming::new("have", claim_label, "smart have planning");
     let (fact, evidence) = plan_smart_have_at_current_point(
@@ -2460,10 +2462,10 @@ pub(super) fn surface_smart_have_certificate(
     have: &ProofHave,
     plan: &SimpEvidence,
     unfolded_predicates: &[String],
-) -> Result<SimpleProof, ClickError> {
+) -> Result<ProofCertificate, ClickError> {
     let restricted_simp = matches!(
         &have.proof,
-        Proof::Script(tactics) if matches!(tactics.last(), Some(ProofTactic::SimpUsing(_)))
+        SourceProof::Script(tactics) if matches!(tactics.last(), Some(ProofTactic::SimpUsing(_)))
     );
     let unfolded_available = (restricted_simp && !unfolded_predicates.is_empty())
         .then(|| {
@@ -2478,7 +2480,7 @@ pub(super) fn surface_smart_have_certificate(
         .transpose()?;
     let restricted_context_available = unfolded_available.as_deref().unwrap_or(available);
     let restricted_resolved = match &have.proof {
-        Proof::Script(tactics) => tactics.last().and_then(|tactic| match tactic {
+        SourceProof::Script(tactics) => tactics.last().and_then(|tactic| match tactic {
             ProofTactic::SimpUsing(simp) => Some(
                 simp.premises
                     .iter()
@@ -2569,7 +2571,7 @@ pub(super) fn surface_smart_have_certificate(
             .collect::<Vec<_>>()
     });
     let certificate_available = restricted_available.as_deref().unwrap_or(available);
-    let proof = if let (Some(exact), Proof::Script(source_tactics)) =
+    let proof = if let (Some(exact), SourceProof::Script(source_tactics)) =
         (restricted_available.as_ref(), &have.proof)
         && let Some(ProofTactic::SimpUsing(simp)) = source_tactics.last()
     {
@@ -2669,7 +2671,7 @@ pub(super) fn surface_smart_have_certificate(
             });
         }
         tactics.extend(explicit);
-        Proof::Script(tactics)
+        SourceProof::Script(tactics)
     } else {
         surface_simp_plan_proof(
             replay,
@@ -2688,7 +2690,7 @@ pub(super) fn surface_smart_have_certificate(
         proposition: have.proposition.clone(),
         proof,
     });
-    SimpleProof::from_proof_tactics(&[tactic]).map_err(|error| {
+    ProofCertificate::from_proof_tactics(&[tactic]).map_err(|error| {
         ClickError::new(format!(
             "smart `have` produced an invalid certificate: {error:?}"
         ))
@@ -2709,11 +2711,11 @@ pub(super) fn surface_smart_apply_have_certificate(
     tactic_index: usize,
     have: &ProofHave,
     goal: &Proposition,
-) -> Result<Option<SimpleProof>, ClickError> {
+) -> Result<Option<ProofCertificate>, ClickError> {
     if !have_proof_contains_smart_apply(&have.proof) {
         return Ok(None);
     }
-    let Proof::Script(tactics) = &have.proof else {
+    let SourceProof::Script(tactics) = &have.proof else {
         unreachable!("smart apply is represented by a proof script")
     };
     let mut planning_replay = replay.clone();
@@ -2780,7 +2782,7 @@ pub(super) fn surface_smart_apply_have_certificate(
                         "`{claim_label}` tactic {tactic_index}: could not plan the `simp` suffix after smart `apply`"
                     ))
                 })?;
-                let Proof::Script(lowered) = surface_simp_plan_proof(
+                let SourceProof::Script(lowered) = surface_simp_plan_proof(
                     &mut planning_replay,
                     state,
                     &planning_available,
@@ -2802,9 +2804,9 @@ pub(super) fn surface_smart_apply_have_certificate(
     }
     let tactic = ProofTactic::Have(ProofHave {
         proposition: have.proposition.clone(),
-        proof: Proof::Script(surface_tactics),
+        proof: SourceProof::Script(surface_tactics),
     });
-    let certificate = SimpleProof::from_proof_tactics(&[tactic]).map_err(|error| {
+    let certificate = ProofCertificate::from_proof_tactics(&[tactic]).map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: smart `apply` inside `have` produced an invalid certificate: {error:?}"
         ))

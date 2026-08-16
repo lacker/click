@@ -114,7 +114,7 @@ giant-memory-term performance wall described above.
 ## Current-master isolation (2026-08-15)
 
 The first failure on `baace5ab` initially looked like a slow simple proof:
-a smart `step()` constructed a `SimpleProof`, then reported that independent
+a smart `step()` constructed a `ProofCertificate`, then reported that independent
 replay exceeded the two-second smart deadline while checking the generated
 `step() using { ... }`. Replacing only that smart site with the exact printed
 `step() using` disproves that diagnosis. The source-level simple step checks

@@ -60,7 +60,7 @@ use timing::{TacticTiming, has_independent_source_timing};
 /// Checked kernel evidence used as the input to constructing one
 /// [`SimpleProofStep`]. Evidence never forms an ordered replayable program of
 /// its own: search consumes it transiently to spell the surface step, and the
-/// resulting `SimpleProof` is what replays.
+/// resulting `ProofCertificate` is what replays.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::lang::click::proof) enum ConstructionEvidence {
     CertifiedStatementStep {
@@ -785,11 +785,11 @@ pub(in crate::lang::click) fn normalizes_context_free(goal: &Proposition) -> boo
             .is_some()
 }
 
-fn pure_goal_simple_proof_gateway<T>(
+fn pure_goal_proof_certificate_gateway<T>(
     claim_label: &str,
-    planner: impl FnOnce() -> Result<SimpleProof, ClickError>,
-    replay: impl FnOnce(&SimpleProof) -> Result<T, ClickError>,
-) -> Result<(SimpleProof, T), ClickError> {
+    planner: impl FnOnce() -> Result<ProofCertificate, ClickError>,
+    replay: impl FnOnce(&ProofCertificate) -> Result<T, ClickError>,
+) -> Result<(ProofCertificate, T), ClickError> {
     let function = claim_label
         .split_once('.')
         .map_or(claim_label, |(function, _)| function);
@@ -808,7 +808,7 @@ fn pure_goal_simple_proof_gateway<T>(
     .map_err(|error| {
         ClickError::new(format!(
             "pure goal `{claim_label}` certificate failed ordinary replay:\n{}\n{}",
-            format_simple_proof(&certificate),
+            format_proof_certificate(&certificate),
             error.message()
         ))
     })?;
@@ -1102,7 +1102,7 @@ mod certificate_tests {
                 operator: ComparisonOperator::Equal,
                 right: ContractExpression::CFragment(CExpression::Value(int32(1))),
             },
-            proof: Proof::Script(vec![ProofTactic::Assumption]),
+            proof: SourceProof::Script(vec![ProofTactic::Assumption]),
         });
 
         assert_eq!(source_tactic_class(&have), SourceTacticClass::Simple);
@@ -1117,11 +1117,11 @@ mod certificate_tests {
         };
         let smart = ProofTactic::Have(ProofHave {
             proposition: proposition.clone(),
-            proof: Proof::Tactic(SmartTactic::Simp),
+            proof: SourceProof::Tactic(SmartTactic::Simp),
         });
         let structural = ProofTactic::Have(ProofHave {
             proposition,
-            proof: Proof::Script(Vec::new()),
+            proof: SourceProof::Script(Vec::new()),
         });
 
         assert_eq!(source_tactic_class(&smart), SourceTacticClass::Smart);
@@ -1136,7 +1136,7 @@ mod certificate_tests {
                 operator: ComparisonOperator::Equal,
                 right: ContractExpression::CFragment(CExpression::Value(int32(1))),
             },
-            proof: Proof::Script(vec![ProofTactic::Assumption]),
+            proof: SourceProof::Script(vec![ProofTactic::Assumption]),
         });
 
         assert_eq!(post_execution_tactic_timing(&have), ("have", "control"));
@@ -1192,12 +1192,12 @@ mod certificate_tests {
             &click_function_environment,
         )
         .expect("goal should lower");
-        let failing = SimpleProof::from_proof_tactics(&[ProofTactic::Assumption])
+        let failing = ProofCertificate::from_proof_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple tactic");
-        let succeeding = SimpleProof::from_proof_tactics(&[ProofTactic::Normalize])
+        let succeeding = ProofCertificate::from_proof_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a simple tactic");
 
-        let error = pure_goal_simple_proof_gateway(
+        let error = pure_goal_proof_certificate_gateway(
             "reflexive.ensures_0",
             || Ok(failing.clone()),
             |certificate| {
@@ -1243,9 +1243,9 @@ mod certificate_tests {
             operator: ComparisonOperator::Equal,
             right: ContractExpression::CFragment(CExpression::Value(int32(0))),
         };
-        let assumption = SimpleProof::from_proof_tactics(&[ProofTactic::Assumption])
+        let assumption = ProofCertificate::from_proof_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a certificate");
-        let normalize = SimpleProof::from_proof_tactics(&[ProofTactic::Normalize])
+        let normalize = ProofCertificate::from_proof_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a certificate");
 
         let merged = merge_path_aligned_certificates(
@@ -1296,9 +1296,9 @@ mod certificate_tests {
             operator: ComparisonOperator::Equal,
             right: ContractExpression::CFragment(CExpression::Value(int32(0))),
         };
-        let assumption = SimpleProof::from_proof_tactics(&[ProofTactic::Assumption])
+        let assumption = ProofCertificate::from_proof_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a certificate");
-        let normalize = SimpleProof::from_proof_tactics(&[ProofTactic::Normalize])
+        let normalize = ProofCertificate::from_proof_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a certificate");
 
         let error = merge_path_aligned_certificates(
@@ -1807,11 +1807,11 @@ fn internal_proof_contains_source_index(node: &InternalProofNode, wanted: usize)
     }
 }
 
-pub(super) fn proof_source_tactic_count(proof: &Proof) -> usize {
+pub(super) fn proof_source_tactic_count(proof: &SourceProof) -> usize {
     match proof {
-        Proof::Default => 0,
-        Proof::Tactic(_) => 1,
-        Proof::Script(tactics) => source_tactic_count(tactics),
+        SourceProof::Default => 0,
+        SourceProof::Tactic(_) => 1,
+        SourceProof::Script(tactics) => source_tactic_count(tactics),
     }
 }
 
@@ -1822,7 +1822,7 @@ pub(super) enum FunctionClaimRef<'a> {
 }
 
 impl<'a> FunctionClaimRef<'a> {
-    pub(super) fn proof(self) -> &'a Proof {
+    pub(super) fn proof(self) -> &'a SourceProof {
         match self {
             Self::Effect(_, clause) => clause.proof(),
             Self::Ensure(_, clause) => clause.proof(),
@@ -2095,7 +2095,7 @@ pub(super) fn initial_claim_context(
     ))
 }
 
-pub(super) fn proof_contains_frontier_loop(proof: &Proof) -> bool {
+pub(super) fn proof_contains_frontier_loop(proof: &SourceProof) -> bool {
     proof
         .tactics()
         .is_some_and(|tactics| tactics.iter().any(tactic_contains_frontier_loop))
@@ -2309,7 +2309,7 @@ fn certify_claim_result(
     proof_description: &str,
     replayed_tactics: &[ProofTactic],
 ) -> Result<(), ClickError> {
-    if let Ok(script) = SimpleProof::from_proof_tactics(replayed_tactics) {
+    if let Ok(script) = ProofCertificate::from_proof_tactics(replayed_tactics) {
         for theorem in verified.iter_mut() {
             theorem.expanded_proof = Some(script.clone());
             theorem.expansion_blocker = None;
@@ -2364,7 +2364,7 @@ fn certify_claim_result(
     .map_err(|error| {
         ClickError::new(format!(
             "`{proof_description}` surface certificate failed complete replay for `{claim_label}`:\n{}\n{}",
-            format_simple_proof(&certificate),
+            format_proof_certificate(&certificate),
             error.message()
         ))
     })?;

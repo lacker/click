@@ -820,10 +820,10 @@ impl Parser {
             let proof = self.parse_by_clause()?;
             if effects
                 .iter()
-                .any(|clause| !matches!(clause.proof(), Proof::Default))
+                .any(|clause| !matches!(clause.proof(), SourceProof::Default))
                 || ensures
                     .iter()
-                    .any(|clause| !matches!(clause.proof(), Proof::Default))
+                    .any(|clause| !matches!(clause.proof(), SourceProof::Default))
             {
                 return Err(self.error(
                     "a grouped function proof cannot be combined with individual claim proofs",
@@ -1174,7 +1174,7 @@ impl Parser {
                 Ok(vec![StructuralItem {
                     kind: StructuralItemKind::Invariant,
                     claim: StructuralItemClaim::Proposition(proposition),
-                    proof: Proof::Tactic(SmartTactic::Auto),
+                    proof: SourceProof::Tactic(SmartTactic::Auto),
                 }])
             }
             Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" => {
@@ -1618,7 +1618,7 @@ impl Parser {
         }
     }
 
-    fn parse_by_clause(&mut self) -> Result<Proof, ClickError> {
+    fn parse_by_clause(&mut self) -> Result<SourceProof, ClickError> {
         self.expect_ident_spelling("by")?;
         if self.peek() == Some(&Token::LBrace) {
             self.position += 1;
@@ -1628,7 +1628,7 @@ impl Parser {
                 {
                     let tactic = self.parse_tactic()?;
                     self.expect(Token::RBrace)?;
-                    Proof::Tactic(tactic)
+                    SourceProof::Tactic(tactic)
                 }
                 Some(Token::RBrace) => {
                     return Err(self.error("`by` block must contain at least one tactic"));
@@ -1639,22 +1639,22 @@ impl Parser {
                         tactics.push(self.parse_proof_tactic()?);
                     }
                     self.expect(Token::RBrace)?;
-                    Proof::Script(tactics)
+                    SourceProof::Script(tactics)
                 }
                 None => return Err(self.error("expected tactic, got end of input")),
             };
             return Ok(proof);
         }
 
-        Ok(Proof::Tactic(self.parse_tactic()?))
+        Ok(SourceProof::Tactic(self.parse_tactic()?))
     }
 
-    fn parse_proof_clause_or_default(&mut self) -> Result<Proof, ClickError> {
+    fn parse_proof_clause_or_default(&mut self) -> Result<SourceProof, ClickError> {
         if self.peek_ident() == Some("by") {
             self.parse_by_clause()
         } else {
             self.expect(Token::Semicolon)?;
-            Ok(Proof::Default)
+            Ok(SourceProof::Default)
         }
     }
 

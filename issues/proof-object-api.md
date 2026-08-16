@@ -33,8 +33,9 @@ state, smart planning, surface-certificate construction, replay bookkeeping,
 and expansion capture are mixed in `ProofReplayContext` and
 `TacticReplayState`. Smart execution can use planning-only policies and
 private transition evidence, mutate a temporary semantic context, lower the
-result afterward into a `SimpleProof`, and independently replay that generated
-proof to discover whether the spelling described the transition accurately.
+result afterward into a `ProofCertificate`, and independently replay that
+generated proof to discover whether the spelling described the transition
+accurately.
 
 That architecture double-implements proof operations:
 
@@ -82,12 +83,11 @@ during smart search is that candidate's ordinary check, not replay. Ordinary
 smart-tactic success must not rerun its successful path merely to validate a
 second representation.
 
-Existing names must move out of the way rather than acquire overlapping
-definitions:
+The first migration checkpoint moves existing names out of the way rather
+than giving them overlapping definitions:
 
-- rename the current parsed-source `Proof` enum to `SourceProof`;
-- rename the current exportable `SimpleProof` structure to
-  `ProofCertificate`;
+- the parsed-source enum is `SourceProof`;
+- the exportable certificate structure is `ProofCertificate`;
 - keep `SimpleProofStep` for deterministic certificate instructions;
 - retire `ProofReplayContext` as a smart-tactic interface rather than
   relabeling its mixed mutable contents as `Proof`;

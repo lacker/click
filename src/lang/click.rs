@@ -89,7 +89,7 @@ pub use expansion::{
 use expansion::{ExpansionCapture, ProofSite, VerificationTarget, verification_target_at};
 use lowering::*;
 use parser::ContractLetBinding;
-pub use printing::{format_proof_tactics, format_simple_proof};
+pub use printing::{format_proof_certificate, format_proof_tactics};
 use proof::*;
 use validation::{
     combined_click_function_definitions, combined_predicate_definitions,
@@ -223,7 +223,7 @@ pub struct FunctionBlock {
     structural_clauses: Vec<StructuralClause>,
     effects: Vec<EffectClause>,
     ensures: Vec<EnsureClause>,
-    grouped_proof: Option<Proof>,
+    grouped_proof: Option<SourceProof>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -266,13 +266,13 @@ pub enum Requirement {
 pub struct EnsureClause {
     name: Option<String>,
     ensure: Ensure,
-    proof: Proof,
+    proof: SourceProof,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EffectClause {
     effect: Effect,
-    proof: Proof,
+    proof: SourceProof,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -281,8 +281,8 @@ pub struct StructuralClause {
     label: Option<String>,
     decreases: Option<ContractExpression>,
     items: Vec<StructuralItem>,
-    initialize_proof: Option<Proof>,
-    preserve_proof: Option<Proof>,
+    initialize_proof: Option<SourceProof>,
+    preserve_proof: Option<SourceProof>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -296,7 +296,7 @@ pub enum CodeRegion {
 pub struct StructuralItem {
     kind: StructuralItemKind,
     claim: StructuralItemClaim,
-    proof: Proof,
+    proof: SourceProof,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1068,7 +1068,7 @@ impl fmt::Display for ComparisonOperator {
 
 /// A `.click` `by` clause proving one theorem.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Proof {
+pub enum SourceProof {
     Default,
     Tactic(SmartTactic),
     Script(Vec<ProofTactic>),
@@ -1101,7 +1101,7 @@ pub struct CertifiedFactTransport {
 }
 
 /// Private semantic evidence retained while a smart tactic constructs its
-/// [`SimpleProof`]. This is planner metadata, not a proof step and cannot
+/// [`ProofCertificate`]. This is planner metadata, not a proof step and cannot
 /// cross the smart/simple boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PlannedStatementTransition {
@@ -1112,7 +1112,7 @@ pub(crate) struct PlannedStatementTransition {
 
 /// A tactic in an explicit `.click` proof script.
 ///
-/// Tactics are classified by [`ProofTactic::class`]. A `Proof::Script`
+/// Tactics are classified by [`ProofTactic::class`]. A `SourceProof::Script`
 /// certificate is not considered fully expanded while it contains a smart
 /// tactic.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1250,11 +1250,11 @@ pub enum TacticClass {
 /// return this type directly; printing it is then a structural conversion
 /// back to ordinary `.click` syntax.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SimpleProof {
+pub struct ProofCertificate {
     steps: Vec<SimpleProofStep>,
 }
 
-/// One surface-expressible step in a [`SimpleProof`]. Structured tactics own
+/// One surface-expressible step in a [`ProofCertificate`]. Structured tactics own
 /// recursively simple child proofs, so simplicity is enforced by the Rust
 /// type rather than recovered later from [`ProofTactic::class`].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1308,26 +1308,26 @@ pub enum SimpleProofStep {
     },
     Have {
         proposition: ClickProposition,
-        proof: Box<SimpleProof>,
+        proof: Box<ProofCertificate>,
     },
     Open {
         resource: ResourceClause,
-        proof: Box<SimpleProof>,
+        proof: Box<ProofCertificate>,
     },
     If {
         condition: ClickProposition,
-        then_proof: Box<SimpleProof>,
-        else_proof: Box<SimpleProof>,
+        then_proof: Box<ProofCertificate>,
+        else_proof: Box<ProofCertificate>,
     },
     Cases {
         disjunction: ClickProposition,
-        left_proof: Box<SimpleProof>,
-        right_proof: Box<SimpleProof>,
+        left_proof: Box<ProofCertificate>,
+        right_proof: Box<ProofCertificate>,
     },
     Branch {
         ensuring: Option<Vec<ProofAssertion>>,
-        then_proof: Box<SimpleProof>,
-        else_proof: Box<SimpleProof>,
+        then_proof: Box<ProofCertificate>,
+        else_proof: Box<ProofCertificate>,
     },
     Loop(SimpleStructuralClause),
 }
@@ -1338,8 +1338,8 @@ pub struct SimpleStructuralClause {
     label: Option<String>,
     decreases: Option<ContractExpression>,
     items: Vec<SimpleStructuralItem>,
-    initialize_proof: Option<Box<SimpleProof>>,
-    preserve_proof: Option<Box<SimpleProof>>,
+    initialize_proof: Option<Box<ProofCertificate>>,
+    preserve_proof: Option<Box<ProofCertificate>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1348,7 +1348,7 @@ struct SimpleStructuralItem {
     claim: StructuralItemClaim,
     /// Invariants are declarations whose initialize/preserve proofs live on
     /// the enclosing loop. Effect items contain their own simple proof.
-    effect_proof: Option<Box<SimpleProof>>,
+    effect_proof: Option<Box<ProofCertificate>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1371,7 +1371,7 @@ pub struct CertificateError {
     path: Vec<CertificatePathSegment>,
 }
 
-impl SimpleProof {
+impl ProofCertificate {
     pub fn from_proof_tactics(tactics: &[ProofTactic]) -> Result<Self, CertificateError> {
         validate_certificate_tactics(tactics, &mut Vec::new())?;
         Ok(Self {
@@ -1397,8 +1397,8 @@ impl SimpleProof {
             .collect()
     }
 
-    fn from_validated_proof(proof: &Proof) -> Self {
-        let Proof::Script(tactics) = proof else {
+    fn from_validated_proof(proof: &SourceProof) -> Self {
+        let SourceProof::Script(tactics) = proof else {
             unreachable!("validated simple proof must be an explicit script")
         };
         Self {
@@ -1409,8 +1409,8 @@ impl SimpleProof {
         }
     }
 
-    fn to_source_proof(&self) -> Proof {
-        Proof::Script(self.to_proof_tactics())
+    fn to_source_proof(&self) -> SourceProof {
+        SourceProof::Script(self.to_proof_tactics())
     }
 }
 
@@ -1483,11 +1483,11 @@ impl SimpleProofStep {
             },
             ProofTactic::Have(proof_have) => Self::Have {
                 proposition: proof_have.proposition.clone(),
-                proof: Box::new(SimpleProof::from_validated_proof(&proof_have.proof)),
+                proof: Box::new(ProofCertificate::from_validated_proof(&proof_have.proof)),
             },
             ProofTactic::Open(proof_open) => Self::Open {
                 resource: proof_open.resource.clone(),
-                proof: Box::new(SimpleProof {
+                proof: Box::new(ProofCertificate {
                     steps: proof_open
                         .tactics
                         .iter()
@@ -1497,14 +1497,14 @@ impl SimpleProofStep {
             },
             ProofTactic::If(proof_if) => Self::If {
                 condition: proof_if.condition.clone(),
-                then_proof: Box::new(SimpleProof {
+                then_proof: Box::new(ProofCertificate {
                     steps: proof_if
                         .then_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
                 }),
-                else_proof: Box::new(SimpleProof {
+                else_proof: Box::new(ProofCertificate {
                     steps: proof_if
                         .else_tactics
                         .iter()
@@ -1514,14 +1514,14 @@ impl SimpleProofStep {
             },
             ProofTactic::Cases(proof_cases) => Self::Cases {
                 disjunction: proof_cases.disjunction.clone(),
-                left_proof: Box::new(SimpleProof {
+                left_proof: Box::new(ProofCertificate {
                     steps: proof_cases
                         .left_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
                 }),
-                right_proof: Box::new(SimpleProof {
+                right_proof: Box::new(ProofCertificate {
                     steps: proof_cases
                         .right_tactics
                         .iter()
@@ -1531,14 +1531,14 @@ impl SimpleProofStep {
             },
             ProofTactic::Branch(proof_branch) => Self::Branch {
                 ensuring: proof_branch.ensuring.clone(),
-                then_proof: Box::new(SimpleProof {
+                then_proof: Box::new(ProofCertificate {
                     steps: proof_branch
                         .then_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
                 }),
-                else_proof: Box::new(SimpleProof {
+                else_proof: Box::new(ProofCertificate {
                     steps: proof_branch
                         .else_tactics
                         .iter()
@@ -1558,17 +1558,17 @@ impl SimpleProofStep {
                         claim: item.claim.clone(),
                         effect_proof: item
                             .is_effect_kind()
-                            .then(|| Box::new(SimpleProof::from_validated_proof(&item.proof))),
+                            .then(|| Box::new(ProofCertificate::from_validated_proof(&item.proof))),
                     })
                     .collect(),
                 initialize_proof: clause
                     .initialize_proof
                     .as_ref()
-                    .map(|proof| Box::new(SimpleProof::from_validated_proof(proof))),
+                    .map(|proof| Box::new(ProofCertificate::from_validated_proof(proof))),
                 preserve_proof: clause
                     .preserve_proof
                     .as_ref()
-                    .map(|proof| Box::new(SimpleProof::from_validated_proof(proof))),
+                    .map(|proof| Box::new(ProofCertificate::from_validated_proof(proof))),
             }),
             _ => unreachable!("certificate validation admitted a non-surface tactic"),
         }
@@ -1689,7 +1689,7 @@ impl SimpleProofStep {
                             .effect_proof
                             .as_ref()
                             .map(|proof| proof.to_source_proof())
-                            .unwrap_or(Proof::Tactic(SmartTactic::Auto)),
+                            .unwrap_or(SourceProof::Tactic(SmartTactic::Auto)),
                     })
                     .collect(),
                 initialize_proof: clause
@@ -1843,19 +1843,19 @@ fn validate_certificate_tactics(
 }
 
 fn validate_certificate_proof(
-    proof: &Proof,
+    proof: &SourceProof,
     path: &mut Vec<CertificatePathSegment>,
 ) -> Result<(), CertificateError> {
     match proof {
-        Proof::Default => Err(CertificateError {
+        SourceProof::Default => Err(CertificateError {
             tactic_class: TacticClass::Smart(SmartTacticKind::Auto),
             path: path.clone(),
         }),
-        Proof::Tactic(smart_tactic) => Err(CertificateError {
+        SourceProof::Tactic(smart_tactic) => Err(CertificateError {
             tactic_class: TacticClass::Smart(smart_tactic.kind()),
             path: path.clone(),
         }),
-        Proof::Script(tactics) => validate_certificate_tactics(tactics, path),
+        SourceProof::Script(tactics) => validate_certificate_tactics(tactics, path),
     }
 }
 
@@ -1922,7 +1922,7 @@ impl SmartTactic {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProofHave {
     proposition: ClickProposition,
-    proof: Proof,
+    proof: SourceProof,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2117,7 +2117,7 @@ pub struct VerifiedCTheorem {
     pub claim: VerifiedClaim,
     pub proof_kind: ProofKind,
     pub proof_tactics: Option<Vec<ProofTactic>>,
-    pub expanded_proof: Option<SimpleProof>,
+    pub expanded_proof: Option<ProofCertificate>,
     pub expansion_blocker: Option<String>,
     pub specification: CFunctionSpecification,
     pub theorem: Theorem,
@@ -2133,7 +2133,7 @@ pub struct VerifiedPureTheorem {
     pub ensure_index: usize,
     pub ensure_clause: EnsureClause,
     pub proof_kind: ProofKind,
-    pub proof: Option<SimpleProof>,
+    pub proof: Option<ProofCertificate>,
     pub requires: Vec<Proposition>,
     pub conclusion: Proposition,
     pub(crate) kernel_authority: Option<CVerifiedPureTheorem>,
@@ -2333,7 +2333,7 @@ impl FunctionBlock {
         &self.ensures
     }
 
-    pub fn grouped_proof(&self) -> Option<&Proof> {
+    pub fn grouped_proof(&self) -> Option<&SourceProof> {
         self.grouped_proof.as_ref()
     }
 
@@ -2435,7 +2435,7 @@ impl EnsureClause {
         &self.ensure
     }
 
-    pub fn proof(&self) -> &Proof {
+    pub fn proof(&self) -> &SourceProof {
         &self.proof
     }
 }
@@ -2445,7 +2445,7 @@ impl EffectClause {
         &self.effect
     }
 
-    pub fn proof(&self) -> &Proof {
+    pub fn proof(&self) -> &SourceProof {
         &self.proof
     }
 }
@@ -2467,11 +2467,11 @@ impl StructuralClause {
         &self.items
     }
 
-    pub fn initialize_proof(&self) -> Option<&Proof> {
+    pub fn initialize_proof(&self) -> Option<&SourceProof> {
         self.initialize_proof.as_ref()
     }
 
-    pub fn preserve_proof(&self) -> Option<&Proof> {
+    pub fn preserve_proof(&self) -> Option<&SourceProof> {
         self.preserve_proof.as_ref()
     }
 
@@ -2508,12 +2508,12 @@ impl StructuralItem {
         )
     }
 
-    pub fn proof(&self) -> &Proof {
+    pub fn proof(&self) -> &SourceProof {
         &self.proof
     }
 }
 
-impl Proof {
+impl SourceProof {
     pub fn is_auto_tactic(&self) -> bool {
         matches!(self, Self::Default | Self::Tactic(SmartTactic::Auto))
     }
@@ -2559,7 +2559,7 @@ fn collect_unfold_tactic_names(tactics: &[ProofTactic], names: &mut Vec<String>)
         match tactic {
             ProofTactic::UnfoldPredicate(name) => names.push(name.clone()),
             ProofTactic::Have(have) => {
-                if let Proof::Script(tactics) = &have.proof {
+                if let SourceProof::Script(tactics) = &have.proof {
                     collect_unfold_tactic_names(tactics, names);
                 }
             }
@@ -2589,14 +2589,14 @@ impl VerifiedCTheorem {
     pub fn expanded_proof_tactics(&self) -> Option<Vec<ProofTactic>> {
         self.expanded_proof
             .as_ref()
-            .map(SimpleProof::to_proof_tactics)
+            .map(ProofCertificate::to_proof_tactics)
     }
 
     pub fn expansion_blocker(&self) -> Option<&str> {
         self.expansion_blocker.as_deref()
     }
 
-    pub fn expanded_proof_certificate(&self) -> Result<SimpleProof, ClickError> {
+    pub fn expanded_proof_certificate(&self) -> Result<ProofCertificate, ClickError> {
         self.expanded_proof.clone().ok_or_else(|| {
             ClickError::new(format!(
                 "proof expansion is unavailable for `{}`: {}",
@@ -2609,7 +2609,9 @@ impl VerifiedCTheorem {
     }
 
     pub fn expanded_proof_source(&self) -> Result<String, ClickError> {
-        Ok(format_simple_proof(&self.expanded_proof_certificate()?))
+        Ok(format_proof_certificate(
+            &self.expanded_proof_certificate()?,
+        ))
     }
 
     pub fn ensure_clause(&self) -> Option<&EnsureClause> {
@@ -2629,10 +2631,10 @@ impl VerifiedCTheorem {
 
 impl VerifiedPureTheorem {
     pub fn proof_tactics(&self) -> Option<Vec<ProofTactic>> {
-        self.proof.as_ref().map(SimpleProof::to_proof_tactics)
+        self.proof.as_ref().map(ProofCertificate::to_proof_tactics)
     }
 
-    pub fn proof_certificate(&self) -> Result<SimpleProof, ClickError> {
+    pub fn proof_certificate(&self) -> Result<ProofCertificate, ClickError> {
         self.proof.clone().ok_or_else(|| {
             ClickError::new(format!(
                 "pure theorem `{}` ensure {} has no surface certificate",
@@ -2643,7 +2645,7 @@ impl VerifiedPureTheorem {
     }
 
     pub fn expanded_proof_source(&self) -> Result<String, ClickError> {
-        Ok(format_simple_proof(&self.proof_certificate()?))
+        Ok(format_proof_certificate(&self.proof_certificate()?))
     }
 }
 

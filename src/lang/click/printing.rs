@@ -95,8 +95,8 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
 }
 
 pub fn format_proof_tactics(tactics: &[ProofTactic]) -> Result<String, CertificateError> {
-    let certificate = SimpleProof::from_proof_tactics(tactics)?;
-    Ok(format_simple_proof(&certificate))
+    let certificate = ProofCertificate::from_proof_tactics(tactics)?;
+    Ok(format_proof_certificate(&certificate))
 }
 
 pub(super) fn format_partial_tactic_sequence(tactics: &[ProofTactic]) -> String {
@@ -106,7 +106,7 @@ pub(super) fn format_partial_tactic_sequence(tactics: &[ProofTactic]) -> String 
     output
 }
 
-pub fn format_simple_proof(certificate: &SimpleProof) -> String {
+pub fn format_proof_certificate(certificate: &ProofCertificate) -> String {
     let mut output = String::from("by {\n");
     write_tactics(&mut output, &certificate.to_proof_tactics(), 1);
     output.push('}');
@@ -447,8 +447,8 @@ fn write_structural_effect(output: &mut String, item: &StructuralItem, indent: u
     output.push('\n');
 }
 
-fn write_proof(output: &mut String, proof: &Proof, indent: usize) {
-    let Proof::Script(tactics) = proof else {
+fn write_proof(output: &mut String, proof: &SourceProof, indent: usize) {
+    let SourceProof::Script(tactics) = proof else {
         unreachable!("certificate validation requires an explicit proof script")
     };
     output.push_str("by {\n");

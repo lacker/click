@@ -10,7 +10,7 @@ pub(in crate::lang::click) fn unfold_available_predicate_facts(
         return Ok(available_pure_facts.to_vec());
     }
 
-    // Proof contexts can contain large execution propositions whose trees do
+    // SourceProof contexts can contain large execution propositions whose trees do
     // not mention a Click predicate at all. Rebuilding every one of those
     // trees for each `unfold` made this otherwise structural tactic scale with
     // the entire execution history. Predicate applications only occur at the

@@ -863,7 +863,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_theorem_application_at_outcom
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn replay_outcome_apply_certificate(
-    certificate: &SimpleProof,
+    certificate: &ProofCertificate,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
     path_index: usize,

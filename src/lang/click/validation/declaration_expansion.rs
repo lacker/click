@@ -265,13 +265,13 @@ fn expand_declared_resource_structural_item(
 }
 
 fn expand_declared_resource_proof(
-    proof: Proof,
+    proof: SourceProof,
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
-) -> Result<Proof, ClickError> {
+) -> Result<SourceProof, ClickError> {
     match proof {
-        Proof::Default => Ok(proof),
-        Proof::Tactic(_) => Ok(proof),
-        Proof::Script(tactics) => Ok(Proof::Script(
+        SourceProof::Default => Ok(proof),
+        SourceProof::Tactic(_) => Ok(proof),
+        SourceProof::Script(tactics) => Ok(SourceProof::Script(
             tactics
                 .into_iter()
                 .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))

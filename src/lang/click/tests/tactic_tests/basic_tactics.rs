@@ -47,7 +47,7 @@ fn parses_grouped_function_proof() {
     let function = &file.function_blocks()[0];
 
     assert_eq!(
-        function.grouped_proof().and_then(Proof::tactics),
+        function.grouped_proof().and_then(SourceProof::tactics),
         Some(
             [
                 ProofTactic::SmartExecute,
@@ -57,8 +57,14 @@ fn parses_grouped_function_proof() {
             .as_slice()
         )
     );
-    assert!(matches!(function.effects()[0].proof(), Proof::Default));
-    assert!(matches!(function.ensures()[0].proof(), Proof::Default));
+    assert!(matches!(
+        function.effects()[0].proof(),
+        SourceProof::Default
+    ));
+    assert!(matches!(
+        function.ensures()[0].proof(),
+        SourceProof::Default
+    ));
 }
 
 #[test]
@@ -425,7 +431,7 @@ fn parses_resource_verb_function_clauses() {
                         end: current_int(1),
                     },
                 })),
-                proof: Proof::Default,
+                proof: SourceProof::Default,
             },
             EnsureClause {
                 name: None,
@@ -436,7 +442,7 @@ fn parses_resource_verb_function_clauses() {
                     arguments: vec![current_int(9)],
                     parameter_types: vec![C0Type::Int32],
                 }),
-                proof: Proof::Default,
+                proof: SourceProof::Default,
             },
         ]
     );

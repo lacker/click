@@ -1,18 +1,18 @@
 //! Completion and independent replay of typed simple proofs.
 //!
-//! A smart tactic's search constructs its [`SimpleProof`] directly, step by
+//! A smart tactic's search constructs its [`ProofCertificate`] directly, step by
 //! step, while it commits to each move (see
 //! `construct_simple_step_for_planned_operation`). This module receives that
 //! constructed proof, independently replays it through the ordinary simple
 //! tactic executor, and merges the steps into the enclosing proof's surface
 //! record. There is no intermediate plan language or plan replay: the
-//! independent replay of the `SimpleProof` is the only re-execution, and its
+//! independent replay of the `ProofCertificate` is the only re-execution, and its
 //! resulting context is the smart tactic's result.
 
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn replay_simple_proof(
+pub(in crate::lang::click::proof) fn replay_proof_certificate(
     context: ProofReplayContext,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -27,7 +27,7 @@ pub(in crate::lang::click::proof) fn replay_simple_proof(
     arguments: &[CExpression],
     tactic_index: usize,
     source_index: usize,
-    proof: &SimpleProof,
+    proof: &ProofCertificate,
 ) -> Result<ProofReplayContext, ClickError> {
     let enclosing_branch_path = context.branch_path.clone();
     let enclosing_case_assumptions = context.replay.case_assumptions.clone();
@@ -76,7 +76,7 @@ fn merge_surface_certificate_contexts(
 ) -> Result<ProofReplayContext, ClickError> {
     if completed.is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `SimpleProof` at source tactic {source_index} produced no replay contexts"
+            "`{claim_label}` tactic {tactic_index}: `ProofCertificate` at source tactic {source_index} produced no replay contexts"
         )));
     }
     if completed.len() == 1 {
@@ -87,7 +87,7 @@ fn merge_surface_certificate_contexts(
         .any(|context| !context.replay.is_at_function_exit())
     {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: branched `SimpleProof` at source tactic {source_index} did not finish every branch at function exit"
+            "`{claim_label}` tactic {tactic_index}: branched `ProofCertificate` at source tactic {source_index} did not finish every branch at function exit"
         )));
     }
     let execution_start_state = completed[0]
@@ -97,7 +97,7 @@ fn merge_surface_certificate_contexts(
         .clone()
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: branched `SimpleProof` has no execution start state"
+                "`{claim_label}` tactic {tactic_index}: branched `ProofCertificate` has no execution start state"
             ))
         })?;
     let mut common_pure_facts = completed[0].pure_facts.clone();
@@ -157,7 +157,7 @@ fn merge_surface_certificate_contexts(
     Ok(merged)
 }
 
-/// Checks a smart tactic's constructed [`SimpleProof`] by independent replay
+/// Checks a smart tactic's constructed [`ProofCertificate`] by independent replay
 /// and merges its steps into the enclosing proof's surface record.
 ///
 /// `construction` is the builder the smart search filled while committing to
@@ -187,24 +187,24 @@ pub(in crate::lang::click::proof) fn complete_smart_tactic(
     arguments: &[CExpression],
     tactic_index: usize,
     source_index: usize,
-    construction: SimpleProofBuilder,
+    construction: ProofCertificateBuilder,
     certified_frame: bool,
     merge_construction: bool,
 ) -> Result<ProofReplayContext, ClickError> {
     if let Some(blocker) = &construction.blocker {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: smart search found an internal plan, but `SimpleProof` construction failed: {blocker}"
+            "`{claim_label}` tactic {tactic_index}: smart search found an internal plan, but `ProofCertificate` construction failed: {blocker}"
         )));
     }
     if construction.steps.is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: smart search found an internal plan, but `SimpleProof` construction produced no steps"
+            "`{claim_label}` tactic {tactic_index}: smart search found an internal plan, but `ProofCertificate` construction produced no steps"
         )));
     }
-    let proof = SimpleProof::from_steps(construction.steps.clone());
-    let outer_simple_proof = context.replay.simple_proof_builder.clone();
+    let proof = ProofCertificate::from_steps(construction.steps.clone());
+    let outer_certificate = context.replay.proof_certificate_builder.clone();
     let deferred_before = context.replay.post_execution_tactics.len();
-    let mut verified_result = replay_simple_proof(
+    let mut verified_result = replay_proof_certificate(
         context,
         function_block,
         parsed_function,
@@ -223,12 +223,12 @@ pub(in crate::lang::click::proof) fn complete_smart_tactic(
     )
     .map_err(|error| {
         ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: constructed `SimpleProof` failed independent replay:\n{}\n{}",
-            format_simple_proof(&proof),
+            "`{claim_label}` tactic {tactic_index}: constructed `ProofCertificate` failed independent replay:\n{}\n{}",
+            format_proof_certificate(&proof),
             error.message()
         ))
     })?;
-    let mut merged = outer_simple_proof;
+    let mut merged = outer_certificate;
     if merge_construction {
         // The merged steps are the surface record; deferred work the
         // independent replay carried into the enclosing replay must not be
@@ -256,6 +256,6 @@ pub(in crate::lang::click::proof) fn complete_smart_tactic(
         }
         merged.last_step_entry = construction.last_step_entry;
     }
-    verified_result.replay.simple_proof_builder = merged;
+    verified_result.replay.proof_certificate_builder = merged;
     Ok(verified_result)
 }

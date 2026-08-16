@@ -136,15 +136,15 @@ fn validate_resource_subject_expression_types(
 
 pub(super) fn validate_pure_theorem_proof(
     theorem_name: &str,
-    proof: &Proof,
+    proof: &SourceProof,
 ) -> Result<(), ClickError> {
     match proof {
-        Proof::Default => Ok(()),
-        Proof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => Ok(()),
-        Proof::Tactic(SmartTactic::Frame) => Err(ClickError::new(format!(
+        SourceProof::Default => Ok(()),
+        SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => Ok(()),
+        SourceProof::Tactic(SmartTactic::Frame) => Err(ClickError::new(format!(
             "`frame` is not available in the pure proof for theorem `{theorem_name}`"
         ))),
-        Proof::Script(tactics) => validate_pure_theorem_tactics(theorem_name, tactics),
+        SourceProof::Script(tactics) => validate_pure_theorem_tactics(theorem_name, tactics),
     }
 }
 

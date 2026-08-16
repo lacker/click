@@ -108,7 +108,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                 .iter()
                 .find(|clause| clause.region() == &CodeRegion::Loop(loop_index));
             let explicit_tactics = loop_clause.and_then(explicit_loop_preservation_tactics);
-            let default_initialization = Proof::Default;
+            let default_initialization = SourceProof::Default;
             let initialization_proof = loop_clause.map(|clause| {
                 (
                     clause,
@@ -177,7 +177,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                                 )?;
                                 let mut tactics = clause
                                     .preserve_proof()
-                                    .and_then(Proof::tactics)
+                                    .and_then(SourceProof::tactics)
                                     .unwrap_or_default()
                                     .iter()
                                     .filter(|tactic| {
@@ -261,8 +261,8 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                         // The parser keeps a single smart tactic as `Tactic`
                         // rather than wrapping it in a one-item `Script`.
                         && initialization_proof.is_some_and(|(_, proof)| match proof {
-                            Proof::Tactic(SmartTactic::Simp) => local_index == 0,
-                            Proof::Script(source_tactics) => {
+                            SourceProof::Tactic(SmartTactic::Simp) => local_index == 0,
+                            SourceProof::Script(source_tactics) => {
                                 selected == phase_start
                                     || matches!(
                                         source_tactics.get(local_index),
@@ -282,7 +282,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                 } else {
                     if let Some(source_index) =
                         selected_tactic_index_for_site(expansion_capture.as_deref(), &site)
-                        && let Some((_, Proof::Script(source_tactics))) = initialization_proof
+                        && let Some((_, SourceProof::Script(source_tactics))) = initialization_proof
                         && matches!(source_tactics.get(source_index), Some(ProofTactic::Simp))
                         && !source_tactics.iter().any(|tactic| {
                             matches!(
@@ -471,7 +471,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: &ProofSite,
     proposition: &ClickProposition,
-    proof: &Proof,
+    proof: &SourceProof,
     claim_label: &str,
     proof_index: usize,
     available: &[Proposition],
@@ -485,9 +485,9 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     surface_propositions: &SurfacePropositionMap,
     prelowered_goal: Option<&Proposition>,
     theorem_environment: &TheoremEnvironment,
-) -> Result<(Proposition, SimpleProof), ClickError> {
+) -> Result<(Proposition, ProofCertificate), ClickError> {
     let applied_theorem_script;
-    let lowered_applied_theorem_script = matches!(proof, Proof::Script(tactics)
+    let lowered_applied_theorem_script = matches!(proof, SourceProof::Script(tactics)
     if tactics.iter().any(|tactic| matches!(
         tactic,
         ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. }
@@ -496,7 +496,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             matches!(tactic.class(), TacticClass::Simple(_))
                 || matches!(tactic, ProofTactic::Simp | ProofTactic::ApplyTheorem(_))
         }));
-    let proof = if let Proof::Script(tactics) = proof
+    let proof = if let SourceProof::Script(tactics) = proof
         && tactics.iter().any(|tactic| {
             matches!(
                 tactic,
@@ -511,7 +511,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         // trailing smart `simp` lowers to the deterministic `assumption` and
         // a bare `apply` lowers to `apply using` with the theorem's own
         // requires as the explicit premise pool.
-        applied_theorem_script = Proof::Script(
+        applied_theorem_script = SourceProof::Script(
             tactics
                 .iter()
                 .map(|tactic| match tactic {
@@ -541,8 +541,8 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     } else {
         proof
     };
-    if let Proof::Script(tactics) = proof
-        && let Ok(certificate) = SimpleProof::from_proof_tactics(tactics)
+    if let SourceProof::Script(tactics) = proof
+        && let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
     {
         if lowered_applied_theorem_script
             && let Some(source_index) =
@@ -605,21 +605,21 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         &unfolded_predicates,
         prelowered_goal,
     )?;
-    let mut simple_proof_builder = TacticReplayState {
+    let mut proof_certificate_builder = TacticReplayState {
         surface_propositions: surface_propositions.clone(),
         program_point_states: program_point_states.clone(),
         ..TacticReplayState::default()
     };
-    simple_proof_builder
+    proof_certificate_builder
         .surface_propositions
         .record_lowering(proposition, &fact)?;
     if !unfolded_predicates.is_empty() {
         let assumptions = assumptions_from_propositions(available);
-        let recorded_unfoldings = simple_proof_builder
+        let recorded_unfoldings = proof_certificate_builder
             .surface_propositions
             .kernel_facts()
             .flat_map(|kernel| {
-                simple_proof_builder
+                proof_certificate_builder
                     .surface_propositions
                     .surfaces(kernel)
                     .filter_map(|surface| {
@@ -660,7 +660,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             })
             .collect::<Vec<_>>();
         for (surface, kernel) in recorded_unfoldings {
-            simple_proof_builder
+            proof_certificate_builder
                 .surface_propositions
                 .record_lowering(&surface, &kernel)?;
         }
@@ -678,12 +678,12 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             &assumptions,
         )
         .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
-        simple_proof_builder
+        proof_certificate_builder
             .surface_propositions
             .record_lowering(&unfolded_surface, &unfolded_fact)?;
     }
     let surface_proof = surface_simp_plan_proof(
-        &mut simple_proof_builder,
+        &mut proof_certificate_builder,
         state,
         available,
         parameters,
@@ -694,18 +694,18 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         &plan,
         &unfolded_predicates,
     )?;
-    let Proof::Script(tactics) = surface_proof else {
+    let SourceProof::Script(tactics) = surface_proof else {
         return Err(ClickError::new(format!(
             "`{claim_label}` did not lower to an explicit proof script"
         )));
     };
-    let certificate = SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+    let certificate = ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` produced an invalid point-pure certificate: {error:?}"
         ))
     })?;
     if matches!(proof_site, ProofSite::StructuralItem { .. })
-        && let Proof::Script(source_tactics) = proof
+        && let SourceProof::Script(source_tactics) = proof
     {
         let source_index = selected_tactic_index_for_site(expansion_capture.as_deref(), proof_site);
         if let Some(source_index) = source_index

@@ -268,7 +268,7 @@ fn parses_local_have_proof_tactic() {
     assert!(matches!(
         &tactics[0],
         ProofTactic::Have(ProofHave {
-            proof: Proof::Tactic(SmartTactic::Simp),
+            proof: SourceProof::Tactic(SmartTactic::Simp),
             ..
         })
     ));
@@ -1087,7 +1087,7 @@ fn mid_execution_witness_simp_have_expands_to_a_simple_certificate() {
             _ => None,
         })
         .expect("the expansion should retain the have");
-    let Proof::Script(body) = &have.proof else {
+    let SourceProof::Script(body) = &have.proof else {
         panic!("the expanded have should carry an explicit script: {have:?}");
     };
     assert!(
@@ -1096,7 +1096,7 @@ fn mid_execution_witness_simp_have_expands_to_a_simple_certificate() {
             .any(|tactic| matches!(tactic, ProofTactic::Simp)),
         "the expanded have body should replace its smart simp: {body:?}"
     );
-    SimpleProof::from_proof_tactics(&expanded)
+    ProofCertificate::from_proof_tactics(&expanded)
         .expect("the witness/simp have expansion should be a surface certificate");
 }
 
@@ -1148,7 +1148,7 @@ fn mid_execution_proof_if_have_expands_to_a_simple_certificate() {
         !format!("{have:?}").contains("Simp"),
         "the expanded have cases should close with simple tactics: {have:?}"
     );
-    SimpleProof::from_proof_tactics(&expanded)
+    ProofCertificate::from_proof_tactics(&expanded)
         .expect("the proof-if have expansion should be a surface certificate");
 }
 
@@ -1510,7 +1510,7 @@ fn disjunctive_premise_simp_expands_to_a_cases_certificate() {
         tactics.iter().find_map(|tactic| match tactic {
             ProofTactic::Cases(cases) => Some(cases),
             ProofTactic::Have(have) => match &have.proof {
-                Proof::Script(body) => find_cases(body),
+                SourceProof::Script(body) => find_cases(body),
                 _ => None,
             },
             _ => None,
@@ -1522,7 +1522,7 @@ fn disjunctive_premise_simp_expands_to_a_cases_certificate() {
         !format!("{cases:?}").contains("Simp"),
         "both spelled branches should close with simple tactics: {cases:?}"
     );
-    SimpleProof::from_proof_tactics(&expanded)
+    ProofCertificate::from_proof_tactics(&expanded)
         .expect("the disjunctive-premise expansion should be a surface certificate");
 }
 

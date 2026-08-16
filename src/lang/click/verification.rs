@@ -8,7 +8,7 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
                 names.insert(application.name.clone());
             }
             ProofTactic::Have(proof_have) => {
-                if let Proof::Script(tactics) = &proof_have.proof {
+                if let SourceProof::Script(tactics) = &proof_have.proof {
                     collect_applied_theorems(tactics, names);
                 }
             }
@@ -29,7 +29,7 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
             }
             ProofTactic::Loop(clause) => {
                 for item in &clause.items {
-                    if let Proof::Script(tactics) = &item.proof {
+                    if let SourceProof::Script(tactics) = &item.proof {
                         collect_applied_theorems(tactics, names);
                     }
                 }
@@ -40,7 +40,7 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
                 .into_iter()
                 .flatten()
                 {
-                    if let Proof::Script(tactics) = proof {
+                    if let SourceProof::Script(tactics) = proof {
                         collect_applied_theorems(tactics, names);
                     }
                 }
@@ -50,8 +50,8 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
     }
 }
 
-fn collect_applied_theorems_from_proof(proof: &Proof, names: &mut BTreeSet<String>) {
-    if let Proof::Script(tactics) = proof {
+fn collect_applied_theorems_from_proof(proof: &SourceProof, names: &mut BTreeSet<String>) {
+    if let SourceProof::Script(tactics) = proof {
         collect_applied_theorems(tactics, names);
     }
 }
@@ -188,7 +188,7 @@ pub(in crate::lang::click) fn proof_unit_erased_click_file(
         for theorem in &mut file.theorem_definitions {
             if theorem.name == *target_name {
                 for ensure in &mut theorem.ensures {
-                    ensure.proof = Proof::Default;
+                    ensure.proof = SourceProof::Default;
                 }
             }
         }
@@ -201,13 +201,13 @@ pub(in crate::lang::click) fn proof_unit_erased_click_file(
             continue;
         }
         if function.grouped_proof.is_some() {
-            function.grouped_proof = Some(Proof::Default);
+            function.grouped_proof = Some(SourceProof::Default);
         }
         for ensure in &mut function.ensures {
-            ensure.proof = Proof::Default;
+            ensure.proof = SourceProof::Default;
         }
         for effect in &mut function.effects {
-            effect.proof = Proof::Default;
+            effect.proof = SourceProof::Default;
         }
         for clause in &mut function.structural_clauses {
             // Omitted loop-phase proofs and explicit default/expanded proofs
@@ -217,7 +217,7 @@ pub(in crate::lang::click) fn proof_unit_erased_click_file(
             clause.initialize_proof = None;
             clause.preserve_proof = None;
             for item in &mut clause.items {
-                item.proof = Proof::Default;
+                item.proof = SourceProof::Default;
             }
         }
     }
@@ -764,7 +764,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                 operator: ComparisonOperator::Equal,
                 right: ContractExpression::CFragment(CExpression::Value(int32(0))),
             }),
-            proof: Proof::Tactic(SmartTactic::Auto),
+            proof: SourceProof::Tactic(SmartTactic::Auto),
         };
         let mut claims = function_claims(&function_block);
         let has_explicit_claims = !claims.is_empty();
@@ -774,7 +774,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
         let mut function_verified = Vec::new();
         if let Some(grouped_proof) = function_block.grouped_proof() {
             let theorems = match grouped_proof {
-                Proof::Tactic(SmartTactic::Auto) => prove_claims_by_grouped_auto(
+                SourceProof::Tactic(SmartTactic::Auto) => prove_claims_by_grouped_auto(
                     expansion_capture.as_deref_mut(),
                     source_path,
                     &function_block,
@@ -786,7 +786,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                     &resource_environment,
                     &theorem_environment,
                 )?,
-                Proof::Script(tactics) => prove_claims_by_grouped_script(
+                SourceProof::Script(tactics) => prove_claims_by_grouped_script(
                     expansion_capture.as_deref_mut(),
                     source_path,
                     &function_block,
@@ -799,7 +799,8 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                     &theorem_environment,
                     tactics,
                 )?,
-                Proof::Default | Proof::Tactic(SmartTactic::Simp | SmartTactic::Frame) => {
+                SourceProof::Default
+                | SourceProof::Tactic(SmartTactic::Simp | SmartTactic::Frame) => {
                     return Err(ClickError::new(format!(
                         "grouped proof for `{}` must use `by auto;` or an explicit `by {{ ... }}` proof script",
                         function_block.signature().name()
@@ -816,7 +817,22 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                     format!("{}.body_safety", function_block.signature.name())
                 };
                 let theorems = match claim.proof() {
-                    Proof::Default | Proof::Tactic(SmartTactic::Auto) => prove_claim_by_auto(
+                    SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto) => {
+                        prove_claim_by_auto(
+                            expansion_capture.as_deref_mut(),
+                            source_path,
+                            &function_block,
+                            parsed_function,
+                            &claim,
+                            &claim_label,
+                            &verification_function_environment,
+                            &predicate_environment,
+                            &click_function_environment,
+                            &resource_environment,
+                            &theorem_environment,
+                        )?
+                    }
+                    SourceProof::Tactic(SmartTactic::Frame) => prove_claim_by_frame(
                         expansion_capture.as_deref_mut(),
                         source_path,
                         &function_block,
@@ -829,7 +845,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                         &resource_environment,
                         &theorem_environment,
                     )?,
-                    Proof::Tactic(SmartTactic::Frame) => prove_claim_by_frame(
+                    SourceProof::Tactic(SmartTactic::Simp) => prove_claim_by_simp(
                         expansion_capture.as_deref_mut(),
                         source_path,
                         &function_block,
@@ -842,20 +858,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                         &resource_environment,
                         &theorem_environment,
                     )?,
-                    Proof::Tactic(SmartTactic::Simp) => prove_claim_by_simp(
-                        expansion_capture.as_deref_mut(),
-                        source_path,
-                        &function_block,
-                        parsed_function,
-                        &claim,
-                        &claim_label,
-                        &verification_function_environment,
-                        &predicate_environment,
-                        &click_function_environment,
-                        &resource_environment,
-                        &theorem_environment,
-                    )?,
-                    Proof::Script(tactics) => prove_claim_by_script(
+                    SourceProof::Script(tactics) => prove_claim_by_script(
                         expansion_capture.as_deref_mut(),
                         source_path,
                         &function_block,
@@ -1218,7 +1221,9 @@ pub(in crate::lang::click) fn tactic_expansion_required_functions(
         .find(|function| function.signature().name() == function_name)
         .ok_or_else(|| ClickError::new(format!("unknown function `{function_name}`")))?;
     let _tactics = match claim {
-        CProofClaim::Grouped => function_block.grouped_proof().and_then(Proof::tactics),
+        CProofClaim::Grouped => function_block
+            .grouped_proof()
+            .and_then(SourceProof::tactics),
         CProofClaim::Ensure(index) => function_block
             .ensures()
             .get(index)
@@ -2018,8 +2023,8 @@ pub(in crate::lang::click) fn validate_region_proof_clauses(
                 if !item.proof().is_auto_or_frame_tactic()
                     && !matches!(
                         item.proof(),
-                        Proof::Script(tactics)
-                            if SimpleProof::from_proof_tactics(tactics).is_ok()
+                        SourceProof::Script(tactics)
+                            if ProofCertificate::from_proof_tactics(tactics).is_ok()
                     )
                 {
                     return Err(ClickError::new(
@@ -2036,9 +2041,9 @@ pub(in crate::lang::click) fn validate_region_proof_clauses(
 
 pub(in crate::lang::click) fn validate_loop_phase_proof(
     phase: &str,
-    proof: Option<&Proof>,
+    proof: Option<&SourceProof>,
 ) -> Result<(), ClickError> {
-    let Some(Proof::Script(tactics)) = proof else {
+    let Some(SourceProof::Script(tactics)) = proof else {
         return Ok(());
     };
     if phase == "preserve" {

@@ -90,7 +90,7 @@ pub(in crate::lang::click) fn verify_loop_execution_proofs(
 pub(in crate::lang::click::proof) fn explicit_loop_preservation_tactics(
     clause: &StructuralClause,
 ) -> Option<&[ProofTactic]> {
-    let Proof::Script(tactics) = clause.preserve_proof()? else {
+    let SourceProof::Script(tactics) = clause.preserve_proof()? else {
         return None;
     };
     (!tactics
@@ -156,9 +156,9 @@ pub(in crate::lang::click::proof) struct ExecutionProofEnvironment<'a> {
 
 #[derive(Clone, Default)]
 pub(in crate::lang::click::proof) struct LoopProofCertificates {
-    pub(in crate::lang::click::proof) initialize: Option<SimpleProof>,
-    pub(in crate::lang::click::proof) preserve: Option<SimpleProof>,
-    pub(in crate::lang::click::proof) effects: BTreeMap<usize, SimpleProof>,
+    pub(in crate::lang::click::proof) initialize: Option<ProofCertificate>,
+    pub(in crate::lang::click::proof) preserve: Option<ProofCertificate>,
+    pub(in crate::lang::click::proof) effects: BTreeMap<usize, ProofCertificate>,
 }
 
 #[derive(Clone)]
@@ -233,17 +233,17 @@ pub(in crate::lang::click::proof) struct ProofCaseChoice {
 #[derive(Clone)]
 pub(in crate::lang::click::proof) struct PathCertificate {
     pub(in crate::lang::click::proof) case_path: Vec<ProofCaseChoice>,
-    pub(in crate::lang::click::proof) certificate: SimpleProof,
+    pub(in crate::lang::click::proof) certificate: ProofCertificate,
 }
 
 pub(in crate::lang::click::proof) fn merge_path_aligned_certificates(
     claim_label: &str,
     paths: Vec<PathCertificate>,
-) -> Result<SimpleProof, ClickError> {
+) -> Result<ProofCertificate, ClickError> {
     pub(in crate::lang::click::proof) fn merge(
         claim_label: &str,
         mut paths: Vec<PathCertificate>,
-    ) -> Result<SimpleProof, ClickError> {
+    ) -> Result<ProofCertificate, ClickError> {
         let first = paths.first().ok_or_else(|| {
             ClickError::new(format!(
                 "`{claim_label}` path-aligned certificate has no paths"
@@ -297,7 +297,7 @@ pub(in crate::lang::click::proof) fn merge_path_aligned_certificates(
         }
         let then_certificate = merge(claim_label, then_paths)?;
         let else_certificate = merge(claim_label, else_paths)?;
-        SimpleProof::from_proof_tactics(&[ProofTactic::If(ProofIf {
+        ProofCertificate::from_proof_tactics(&[ProofTactic::If(ProofIf {
             condition,
             then_tactics: then_certificate.to_proof_tactics().to_vec(),
             else_tactics: else_certificate.to_proof_tactics().to_vec(),
@@ -331,7 +331,7 @@ pub(in crate::lang::click::proof) fn certificate_leaf_for_case_path(
     claim_label: &str,
     tactics: &[ProofTactic],
     case_path: &[ProofCaseChoice],
-) -> Result<SimpleProof, ClickError> {
+) -> Result<ProofCertificate, ClickError> {
     pub(in crate::lang::click::proof) fn select(
         claim_label: &str,
         tactics: &[ProofTactic],
@@ -379,7 +379,7 @@ pub(in crate::lang::click::proof) fn certificate_leaf_for_case_path(
         &mut next_case,
         &mut selected,
     )?;
-    SimpleProof::from_proof_tactics(&selected).map_err(|error| {
+    ProofCertificate::from_proof_tactics(&selected).map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` selected a non-surface certificate leaf: {error:?}"
         ))
@@ -431,7 +431,10 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     // premise instead of treating the evaluator's identical output as newly
     // discovered information.
     for fact in &transition.path_facts {
-        if replay.simple_proof_builder.certificate_facts.contains(fact)
+        if replay
+            .proof_certificate_builder
+            .certificate_facts
+            .contains(fact)
             && !exact_premises.contains(fact)
         {
             exact_premises.push(fact.clone());
@@ -471,7 +474,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         // step, adds the transition's path facts, and rewrites
         // statement-local transports; automatic planning transports stay out
         // of the replay-visible set.
-        let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
+        let certificate_facts = &mut replay.proof_certificate_builder.certificate_facts;
         for fact in &transition.path_facts {
             certificate_facts.insert(fact.clone());
         }
@@ -595,7 +598,7 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     // A condition step introduces evaluation guards and path facts without
     // touching memory; extend the replay-visible set with exactly what this
     // transition adds over the planning context.
-    let certificate_facts = &mut replay.simple_proof_builder.certificate_facts;
+    let certificate_facts = &mut replay.proof_certificate_builder.certificate_facts;
     for fact in &transition.pure_facts {
         if !available.contains(fact) {
             certificate_facts.insert(fact.clone());

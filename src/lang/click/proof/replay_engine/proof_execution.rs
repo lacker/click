@@ -71,7 +71,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     "`{claim_label}` tactic {index}: `open` must begin before execution reaches function exit"
                 )));
             }
-            let surface_start = opened.replay.simple_proof_builder.steps.len();
+            let surface_start = opened.replay.proof_certificate_builder.steps.len();
             opened.replay.open_scopes += 1;
             let unfolded = unfold_composite_resource(
                 resource_environment,
@@ -137,16 +137,16 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 }
                 let nested = closed
                     .replay
-                    .simple_proof_builder
+                    .proof_certificate_builder
                     .steps
                     .split_off(surface_start);
                 closed
                     .replay
-                    .simple_proof_builder
+                    .proof_certificate_builder
                     .steps
                     .push(SimpleProofStep::Open {
                         resource: resource.clone(),
-                        proof: Box::new(SimpleProof::from_steps(nested)),
+                        proof: Box::new(ProofCertificate::from_steps(nested)),
                     });
                 let mut continued = execute_internal_proof(
                     continuation,
@@ -219,11 +219,16 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 // whole-claim certificate at exactly these recorded choices,
                 // so the tactics a case runs are spelled inside its surface
                 // `if` branch instead of leaking into sibling paths.
-                if branch_context.replay.simple_proof_builder.blocker.is_none() {
-                    let tactic_offset = branch_context.replay.simple_proof_builder.steps.len();
+                if branch_context
+                    .replay
+                    .proof_certificate_builder
+                    .blocker
+                    .is_none()
+                {
+                    let tactic_offset = branch_context.replay.proof_certificate_builder.steps.len();
                     branch_context
                         .replay
-                        .simple_proof_builder
+                        .proof_certificate_builder
                         .path_choices
                         .push(SurfacePathChoice {
                             occurrence: *index,
@@ -336,8 +341,8 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             };
             let capture_condition = (selected_source_index.is_some() && !capture_in_continuation)
                 .then(|| branch_surface_condition.clone());
-            let branch_surface_start = context.replay.simple_proof_builder.steps.len();
-            let prior_choice_count = context.replay.simple_proof_builder.path_choices.len();
+            let branch_surface_start = context.replay.proof_certificate_builder.steps.len();
+            let prior_choice_count = context.replay.proof_certificate_builder.path_choices.len();
             let branch_entry_snapshot = context
                 .replay
                 .program_point_states
@@ -353,7 +358,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             // certificates replay the branch as a decided case.
             let retrofit_branch_case =
                 |context: &mut ProofReplayContext, take_then: bool, empty_arm: bool| {
-                    let builder = &mut context.replay.simple_proof_builder;
+                    let builder = &mut context.replay.proof_certificate_builder;
                     if builder.blocker.is_some() {
                         return;
                     }
@@ -373,7 +378,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                         },
                     );
                     let entry_step =
-                        SimpleProof::from_proof_tactics(&[ProofTactic::StepUsing(Vec::new())])
+                        ProofCertificate::from_proof_tactics(&[ProofTactic::StepUsing(Vec::new())])
                             .expect("a plain step is a simple tactic")
                             .steps()[0]
                             .clone();
@@ -505,7 +510,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 for ((take_then, _), arm_context) in
                     continuing_arm_values.iter().zip(&continuing_contexts)
                 {
-                    let builder = &arm_context.replay.simple_proof_builder;
+                    let builder = &arm_context.replay.proof_certificate_builder;
                     if let Some(message) = &builder.blocker {
                         arm_blocker.get_or_insert_with(|| message.clone());
                         continue;
@@ -525,10 +530,10 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                         choice.tactic_offset =
                             choice.tactic_offset.saturating_sub(branch_surface_start);
                     }
-                    let arm_builder = SimpleProofBuilder {
+                    let arm_builder = ProofCertificateBuilder {
                         steps,
                         path_choices: choices,
-                        ..SimpleProofBuilder::default()
+                        ..ProofCertificateBuilder::default()
                     };
                     if *take_then {
                         then_builders.push(arm_builder);
@@ -536,17 +541,20 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                         else_builders.push(arm_builder);
                     }
                 }
-                let mut merged = continuing_contexts[0].replay.simple_proof_builder.clone();
+                let mut merged = continuing_contexts[0]
+                    .replay
+                    .proof_certificate_builder
+                    .clone();
                 merged.steps.truncate(branch_surface_start);
                 merged.path_choices.truncate(prior_choice_count);
                 if let Some(message) = arm_blocker {
                     merged.block(message);
                 } else {
-                    let arm_proof = |builders: Vec<SimpleProofBuilder>| {
+                    let arm_proof = |builders: Vec<ProofCertificateBuilder>| {
                         if builders.is_empty() {
-                            Ok(SimpleProof::from_steps(Vec::new()))
+                            Ok(ProofCertificate::from_steps(Vec::new()))
                         } else {
-                            synthesize_surface_paths(builders).map(SimpleProof::from_steps)
+                            synthesize_surface_paths(builders).map(ProofCertificate::from_steps)
                         }
                     };
                     match (arm_proof(then_builders), arm_proof(else_builders)) {
@@ -577,7 +585,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 (continuing_contexts.len() > 1).then(|| {
                     let builders = continuing_contexts
                         .iter()
-                        .map(|context| context.replay.simple_proof_builder.clone())
+                        .map(|context| context.replay.proof_certificate_builder.clone())
                         .collect::<Vec<_>>();
                     let mut merged = builders[0].clone();
                     merged.path_choices.truncate(prior_choice_count);
@@ -718,7 +726,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 joined
             };
             if let Some(builder) = joined_surface_builder {
-                joined_context.replay.simple_proof_builder = builder;
+                joined_context.replay.proof_certificate_builder = builder;
             }
             // Branch abstraction discards source-boundary snapshots, but the
             // recorded surface branch choice is spelled against the branch

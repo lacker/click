@@ -33,7 +33,7 @@ pub(in crate::lang::click) fn source_tactic_class(tactic: &ProofTactic) -> Sourc
         if smart_simp_unfold_prefix(&have.proof).is_some() {
             return SourceTacticClass::Smart;
         }
-        if let Proof::Script(tactics) = &have.proof
+        if let SourceProof::Script(tactics) = &have.proof
             && !tactics.is_empty()
             && tactics
                 .iter()
@@ -48,7 +48,7 @@ pub(in crate::lang::click) fn source_tactic_class(tactic: &ProofTactic) -> Sourc
             || loop_clause
                 .items()
                 .iter()
-                .any(|item| item.is_effect_kind() && matches!(item.proof(), Proof::Default)))
+                .any(|item| item.is_effect_kind() && matches!(item.proof(), SourceProof::Default)))
     {
         // The loop keyword is the shared source anchor for every omitted
         // phase/effect proof in this block. Expanding it materializes all of

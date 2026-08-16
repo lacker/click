@@ -53,7 +53,7 @@ fn parses_expanded_typed_loads_and_old_loadability() {
         }
     "#;
     let file = parser::parse(source).expect("expanded step syntax should parse");
-    let Proof::Script(tactics) = file.function_blocks[0]
+    let SourceProof::Script(tactics) = file.function_blocks[0]
         .grouped_proof()
         .expect("example should have a grouped proof")
     else {
@@ -220,7 +220,7 @@ fn parses_and_prints_pure_induction_tactics() {
         }
     "#;
     let file = parse(source).expect("induction proof should parse");
-    let Proof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof() else {
+    let SourceProof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof() else {
         panic!("expected an explicit theorem proof");
     };
     assert!(matches!(
@@ -252,7 +252,7 @@ fn parses_and_prints_pure_induction_tactics() {
     .expect("printed induction proof should parse");
     assert_eq!(
         reparsed.theorem_definitions()[0].ensures()[0].proof(),
-        &Proof::Script(tactics.clone())
+        &SourceProof::Script(tactics.clone())
     );
 }
 
@@ -681,7 +681,7 @@ fn proof_source_printing_preserves_proposition_precedence() {
     );
     let source = super::printing::format_partial_tactic_sequence(&[ProofTactic::Have(ProofHave {
         proposition,
-        proof: Proof::Script(vec![ProofTactic::Assumption]),
+        proof: SourceProof::Script(vec![ProofTactic::Assumption]),
     })]);
 
     assert!(
@@ -702,7 +702,7 @@ fn proof_source_printing_preserves_proposition_precedence() {
     };
     let source = super::printing::format_partial_tactic_sequence(&[ProofTactic::Have(ProofHave {
         proposition: quantified,
-        proof: Proof::Script(vec![ProofTactic::Assumption]),
+        proof: SourceProof::Script(vec![ProofTactic::Assumption]),
     })]);
 
     assert!(
@@ -1070,11 +1070,11 @@ fn restricted_simp_premises_retain_declared_resource_argument_types() {
         }
     "#;
     let file = parse(source).expect("restricted simp resource premise should parse");
-    let Proof::Script(tactics) = file.function_blocks()[0].grouped_proof().unwrap() else {
+    let SourceProof::Script(tactics) = file.function_blocks()[0].grouped_proof().unwrap() else {
         panic!("expected grouped proof script");
     };
     let ProofTactic::Have(ProofHave {
-        proof: Proof::Script(have_tactics),
+        proof: SourceProof::Script(have_tactics),
         ..
     }) = &tactics[0]
     else {
@@ -1112,11 +1112,11 @@ fn transport_using_retains_declared_resource_argument_types() {
         }
     "#;
     let file = parse(source).expect("transport resource premises should parse");
-    let Proof::Script(tactics) = file.function_blocks()[0].grouped_proof().unwrap() else {
+    let SourceProof::Script(tactics) = file.function_blocks()[0].grouped_proof().unwrap() else {
         panic!("expected grouped proof script");
     };
     let ProofTactic::Have(ProofHave {
-        proof: Proof::Script(have_tactics),
+        proof: SourceProof::Script(have_tactics),
         ..
     }) = &tactics[0]
     else {

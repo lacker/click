@@ -166,7 +166,7 @@ pub fn c0_smart_tactic_source_sites(
                 CodeRegion::Statement(index) => format!("{function_name}.statement({index})"),
             };
             if let CodeRegion::Loop(loop_index) = clause.region() {
-                let default = Proof::Default;
+                let default = SourceProof::Default;
                 collect_smart_proof_sites(
                     &format!("{function_name}.loop({loop_index}).initialize"),
                     clause.initialize_proof().unwrap_or(&default),
@@ -224,16 +224,16 @@ pub fn c0_smart_tactic_source_sites(
 
 fn collect_smart_proof_sites(
     claim_label: &str,
-    proof: &Proof,
+    proof: &SourceProof,
     sites: &mut Vec<SmartTacticSourceSite>,
 ) {
     match proof {
-        Proof::Default => sites.push(SmartTacticSourceSite {
+        SourceProof::Default => sites.push(SmartTacticSourceSite {
             claim_label: claim_label.to_string(),
             source_index: 0,
             tactic_name: "auto".to_string(),
         }),
-        Proof::Tactic(tactic) => sites.push(SmartTacticSourceSite {
+        SourceProof::Tactic(tactic) => sites.push(SmartTacticSourceSite {
             claim_label: claim_label.to_string(),
             source_index: 0,
             tactic_name: match tactic {
@@ -243,7 +243,7 @@ fn collect_smart_proof_sites(
             }
             .to_string(),
         }),
-        Proof::Script(tactics) => {
+        SourceProof::Script(tactics) => {
             collect_smart_script_sites(claim_label, tactics, 0, sites);
         }
     }
@@ -337,13 +337,13 @@ fn collect_smart_script_sites(
 
 fn collect_smart_nested_proof_sites(
     claim_label: &str,
-    proof: &Proof,
+    proof: &SourceProof,
     source_index: usize,
     sites: &mut Vec<SmartTacticSourceSite>,
 ) {
     match proof {
-        Proof::Default => {}
-        Proof::Tactic(tactic) => sites.push(SmartTacticSourceSite {
+        SourceProof::Default => {}
+        SourceProof::Tactic(tactic) => sites.push(SmartTacticSourceSite {
             claim_label: claim_label.to_string(),
             source_index,
             tactic_name: match tactic {
@@ -353,7 +353,7 @@ fn collect_smart_nested_proof_sites(
             }
             .to_string(),
         }),
-        Proof::Script(tactics) => {
+        SourceProof::Script(tactics) => {
             collect_smart_script_sites(claim_label, tactics, source_index, sites)
         }
     }
@@ -449,21 +449,24 @@ pub fn expand_c0_tactic_source_at(
         ),
         TacticSourceEdit::PartialProofClause(span) => {
             let certificate =
-                SimpleProof::from_proof_tactics(&replacement_tactics).map_err(|error| {
+                ProofCertificate::from_proof_tactics(&replacement_tactics).map_err(|error| {
                     ClickError::new(format!(
                         "selected tactic did not produce a surface certificate: {error:?}"
                     ))
                 })?;
-            (span, super::printing::format_simple_proof(&certificate))
+            (
+                span,
+                super::printing::format_proof_certificate(&certificate),
+            )
         }
         TacticSourceEdit::WholeProof(edit) => {
             let certificate =
-                SimpleProof::from_proof_tactics(&replacement_tactics).map_err(|error| {
+                ProofCertificate::from_proof_tactics(&replacement_tactics).map_err(|error| {
                     ClickError::new(format!(
                         "selected tactic did not produce a surface certificate: {error:?}"
                     ))
                 })?;
-            let replacement = super::printing::format_simple_proof(&certificate);
+            let replacement = super::printing::format_proof_certificate(&certificate);
             let span = edit.span().clone();
             let replacement = match edit {
                 ProofSourceEdit::Explicit(_) => replacement,
@@ -1053,7 +1056,7 @@ fn locate_source_tactic(
                 ] {
                     let (selector, proof_span, insertion) =
                         find_loop_phase_proof_span(&tokens, &function, *loop_index, phase)?;
-                    let default_proof = Proof::Default;
+                    let default_proof = SourceProof::Default;
                     let proof = proof.unwrap_or(&default_proof);
                     let edit = proof_span.map_or_else(
                         || ProofSourceEdit::OmittedLoopPhase {
@@ -1162,12 +1165,12 @@ fn locate_source_tactic(
 fn locate_tactic_in_proof(
     tokens: &[SourceToken],
     edit: &ProofSourceEdit,
-    proof: &Proof,
+    proof: &SourceProof,
     wanted: usize,
     site: ProofSite,
 ) -> Result<Option<LocatedSourceTactic>, ClickError> {
     match proof {
-        Proof::Script(tactics) => {
+        SourceProof::Script(tactics) => {
             let ProofSourceEdit::Explicit(source_proof_span) = edit else {
                 return Err(ClickError::new(
                     "an explicit proof script has no source `by` clause",
@@ -1204,7 +1207,7 @@ fn locate_tactic_in_proof(
                 edit,
             }))
         }
-        Proof::Tactic(_) => match edit {
+        SourceProof::Tactic(_) => match edit {
             ProofSourceEdit::Explicit(proof_span) => {
                 let by = tokens
                     .iter()
@@ -1228,7 +1231,7 @@ fn locate_tactic_in_proof(
                 }))
             }
         },
-        Proof::Default => Ok((edit.selector() == wanted).then(|| LocatedSourceTactic {
+        SourceProof::Default => Ok((edit.selector() == wanted).then(|| LocatedSourceTactic {
             site,
             source_index: 0,
             edit: TacticSourceEdit::WholeProof(edit.clone()),
@@ -1407,12 +1410,12 @@ fn proof_source_position(
     click_source: &str,
     tokens: &[SourceToken],
     proof_span: Option<&Range<usize>>,
-    proof: Option<&Proof>,
+    proof: Option<&SourceProof>,
     fallback: usize,
     claim_label: &str,
     source_index: usize,
 ) -> Result<SourcePosition, ClickError> {
-    if let Some(tactics) = proof.and_then(Proof::tactics) {
+    if let Some(tactics) = proof.and_then(SourceProof::tactics) {
         let proof_span = proof_span.ok_or_else(|| {
             ClickError::new(format!(
                 "`{claim_label}` has no explicit source proof clause"
@@ -1740,11 +1743,11 @@ fn collect_source_tactic_spans(
 }
 
 fn source_tactic_is_nested_proof_clause(tactics: &[ProofTactic], wanted: usize) -> bool {
-    fn in_proof(proof: &Proof, wanted: usize, source_index: usize) -> Option<bool> {
+    fn in_proof(proof: &SourceProof, wanted: usize, source_index: usize) -> Option<bool> {
         match proof {
-            Proof::Default => None,
-            Proof::Tactic(_) => (wanted == source_index).then_some(true),
-            Proof::Script(tactics) => find(tactics, wanted, source_index),
+            SourceProof::Default => None,
+            SourceProof::Tactic(_) => (wanted == source_index).then_some(true),
+            SourceProof::Script(tactics) => find(tactics, wanted, source_index),
         }
     }
 
@@ -1944,12 +1947,12 @@ fn inline_loop_phase_proof_edit(
 fn collect_nested_proof_spans(
     tokens: &[SourceToken],
     edit: &ProofSourceEdit,
-    proof: &Proof,
+    proof: &SourceProof,
     spans: &mut Vec<Range<usize>>,
 ) -> Result<(), ClickError> {
     match proof {
-        Proof::Default => Ok(()),
-        Proof::Tactic(_) => {
+        SourceProof::Default => Ok(()),
+        SourceProof::Tactic(_) => {
             let ProofSourceEdit::Explicit(span) = edit else {
                 return Err(ClickError::new(
                     "explicit nested loop tactic has no source `by` clause",
@@ -1965,7 +1968,7 @@ fn collect_nested_proof_spans(
             spans.push(tactic.span.clone());
             Ok(())
         }
-        Proof::Script(tactics) => {
+        SourceProof::Script(tactics) => {
             let ProofSourceEdit::Explicit(span) = edit else {
                 return Err(ClickError::new(
                     "explicit nested loop proof has no source `by` clause",

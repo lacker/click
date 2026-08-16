@@ -203,7 +203,7 @@ fn frontier_local_loop_resolves_composite_resources_in_nested_proofs() {
         .expect("nested loop resources should resolve");
     let loop_clause = expanded.function_blocks()[0]
         .grouped_proof()
-        .and_then(Proof::tactics)
+        .and_then(SourceProof::tactics)
         .and_then(|tactics| {
             tactics.iter().find_map(|tactic| match tactic {
                 ProofTactic::Loop(clause) => Some(clause),
@@ -219,7 +219,7 @@ fn frontier_local_loop_resolves_composite_resources_in_nested_proofs() {
         .expect("effect should contain an observe tactic");
     let preserve_observe = loop_clause
         .preserve_proof()
-        .and_then(Proof::tactics)
+        .and_then(SourceProof::tactics)
         .and_then(|tactics| tactics.first())
         .expect("preservation should contain an observe tactic");
     for tactic in [effect_observe, preserve_observe] {

@@ -389,15 +389,15 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
             condition: nonnegative.clone(),
             then_tactics: vec![ProofTactic::Have(ProofHave {
                 proposition: nonnegative.clone(),
-                proof: Proof::Script(vec![ProofTactic::Assumption]),
+                proof: SourceProof::Script(vec![ProofTactic::Assumption]),
             })],
             else_tactics: vec![ProofTactic::Normalize],
         }),
         ProofTactic::CloseInvariants,
     ];
-    let certificate = SimpleProof::from_proof_tactics(&tactics)
+    let certificate = ProofCertificate::from_proof_tactics(&tactics)
         .expect("test tactics should form a surface certificate");
-    let printed = format_simple_proof(&certificate);
+    let printed = format_proof_certificate(&certificate);
     let source = format!(
         r#"
             verifying "printer.c";
@@ -410,7 +410,7 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
     let parsed = parse(&source).expect("printed certificate should parse");
     assert_eq!(
         parsed.function_blocks()[0].grouped_proof(),
-        Some(&Proof::Script(tactics))
+        Some(&SourceProof::Script(tactics))
     );
 }
 
@@ -431,7 +431,7 @@ fn canonical_tactic_printer_round_trips_cases_certificate() {
     let tactics = vec![
         ProofTactic::Have(ProofHave {
             proposition: disjunction.clone(),
-            proof: Proof::Script(vec![ProofTactic::Cases(ProofCases {
+            proof: SourceProof::Script(vec![ProofTactic::Cases(ProofCases {
                 disjunction,
                 left_tactics: vec![ProofTactic::Left],
                 right_tactics: vec![ProofTactic::Right],
@@ -439,9 +439,9 @@ fn canonical_tactic_printer_round_trips_cases_certificate() {
         }),
         ProofTactic::Enumerate,
     ];
-    let certificate = SimpleProof::from_proof_tactics(&tactics)
+    let certificate = ProofCertificate::from_proof_tactics(&tactics)
         .expect("a cases script should form a surface certificate");
-    let printed = format_simple_proof(&certificate);
+    let printed = format_proof_certificate(&certificate);
     let source = format!(
         r#"
             verifying "printer.c";
@@ -454,12 +454,12 @@ fn canonical_tactic_printer_round_trips_cases_certificate() {
     let parsed = parse(&source).expect("printed cases certificate should parse");
     assert_eq!(
         parsed.function_blocks()[0].grouped_proof(),
-        Some(&Proof::Script(tactics))
+        Some(&SourceProof::Script(tactics))
     );
 }
 
 #[test]
-fn simple_proof_round_trips_nested_surface_steps() {
+fn proof_certificate_round_trips_nested_surface_steps() {
     let reflexive = ClickProposition::Comparison {
         left: current_var("x"),
         operator: ComparisonOperator::Equal,
@@ -469,7 +469,7 @@ fn simple_proof_round_trips_nested_surface_steps() {
         ProofTactic::Mark("entry".to_string()),
         ProofTactic::Have(ProofHave {
             proposition: reflexive.clone(),
-            proof: Proof::Script(vec![ProofTactic::Normalize]),
+            proof: SourceProof::Script(vec![ProofTactic::Normalize]),
         }),
         ProofTactic::Branch(ProofBranch {
             ensuring: Some(vec![ProofAssertion::Fact(reflexive)]),
@@ -478,7 +478,7 @@ fn simple_proof_round_trips_nested_surface_steps() {
         }),
     ];
 
-    let proof = SimpleProof::from_proof_tactics(&tactics)
+    let proof = ProofCertificate::from_proof_tactics(&tactics)
         .expect("surface tactics should construct a simple proof");
 
     assert_eq!(proof.to_proof_tactics(), tactics);
@@ -493,8 +493,8 @@ fn simple_proof_round_trips_nested_surface_steps() {
 }
 
 #[test]
-fn simple_proof_has_no_smart_step_variant() {
-    let smart = SimpleProof::from_proof_tactics(&[ProofTactic::Simp])
+fn proof_certificate_has_no_smart_step_variant() {
+    let smart = ProofCertificate::from_proof_tactics(&[ProofTactic::Simp])
         .expect_err("smart tactics are not simple proof steps");
     assert_eq!(
         smart.tactic_class(),
@@ -514,14 +514,14 @@ fn tactic_certificate_accepts_only_simple_tactics() {
     ];
 
     let certificate =
-        SimpleProof::from_proof_tactics(&tactics).expect("simple tactics form a certificate");
+        ProofCertificate::from_proof_tactics(&tactics).expect("simple tactics form a certificate");
 
     assert_eq!(certificate.to_proof_tactics(), tactics);
 }
 
 #[test]
 fn tactic_certificate_rejects_a_direct_smart_tactic() {
-    let error = SimpleProof::from_proof_tactics(&[ProofTactic::Simp])
+    let error = ProofCertificate::from_proof_tactics(&[ProofTactic::Simp])
         .expect_err("a smart tactic cannot be a certificate leaf");
 
     assert_eq!(
@@ -548,14 +548,14 @@ fn tactic_certificate_rejects_smart_tactics_in_nested_control_flow() {
                     operator: ComparisonOperator::Equal,
                     right: current_var("x"),
                 },
-                proof: Proof::Script(vec![ProofTactic::Simp]),
+                proof: SourceProof::Script(vec![ProofTactic::Simp]),
             })],
             else_tactics: vec![ProofTactic::Normalize],
         })],
         else_tactics: vec![ProofTactic::Normalize],
     })];
 
-    let error = SimpleProof::from_proof_tactics(&tactics)
+    let error = ProofCertificate::from_proof_tactics(&tactics)
         .expect_err("nested smart tactics cannot be hidden in a certificate");
 
     assert_eq!(
@@ -584,10 +584,10 @@ fn tactic_certificate_treats_an_omitted_nested_proof_as_auto() {
             operator: ComparisonOperator::Equal,
             right: current_var("x"),
         },
-        proof: Proof::Default,
+        proof: SourceProof::Default,
     })];
 
-    let error = SimpleProof::from_proof_tactics(&tactics)
+    let error = ProofCertificate::from_proof_tactics(&tactics)
         .expect_err("an omitted nested proof is smart auto");
 
     assert_eq!(

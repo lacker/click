@@ -12,7 +12,7 @@ pub(super) fn lower_surface_atomic_derivation(
     state: &CState,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-) -> Result<(ClickProposition, Proof), ClickError> {
+) -> Result<(ClickProposition, SourceProof), ClickError> {
     let mut conclusion = match preferred_conclusion {
         Some(conclusion) => conclusion.clone(),
         None => crate::instrumentation::measure_operation(
@@ -76,12 +76,12 @@ pub(super) fn lower_surface_atomic_derivation(
             }),
             ProofTactic::Split,
         ];
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "conjunction derivation produced a non-simple expansion: {error:?}"
             ))
         })?;
-        return Ok((conclusion, Proof::Script(tactics)));
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     if let (Some(false_proof), ClickProposition::Implies(surface_antecedent, _)) =
         (derivation.false_antecedent_proof(), &conclusion)
@@ -107,12 +107,12 @@ pub(super) fn lower_surface_atomic_derivation(
             ProofTactic::Intro,
             ProofTactic::Contradiction(negated_antecedent),
         ];
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "false-antecedent derivation produced a non-simple expansion: {error:?}"
             ))
         })?;
-        return Ok((conclusion, Proof::Script(tactics)));
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     let mut premise_pairs = Vec::new();
     let mut unexpressed_premises = Vec::new();
@@ -343,7 +343,10 @@ pub(super) fn lower_surface_atomic_derivation(
         }
     }
     if premise_pairs.is_empty() && surface_normalizes_context_free {
-        return Ok((conclusion, Proof::Script(vec![ProofTactic::Normalize])));
+        return Ok((
+            conclusion,
+            SourceProof::Script(vec![ProofTactic::Normalize]),
+        ));
     }
     if let Proposition::Not(body) = &lowered_conclusion
         && let Proposition::ConditionIs(condition, expected) = body.as_ref()
@@ -355,12 +358,12 @@ pub(super) fn lower_surface_atomic_derivation(
             ProofTactic::Intro,
             ProofTactic::Contradiction(surface.clone()),
         ];
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "negation derivation produced a non-simple expansion: {error:?}"
             ))
         })?;
-        return Ok((conclusion, Proof::Script(tactics)));
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     // A `rewrite` step substitutes the exact terms of its equality, so its
     // premise is usable only when the surface spelling lowers at replay to
@@ -403,12 +406,12 @@ pub(super) fn lower_surface_atomic_derivation(
     if let Some(tactics) =
         plan_explicit_equality_rewrites(&lowered_conclusion, &rewrite_pairs, available)
     {
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "atomic derivation produced a non-simple expansion: {error:?}"
             ))
         })?;
-        return Ok((conclusion, Proof::Script(tactics)));
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     let _harvest_span = crate::instrumentation::OperationTiming::new(
         "have",
@@ -453,40 +456,40 @@ pub(super) fn lower_surface_atomic_derivation(
     if let Some(tactics) =
         plan_explicit_equality_rewrites(&lowered_conclusion, &rewrite_pairs, available)
     {
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "atomic derivation produced a non-simple expansion: {error:?}"
             ))
         })?;
-        return Ok((conclusion, Proof::Script(tactics)));
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     if let Some(tactics) = plan_explicit_named_signed_rule(&lowered_conclusion, &premise_pairs) {
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "atomic predecessor derivation produced a non-simple expansion: {error:?}"
             ))
         })?;
-        return Ok((conclusion, Proof::Script(tactics)));
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     if let Some(tactics) = plan_explicit_increment_lower_bound_transport(
         &lowered_conclusion,
         &conclusion,
         &premise_pairs,
     ) {
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "increment transport produced a non-simple atomic derivation: {error:?}"
             ))
         })?;
-        return Ok((conclusion, Proof::Script(tactics)));
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     if let Some(tactics) = plan_explicit_forall_instantiation(&lowered_conclusion, &premise_pairs) {
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "universal instantiation produced a non-simple expansion: {error:?}"
             ))
         })?;
-        return Ok((conclusion, Proof::Script(tactics)));
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     if let Some(tactics) = plan_explicit_forall_goal(
         &lowered_conclusion,
@@ -496,12 +499,12 @@ pub(super) fn lower_surface_atomic_derivation(
         &replay.effect_facts,
         state,
     ) {
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "universal goal discharge produced a non-simple expansion: {error:?}"
             ))
         })?;
-        return Ok((conclusion, Proof::Script(tactics)));
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     let _rewrites_span = crate::instrumentation::OperationTiming::new(
         "have",
@@ -514,12 +517,12 @@ pub(super) fn lower_surface_atomic_derivation(
         available,
         &|goal| plan_explicit_named_signed_rule(goal, &premise_pairs),
     ) {
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "rewritten atomic derivation produced a non-simple expansion: {error:?}"
             ))
         })?;
-        return Ok((conclusion, Proof::Script(tactics)));
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     drop(_rewrites_span);
     let _transport_span = crate::instrumentation::OperationTiming::new(
@@ -591,12 +594,12 @@ pub(super) fn lower_surface_atomic_derivation(
             premises: transport_premises,
         });
         tactics.push(ProofTactic::Assumption);
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "atomic transport produced a non-simple expansion: {error:?}"
             ))
         })?;
-        return Ok((conclusion, Proof::Script(tactics)));
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     let internal = std::env::var_os(FULL_DIAGNOSTICS_ENV).is_some().then(|| {
         format!(
@@ -1496,7 +1499,7 @@ pub(super) fn lower_outcome_simp_tactics(
                     .map(ProofTactic::UnfoldPredicate)
                     .collect::<Vec<_>>();
                 tactics.append(&mut suffix);
-                SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+                ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
                     ClickError::new(format!(
                         "universal predicate goal discharge produced a non-simple expansion: {error:?}"
                     ))
@@ -1522,7 +1525,7 @@ pub(super) fn lower_outcome_simp_tactics(
     if let Some(tactics) =
         plan_explicit_increment_lower_bound_transport(goal, surface_goal, &premise_pairs)
     {
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "increment transport produced a non-simple expansion: {error:?}"
             ))
@@ -1530,7 +1533,7 @@ pub(super) fn lower_outcome_simp_tactics(
         return Ok(tactics);
     }
     if let Some(tactics) = plan_explicit_forall_instantiation(goal, &premise_pairs) {
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "universal instantiation produced a non-simple expansion: {error:?}"
             ))
@@ -1545,7 +1548,7 @@ pub(super) fn lower_outcome_simp_tactics(
         &replay.effect_facts,
         post_state,
     ) {
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "universal goal discharge produced a non-simple expansion: {error:?}"
             ))
@@ -1592,7 +1595,7 @@ pub(super) fn lower_outcome_simp_tactics(
         predicate_environment,
         click_function_environment,
     ) {
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "disjunction case split produced a non-simple expansion: {error:?}"
             ))
@@ -1658,7 +1661,7 @@ fn plan_outcome_disjunction_cases(
                 predicate_environment,
                 click_function_environment,
             ) {
-                Ok(Proof::Script(tactics)) => Some(tactics),
+                Ok(SourceProof::Script(tactics)) => Some(tactics),
                 _ => None,
             }
         };
@@ -1744,7 +1747,7 @@ fn plan_outcome_finite_forall_enumeration(
             &value_expressions,
             premise_pairs,
         )
-        .map(Proof::Script)
+        .map(SourceProof::Script)
         .or_else(|| {
             lower_outcome_simp_proof(
                 replay,
@@ -1962,7 +1965,7 @@ fn plan_explicit_increment_lower_bound_transport(
             return Some(vec![
                 ProofTactic::Have(ProofHave {
                     proposition: intermediate_surface.clone(),
-                    proof: Proof::Script(vec![
+                    proof: SourceProof::Script(vec![
                         ProofTactic::ApplyTheoremUsing {
                             application: TheoremApplication {
                                 name: "int32_increment_lower_bound".to_string(),
@@ -2565,7 +2568,7 @@ pub(super) fn lower_restricted_simp_plan(
             premise_pairs.len(),
         ))
         })?;
-    SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+    ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
         ClickError::new(format!(
             "`simp() using` produced a non-simple expansion: {error:?}"
         ))
@@ -3298,7 +3301,7 @@ fn plan_explicit_negated_strict_successor_bound(
         return Some(vec![
             ProofTactic::Have(ProofHave {
                 proposition: value_ge_upper.clone(),
-                proof: Proof::Script(vec![
+                proof: SourceProof::Script(vec![
                     ProofTactic::ApplyTheoremUsing {
                         application: TheoremApplication {
                             name: "int32_not_lt_implies_ge".to_string(),
@@ -3311,7 +3314,7 @@ fn plan_explicit_negated_strict_successor_bound(
             }),
             ProofTactic::Have(ProofHave {
                 proposition: upper_ge_lower.clone(),
-                proof: Proof::Script(vec![ProofTactic::Normalize]),
+                proof: SourceProof::Script(vec![ProofTactic::Normalize]),
             }),
             ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
@@ -3895,7 +3898,7 @@ fn plan_explicit_predecessor_upper_bound(
             };
             tactics.push(ProofTactic::Have(ProofHave {
                 proposition: nonnegative.clone(),
-                proof: Proof::Script(sub_tactics),
+                proof: SourceProof::Script(sub_tactics),
             }));
             nonnegative
         };
@@ -3956,7 +3959,7 @@ fn plan_explicit_one_le_predecessor(
         return Some(vec![
             ProofTactic::Have(ProofHave {
                 proposition: positive.clone(),
-                proof: Proof::Script(vec![
+                proof: SourceProof::Script(vec![
                     ProofTactic::ApplyTheoremUsing {
                         application: TheoremApplication {
                             name: "int32_successor_le_implies_lt".to_string(),
@@ -4341,7 +4344,7 @@ pub(super) fn lower_outcome_simp_proof(
     result: &CValue,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-) -> Result<Proof, ClickError> {
+) -> Result<SourceProof, ClickError> {
     // An opaque predicate in the goal is unfolded by the certificate: the
     // replay-side derivation judgment has no predicate rules, so the
     // emitted proof must carry `unfold(...)` and prove the body. The goal
@@ -4394,7 +4397,7 @@ pub(super) fn lower_outcome_simp_proof(
                     && matches!(unfolded_goal, Proposition::And(_, _))
             })
             .unwrap_or_else(|| surface_goal.clone());
-            if let Ok(Proof::Script(inner_tactics)) = lower_outcome_simp_proof_direct(
+            if let Ok(SourceProof::Script(inner_tactics)) = lower_outcome_simp_proof_direct(
                 &unfolding_replay,
                 &unfolded_surface,
                 &unfolded_goal,
@@ -4412,7 +4415,7 @@ pub(super) fn lower_outcome_simp_proof(
                     .map(ProofTactic::UnfoldPredicate)
                     .collect::<Vec<_>>();
                 tactics.extend(inner_tactics);
-                return Ok(Proof::Script(tactics));
+                return Ok(SourceProof::Script(tactics));
             }
         }
     } else {
@@ -4453,7 +4456,7 @@ pub(super) fn lower_outcome_simp_proof(
                 predicate_environment,
                 click_function_environment,
             )?;
-            let Proof::Script(inner_tactics) = inner else {
+            let SourceProof::Script(inner_tactics) = inner else {
                 return Err(ClickError::new(
                     "predicate-goal certificate lowering produced a non-script proof",
                 ));
@@ -4463,7 +4466,7 @@ pub(super) fn lower_outcome_simp_proof(
                 .map(ProofTactic::UnfoldPredicate)
                 .collect::<Vec<_>>();
             tactics.extend(inner_tactics);
-            return Ok(Proof::Script(tactics));
+            return Ok(SourceProof::Script(tactics));
         }
     }
     lower_outcome_simp_proof_direct(
@@ -4494,7 +4497,7 @@ fn lower_outcome_simp_proof_direct(
     result: &CValue,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-) -> Result<Proof, ClickError> {
+) -> Result<SourceProof, ClickError> {
     if let (
         ClickProposition::Implies(_, surface_consequent),
         Proposition::Implies(antecedent, consequent),
@@ -4514,7 +4517,7 @@ fn lower_outcome_simp_proof_direct(
             predicate_environment,
             click_function_environment,
         ) {
-            return Ok(Proof::Script(tactics));
+            return Ok(SourceProof::Script(tactics));
         }
         let mut consequent_available = available.to_vec();
         if !consequent_available.contains(antecedent) {
@@ -4533,18 +4536,18 @@ fn lower_outcome_simp_proof_direct(
             predicate_environment,
             click_function_environment,
         )?;
-        let Proof::Script(mut tactics) = proof else {
+        let SourceProof::Script(mut tactics) = proof else {
             return Err(ClickError::new(
                 "implication certificate lowering produced a non-script proof",
             ));
         };
         tactics.insert(0, ProofTactic::Intro);
-        SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "implication derivation produced a non-simple expansion: {error:?}"
             ))
         })?;
-        return Ok(Proof::Script(tactics));
+        return Ok(SourceProof::Script(tactics));
     }
     if let (ClickProposition::Or(surface_left, surface_right), Proposition::Or(left, right)) =
         (surface_goal, goal)
@@ -4567,7 +4570,7 @@ fn lower_outcome_simp_proof_direct(
             click_function_environment,
         );
         let direct_error = match direct {
-            Ok(tactics) => return Ok(Proof::Script(tactics)),
+            Ok(tactics) => return Ok(SourceProof::Script(tactics)),
             Err(error) => error,
         };
         for (side_surface, side_kernel, choose) in [
@@ -4575,7 +4578,7 @@ fn lower_outcome_simp_proof_direct(
             (surface_right, right, ProofTactic::Right),
         ] {
             if pure_fact_is_replay_available(side_kernel, available) {
-                return Ok(Proof::Script(vec![choose]));
+                return Ok(SourceProof::Script(vec![choose]));
             }
             let Ok(proof) = lower_outcome_simp_proof(
                 replay,
@@ -4599,12 +4602,12 @@ fn lower_outcome_simp_proof_direct(
                 }),
                 choose,
             ];
-            SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+            ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
                 ClickError::new(format!(
                     "disjunct introduction produced a non-simple expansion: {error:?}"
                 ))
             })?;
-            return Ok(Proof::Script(tactics));
+            return Ok(SourceProof::Script(tactics));
         }
         return Err(direct_error);
     }
@@ -4642,7 +4645,7 @@ fn lower_outcome_simp_proof_direct(
             predicate_environment,
             click_function_environment,
         )?;
-        return Ok(Proof::Script(vec![
+        return Ok(SourceProof::Script(vec![
             ProofTactic::Have(ProofHave {
                 proposition: surface_left.as_ref().clone(),
                 proof: left_proof,
@@ -4654,7 +4657,7 @@ fn lower_outcome_simp_proof_direct(
             ProofTactic::Split,
         ]));
     }
-    Ok(Proof::Script(lower_outcome_simp_tactics(
+    Ok(SourceProof::Script(lower_outcome_simp_tactics(
         replay,
         surface_goal,
         goal,
@@ -5249,7 +5252,7 @@ fn certify_outcome_simp_have(
         proof,
     };
     let surface_tactic = ProofTactic::Have(surface_have.clone());
-    let certificate = SimpleProof::from_proof_tactics(std::slice::from_ref(&surface_tactic))
+    let certificate = ProofCertificate::from_proof_tactics(std::slice::from_ref(&surface_tactic))
         .map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` produced an invalid certificate: {error:?}"
@@ -5291,7 +5294,7 @@ fn certify_outcome_simp_have(
     .map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` certificate failed replay:\n{}\n{}",
-            format_simple_proof(&certificate),
+            format_proof_certificate(&certificate),
             error.message(),
         ))
     })?;
@@ -5334,7 +5337,7 @@ pub(super) fn certify_outcome_simp(
     claim_label: &str,
     tactic_index: usize,
     path_index: usize,
-) -> Result<SimpleProof, ClickError> {
+) -> Result<ProofCertificate, ClickError> {
     let mut surface_tactics = certify_outcome_simp_have(
         replay,
         surface_goal,
@@ -5354,7 +5357,7 @@ pub(super) fn certify_outcome_simp(
         path_index,
     )?;
     surface_tactics.push(ProofTactic::Assumption);
-    let certificate = SimpleProof::from_proof_tactics(&surface_tactics).map_err(|error| {
+    let certificate = ProofCertificate::from_proof_tactics(&surface_tactics).map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` produced an invalid certificate: {error:?}"
         ))
@@ -5395,7 +5398,7 @@ pub(super) fn certify_outcome_existential_simp(
     claim_label: &str,
     tactic_index: usize,
     path_index: usize,
-) -> Result<SimpleProof, ClickError> {
+) -> Result<ProofCertificate, ClickError> {
     // Replay may frame loads across recorded effects; a fresh replay
     // recomputes the same effect facts from execution, so including them
     // keeps in-place and standalone replays aligned.
@@ -5412,7 +5415,7 @@ pub(super) fn certify_outcome_existential_simp(
     }
     let mut unfolds = replay.unfolded_predicates.clone();
     unfolds.retain(|name| predicate_environment.get(name).is_some());
-    let try_closer = |closers: Vec<ProofTactic>| -> Result<SimpleProof, String> {
+    let try_closer = |closers: Vec<ProofTactic>| -> Result<ProofCertificate, String> {
         let mut tactics = unfolds
             .iter()
             .cloned()
@@ -5422,13 +5425,13 @@ pub(super) fn certify_outcome_existential_simp(
         tactics.extend(closers);
         let surface_have = ProofHave {
             proposition: surface_goal.clone(),
-            proof: Proof::Script(tactics),
+            proof: SourceProof::Script(tactics),
         };
         let surface_tactics = vec![
             ProofTactic::Have(surface_have.clone()),
             ProofTactic::Assumption,
         ];
-        let certificate = SimpleProof::from_proof_tactics(&surface_tactics)
+        let certificate = ProofCertificate::from_proof_tactics(&surface_tactics)
             .map_err(|error| format!("produced an invalid certificate: {error:?}"))?;
         let replayed_goal = prove_have_at_point(
             &surface_have,
@@ -5584,7 +5587,7 @@ pub(super) fn certify_outcome_existential_simp(
             predicate_environment,
             click_function_environment,
         ) {
-            Ok(Proof::Script(tactics)) => match try_closer(tactics) {
+            Ok(SourceProof::Script(tactics)) => match try_closer(tactics) {
                 Ok(certificate) => return Ok(certificate),
                 Err(message) => last_error = Some(message),
             },
@@ -5623,7 +5626,7 @@ pub(super) fn certify_grouped_outcome_simp_transition(
     proof_label: &str,
     tactic_index: usize,
     path_index: usize,
-) -> Result<SimpleProof, ClickError> {
+) -> Result<ProofCertificate, ClickError> {
     let mut replay = replay.clone();
     let mut available = available.to_vec();
     let mut pending = goals;
@@ -5690,7 +5693,7 @@ pub(super) fn certify_grouped_outcome_simp_transition(
     }
 
     tactics.extend(std::iter::repeat_n(ProofTactic::Assumption, claim_count));
-    SimpleProof::from_proof_tactics(&tactics).map_err(|error| {
+    ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
         ClickError::new(format!(
             "`{proof_label}` path {path_index}, tactic {tactic_index}: grouped `simp` produced an invalid transition certificate: {error:?}"
         ))
