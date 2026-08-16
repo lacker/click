@@ -424,6 +424,13 @@ drain also calls this checked branch path against its outcome-specific surface
 map without cloning replay state, so these smart bodies no longer fall back to
 certificate reconstruction merely because the C execution has returned.
 
+The structural branch representation now has a deterministic multi-size
+regression over 16 through 4096 unrelated facts. It counts persistent fact
+node allocation around a fixed two-arm `if`, bounds the fork by the tree's
+logarithmic height, joins the checked descendants, and confirms certificate
+extraction emits only the retained one-node branch. This pins cheap
+branch-local fact insertion without relying on wall-clock timing.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

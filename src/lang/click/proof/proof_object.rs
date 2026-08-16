@@ -4,6 +4,11 @@ use super::*;
 use std::cmp::Ordering;
 use std::sync::Arc;
 
+#[cfg(test)]
+thread_local! {
+    static FACT_NODE_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Immutable checked proof state exposed to smart tactics.
 ///
 /// This first vertical slice supports linear pure goals. The representation is
@@ -1548,6 +1553,8 @@ fn make_fact_node(
     left: Option<Arc<FactNode>>,
     right: Option<Arc<FactNode>>,
 ) -> Arc<FactNode> {
+    #[cfg(test)]
+    FACT_NODE_ALLOCATIONS.with(|allocations| allocations.set(allocations.get() + 1));
     Arc::new(FactNode {
         fact,
         height: 1 + fact_node_height(left.as_ref()).max(fact_node_height(right.as_ref())),
@@ -1642,6 +1649,10 @@ mod tests {
             ),
             true,
         )
+    }
+
+    fn fact_node_allocations() -> usize {
+        FACT_NODE_ALLOCATIONS.with(std::cell::Cell::get)
     }
 
     #[test]
@@ -1945,6 +1956,79 @@ mod tests {
             ));
             assert!(proof.certificate().steps().is_empty());
             assert_eq!(complete.certificate().steps().len(), 1);
+        }
+    }
+
+    #[test]
+    fn proof_if_fork_and_join_work_is_logarithmic_in_unrelated_facts() {
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let condition = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(1))),
+        };
+        let surface_goal = ClickProposition::Or(
+            Box::new(condition.clone()),
+            Box::new(ClickProposition::Not(Box::new(condition.clone()))),
+        );
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let requires = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            let theorem_context = PureTheoremContext {
+                memory: CMemory::new(),
+                values: BTreeMap::new(),
+                array_refs: BTreeMap::new(),
+                requires,
+            };
+            let goal = lower_pure_theorem_proposition(
+                "branch scaling",
+                &surface_goal,
+                &theorem_context.values,
+                &theorem_context.array_refs,
+                &theorem_context.memory,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("excluded-middle goal should lower");
+            let root = Proof::for_pure_goal(
+                "branch scaling",
+                &theorem_context.requires,
+                goal,
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let before = fact_node_allocations();
+            let branches = root
+                .begin_if(condition.clone())
+                .expect("proof if should create two checked arms");
+            let branch_allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 8 * logarithmic_height + 16;
+            assert!(
+                branch_allocations <= allocation_bound,
+                "size {size} branch fork allocated {branch_allocations} fact nodes (bound {allocation_bound})"
+            );
+
+            let joined = branches
+                .apply_step(ProofArm::Left, SimpleProofStep::Left)
+                .expect("the condition closes the then arm")
+                .apply_step(ProofArm::Right, SimpleProofStep::Right)
+                .expect("the exact negation closes the else arm")
+                .join()
+                .expect("both checked descendants should join");
+            assert!(joined.is_complete());
+            assert_eq!(joined.certificate().steps().len(), 1);
+            assert!(matches!(
+                joined.certificate().steps(),
+                [SimpleProofStep::If { then_proof, else_proof, .. }]
+                    if then_proof.steps() == [SimpleProofStep::Left]
+                        && else_proof.steps() == [SimpleProofStep::Right]
+            ));
+            assert!(root.certificate().steps().is_empty());
         }
     }
 
