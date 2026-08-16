@@ -633,6 +633,20 @@ implications while the selected consequent and alpha-equivalent antecedent
 buckets remain singleton, bounds persistent allocation logarithmically, and
 checks missing-antecedent rejection and ancestor transactionality.
 
+Point-proof `InstantiateUsing` now crosses the same checked boundary. The
+selected universal is found through `ProofFacts`' alpha-normal quantified
+index and then revalidated by the existing binder-equivalence judgment; named
+guards are checked through persistent replay-availability indexes. One shared
+deterministic instantiation judgment substitutes the evaluated `int32`
+argument, discharges guards from only the explicitly listed premises, invokes
+the kernel universal-application rule, and validates its theorem before the
+conclusion enters the successor. The legacy point prover delegates to that
+same judgment while unsupported quantified atom families retain their legacy
+fallback. A 16-through-4096 regression holds one instantiation fixed under
+unrelated facts, checks a singleton universal bucket and logarithmic
+persistent allocation, rejects an omitted guard despite ambient availability,
+and preserves the ancestor and exact retained certificate.
+
 Explicit proposition `Rewrite` now advances through `Proof::apply_step` for
 pure and point goals. The rewrite engine accepts an indexed availability
 query, so recursively visiting a structured goal no longer rescans the entire

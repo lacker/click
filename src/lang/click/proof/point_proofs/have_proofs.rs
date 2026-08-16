@@ -1242,61 +1242,16 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` argument did not evaluate to int32"
                     )));
                 };
-                let Proposition::ForAll { var, sort, body } = &quantified_fact else {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` requires a universally quantified fact"
-                    )));
-                };
-                if *sort != Sort::CInt32 {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` supports only int32 universals"
-                    )));
-                }
-                let instantiated =
-                    substitute_int32_variable_in_proposition(body, *var, argument_term.clone());
-                let (guards, conclusion) =
-                    discharge_instantiated_guards(instantiated, &explicit_premises).map_err(
-                        |message| {
-                            ClickError::new(format!(
-                                "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` failed: {message}"
-                            ))
-                        },
-                    )?;
-                let theorem =
-                    prove_forall_int32_application(&quantified_fact, argument_term, &guards)
-                        .ok_or_else(|| {
-                            ClickError::new(format!(
-                                "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: kernel rejected the `instantiate` application"
-                            ))
-                        })?;
-                let Proposition::Implies(theorem_quantified, mut theorem_body) =
-                    theorem.proposition().clone()
-                else {
-                    return Err(ClickError::new("invalid universal instantiation theorem"));
-                };
-                if theorem_quantified.as_ref() != &quantified_fact {
-                    return Err(ClickError::new(
-                        "universal instantiation changed its quantified premise",
-                    ));
-                }
-                for guard in &guards {
-                    let Proposition::Implies(theorem_guard, next) = theorem_body.as_ref() else {
-                        return Err(ClickError::new(
-                            "universal instantiation omitted a discharged premise",
-                        ));
-                    };
-                    if theorem_guard.as_ref() != guard {
-                        return Err(ClickError::new(
-                            "universal instantiation changed a discharged premise",
-                        ));
-                    }
-                    theorem_body = next.clone();
-                }
-                if theorem_body.as_ref() != &conclusion {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: universal instantiation produced an unexpected conclusion"
-                    )));
-                }
+                let conclusion = check_forall_int32_instantiation(
+                    &quantified_fact,
+                    argument_term,
+                    &explicit_premises,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate` failed: {message}"
+                    ))
+                })?;
                 if !available.contains(&conclusion) {
                     available.push(conclusion);
                 }

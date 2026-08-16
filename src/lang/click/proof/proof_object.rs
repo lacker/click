@@ -497,6 +497,11 @@ impl<'a> Proof<'a> {
             } => self.apply_transport_using(source, target, premises),
             SimpleProofStep::UnfoldPredicate(name) => self.apply_execution_unfold(name),
             SimpleProofStep::Witness(witness) => self.apply_point_witness(witness),
+            SimpleProofStep::InstantiateUsing {
+                quantified,
+                argument,
+                premises,
+            } => self.apply_point_instantiate_using(quantified, argument, premises),
             SimpleProofStep::Extract(proposition) => self.apply_extract(proposition),
             SimpleProofStep::Rewrite(equality) => self.apply_rewrite(equality),
             SimpleProofStep::Assumption => self.apply_assumption(),
@@ -1559,6 +1564,99 @@ impl<'a> Proof<'a> {
             complete: false,
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
+            execution: None,
+        })
+    }
+
+    fn apply_point_instantiate_using(
+        &self,
+        surface_quantified: &ClickProposition,
+        argument: &ContractExpression,
+        surface_premises: &[ClickProposition],
+    ) -> Result<ProofState, ClickError> {
+        let ProofContext::Point(context) = self.context.as_ref() else {
+            return Err(self.step_error("`instantiate` requires a point proposition proof"));
+        };
+        self.proposition_goal("`instantiate` requires a proposition goal")?;
+
+        let explicit_premises = surface_premises
+            .iter()
+            .map(|surface| self.lower_surface_proposition(surface, "`instantiate using` premise"))
+            .collect::<Result<Vec<_>, _>>()?;
+        for premise in &explicit_premises {
+            if !self
+                .state
+                .facts
+                .replay_available_across_effects(premise, &[])
+            {
+                return Err(self.step_error(format!(
+                    "`instantiate using` requires an unavailable exact premise: {premise:?}"
+                )));
+            }
+        }
+
+        let lowered_quantified =
+            self.lower_surface_proposition(surface_quantified, "`instantiate` quantified fact")?;
+        let quantified = if self.state.facts.contains(&lowered_quantified) {
+            lowered_quantified
+        } else if let Some(available) = self
+            .state
+            .facts
+            .matching_quantified_replay_fact(&lowered_quantified)
+        {
+            available
+        } else {
+            return Err(self.step_error(format!(
+                "`instantiate` quantified fact is not exactly available: {}",
+                describe_click_proposition(surface_quantified)
+            )));
+        };
+
+        let parameter_values = parameter_values(context.parameters, context.arguments)
+            .map_err(|error| self.step_error(error.message))?;
+        let array_refs = array_refs_for_parameters(
+            context.parameters,
+            &parameter_values,
+            context.state.memory(),
+        );
+        let (values, array_refs) =
+            contract_environment_at_state(&parameter_values, &array_refs, context.state);
+        let mut active_functions = BTreeSet::new();
+        let value = evaluate_contract_expression_with_environment(
+            &values,
+            &array_refs,
+            context.pre_state,
+            context.state,
+            None,
+            self.state.facts.assumptions(),
+            argument,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.program_point_states,
+            &mut active_functions,
+        )
+        .map_err(|message| {
+            self.step_error(format!(
+                "could not evaluate `instantiate` argument: {message}"
+            ))
+        })?;
+        let CValue::Int32(argument) = value else {
+            return Err(self.step_error("`instantiate` argument did not evaluate to int32"));
+        };
+
+        let conclusion =
+            check_forall_int32_instantiation(&quantified, argument, &explicit_premises)
+                .map_err(|message| self.step_error(format!("`instantiate` failed: {message}")))?;
+        let added = !self.state.facts.contains_top_level(&conclusion);
+        let facts = self.state.facts.with_fact(conclusion.clone());
+        let complete = self.goal().is_some_and(|goal| facts.contains(goal));
+        let added_facts = added.then_some(conclusion).into_iter().collect::<Vec<_>>();
+        Ok(ProofState {
+            facts,
+            goal: self.state.goal.clone(),
+            complete,
+            added_facts: Arc::new(added_facts.clone()),
+            checked_facts: Arc::new(added_facts),
             execution: None,
         })
     }
@@ -2710,12 +2808,12 @@ impl ProofFacts {
             || self.quantified_replay_available(required)
     }
 
-    fn quantified_replay_available(&self, required: &Proposition) -> bool {
+    fn matching_quantified_replay_fact(&self, required: &Proposition) -> Option<Proposition> {
         quantified_replay_index_key(required)
             .and_then(|key| self.by_quantified_replay.get(&key))
             .into_iter()
             .flat_map(PersistentSequence::iter)
-            .any(|candidate| {
+            .find(|candidate| {
                 quantified_binder_equivalent(required, candidate)
                     || quantified_replay_equivalent_available_fact(
                         required,
@@ -2723,6 +2821,11 @@ impl ProofFacts {
                     )
                     .is_some()
             })
+            .cloned()
+    }
+
+    fn quantified_replay_available(&self, required: &Proposition) -> bool {
+        self.matching_quantified_replay_fact(required).is_some()
     }
 
     fn contains_discharged_implication_consequent(&self, required: &Proposition) -> bool {
@@ -3963,6 +4066,139 @@ mod tests {
                 "an indexed consequent does not bypass its antecedent"
             );
             assert!(missing_antecedent.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn point_instantiate_uses_indexed_universal_and_only_named_guards() {
+        let parsed_function = syntax::parse_function("int32 selected(int32 x) { return x; }")
+            .expect("test function should parse");
+        let state = CState::new();
+        let program_point_states = ProgramPointStates::new();
+        let surface_propositions = SurfacePropositionMap::default();
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let x_value = CValue::Int32(Bitvector32Term::Variable(Variable(8_700_000)));
+        let arguments = vec![CExpression::Value(x_value)];
+        let value = |constant| ContractExpression::CFragment(CExpression::Value(int32(constant)));
+        let variable =
+            |name: &str| ContractExpression::CFragment(CExpression::Variable(name.to_string()));
+        let premise = ClickProposition::Comparison {
+            left: variable("x"),
+            operator: ComparisonOperator::LessEqual,
+            right: value(7),
+        };
+        let goal_surface = ClickProposition::Comparison {
+            left: value(7),
+            operator: ComparisonOperator::Equal,
+            right: value(7),
+        };
+        let quantified_surface = ClickProposition::ForAll {
+            c_type: C0Type::Int32,
+            name: "k".to_string(),
+            body: Box::new(ClickProposition::Implies(
+                Box::new(ClickProposition::Comparison {
+                    left: variable("x"),
+                    operator: ComparisonOperator::LessEqual,
+                    right: variable("k"),
+                }),
+                Box::new(ClickProposition::Comparison {
+                    left: variable("k"),
+                    operator: ComparisonOperator::Equal,
+                    right: variable("k"),
+                }),
+            )),
+        };
+        let lower = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("test proposition should lower")
+        };
+        let kernel_premise = lower(&premise);
+        let kernel_goal = lower(&goal_surface);
+        let kernel_quantified = lower(&quantified_surface);
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut available = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            available.push(kernel_premise.clone());
+            available.push(kernel_quantified.clone());
+            let root = Proof::for_point_goal(
+                "indexed instantiate",
+                0,
+                &available,
+                kernel_goal.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let key = quantified_replay_index_key(&kernel_quantified)
+                .expect("the selected universal should have an alpha key");
+            assert_eq!(
+                root.state
+                    .facts
+                    .by_quantified_replay
+                    .get(&key)
+                    .expect("the selected universal should be indexed")
+                    .len(),
+                1,
+                "unrelated facts must not enter the selected universal bucket"
+            );
+
+            let omitted = SimpleProofStep::InstantiateUsing {
+                quantified: quantified_surface.clone(),
+                argument: value(7),
+                premises: Vec::new(),
+            };
+            assert!(
+                root.apply_step(omitted).is_err(),
+                "ambient availability must not discharge an omitted guard"
+            );
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+
+            let step = SimpleProofStep::InstantiateUsing {
+                quantified: quantified_surface.clone(),
+                argument: value(7),
+                premises: vec![premise.clone()],
+            };
+            let before = fact_node_allocations();
+            let instantiated = root
+                .apply_step(step.clone())
+                .expect("the indexed universal and named guard should instantiate");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 48 * logarithmic_height + 192;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} instantiate allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(instantiated.is_complete());
+            assert_eq!(instantiated.certificate().steps(), &[step]);
+            assert_eq!(
+                instantiated.added_facts(),
+                std::slice::from_ref(&kernel_goal)
+            );
+            assert!(root.certificate().steps().is_empty());
         }
     }
 

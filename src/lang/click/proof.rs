@@ -492,6 +492,51 @@ pub(super) fn discharge_instantiated_guards(
     Ok((guards, current))
 }
 
+/// Checks one explicit specialization of an available `int32` universal.
+///
+/// The caller owns availability and expression evaluation. This judgment owns
+/// the deterministic logical transition: substitute the selected argument,
+/// discharge guards from exactly the named premises, ask the kernel for the
+/// application theorem, and validate that theorem before returning its one
+/// conclusion.
+pub(super) fn check_forall_int32_instantiation(
+    quantified: &Proposition,
+    argument: Bitvector32Term,
+    premises: &[Proposition],
+) -> Result<Proposition, String> {
+    let Proposition::ForAll { var, sort, body } = quantified else {
+        return Err("`instantiate` requires a universally quantified fact".to_string());
+    };
+    if *sort != Sort::CInt32 {
+        return Err("`instantiate` supports only int32 universals".to_string());
+    }
+
+    let instantiated = substitute_int32_variable_in_proposition(body, *var, argument.clone());
+    let (guards, conclusion) = discharge_instantiated_guards(instantiated, premises)?;
+    let theorem = prove_forall_int32_application(quantified, argument, &guards)
+        .ok_or_else(|| "kernel rejected the `instantiate` application".to_string())?;
+    let Proposition::Implies(theorem_quantified, mut theorem_body) = theorem.proposition().clone()
+    else {
+        return Err("invalid universal instantiation theorem".to_string());
+    };
+    if theorem_quantified.as_ref() != quantified {
+        return Err("universal instantiation changed its quantified premise".to_string());
+    }
+    for guard in &guards {
+        let Proposition::Implies(theorem_guard, next) = theorem_body.as_ref() else {
+            return Err("universal instantiation omitted a discharged premise".to_string());
+        };
+        if theorem_guard.as_ref() != guard {
+            return Err("universal instantiation changed a discharged premise".to_string());
+        }
+        theorem_body = next.clone();
+    }
+    if theorem_body.as_ref() != &conclusion {
+        return Err("universal instantiation produced an unexpected conclusion".to_string());
+    }
+    Ok(conclusion)
+}
+
 pub(super) fn check_atomic_premise_derivation_goal(
     target: &Proposition,
     premises: Vec<Proposition>,
