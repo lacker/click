@@ -2811,6 +2811,39 @@ fn point_have_bare_apply_retains_and_checks_its_exact_premise() {
 }
 
 #[test]
+fn point_smart_have_retains_a_checked_simple_closer() {
+    let c_source = r#"
+            int32 identity(int32 value) {
+                return value;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 value) {
+                requires value >= 0;
+                ensures result >= 0;
+            } by {
+                have value >= 0 by auto;
+                step();
+                assumption();
+            }
+        "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("checked point smart have should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.contract" && name == "surface certificate replay"
+        )),
+        "the migrated smart have must not pass through ordinary certificate replay: {events:#?}"
+    );
+}
+
+#[test]
 fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {

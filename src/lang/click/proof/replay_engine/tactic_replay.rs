@@ -466,15 +466,16 @@ fn replay_frontier_local_loop_tactic(
     })
 }
 
-/// Migrates the smallest point-proof smart path onto the checked proof
-/// object: a bare theorem application whose conclusion closes the `have`.
+/// Migrates the linear point-proof paths supported by the checked proof
+/// object: direct smart closers and a bare theorem application whose
+/// conclusion closes the `have`.
 ///
 /// The premise planner is only a query. The theorem application advances
 /// through `Proof::apply_step`, so the returned certificate is the provenance
 /// of the semantic work already performed, not a second representation that
 /// ordinary verification must replay.
 #[allow(clippy::too_many_arguments)]
-fn checked_bare_apply_have(
+fn checked_linear_have(
     have: &ProofHave,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
@@ -488,11 +489,15 @@ fn checked_bare_apply_have(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Option<(Proposition, ProofCertificate)>, ClickError> {
-    let SourceProof::Script(tactics) = &have.proof else {
-        return Ok(None);
-    };
-    let [ProofTactic::ApplyTheorem(application)] = tactics.as_slice() else {
-        return Ok(None);
+    let application = match &have.proof {
+        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => None,
+        SourceProof::Script(tactics) => {
+            let [ProofTactic::ApplyTheorem(application)] = tactics.as_slice() else {
+                return Ok(None);
+            };
+            Some(application)
+        }
+        SourceProof::Tactic(SmartTactic::Frame) => return Ok(None),
     };
     let goal = lower_point_proposition(
         &have.proposition,
@@ -511,19 +516,6 @@ fn checked_bare_apply_have(
             "`{claim_label}` have proof {tactic_index}: could not lower pure goal: {message}"
         ))
     })?;
-    let premises = select_explicit_theorem_application_premises(
-        theorem_environment,
-        application,
-        claim_label,
-        tactic_index,
-        available,
-        parameters,
-        arguments,
-        replay,
-        state,
-        predicate_environment,
-        click_function_environment,
-    )?;
     let proof = Proof::for_point_goal(
         claim_label,
         tactic_index,
@@ -541,10 +533,37 @@ fn checked_bare_apply_have(
         &replay.unfolded_predicates,
         &replay.effect_facts,
     );
-    let proof = proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
-        application: application.clone(),
-        premises,
-    })?;
+    let proof = if let Some(application) = application {
+        let premises = select_explicit_theorem_application_premises(
+            theorem_environment,
+            application,
+            claim_label,
+            tactic_index,
+            available,
+            parameters,
+            arguments,
+            replay,
+            state,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
+            application: application.clone(),
+            premises,
+        })?
+    } else {
+        let mut closed = None;
+        for closer in [SimpleProofStep::Assumption, SimpleProofStep::Normalize] {
+            if let Ok(candidate) = proof.apply_step(closer) {
+                closed = Some(candidate);
+                break;
+            }
+        }
+        let Some(closed) = closed else {
+            return Ok(None);
+        };
+        closed
+    };
     if !proof.is_complete() {
         return Err(ClickError::new(format!(
             "`{claim_label}` have proof {tactic_index}: checked proof retained an open goal"
@@ -2306,7 +2325,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         have_facts.push(fact.clone());
                     }
                 }
-                let checked_proof_result = checked_bare_apply_have(
+                let checked_proof_result = checked_linear_have(
                     have,
                     theorem_environment,
                     claim_label,

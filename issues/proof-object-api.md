@@ -319,6 +319,11 @@ need richer simple vocabulary continue through the legacy path for now.
 Fully explicit linear pure scripts composed of `apply using`, `assumption`,
 and `normalize` use the same checked path.
 
+Direct point-level smart `have` goals now use the same fork-and-apply search
+for `assumption` and `normalize`. The accepted successor is wrapped as the
+nested `Have` certificate and incorporated directly, without reconstructing
+or ordinarily replaying the selected closer.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
