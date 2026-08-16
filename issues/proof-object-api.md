@@ -409,6 +409,13 @@ direct logical vocabulary searches inside that body `Proof` and retains the
 successful steps directly, rather than constructing and ordinarily replaying
 a second body certificate.
 
+The same direct search path now covers one-node smart pure `if` and `cases`
+proofs whose arms close through the direct logical vocabulary. Each arm runs
+`try_direct_logical_closure` on its branch-local `Proof`; the join retains
+those descendants as the structured certificate. Unsupported richer searches
+still fall back to the legacy planner while the shared smart-search vocabulary
+continues to migrate.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

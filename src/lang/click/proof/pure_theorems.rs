@@ -912,6 +912,38 @@ fn check_pure_script_with_proof(
         theorem_environment,
     );
 
+    // A one-node smart logical branch searches each arm directly on its
+    // branch-local Proof. Successful arms are joined with their retained
+    // steps; no separately synthesized branch certificate is replayed.
+    let direct_branch = match tactics {
+        [ProofTactic::If(proof_if)]
+            if matches!(proof_if.then_tactics.as_slice(), [ProofTactic::Simp])
+                && matches!(proof_if.else_tactics.as_slice(), [ProofTactic::Simp]) =>
+        {
+            root.begin_if(proof_if.condition.clone())
+                .ok()
+                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Left))
+                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Right))
+                .and_then(|branches| branches.join().ok())
+        }
+        [ProofTactic::Cases(proof_cases)]
+            if matches!(proof_cases.left_tactics.as_slice(), [ProofTactic::Simp])
+                && matches!(proof_cases.right_tactics.as_slice(), [ProofTactic::Simp]) =>
+        {
+            root.begin_cases(proof_cases.disjunction.clone())
+                .ok()
+                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Left))
+                .and_then(|branches| branches.try_direct_logical_closure(ProofArm::Right))
+                .and_then(|branches| branches.join().ok())
+        }
+        _ => None,
+    };
+    if let Some(proof) = direct_branch
+        && proof.is_complete()
+    {
+        return Ok(Some(proof.certificate()));
+    }
+
     // The first smart scope path searches inside the owned nested Proof and
     // retains that checked body directly. It does not first synthesize a
     // `Have` certificate and replay it.

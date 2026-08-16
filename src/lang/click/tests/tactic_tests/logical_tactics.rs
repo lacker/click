@@ -1454,6 +1454,44 @@ fn smart_pure_have_retains_the_checked_scope_body_directly() {
 }
 
 #[test]
+fn smart_pure_if_retains_checked_arm_proofs_directly() {
+    let click_source = r#"
+        theorem equality_excluded_middle_smart(x: int32) {
+            ensures x == 0 or not (x == 0) by {
+                if x == 0 {
+                    simp();
+                } else {
+                    simp();
+                }
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect("smart if arms should search by applying steps to branch-local Proofs");
+}
+
+#[test]
+fn smart_pure_cases_retains_checked_arm_proofs_directly() {
+    let click_source = r#"
+        theorem retain_sign_case_smart(x: int32) {
+            requires sign: x <= 0 or x > 0;
+
+            ensures x <= 0 or x > 0 by {
+                cases (x <= 0 or x > 0) {
+                    simp();
+                } {
+                    simp();
+                }
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect("smart cases arms should search by applying steps to branch-local Proofs");
+}
+
+#[test]
 fn enumerate_closes_a_constant_bounded_universal_goal() {
     let c_source = r#"
         int32 keep(int32 x) {

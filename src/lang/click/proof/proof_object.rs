@@ -1333,6 +1333,15 @@ impl<'a> ProofBranches<'a> {
         Ok(next)
     }
 
+    /// Runs the shared direct smart closure search in one arm. The selected
+    /// descendant is retained in the branch container; the other arm and the
+    /// common root remain shared.
+    pub(super) fn try_direct_logical_closure(&self, arm: ProofArm) -> Option<Self> {
+        let mut next = self.clone();
+        next.arms[arm.index()] = self.arms[arm.index()].try_direct_logical_closure()?;
+        Some(next)
+    }
+
     fn check_arm_certificate(
         &self,
         arm: ProofArm,
