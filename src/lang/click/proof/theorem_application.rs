@@ -104,6 +104,39 @@ fn instantiate_theorem_application(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<Vec<Proposition>, ClickError> {
+    let assumptions = assumptions_from_propositions(available);
+    let lowering_assumptions = assumptions_from_propositions(lowering_available);
+    instantiate_theorem_application_with_assumptions(
+        theorem_environment,
+        application,
+        claim_label,
+        path_index,
+        tactic_index,
+        available,
+        &assumptions,
+        &lowering_assumptions,
+        context,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn instantiate_theorem_application_with_assumptions(
+    theorem_environment: &TheoremEnvironment,
+    application: &TheoremApplication,
+    claim_label: &str,
+    path_index: Option<usize>,
+    tactic_index: usize,
+    available: &[Proposition],
+    assumptions: &PureFactContext,
+    lowering_assumptions: &PureFactContext,
+    context: &TheoremApplicationContext<'_>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<Vec<Proposition>, ClickError> {
     let theorem = theorem_environment.get(&application.name).ok_or_else(|| {
         theorem_application_error(
             claim_label,
@@ -126,13 +159,11 @@ fn instantiate_theorem_application(
         ));
     }
 
-    let assumptions = assumptions_from_propositions(available);
-    let lowering_assumptions = assumptions_from_propositions(lowering_available);
     let (values, array_refs) = theorem_application_bindings(
         theorem,
         application,
         context,
-        &lowering_assumptions,
+        lowering_assumptions,
         predicate_environment,
         click_function_environment,
     )
@@ -176,7 +207,7 @@ fn instantiate_theorem_application(
             click_function_environment,
             unfolded_predicates,
             &lowered,
-            &assumptions,
+            assumptions,
         )
         .map_err(|message| {
             theorem_application_error(claim_label, path_index, tactic_index, message)

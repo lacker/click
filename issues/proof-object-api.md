@@ -579,6 +579,18 @@ the named program point only in the returned successor, retains
 changing the accepted descendant or its ancestor. The old direct replay-state
 mutation has been removed.
 
+The next execution-step seam is `ApplyTheoremUsing`. Its checker currently
+represents two different capabilities as vectors: the small explicit premise
+set that is admissible theorem evidence, and the ambient/resource context that
+may only lower the theorem's arguments. The theorem instantiator now has one
+behavior-preserving internal boundary that receives those two assumption
+contexts separately. The execution `Proof` migration must feed the evidence
+context only from named premises, feed the lowering context from persistent
+`ProofFacts` plus observable resources, unfold predicates through the existing
+single operation, and atomically retain both conclusion facts and any
+function-entry derivation delta. Do not add a parallel theorem engine or
+materialize all ambient facts per application.
+
 The execution branch container now accepts linear arm bodies made only of
 `StepUsing`, `TransportUsing`, and `UnfoldPredicate`. Each arm advances through the ordinary
 checked `Proof` operation and accumulates only its fact and execution-effect
