@@ -473,6 +473,15 @@ identity and stack-prefix identity rather than relying on wall-clock timing.
 This removes the last source-AST-sized clone from creating an execution branch
 before the semantic branch/scope/join operations move behind `Proof`.
 
+Three other branch-local histories now share their complete prefixes as well:
+completed C-region markers use a persistent ordered set, and deferred
+post-execution work plus deferred expansion path choices use persistent
+sequences. Appending one arm-local record no longer triggers a clone of every
+enclosing deferred operation. A 4096-entry identity regression checks all
+three concrete `TacticReplayState` fields and their one-entry descendants.
+The only deliberate contiguous rebuild is the legacy finalization adapter
+that edits an already-selected suffix's `surface_recorded` flags.
+
 The execution diagnostic branch path uses the same persistent sequence.
 Proof-level and C-level branch exploration now share their complete enclosing
 diagnostic path instead of cloning every owned string, while `push`, join-time

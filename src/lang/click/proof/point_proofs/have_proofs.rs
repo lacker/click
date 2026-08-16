@@ -2071,7 +2071,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
     let mut claim_surface_builders: Vec<(VerifiedClaim, Vec<ProofCertificateBuilder>)> = Vec::new();
     for context in contexts {
         context_count += 1;
-        let path_choices = context.replay.deferred_expansion_path_choices.clone();
+        let path_choices = context.replay.deferred_expansion_path_choices.to_vec();
         resume_deferred_tactic_expansion_capture(
             expansion_capture.as_deref_mut(),
             &context.replay,
@@ -2137,7 +2137,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
                     })?
                     .steps()
                     .to_vec(),
-                path_choices: path_choices.into_vec(),
+                path_choices,
                 ..ProofCertificateBuilder::default()
             });
         }

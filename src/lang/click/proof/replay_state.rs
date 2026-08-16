@@ -123,13 +123,13 @@ pub(super) struct TacticReplayState {
     /// C `if` regions completed by the most recent execution transition.
     /// A frontier-local `branch` uses this edge-local record to distinguish
     /// reaching its join from executing past it in a later tactic.
-    pub(super) completed_branch_regions: SharedVec<usize>,
+    pub(super) completed_branch_regions: PersistentOrderedSet<usize>,
     /// This proof path has passed through a frontier-local `branch`. Unlike
     /// `branch_path`, this excludes pure proof-level `if` diagnostics and can
     /// therefore distinguish an already selected C path at function exit.
     pub(super) has_structured_branch_history: bool,
     pub(super) unfolded_predicates: SharedVec<String>,
-    pub(super) post_execution_tactics: SharedVec<DeferredPostExecutionTactic>,
+    pub(super) post_execution_tactics: PersistentSequence<DeferredPostExecutionTactic>,
     pub(super) region_simp: Option<(usize, usize)>,
     /// Depth of enclosing `open { ... }` blocks. Surface steps recorded while
     /// an open block is active are captured into its nested `Open` proof, so
@@ -207,7 +207,7 @@ pub(super) struct TacticReplayState {
     /// continuation. Deferred post-execution expansion is finalized after
     /// `execute_internal_proof` has returned one context per path, so it must
     /// retain this typed path rather than reconstructing it from diagnostics.
-    pub(super) deferred_expansion_path_choices: SharedVec<SurfacePathChoice>,
+    pub(super) deferred_expansion_path_choices: PersistentSequence<SurfacePathChoice>,
 }
 
 #[derive(Clone)]
@@ -367,6 +367,11 @@ impl<T> Default for PersistentOrderedSet<T> {
 }
 
 impl<T: Clone + Ord> PersistentOrderedSet<T> {
+    pub(super) fn clear(&mut self) {
+        self.ordered.clear();
+        self.exact = PersistentSet::default();
+    }
+
     pub(super) fn insert(&mut self, value: T) -> bool {
         if self.exact.contains(&value) {
             return false;
@@ -1555,6 +1560,89 @@ mod proof_fact_store_tests {
                 "popping the local suffix should restore the shared ancestor stack"
             );
         }
+    }
+
+    #[test]
+    fn replay_branch_local_histories_share_their_complete_prefixes() {
+        let mut replay = TacticReplayState::default();
+        for index in 0..4096 {
+            replay.completed_branch_regions.insert(index);
+            replay.defer_post_execution(index, index, PostExecutionTactic::Assumption);
+            replay
+                .deferred_expansion_path_choices
+                .push(SurfacePathChoice {
+                    occurrence: index,
+                    condition: ClickProposition::Comparison {
+                        left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+                        operator: ComparisonOperator::Equal,
+                        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+                    },
+                    value: true,
+                    tactic_offset: index,
+                });
+        }
+        let ancestor = replay.clone();
+        assert!(
+            replay
+                .completed_branch_regions
+                .exact
+                .shares_root_with(&ancestor.completed_branch_regions.exact)
+        );
+        assert!(
+            replay
+                .post_execution_tactics
+                .shares_tail_with(&ancestor.post_execution_tactics)
+        );
+        assert!(
+            replay
+                .deferred_expansion_path_choices
+                .shares_tail_with(&ancestor.deferred_expansion_path_choices)
+        );
+
+        replay.completed_branch_regions.insert(4096);
+        replay.defer_post_execution(4096, 4096, PostExecutionTactic::Assumption);
+        replay
+            .deferred_expansion_path_choices
+            .push(SurfacePathChoice {
+                occurrence: 4096,
+                condition: ClickProposition::Comparison {
+                    left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+                    operator: ComparisonOperator::Equal,
+                    right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+                },
+                value: false,
+                tactic_offset: 4096,
+            });
+
+        assert!(!ancestor.completed_branch_regions.contains(&4096));
+        assert_eq!(ancestor.post_execution_tactics.len(), 4096);
+        assert_eq!(replay.post_execution_tactics.len(), 4097);
+        assert!(Arc::ptr_eq(
+            replay
+                .post_execution_tactics
+                .tail
+                .as_ref()
+                .and_then(|tail| tail.parent.as_ref())
+                .expect("post-execution prefix"),
+            ancestor
+                .post_execution_tactics
+                .tail
+                .as_ref()
+                .expect("ancestor post-execution tail")
+        ));
+        assert!(Arc::ptr_eq(
+            replay
+                .deferred_expansion_path_choices
+                .tail
+                .as_ref()
+                .and_then(|tail| tail.parent.as_ref())
+                .expect("deferred path prefix"),
+            ancestor
+                .deferred_expansion_path_choices
+                .tail
+                .as_ref()
+                .expect("ancestor deferred path tail")
+        ));
     }
 
     #[test]

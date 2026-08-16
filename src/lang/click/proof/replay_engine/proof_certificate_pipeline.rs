@@ -233,13 +233,13 @@ pub(in crate::lang::click::proof) fn complete_smart_tactic(
         // The merged steps are the surface record; deferred work the
         // independent replay carried into the enclosing replay must not be
         // recorded a second time by the exit drain.
-        for entry in verified_result
-            .replay
-            .post_execution_tactics
-            .iter_mut()
-            .skip(deferred_before)
-        {
+        let mut deferred = verified_result.replay.post_execution_tactics.to_vec();
+        for entry in deferred.iter_mut().skip(deferred_before) {
             entry.surface_recorded = true;
+        }
+        verified_result.replay.post_execution_tactics = PersistentSequence::default();
+        for entry in deferred {
+            verified_result.replay.post_execution_tactics.push(entry);
         }
         let replaces_existing_branch = certified_frame
             && matches!(proof.steps(), [SimpleProofStep::If { .. }])

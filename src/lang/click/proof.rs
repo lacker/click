@@ -1088,9 +1088,11 @@ mod certificate_tests {
         let mut replay = TacticReplayState::default();
         replay.defer_post_execution(9, 2, PostExecutionTactic::Simp);
 
-        let [deferred] = replay.post_execution_tactics.as_slice() else {
-            panic!("expected one deferred tactic");
-        };
+        let mut deferred_entries = replay.post_execution_tactics.iter();
+        let deferred = deferred_entries
+            .next()
+            .expect("expected one deferred tactic");
+        assert!(deferred_entries.next().is_none());
         assert_eq!(deferred.tactic_index, 9);
         assert_eq!(deferred.source_index, 2);
         assert!(matches!(deferred.tactic, PostExecutionTactic::Simp));

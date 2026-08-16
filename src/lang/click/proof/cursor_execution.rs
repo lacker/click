@@ -1880,7 +1880,7 @@ fn resume_after_completed_region(
 ) -> Option<CStatement> {
     while let Some(continuation) = replay.frontier.continuations.pop() {
         if let ProofExecutionContinuationKind::Branch { statement_index } = continuation.kind {
-            replay.completed_branch_regions.push(statement_index);
+            replay.completed_branch_regions.insert(statement_index);
             record_statement_program_point_state(
                 replay,
                 function_block,
@@ -1904,7 +1904,7 @@ fn record_completed_continuation_exits(
 ) {
     while let Some(continuation) = replay.frontier.continuations.pop() {
         if let ProofExecutionContinuationKind::Branch { statement_index } = continuation.kind {
-            replay.completed_branch_regions.push(statement_index);
+            replay.completed_branch_regions.insert(statement_index);
             record_statement_program_point_state(
                 replay,
                 function_block,
