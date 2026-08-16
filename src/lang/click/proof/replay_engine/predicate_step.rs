@@ -19,6 +19,36 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate(
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<(), ClickError> {
+    let facts = ProofFacts::from_ordered(available_pure_facts);
+    let facts = check_unfold_predicate_facts(
+        replay,
+        state,
+        &facts,
+        name,
+        function,
+        arguments,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+        tactic_index,
+    )?;
+    *available_pure_facts = facts.to_vec();
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
+    replay: &mut TacticReplayState,
+    state: &CState,
+    available_pure_facts: &ProofFacts,
+    name: &String,
+    function: &CFunction,
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+) -> Result<ProofFacts, ClickError> {
     if predicate_environment.get(name).is_none() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: unknown predicate `{name}`"
@@ -27,9 +57,9 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate(
     if !replay.unfolded_predicates.contains(name) {
         replay.unfolded_predicates.push(name.clone());
     }
-    let assumptions = assumptions_from_propositions(available_pure_facts);
+    let assumptions = available_pure_facts.assumptions();
     let surface_unfoldings = available_pure_facts
-        .iter()
+        .mentioning_predicate(name)
         .filter_map(|kernel| {
             let Proposition::Predicate {
                 name: kernel_name, ..
@@ -55,21 +85,28 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate(
                 click_function_environment,
                 std::slice::from_ref(name),
                 kernel,
-                &assumptions,
+                assumptions,
             )
             .ok()?;
             Some((kernel.clone(), surface, unfolded))
         })
         .collect::<Vec<_>>();
-    *available_pure_facts = unfold_available_predicate_facts(
-        predicate_environment,
-        click_function_environment,
-        std::slice::from_ref(name),
-        available_pure_facts,
-    )
-    .map_err(|message| {
-        ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
-    })?;
+    let mut facts = available_pure_facts.clone();
+    for proposition in available_pure_facts.mentioning_predicate(name) {
+        let unfolded = unfold_predicates_in_proposition(
+            predicate_environment,
+            click_function_environment,
+            std::slice::from_ref(name),
+            proposition,
+            assumptions,
+        )
+        .map_err(|message| {
+            ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
+        })?;
+        if &unfolded != proposition {
+            facts = facts.with_fact(unfolded);
+        }
+    }
     for (predicate, surface, kernel) in surface_unfoldings {
         replay
             .surface_propositions
@@ -86,7 +123,7 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate(
                     arguments,
                     &predicate,
                     &kernel,
-                    &assumptions,
+                    assumptions,
                 )
             })
             .flatten();
@@ -97,5 +134,5 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate(
             replay.function_entry_derivations.insert(derivation);
         }
     }
-    Ok(())
+    Ok(facts)
 }

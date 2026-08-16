@@ -503,6 +503,16 @@ contiguous slices materialize only at loop binding/final export. The old
 `frames` set was removed instead of migrated: an audit found that it was
 write-only bookkeeping with no semantic or diagnostic reader.
 
+`ProofFacts` now also retains deterministic fact order and a persistent index
+from each predicate name to only the propositions that mention it. The
+canonical `check_unfold_predicate_facts` judgment consumes this state directly:
+it reuses the persistent kernel assumption context, visits only facts indexed
+for the requested predicate, and appends unfolded conclusions persistently.
+Legacy vector replay delegates through an explicit adapter. A deterministic
+16-through-4096 regression confirms that one selected predicate fact is found
+without mixing in thousands of unrelated facts and that all fact/index roots
+remain shared across a fork.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

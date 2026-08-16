@@ -1,6 +1,6 @@
 use super::pure_theorems::{PureTheoremContext, lower_pure_theorem_proposition};
 use super::*;
-use crate::persistent::PersistentSet;
+use crate::persistent::{PersistentMap, PersistentSet};
 
 #[cfg(test)]
 use crate::persistent::persistent_node_allocations;
@@ -160,9 +160,11 @@ struct ProofNode {
 /// the kernel's incrementally updated reasoning context. Forking shares both;
 /// adding one fact copies only logarithmic index/context paths.
 #[derive(Clone, Default)]
-struct ProofFacts {
+pub(super) struct ProofFacts {
+    ordered: PersistentSequence<Proposition>,
     exact: PersistentSet<Proposition>,
     assumptions: PureFactContext,
+    by_predicate: PersistentMap<String, PersistentSequence<Proposition>>,
 }
 
 impl<'a> Proof<'a> {
@@ -1484,13 +1486,17 @@ impl ProofContext<'_> {
 }
 
 impl ProofFacts {
-    fn from_ordered(facts: &[Proposition]) -> Self {
+    pub(super) fn from_ordered(facts: &[Proposition]) -> Self {
+        let mut ordered = PersistentSequence::default();
         let mut exact = PersistentSet::default();
         let mut assumptions = PureFactContext::new();
+        let mut by_predicate = PersistentMap::default();
         for fact in facts {
             if exact.contains(fact) {
                 continue;
             }
+            ordered.push(fact.clone());
+            by_predicate = index_predicate_fact(by_predicate, fact);
             if matches!(fact, Proposition::And(_, _)) {
                 let mut conjuncts = Vec::new();
                 collect_owned_atomic_conjuncts(fact, &mut conjuncts);
@@ -1501,14 +1507,19 @@ impl ProofFacts {
             exact = exact.with_value(fact.clone());
             assumptions = assumptions.assume_proposition(fact.clone());
         }
-        Self { exact, assumptions }
+        Self {
+            ordered,
+            exact,
+            assumptions,
+            by_predicate,
+        }
     }
 
     fn contains(&self, fact: &Proposition) -> bool {
         self.exact.contains(fact)
     }
 
-    fn with_fact(&self, fact: Proposition) -> Self {
+    pub(super) fn with_fact(&self, fact: Proposition) -> Self {
         if self.contains(&fact) {
             return self.clone();
         }
@@ -1521,19 +1532,70 @@ impl ProofFacts {
             }
         }
         exact = exact.with_value(fact.clone());
+        let mut ordered = self.ordered.clone();
+        ordered.push(fact.clone());
         Self {
+            ordered,
             exact,
             assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
+            by_predicate: index_predicate_fact(self.by_predicate.clone(), &fact),
         }
     }
 
-    fn assumptions(&self) -> &PureFactContext {
+    pub(super) fn assumptions(&self) -> &PureFactContext {
         &self.assumptions
+    }
+
+    fn iter(&self) -> PersistentSequenceIter<'_, Proposition> {
+        self.ordered.iter()
+    }
+
+    pub(super) fn to_vec(&self) -> Vec<Proposition> {
+        self.iter().cloned().collect()
+    }
+
+    pub(super) fn mentioning_predicate(&self, name: &String) -> impl Iterator<Item = &Proposition> {
+        self.by_predicate
+            .get(name)
+            .into_iter()
+            .flat_map(PersistentSequence::iter)
     }
 
     #[cfg(test)]
     fn lookup_comparisons(&self, fact: &Proposition) -> usize {
         self.exact.lookup_comparisons(fact)
+    }
+}
+
+fn index_predicate_fact(
+    mut index: PersistentMap<String, PersistentSequence<Proposition>>,
+    fact: &Proposition,
+) -> PersistentMap<String, PersistentSequence<Proposition>> {
+    let mut names = BTreeSet::new();
+    collect_fact_predicate_names(fact, &mut names);
+    for name in names {
+        let mut facts = index.get(&name).cloned().unwrap_or_default();
+        facts.push(fact.clone());
+        index = index.with_inserted(name, facts);
+    }
+    index
+}
+
+fn collect_fact_predicate_names(fact: &Proposition, names: &mut BTreeSet<String>) {
+    match fact {
+        Proposition::Predicate { name, .. } => {
+            names.insert(name.clone());
+        }
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            collect_fact_predicate_names(left, names);
+            collect_fact_predicate_names(right, names);
+        }
+        Proposition::Not(body)
+        | Proposition::ForAll { body, .. }
+        | Proposition::Exists { body, .. } => collect_fact_predicate_names(body, names),
+        _ => {}
     }
 }
 
@@ -1895,6 +1957,30 @@ mod tests {
             assert!(!facts.contains(&added));
             assert!(successor.contains(&added));
             assert!(successor.assumptions.proves(&added));
+        }
+    }
+
+    #[test]
+    fn proof_fact_predicate_index_ignores_unrelated_context() {
+        let name = "selected".to_string();
+        let predicate = Proposition::Predicate {
+            name: name.clone(),
+            arguments: Vec::new(),
+        };
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut initial = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            initial.push(predicate.clone());
+            let facts = ProofFacts::from_ordered(&initial);
+            let fork = facts.clone();
+
+            assert!(facts.ordered.shares_tail_with(&fork.ordered));
+            assert!(facts.exact.shares_root_with(&fork.exact));
+            assert!(facts.by_predicate.shares_root_with(&fork.by_predicate));
+            assert_eq!(facts.to_vec(), initial);
+            assert_eq!(
+                facts.mentioning_predicate(&name).collect::<Vec<_>>(),
+                vec![&predicate]
+            );
         }
     }
 
