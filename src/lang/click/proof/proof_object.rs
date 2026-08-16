@@ -1491,6 +1491,107 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Untrusted smart-tactic query for one explicit theorem-application
+    /// candidate at a point proposition goal.
+    ///
+    /// Requirement selection probes the current persistent fact indexes. It
+    /// returns only a `SimpleProofStep`; theorem conclusions and provenance
+    /// are created later, if and only if the caller submits that step to
+    /// `apply_step` on this same proof.
+    pub(super) fn select_point_theorem_application_step(
+        &self,
+        application: &TheoremApplication,
+    ) -> Result<SimpleProofStep, ClickError> {
+        let ProofContext::Point(context) = self.context.as_ref() else {
+            return Err(
+                self.step_error("point theorem-application search requires a proposition goal")
+            );
+        };
+        let values = parameter_values(context.parameters, context.arguments).map_err(|error| {
+            self.step_error(format!(
+                "could not bind theorem arguments: {}",
+                error.message
+            ))
+        })?;
+        let array_refs =
+            array_refs_for_parameters(context.parameters, &values, context.state.memory());
+        let (values, array_refs) =
+            contract_environment_at_state(&values, &array_refs, context.state);
+        let application_context = TheoremApplicationContext {
+            values: &values,
+            array_refs: &array_refs,
+            pre_state: context.pre_state,
+            post_state: context.state,
+            result: None,
+            program_point_states: context.program_point_states,
+        };
+        let unfolded_predicates = self.active_unfolded_predicates();
+        let requirements = lower_theorem_application_requirements_with_assumptions(
+            context.theorem_environment,
+            application,
+            &application_context,
+            self.state.facts.assumptions(),
+            context.predicate_environment,
+            context.click_function_environment,
+            &unfolded_predicates,
+        )
+        .map_err(|message| {
+            self.step_error(format!("could not lower theorem requirements: {message}"))
+        })?;
+
+        let mut premises = Vec::new();
+        for requirement in requirements {
+            if matches!(normalize_proposition(&requirement), SimpProposition::True) {
+                continue;
+            }
+            if !self.state.facts.materialization_available(&requirement) {
+                return Err(self.step_error(format!(
+                    "theorem application `{}` requires an unavailable exact premise: {requirement:?}",
+                    application.name
+                )));
+            }
+
+            let mut candidates = context
+                .surface_propositions
+                .surfaces(&requirement)
+                .cloned()
+                .collect::<Vec<_>>();
+            if let Some(candidate) = synthesize_surface_proposition(
+                &requirement,
+                context.parameters,
+                context.arguments,
+                context.state,
+            ) && !candidates.contains(&candidate)
+            {
+                candidates.push(candidate);
+            }
+            let surface = candidates
+                .into_iter()
+                .find(|candidate| {
+                    self.lower_surface_proposition(candidate, "selected theorem premise")
+                        .is_ok_and(|lowered| {
+                            normalize_direct_atomic_memory_loads(&lowered)
+                                == normalize_direct_atomic_memory_loads(&requirement)
+                                && self.state.facts.materialization_available(&lowered)
+                        })
+                })
+                .ok_or_else(|| {
+                    self.step_error(format!(
+                        "theorem application `{}` has no checked Click spelling for exact premise `{requirement:?}`",
+                        application.name
+                    ))
+                })?;
+            if !premises.contains(&surface) {
+                premises.push(surface);
+            }
+        }
+
+        Ok(SimpleProofStep::ApplyTheoremUsing {
+            application: application.clone(),
+            premises,
+        })
+    }
+
     fn apply_theorem_using(
         &self,
         application: &TheoremApplication,
@@ -1593,83 +1694,35 @@ impl<'a> Proof<'a> {
         application: &TheoremApplication,
         surface_premises: &[ClickProposition],
     ) -> Result<ProofState, ClickError> {
-        // The first point-proof migration is intentionally linear: a single
-        // theorem application that closes the selected goal. This prevents
-        // an accidental partial API from becoming a second mutable point
-        // prover while later point steps move over one by one.
-        if self.node.depth != 0 {
-            return Err(self.step_error("point `apply using` currently requires the root proof"));
-        }
-        let explicit_premises = surface_premises
-            .iter()
-            .map(|surface| {
-                if let Some(recorded) = context
-                    .surface_propositions
-                    .available_kernel(surface, context.lowering_context.as_ref())
-                {
-                    return Ok(recorded.clone());
-                }
-                lower_point_proposition_with_assumptions(
-                    surface,
-                    self.state.facts.assumptions(),
-                    context.parameters,
-                    context.arguments,
-                    context.pre_state,
-                    context.state,
-                    None,
-                    context.program_point_states,
-                    context.predicate_environment,
-                    context.click_function_environment,
-                )
-                .map_err(|message| {
-                    self.step_error(format!(
-                        "could not lower `apply using` premise `{}`: {message}",
-                        describe_click_proposition(surface)
-                    ))
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        for premise in &explicit_premises {
-            if !self.state.facts.contains(premise) {
-                return Err(self.step_error(format!(
-                    "`apply using` requires an unavailable exact premise: {premise:?}"
-                )));
-            }
-        }
         let unfolded_predicates = self.active_unfolded_predicates();
-        let applied = apply_theorem_at_current_point(
+        let checked = check_point_theorem_application_using_facts(
             context.theorem_environment,
             application,
+            surface_premises,
             context.claim_label,
             context.tactic_index,
-            explicit_premises,
+            &self.state.facts,
             context.parameters,
             context.arguments,
             context.pre_state,
             context.state,
             context.program_point_states,
+            context.surface_propositions,
+            &unfolded_predicates,
+            context.effect_facts,
             context.predicate_environment,
             context.click_function_environment,
-            &unfolded_predicates,
-            Some(context.lowering_context.as_ref()),
+            false,
         )?;
-        let mut facts = self.state.facts.clone();
-        let mut added_facts = Vec::new();
-        for fact in applied {
-            if !facts.contains(&fact) {
-                added_facts.push(fact.clone());
-            }
-            facts = facts.with_fact(fact);
-        }
-        let complete = self.goal().is_some_and(|goal| facts.contains(goal));
+        let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
         Ok(ProofState {
-            facts,
+            facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete,
-            checked_facts: Arc::new(added_facts.clone()),
-            added_facts: Arc::new(added_facts),
+            checked_facts: Arc::new(checked.added_facts.clone()),
+            added_facts: Arc::new(checked.added_facts),
             execution: None,
         })
     }
@@ -1706,7 +1759,10 @@ impl<'a> Proof<'a> {
             context.arguments,
             &pre_state,
             &execution.state,
-            &execution.replay,
+            &execution.replay.program_point_states,
+            &execution.replay.surface_propositions,
+            &execution.replay.unfolded_predicates,
+            &execution.replay.effect_facts,
             context.predicate_environment,
             context.click_function_environment,
             retain_function_entry_derivation,
@@ -5104,6 +5160,150 @@ mod tests {
                 .into_execution_context()
                 .expect("the checked successor should export at the compatibility boundary");
             assert!(result.pure_facts.contains(&kernel_conclusion));
+        }
+    }
+
+    #[test]
+    fn point_apply_search_uses_indexes_and_retains_its_checked_successor() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 identity(int32 x) {
+                    ensures returns_x: result == x by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+            .expect("test C function should parse");
+        let state = CState::new();
+        let left = CValue::Int32(Bitvector32Term::Variable(Variable(8_100_000)));
+        let right = CValue::Int32(Bitvector32Term::Variable(Variable(8_100_001)));
+        let arguments = vec![CExpression::Value(left.clone())];
+        let premise = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(left.clone())),
+            operator: ComparisonOperator::LessThan,
+            right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+        };
+        let conclusion = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(left.clone())),
+            operator: ComparisonOperator::LessEqual,
+            right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+        };
+        let program_point_states = ProgramPointStates::new();
+        let kernel_premise = lower_point_proposition_with_assumptions(
+            &premise,
+            &PureFactContext::new(),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            None,
+            &program_point_states,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("the exact premise should lower");
+        let kernel_conclusion = lower_point_proposition_with_assumptions(
+            &conclusion,
+            &PureFactContext::new(),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            None,
+            &program_point_states,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("the theorem conclusion should lower");
+        let application = TheoremApplication {
+            name: "int32_lt_implies_le".to_string(),
+            arguments: vec![
+                ContractExpression::CFragment(CExpression::Value(left)),
+                ContractExpression::CFragment(CExpression::Value(right)),
+            ],
+        };
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
+            .record_lowering(&premise, &kernel_premise)
+            .expect("the selected premise spelling should be recorded");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.push(Proposition::And(
+                Box::new(kernel_premise.clone()),
+                Box::new(indexed_fact(size + 10_000)),
+            ));
+            let goal = Proposition::And(
+                Box::new(kernel_conclusion.clone()),
+                Box::new(kernel_premise.clone()),
+            );
+            let root = Proof::for_point_goal(
+                "persistent point theorem search",
+                0,
+                &facts,
+                goal,
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let extracted = root
+                .apply_step(SimpleProofStep::Extract(premise.clone()))
+                .expect("a checked predecessor should promote the indexed conjunct");
+            let before_query = fact_node_allocations();
+            let step = extracted
+                .select_point_theorem_application_step(&application)
+                .expect("smart search should select one explicit indexed premise");
+            let query_allocations = fact_node_allocations() - before_query;
+            assert_eq!(
+                query_allocations, 0,
+                "size {size} theorem selection must not rebuild persistent fact indexes"
+            );
+            assert_eq!(
+                step,
+                SimpleProofStep::ApplyTheoremUsing {
+                    application: application.clone(),
+                    premises: vec![premise.clone()],
+                }
+            );
+            let before_apply = fact_node_allocations();
+            let applied = extracted
+                .apply_step(step.clone())
+                .expect("the selected explicit step should be checked once");
+            let allocations = fact_node_allocations() - before_apply;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 32 * logarithmic_height + 128;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} point theorem application allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(!applied.is_complete());
+            let complete = applied.try_direct_logical_closure().expect(
+                "the checked conclusion and inherited premise should close the conjunction",
+            );
+            assert!(complete.is_complete());
+            assert_eq!(
+                complete.certificate().steps().first(),
+                Some(&SimpleProofStep::Extract(premise.clone()))
+            );
+            assert_eq!(complete.certificate().steps().get(1), Some(&step));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
         }
     }
 

@@ -494,6 +494,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     enum Plan<'a> {
         DirectSmart,
         BareApply(&'a TheoremApplication),
+        ApplyThenDirect(&'a TheoremApplication),
         RefineThenDirect(ProofCertificate),
         SmartIf(&'a ProofIf),
         SmartCases(&'a ProofCases),
@@ -507,6 +508,10 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
         SourceProof::Script(tactics) => {
             if let [ProofTactic::ApplyTheorem(application)] = tactics.as_slice() {
                 Plan::BareApply(application)
+            } else if let [ProofTactic::ApplyTheorem(application), ProofTactic::Simp] =
+                tactics.as_slice()
+            {
+                Plan::ApplyThenDirect(application)
             } else if let Some(prefix) = direct_point_refinement_prefix(tactics) {
                 Plan::RefineThenDirect(prefix)
             } else if let [ProofTactic::If(proof_if)] = tactics.as_slice()
@@ -566,26 +571,21 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     );
     let (proof, append_certificate) = match plan {
         Plan::BareApply(application) => {
-            let premises = select_explicit_theorem_application_premises(
-                theorem_environment,
-                application,
-                claim_label,
-                tactic_index,
-                available,
-                parameters,
-                arguments,
-                replay,
-                state,
-                predicate_environment,
-                click_function_environment,
-            )?;
-            (
-                proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
-                    application: application.clone(),
-                    premises,
-                })?,
-                true,
-            )
+            let step = proof.select_point_theorem_application_step(application)?;
+            (proof.apply_step(step)?, true)
+        }
+        Plan::ApplyThenDirect(application) => {
+            let step = proof.select_point_theorem_application_step(application)?;
+            let selected = proof.apply_step(step)?;
+            let closed = if selected.is_complete() {
+                selected
+            } else {
+                let Some(closed) = selected.try_direct_logical_closure() else {
+                    return Ok(None);
+                };
+                closed
+            };
+            (closed, true)
         }
         Plan::DirectSmart => {
             let Some(closed) = proof.try_direct_logical_closure() else {
@@ -598,8 +598,13 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
             for step in prefix.steps() {
                 selected = selected.apply_step(step.clone())?;
             }
-            let Some(closed) = selected.try_direct_logical_closure() else {
-                return Ok(None);
+            let closed = if selected.is_complete() {
+                selected
+            } else {
+                let Some(closed) = selected.try_direct_logical_closure() else {
+                    return Ok(None);
+                };
+                closed
             };
             (closed, true)
         }
@@ -663,7 +668,10 @@ fn direct_point_refinement_prefix(tactics: &[ProofTactic]) -> Option<ProofCertif
         || !prefix.iter().all(|tactic| {
             matches!(
                 tactic,
-                ProofTactic::UnfoldPredicate(_) | ProofTactic::Choose(_) | ProofTactic::Witness(_)
+                ProofTactic::ApplyTheoremUsing { .. }
+                    | ProofTactic::UnfoldPredicate(_)
+                    | ProofTactic::Choose(_)
+                    | ProofTactic::Witness(_)
             )
         })
     {

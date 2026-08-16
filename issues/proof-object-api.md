@@ -792,6 +792,34 @@ A deterministic 16-through-4096 unrelated-fact regression bounds persistent
 node growth logarithmically, and the source expansion regression independently
 verifies the serialized path.
 
+Point smart theorem application now has a proof-object query seam. The query
+lowers only the selected theorem's explicit requirements against the
+persistent assumption context, probes `ProofFacts`' exact/materialization
+indexes, and returns a concrete `ApplyTheoremUsing`; it cannot insert the
+conclusion or edit provenance. The smart `apply(...); simp()` form submits that
+step to the same `Proof`, then continues its direct closure search on the
+checked successor. Point `ApplyTheoremUsing` is no longer restricted to a root
+proof and uses the same persistent-fact theorem checker as execution
+application, so an application may follow another accepted refinement without
+reconstructing ambient facts. A deterministic 16-through-4096 regression
+starts from an extracted predecessor, records zero persistent-index
+allocations during candidate selection, bounds application updates
+logarithmically, and checks the retained `Extract`/`ApplyTheoremUsing`/closer
+path. The source regression confirms that ordinary verification performs no
+surface-certificate replay and that expansion independently reverifies the
+serialized steps.
+
+Resource operations remain a distinct representation prerequisite rather
+than being wrapped around the legacy vector APIs. `ResourceContext` currently
+stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses
+copy-on-write on the complete vector and invalidates its lazy complete-context
+index, so the next lookup can clone and reindex every ambient resource. A
+resource `Proof` transition therefore needs persistent, incrementally updated
+exact/shape/block indexes and output-sensitive materialization at the legacy
+adapter boundary. Admitting `observe`, resource `unfold`, or `fold` before that
+store exists would violate the proof-object efficiency contract even if the
+semantic checker were otherwise reusable.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

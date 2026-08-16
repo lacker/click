@@ -2811,6 +2811,85 @@ fn point_have_bare_apply_retains_and_checks_its_exact_premise() {
 }
 
 #[test]
+fn point_have_smart_apply_continues_on_the_checked_successor() {
+    let c_source = r#"
+            int32 choose_second(int32 first, int32 second) {
+                return second;
+            }
+        "#;
+    let click_source = r#"
+            theorem equality_symmetric(first: int32, second: int32) {
+                requires first == second;
+                ensures second == first by {
+                    simp() using { first == second; }
+                }
+            }
+
+            verifying "choose.c";
+
+            int32 choose_second(int32 first, int32 second) {
+                requires first == second;
+                ensures result == second;
+            } by {
+                have second == first and first == second by {
+                    apply(equality_symmetric(first, second));
+                    simp();
+                }
+                step();
+                simp();
+            }
+        "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("choose.c", c_source)])
+    });
+    verified.expect("smart apply should continue from its checked Proof successor");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "choose_second.contract" && name == "surface certificate replay"
+        )),
+        "the migrated apply-then-simp proof must not use construction replay: {events:#?}"
+    );
+
+    let have_offset = click_source
+        .find("have second == first and first == second")
+        .expect("proof should contain the selected have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("choose.c", c_source)], line, column)
+            .expect("the retained apply-then-simp path should expand");
+    let expanded_have = &expanded[expanded
+        .find("have second == first and first == second")
+        .or_else(|| expanded.find("have (second == first) and (first == second)"))
+        .expect("expanded proof should retain the selected have")
+        ..expanded
+            .find("step()")
+            .expect("expanded proof should retain its suffix")];
+    assert!(
+        expanded_have.contains("apply(equality_symmetric(first, second)) using {"),
+        "{expanded_have}"
+    );
+    assert!(
+        expanded_have.contains("normalize();") || expanded_have.contains("split();"),
+        "{expanded_have}"
+    );
+    assert!(!expanded_have.contains("simp();"), "{expanded_have}");
+    verify_c0_sources(&expanded, &[("choose.c", c_source)])
+        .expect("the serialized retained proof should independently reverify");
+}
+
+#[test]
 fn point_smart_have_retains_a_checked_simple_closer() {
     let c_source = r#"
             int32 identity(int32 value) {

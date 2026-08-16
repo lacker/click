@@ -71,7 +71,10 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
     arguments: &[CExpression],
     pre_state: &CState,
     state: &CState,
-    replay: &TacticReplayState,
+    program_point_states: &ProgramPointStates,
+    surface_propositions: &SurfacePropositionMap,
+    unfolded_predicates: &[String],
+    effect_facts: &[ExecutionPureFact],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     retain_function_entry_derivation: bool,
@@ -86,8 +89,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
 
     let mut explicit_premises = Vec::new();
     for surface_premise in surface_premises {
-        let premise = if let Some(recorded) = replay
-            .surface_propositions
+        let premise = if let Some(recorded) = surface_propositions
             .available_kernel_matching(surface_premise, |kernel| available.contains(kernel))
         {
             recorded.clone()
@@ -100,7 +102,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
                 pre_state,
                 state,
                 None,
-                &replay.program_point_states,
+                program_point_states,
                 predicate_environment,
                 click_function_environment,
             )
@@ -120,7 +122,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
                     state.resources().facts(),
                     parameters,
                     arguments,
-                    &replay.effect_facts,
+                    effect_facts,
                 )
             )));
         }
@@ -144,7 +146,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
         pre_state,
         post_state: state,
         result: None,
-        program_point_states: &replay.program_point_states,
+        program_point_states,
     };
     let conclusions = instantiate_theorem_application_with_assumptions(
         theorem_environment,
@@ -158,7 +160,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
         &application_context,
         predicate_environment,
         click_function_environment,
-        &replay.unfolded_predicates,
+        unfolded_predicates,
     )?;
 
     let mut facts = available.clone();
@@ -178,7 +180,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
             arguments,
             pre_state,
             state,
-            &replay.program_point_states,
+            program_point_states,
             predicate_environment,
             click_function_environment,
             &lowering_assumptions,
@@ -370,15 +372,39 @@ pub(in crate::lang::click::proof) fn lower_theorem_application_requirements(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<Vec<Proposition>, String> {
+    let assumptions = assumptions_from_propositions(premises);
+    lower_theorem_application_requirements_with_assumptions(
+        theorem_environment,
+        application,
+        context,
+        &assumptions,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+    )
+}
+
+/// Lowers one application's requirements against an already-persistent
+/// assumption context. Smart proof-object queries use this entry point so
+/// choosing a candidate does not materialize or rescan every ambient fact.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn lower_theorem_application_requirements_with_assumptions(
+    theorem_environment: &TheoremEnvironment,
+    application: &TheoremApplication,
+    context: &TheoremApplicationContext<'_>,
+    assumptions: &PureFactContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<Vec<Proposition>, String> {
     let theorem = theorem_environment
         .get(&application.name)
         .ok_or_else(|| format!("unknown theorem `{}`", application.name))?;
-    let assumptions = assumptions_from_propositions(premises);
     let (values, array_refs) = theorem_application_bindings(
         theorem,
         application,
         context,
-        &assumptions,
+        assumptions,
         predicate_environment,
         click_function_environment,
     )?;
@@ -407,7 +433,7 @@ pub(in crate::lang::click::proof) fn lower_theorem_application_requirements(
                 click_function_environment,
                 unfolded_predicates,
                 &lowered,
-                &assumptions,
+                assumptions,
             )
             .map(|lowered| normalize_direct_atomic_memory_loads(&lowered))
         })
