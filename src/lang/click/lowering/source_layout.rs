@@ -30,6 +30,11 @@ pub(in crate::lang::click) fn count_statements(statement: &syntax::C0Statement) 
 
 #[derive(Clone, Default)]
 pub(in crate::lang::click) struct SourceExecutionLayout {
+    data: std::sync::Arc<SourceExecutionLayoutData>,
+}
+
+#[derive(Default)]
+struct SourceExecutionLayoutData {
     statements: BTreeMap<usize, SourceStatementRegion>,
     loop_bodies: BTreeMap<usize, usize>,
 }
@@ -58,7 +63,7 @@ impl SourceExecutionLayout {
             statement: &syntax::C0Statement,
             next_statement_index: &mut usize,
             next_loop_index: &mut usize,
-            layout: &mut SourceExecutionLayout,
+            layout: &mut SourceExecutionLayoutData,
         ) {
             match statement {
                 syntax::C0Statement::Seq(first, second) => {
@@ -116,21 +121,59 @@ impl SourceExecutionLayout {
             }
         }
 
-        let mut layout = Self::default();
-        visit(statement, &mut 0, &mut 0, &mut layout);
-        layout
+        let mut data = SourceExecutionLayoutData::default();
+        visit(statement, &mut 0, &mut 0, &mut data);
+        Self {
+            data: std::sync::Arc::new(data),
+        }
     }
 
     pub(in crate::lang::click) fn statement(&self, index: usize) -> Option<SourceStatementRegion> {
-        self.statements.get(&index).copied()
+        self.data.statements.get(&index).copied()
     }
 
     pub(in crate::lang::click) fn statement_count(&self) -> usize {
-        self.statements.len()
+        self.data.statements.len()
     }
 
     pub(in crate::lang::click) fn loop_body_entry(&self, loop_index: usize) -> Option<usize> {
-        self.loop_bodies.get(&loop_index).copied()
+        self.data.loop_bodies.get(&loop_index).copied()
+    }
+}
+
+#[cfg(test)]
+mod source_execution_layout_tests {
+    use super::*;
+
+    #[test]
+    fn clones_share_large_immutable_layouts() {
+        let statements = (0..4096)
+            .map(|index| {
+                (
+                    index,
+                    SourceStatementRegion {
+                        continuation_node: index + 1,
+                        kind: SourceStatementKind::Plain,
+                    },
+                )
+            })
+            .collect();
+        let layout = SourceExecutionLayout {
+            data: std::sync::Arc::new(SourceExecutionLayoutData {
+                statements,
+                loop_bodies: BTreeMap::new(),
+            }),
+        };
+        let cloned = layout.clone();
+
+        assert!(std::sync::Arc::ptr_eq(&layout.data, &cloned.data));
+        assert_eq!(cloned.statement_count(), 4096);
+        assert_eq!(
+            cloned
+                .statement(4095)
+                .map(|region| region.continuation_node),
+            Some(4096)
+        );
     }
 }
 

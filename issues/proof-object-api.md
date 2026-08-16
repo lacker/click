@@ -431,6 +431,15 @@ logarithmic height, joins the checked descendants, and confirms certificate
 extraction emits only the retained one-node branch. This pins cheap
 branch-local fact insertion without relying on wall-clock timing.
 
+Execution-branch preparation has begun at the representation boundary rather
+than by wrapping the legacy clone. `SourceExecutionLayout` is immutable after
+construction and now stores its statement and loop maps behind one shared
+`Arc`; cloning a replay context therefore shares even a 4096-statement layout
+by identity. A deterministic regression pins that property. The remaining
+mutable replay fields still need separation into persistent semantic state
+and legacy certificate/expansion bookkeeping before execution branches can
+become cheap `Proof` forks.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
