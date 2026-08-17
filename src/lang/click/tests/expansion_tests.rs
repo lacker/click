@@ -4942,6 +4942,72 @@ fn contextual_mutable_frame_inside_open_applies_explicit_candidate_on_proof() {
 }
 
 #[test]
+fn smart_execute_crosses_terminal_c_branch_before_checked_frame() {
+    let c_source = r#"
+        int32 write_selected(int32 p[2], int32 flag) {
+            if (flag) {
+                p[0] = 1;
+            } else {
+                p[1] = 1;
+            }
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "write_selected.c";
+
+        int32 write_selected(int32 p[2], int32 flag) {
+            owns marker(flag);
+            consumes p[0..2];
+            mutable p[0..2];
+            ensures result == 0;
+        } by {
+            open(marker(flag)) {
+                execute();
+                frame();
+            }
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("write_selected.c", c_source)])
+    });
+    let verified = verified.expect("smart execute should retain both checked terminal C arms");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "write_selected.contract" && name == "surface certificate replay"
+        )),
+        "branched execute and its common frame must not use ordinary surface replay: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the terminal execution branch should retain its checked certificate");
+    let Some(ProofTactic::Open(open)) = tactics.first() else {
+        panic!("{tactics:#?}");
+    };
+    assert!(
+        matches!(open.tactics.as_slice(), [ProofTactic::If(_), ProofTactic::FrameUsing { region: None, premises }] if premises.is_empty()),
+        "the common exact frame should follow the retained execution branch: {tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("write_selected.c", c_source)],
+        "write_selected",
+        CProofClaim::Grouped,
+    )
+    .expect("branched execute with common frame should expand");
+    verify_c0_sources(&expanded, &[("write_selected.c", c_source)])
+        .expect("the retained execution branch should independently replay");
+}
+
+#[test]
 fn linear_execute_until_inside_open_stops_on_checked_frontier() {
     let c_source = r#"
         int32 three_steps(int32 x) {

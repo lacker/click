@@ -1446,6 +1446,20 @@ have a checked Proof container. The legacy empty-premise source spelling also
 still conflates an explicit empty set with ambient-fact selection and must not
 be imported into the simple checker.
 
+Scoped smart `execute()` now drives a terminal C `if` through the existing
+`ExecutionProofBranches` container when both arms are straight-line statement
+frontiers. Each arm repeatedly selects and applies `StepUsing`, the terminal
+join retains the checked arm certificates, and a following common frame
+continues on the joined Proof. `execute` has a distinct indexed selection
+policy that carries unrelated facts, memory resources, prior effect facts,
+and prioritized successor facts through the checked transition while
+selecting only the statement's definedness premises. Standalone smart `step`
+retains its stricter explicit-certificate policy. A source regression performs
+different array writes in both C arms, crosses the shared return, applies one
+common exact frame, pins the `If; FrameUsing` scope certificate, and
+independently verifies expansion. Nested C branches and genuinely
+path-specific frame premises remain to migrate.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

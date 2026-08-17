@@ -2885,23 +2885,41 @@ impl<'a> Proof<'a> {
     /// are visible before executing the statement.
     ///
     /// This is deliberately narrower than general smart `step` planning. It
-    /// A general statement still requires its proof facts to consist exactly
-    /// of expression-definedness evidence. A local assignment additionally
-    /// selects the current Surface facts indexed under the assigned name;
+    /// requires a general statement's proof facts to consist exactly of
+    /// expression-definedness evidence. A local assignment additionally
+    /// selects current Surface facts indexed under the assigned name;
     /// unrelated facts remain shared and are never scanned. Selection performs
     /// indexed fact/surface lookups only; the C transition runs once, when the
     /// resulting `StepUsing` is submitted to `apply_step` and retained by the
     /// returned descendant.
     pub(super) fn try_indexed_statement_step(&self) -> Result<Option<Self>, ClickError> {
+        self.try_indexed_statement_step_with_unrelated_context(false)
+    }
+
+    /// The same bounded statement selection used by a scoped smart `execute`,
+    /// where unrelated facts, resources, and effects remain shared across the
+    /// checked transition instead of preventing a candidate. This is separate
+    /// from standalone smart `step` so `execute` can traverse an open resource
+    /// scope without changing `step`'s established explicit-certificate
+    /// selection policy.
+    fn try_indexed_execute_step(&self) -> Result<Option<Self>, ClickError> {
+        self.try_indexed_statement_step_with_unrelated_context(true)
+    }
+
+    fn try_indexed_statement_step_with_unrelated_context(
+        &self,
+        allow_unrelated_context: bool,
+    ) -> Result<Option<Self>, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Ok(None);
         };
         let Some(execution) = self.state.execution.as_ref() else {
             return Err(self.step_error("execution-frontier proof lost its semantic state"));
         };
-        if !execution.replay.effect_facts.is_empty()
-            || !execution.state.resources().facts().is_empty()
-            || self.state.facts.prioritized.is_some()
+        if !allow_unrelated_context
+            && (!execution.replay.effect_facts.is_empty()
+                || !execution.state.resources().facts().is_empty()
+                || self.state.facts.prioritized.is_some())
         {
             return Ok(None);
         }
@@ -2927,7 +2945,10 @@ impl<'a> Proof<'a> {
             .collect::<Vec<_>>();
         required.sort();
         required.dedup();
-        if assigned_local.is_none() && self.state.facts.ordered.len() != required.len() {
+        if !allow_unrelated_context
+            && assigned_local.is_none()
+            && self.state.facts.ordered.len() != required.len()
+        {
             return Ok(None);
         }
         let mut selected = Vec::with_capacity(required.len());
@@ -2946,7 +2967,10 @@ impl<'a> Proof<'a> {
                 }
             }
         }
-        if assigned_local.is_none() && selected.len() != self.state.facts.ordered.len() {
+        if !allow_unrelated_context
+            && assigned_local.is_none()
+            && selected.len() != self.state.facts.ordered.len()
+        {
             return Ok(None);
         }
         let mut local_dependencies = BTreeSet::new();
@@ -2998,6 +3022,33 @@ impl<'a> Proof<'a> {
             .execution
             .as_ref()
             .is_some_and(|execution| execution.replay.is_at_function_exit())
+    }
+
+    /// Whether the checked execution frontier is a structural C `if`.
+    ///
+    /// Smart `execute` uses this read-only query to distinguish a structural
+    /// frontier from an ordinary statement whose indexed candidate simply did
+    /// not apply. It grants no branch authority and performs no transition.
+    fn is_at_execution_branch(&self) -> Result<bool, ClickError> {
+        let execution = self
+            .state
+            .execution
+            .as_ref()
+            .ok_or_else(|| self.step_error("execution proof lost its semantic frontier"))?;
+        if execution.replay.is_at_function_exit() {
+            return Ok(false);
+        }
+        let statement_index = execution.replay.frontier.next_statement_index;
+        let source_region = execution
+            .replay
+            .source_layout
+            .statement(statement_index)
+            .ok_or_else(|| {
+                self.step_error(format!(
+                    "could not resolve source statement({statement_index})"
+                ))
+            })?;
+        Ok(matches!(source_region.kind, SourceStatementKind::If { .. }))
     }
 
     /// Resolves a Surface Click statement region against this proof's source
@@ -4452,6 +4503,44 @@ impl<'a> ProofBranches<'a> {
 }
 
 impl<'a> ExecutionProofBranches<'a> {
+    fn retain_arm_successor(
+        arm: &mut ExecutionProofArm<'a>,
+        successor: Proof<'a>,
+        prior_effect_count: usize,
+    ) {
+        arm.proof = successor;
+        for fact in arm.proof.added_facts() {
+            arm.introduced_facts.insert(fact.clone());
+        }
+        let execution = arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .expect("checked execution step retains semantic state");
+        for fact in execution
+            .replay
+            .effect_facts
+            .iter()
+            .skip(prior_effect_count)
+        {
+            if !arm.introduced_effect_facts.contains(fact) {
+                arm.introduced_effect_facts.push(fact.clone());
+            }
+        }
+        for fact in &execution.last_step_delta.function_entry_prerequisites {
+            arm.introduced_function_entry_prerequisites
+                .insert(fact.clone());
+        }
+        for theorem in &execution.last_step_delta.function_entry_derivations {
+            arm.introduced_function_entry_derivations
+                .insert(theorem.clone());
+        }
+        for name in &execution.last_step_delta.unfolded_predicates {
+            arm.introduced_unfolded_predicates.insert(name.clone());
+        }
+    }
+
     pub(super) fn has_both_feasible_arms(&self) -> bool {
         self.arms.iter().all(Option::is_some)
     }
@@ -4516,39 +4605,45 @@ impl<'a> ExecutionProofBranches<'a> {
             .replay
             .effect_facts
             .len();
-        arm.proof = arm.proof.apply_step(step)?;
-        for fact in arm.proof.added_facts() {
-            arm.introduced_facts.insert(fact.clone());
-        }
-        let execution = arm
-            .proof
-            .state
-            .execution
-            .as_ref()
-            .expect("checked execution step retains semantic state");
-        for fact in execution
-            .replay
-            .effect_facts
-            .iter()
-            .skip(prior_effect_count)
-        {
-            if !arm.introduced_effect_facts.contains(fact) {
-                arm.introduced_effect_facts.push(fact.clone());
-            }
-        }
-        for fact in &execution.last_step_delta.function_entry_prerequisites {
-            arm.introduced_function_entry_prerequisites
-                .insert(fact.clone());
-        }
-        for theorem in &execution.last_step_delta.function_entry_derivations {
-            arm.introduced_function_entry_derivations
-                .insert(theorem.clone());
-        }
-        for name in &execution.last_step_delta.unfolded_predicates {
-            arm.introduced_unfolded_predicates.insert(name.clone());
-        }
+        let successor = arm.proof.apply_step(step)?;
+        Self::retain_arm_successor(&mut arm, successor, prior_effect_count);
         self.arms[arm_index] = Some(arm);
         Ok(self)
+    }
+
+    /// Runs the narrow statement selector independently in one C arm until
+    /// that arm reaches function exit. Every accepted transition is already
+    /// a retained `StepUsing` successor; encountering another structural
+    /// frontier is a search miss and leaves the caller free to use the legacy
+    /// recursive executor.
+    pub(super) fn try_execute_arm_to_exit(
+        mut self,
+        take_then: bool,
+    ) -> Result<Option<Self>, ClickError> {
+        let arm_index = usize::from(!take_then);
+        loop {
+            let mut arm = self.arms[arm_index].take().ok_or_else(|| {
+                self.root.step_error(format!(
+                    "cannot execute the infeasible {} execution arm",
+                    if take_then { "then" } else { "else" }
+                ))
+            })?;
+            let execution = arm.proof.state.execution.as_ref().ok_or_else(|| {
+                self.root
+                    .step_error("execution branch arm lost its semantic state")
+            })?;
+            if execution.replay.is_at_function_exit() {
+                self.arms[arm_index] = Some(arm);
+                return Ok(Some(self));
+            }
+            let prior_effect_count = execution.replay.effect_facts.len();
+            let Some(successor) = arm.proof.try_indexed_execute_step()? else {
+                self.arms[arm_index] = Some(arm);
+                return Ok(None);
+            };
+            Self::retain_arm_successor(&mut arm, successor, prior_effect_count);
+            self.arms[arm_index] = Some(arm);
+        }
     }
 
     /// Joins two checked C branch descendants that both return.
@@ -4610,14 +4705,13 @@ impl<'a> ExecutionProofBranches<'a> {
                     .step_error(format!("{name} branch arm lost its execution state"))
             })?;
             if !execution.replay.is_at_function_exit()
-                || !execution
-                    .replay
-                    .completed_branch_regions
-                    .contains(&self.statement_index)
                 || execution.replay.frontier.continuations.len() > self.initial_continuation_depth
             {
                 return Err(self.root.step_error(format!(
-                    "{name} branch arm has not completed at function exit"
+                    "{name} branch arm has not completed at function exit (at exit: {}, continuation depth: {}, root depth: {})",
+                    execution.replay.is_at_function_exit(),
+                    execution.replay.frontier.continuations.len(),
+                    self.initial_continuation_depth,
                 )));
             }
             if !matches!(
@@ -5377,8 +5471,23 @@ impl<'a> ProofScope<'a> {
         let mut introduced_facts = self.introduced_facts.clone();
         let mut advanced = false;
         while !proof.is_at_function_exit() {
-            let Some(next) = proof.try_indexed_statement_step()? else {
-                return Ok(None);
+            let next = if let Some(next) = proof.try_indexed_execute_step()? {
+                next
+            } else {
+                if !proof.is_at_execution_branch()? {
+                    return Ok(None);
+                }
+                let branches = proof.begin_execution_branch()?;
+                if !branches.has_both_feasible_arms() {
+                    return Ok(None);
+                }
+                let Some(branches) = branches.try_execute_arm_to_exit(true)? else {
+                    return Ok(None);
+                };
+                let Some(branches) = branches.try_execute_arm_to_exit(false)? else {
+                    return Ok(None);
+                };
+                branches.join_terminal()?
             };
             for fact in next.added_facts() {
                 if !introduced_facts.contains(fact) {
