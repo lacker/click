@@ -648,6 +648,62 @@ fn try_indexed_step_on_proof<'a>(
     }
 }
 
+/// Applies one explicit resource step without growing the recursive replay
+/// driver's stack frame. Resource checking and certificate retention happen
+/// inside `Proof`; this outlined adapter only moves the checked successor back
+/// across the temporary legacy execution boundary.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn apply_resource_step_on_proof<'a>(
+    state: &mut CState,
+    pure_facts: &mut Vec<Proposition>,
+    replay: &mut TacticReplayState,
+    branch_path: &mut PersistentSequence<String>,
+    step: SimpleProofStep,
+    function_block: &'a FunctionBlock,
+    function: &'a CFunction,
+    parsed_function: &'a syntax::C0Function,
+    arguments: &'a [CExpression],
+    function_environment: &'a CExecutionEnvironment,
+    resource_environment: &'a ResourceEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    claim_label: &'a str,
+    tactic_index: usize,
+) -> Result<(), ClickError> {
+    debug_assert!(matches!(
+        step,
+        SimpleProofStep::UnfoldResource(_) | SimpleProofStep::ObserveResource(_)
+    ));
+    let root = Proof::for_execution_frontier(
+        claim_label,
+        tactic_index,
+        ProofReplayContext {
+            state: std::mem::replace(state, CState::new()),
+            pure_facts: std::mem::take(pure_facts),
+            replay: std::mem::take(replay),
+            branch_path: std::mem::take(branch_path),
+        },
+        function_block,
+        function,
+        parsed_function,
+        arguments,
+        function_environment,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    );
+    let proof = root.apply_step(step)?;
+    let context = proof.into_execution_context()?;
+    *state = context.state;
+    *pure_facts = context.pure_facts;
+    *replay = context.replay;
+    *branch_path = context.branch_path;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn replay_linear_tactics_without_frontier_loops(
     context: ProofReplayContext,
@@ -949,38 +1005,12 @@ fn replay_linear_tactics_without_frontier_loops(
                 branch_path = result.branch_path;
             }
             ProofTactic::UnfoldResource(resource) => {
-                if replay.is_at_function_exit() {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `unfold` must run before execution reaches function exit"
-                    )));
-                }
-                state = unfold_composite_resource(
-                    resource_environment,
-                    resource,
-                    parsed_function.parameters(),
-                    arguments,
-                    state,
+                apply_resource_step_on_proof(
+                    &mut state,
                     &mut requirement_pure_facts,
-                    &mut replay.surface_propositions,
-                    predicate_environment,
-                    click_function_environment,
-                    claim_label,
-                    tactic_index,
-                    ResourceBodyAccess::Finalize,
-                )?
-                .state;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
-            }
-            ProofTactic::ObserveResource(resource) => {
-                let proof = Proof::for_execution_frontier(
-                    claim_label,
-                    tactic_index,
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
+                    &mut replay,
+                    &mut branch_path,
+                    SimpleProofStep::UnfoldResource(resource.clone()),
                     function_block,
                     function,
                     parsed_function,
@@ -990,17 +1020,30 @@ fn replay_linear_tactics_without_frontier_loops(
                     predicate_environment,
                     click_function_environment,
                     theorem_environment,
-                );
-                let proof = proof.apply_step(SimpleProofStep::ObserveResource(resource.clone()))?;
-                let certificate = proof.certificate();
-                let result = proof.into_execution_context()?;
-                state = result.state;
-                requirement_pure_facts = result.pure_facts;
-                replay = result.replay;
-                branch_path = result.branch_path;
-                for step in certificate.steps() {
-                    replay.proof_certificate_builder.push_step(step.clone());
-                }
+                    claim_label,
+                    tactic_index,
+                )?;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
+            ProofTactic::ObserveResource(resource) => {
+                apply_resource_step_on_proof(
+                    &mut state,
+                    &mut requirement_pure_facts,
+                    &mut replay,
+                    &mut branch_path,
+                    SimpleProofStep::ObserveResource(resource.clone()),
+                    function_block,
+                    function,
+                    parsed_function,
+                    arguments,
+                    function_environment,
+                    resource_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    theorem_environment,
+                    claim_label,
+                    tactic_index,
+                )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::Transport {

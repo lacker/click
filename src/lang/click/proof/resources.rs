@@ -436,20 +436,25 @@ fn project_resource_context_observable_facts(
     Ok(propositions)
 }
 
-fn append_state_resource_context_observable_facts(
+fn append_state_resource_context_observable_facts_with_store<F: ResourcePureFacts>(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
-    available_pure_facts: &mut Vec<Proposition>,
+    available_pure_facts: &mut F,
     context: &str,
 ) -> Result<(), ClickError> {
-    *available_pure_facts = project_resource_context_observable_facts(
-        parameters,
-        arguments,
-        state.resources(),
-        available_pure_facts,
-        context,
-    )?;
+    let facts = state
+        .resources()
+        .observable_facts(available_pure_facts.assumptions())
+        .map_err(|error| {
+            ClickError::new(format!(
+                "{context}: {}",
+                describe_resource_context_validity_error(error, parameters, arguments)
+            ))
+        })?;
+    for fact in facts {
+        available_pure_facts.insert(fact);
+    }
     Ok(())
 }
 
@@ -1151,7 +1156,7 @@ fn composite_resource_body_is_active(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<bool, String> {
     let assumptions = assumptions_from_propositions(available_pure_facts);
-    try_select_composite_resource_body(
+    composite_resource_body_is_active_with_assumptions(
         definition,
         substitutions,
         parameters,
@@ -1160,6 +1165,33 @@ fn composite_resource_body_is_active(
         state,
         result,
         &assumptions,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn composite_resource_body_is_active_with_assumptions(
+    definition: &ResourceDefinition,
+    substitutions: &BTreeMap<String, ContractExpression>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: &CValue,
+    assumptions: &PureFactContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<bool, String> {
+    try_select_composite_resource_body(
+        definition,
+        substitutions,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        result,
+        assumptions,
         predicate_environment,
         click_function_environment,
     )?
@@ -1370,19 +1402,6 @@ fn append_composite_resource_relation_facts_with_store<F: ResourcePureFacts>(
     }
 }
 
-fn append_composite_resource_relation_facts(
-    parent_resource: &CResource,
-    contained_resources: &ResourceContext,
-    propositions: &mut Vec<Proposition>,
-) {
-    let mut facts = LegacyResourcePureFacts::new(propositions);
-    append_composite_resource_relation_facts_with_store(
-        parent_resource,
-        contained_resources,
-        &mut facts,
-    );
-}
-
 fn append_composite_resource_loadable_facts<F: ResourcePureFacts>(
     definition: &ResourceDefinition,
     composite_body: &CompositeResourceBody,
@@ -1431,19 +1450,6 @@ fn append_resource_clause_loadable_fact_with_store<F: ResourcePureFacts>(
     };
     propositions.insert(proposition);
     Ok(())
-}
-
-fn append_resource_clause_loadable_fact(
-    resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    memory: &CMemory,
-    propositions: &mut Vec<Proposition>,
-) -> Result<(), ClickError> {
-    let mut facts = LegacyResourcePureFacts::new(propositions);
-    append_resource_clause_loadable_fact_with_store(
-        resource, parameters, arguments, memory, &mut facts,
-    )
 }
 
 pub(super) fn append_lowered_resource_clause_loadable_fact(
@@ -1645,8 +1651,82 @@ pub(super) fn unfold_composite_resource(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    mut state: CState,
+    state: CState,
     available_pure_facts: &mut Vec<Proposition>,
+    surface_propositions: &mut SurfacePropositionMap,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+    access: ResourceBodyAccess,
+) -> Result<UnfoldedCompositeResource, ClickError> {
+    let mut facts = LegacyResourcePureFacts::new(available_pure_facts);
+    unfold_composite_resource_with_facts(
+        resource_environment,
+        resource,
+        parameters,
+        arguments,
+        state,
+        &mut facts,
+        surface_propositions,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+        tactic_index,
+        access,
+    )
+}
+
+pub(super) struct CheckedResourceUnfold {
+    pub(super) state: CState,
+    pub(super) facts: ProofFacts,
+    pub(super) added_facts: Vec<Proposition>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn unfold_composite_resource_for_proof(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: CState,
+    facts: ProofFacts,
+    surface_propositions: &mut SurfacePropositionMap,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+) -> Result<CheckedResourceUnfold, ClickError> {
+    let mut facts = ProofResourcePureFacts::new(facts);
+    let unfolded = unfold_composite_resource_with_facts(
+        resource_environment,
+        resource,
+        parameters,
+        arguments,
+        state,
+        &mut facts,
+        surface_propositions,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+        tactic_index,
+        ResourceBodyAccess::Finalize,
+    )?;
+    Ok(CheckedResourceUnfold {
+        state: unfolded.state,
+        facts: facts.facts,
+        added_facts: facts.added,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    mut state: CState,
+    available_pure_facts: &mut F,
     surface_propositions: &mut SurfacePropositionMap,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -1666,7 +1746,7 @@ pub(super) fn unfold_composite_resource(
         .expect("composite_resource_law_definition should require a composite body");
     let substitutions =
         resource_argument_substitutions(definition, resource, claim_label, tactic_index)?;
-    let body_active = composite_resource_body_is_active(
+    let body_active = composite_resource_body_is_active_with_assumptions(
         definition,
         &substitutions,
         parameters,
@@ -1674,7 +1754,7 @@ pub(super) fn unfold_composite_resource(
         &state,
         &state,
         &CValue::Int32(Bitvector32Term::Constant(0)),
-        available_pure_facts,
+        available_pure_facts.assumptions(),
         predicate_environment,
         click_function_environment,
     )
@@ -1696,7 +1776,7 @@ pub(super) fn unfold_composite_resource(
     };
     let mut abstract_resource =
         lower_resource_clause(resource, parameters, arguments, state.memory())?;
-    let assumptions = assumptions_from_propositions(available_pure_facts);
+    let assumptions = available_pure_facts.assumptions().clone();
     if access == ResourceBodyAccess::Open
         && !state
             .resources()
@@ -1798,7 +1878,7 @@ pub(super) fn unfold_composite_resource(
                     describe_resource_clause(resource),
                     describe_missing_resource_fact(
                         &abstract_resource,
-                        available_pure_facts,
+                        &available_pure_facts.materialize(),
                         state.resources().facts(),
                         parameters,
                         arguments,
@@ -1818,7 +1898,7 @@ pub(super) fn unfold_composite_resource(
             describe_resource_clause(resource),
             describe_missing_resource_fact(
                 &abstract_resource,
-                available_pure_facts,
+                &available_pure_facts.materialize(),
                 state.resources().facts(),
                 parameters,
                 arguments,
@@ -1867,7 +1947,7 @@ pub(super) fn unfold_composite_resource(
             parameters,
         );
         state = state.with_memory(memory);
-        append_resource_clause_loadable_fact(
+        append_resource_clause_loadable_fact_with_store(
             &contained,
             parameters,
             arguments,
@@ -1916,13 +1996,13 @@ pub(super) fn unfold_composite_resource(
                     describe_resource_clause(resource)
                 ))
             })?;
-        let lowered_fact = lower_outcome_proposition(
+        let lowered_fact = lower_outcome_proposition_with_assumptions(
             parameters,
             arguments,
             &state,
             &state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
-            available_pure_facts,
+            available_pure_facts.assumptions(),
             &fact,
             predicate_environment,
             click_function_environment,
@@ -1933,7 +2013,7 @@ pub(super) fn unfold_composite_resource(
                 describe_resource_clause(resource),
                 describe_click_proposition(&fact),
                 describe_proof_context(
-                    available_pure_facts,
+                    &available_pure_facts.materialize(),
                     state.resources().facts(),
                     parameters,
                     arguments,
@@ -1942,7 +2022,7 @@ pub(super) fn unfold_composite_resource(
             ))
         })?;
         surface_propositions.record_lowering(&fact, &lowered_fact)?;
-        available_pure_facts.push(lowered_fact);
+        available_pure_facts.insert(lowered_fact);
     }
 
     // Project the complete body in one checked composition. Composing each
@@ -1952,11 +2032,10 @@ pub(super) fn unfold_composite_resource(
     // pure facts are simultaneous consequences of the same composite law, so
     // make them available while canonicalizing its children.
     if !already_unfolded && !body_was_already_exposed {
-        let composition_assumptions = assumptions_from_propositions(available_pure_facts);
         let resources = state
             .resources()
             .clone()
-            .try_compose_with_facts(unfolded_facts.clone(), &composition_assumptions)
+            .try_compose_with_facts(unfolded_facts.clone(), available_pure_facts.assumptions())
             .map_err(|error| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
@@ -1968,13 +2047,13 @@ pub(super) fn unfold_composite_resource(
     }
 
     let unfolded_resources = ResourceContext::new().unchecked_with_facts(unfolded_facts);
-    append_composite_resource_relation_facts(
+    append_composite_resource_relation_facts_with_store(
         abstract_resource.resource(),
         &unfolded_resources,
         available_pure_facts,
     );
 
-    append_state_resource_context_observable_facts(
+    append_state_resource_context_observable_facts_with_store(
         parameters,
         arguments,
         &state,

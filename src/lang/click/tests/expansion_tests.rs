@@ -4372,6 +4372,108 @@ fn execution_bare_apply_selects_and_retains_its_step_through_proof() {
 }
 
 #[test]
+fn execution_resource_unfold_is_recorded_once_and_replays() {
+    let c_source = r#"
+        int32 discard(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "discard.c";
+
+        int32 discard(int32 x) {
+            consumes marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            unfold(marker(x));
+            execute();
+            frame();
+            assumption();
+        }
+    "#;
+
+    let verified = verify_c0_sources(click_source, &[("discard.c", c_source)])
+        .expect("the explicit resource unfold should verify through Proof");
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked grouped proof should retain its simple expansion");
+    assert_eq!(
+        tactics
+            .iter()
+            .filter(|tactic| matches!(tactic, ProofTactic::UnfoldResource(_)))
+            .count(),
+        1,
+        "one source unfold must produce exactly one retained step"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("discard.c", c_source)],
+        "discard",
+        CProofClaim::Grouped,
+    )
+    .expect("the grouped resource proof should expand");
+    assert_eq!(expanded.matches("unfold(marker(x));").count(), 1);
+    verify_c0_sources(&expanded, &[("discard.c", c_source)])
+        .expect("the one retained unfold should independently replay");
+}
+
+#[test]
+fn execution_resource_observe_is_recorded_once_and_replays() {
+    let c_source = r#"
+        int32 inspect(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "inspect.c";
+
+        int32 inspect(int32 x) {
+            views marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            observe(marker(x));
+            execute();
+            frame();
+            assumption();
+        }
+    "#;
+
+    let verified = verify_c0_sources(click_source, &[("inspect.c", c_source)])
+        .expect("the explicit resource observation should verify through Proof");
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked grouped proof should retain its simple expansion");
+    assert_eq!(
+        tactics
+            .iter()
+            .filter(|tactic| matches!(tactic, ProofTactic::ObserveResource(_)))
+            .count(),
+        1,
+        "one source observation must produce exactly one retained step"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("inspect.c", c_source)],
+        "inspect",
+        CProofClaim::Grouped,
+    )
+    .expect("the grouped resource proof should expand");
+    assert_eq!(expanded.matches("observe(marker(x));").count(), 1);
+    verify_c0_sources(&expanded, &[("inspect.c", c_source)])
+        .expect("the one retained observation should independently replay");
+}
+
+#[test]
 fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
     let c_source = r#"
             int32 choose(int32 value) {

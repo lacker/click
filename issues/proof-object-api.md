@@ -1316,6 +1316,19 @@ exact certificate identity, ancestor isolation, and failed-step
 transactionality. Existing expansion/resource examples independently check
 the serialized simple step.
 
+`unfold(resource)` now uses the same indexed seam. Its checked transition
+selects the active composite body, removes the folded representation, lowers
+and records body facts, materializes the body resources, and retains the exact
+`SimpleProofStep::UnfoldResource` atomically. The structural `open` operation
+continues to use the same semantic checker through its legacy scope adapter;
+there is still only one implementation of the resource law. A separate
+16-through-4096 curve checks local persistent work, exact certificate
+identity, ancestor isolation, and failed-step transactionality. Initially
+placing the second resource transition inline enlarged the recursive replay
+driver enough to trip the deep pure-case stack canary; resource-step boundary
+export is now outlined in a non-inlined adapter, and the unchanged canary is
+green.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
