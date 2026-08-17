@@ -722,9 +722,27 @@ struct ClickArrayRef {
 }
 
 type ClickArrayRefs = BTreeMap<String, ClickArrayRef>;
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct ProgramPointStates {
+    version: std::sync::Arc<ProgramPointStateVersion>,
+}
+
+struct ProgramPointStateVersion {
     root: Option<std::sync::Arc<ProgramPointStateNode>>,
+    history: Option<std::sync::Arc<ProgramPointStateChange>>,
+    origin: std::sync::Arc<()>,
+}
+
+impl Default for ProgramPointStates {
+    fn default() -> Self {
+        Self {
+            version: std::sync::Arc::new(ProgramPointStateVersion {
+                root: None,
+                history: None,
+                origin: std::sync::Arc::new(()),
+            }),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -736,13 +754,33 @@ struct ProgramPointStateNode {
     height: u8,
 }
 
+/// One persistent map mutation. Proof branches share their complete prefix;
+/// an audited join can therefore visit only the keys changed in either arm
+/// instead of intersecting every program point accumulated by the project.
+#[derive(Clone)]
+#[allow(dead_code)]
+struct ProgramPointStateChange {
+    point: ProgramPointRef,
+    parent: Option<std::sync::Arc<ProgramPointStateChange>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static PROGRAM_POINT_NODE_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn program_point_node_allocations() -> usize {
+    PROGRAM_POINT_NODE_ALLOCATIONS.with(std::cell::Cell::get)
+}
+
 impl ProgramPointStates {
     fn new() -> Self {
         Self::default()
     }
 
     fn get(&self, point: &ProgramPointRef) -> Option<&CState> {
-        let mut node = self.root.as_deref();
+        let mut node = self.version.root.as_deref();
         while let Some(current) = node {
             match point.cmp(&current.point) {
                 std::cmp::Ordering::Less => node = current.left.as_deref(),
@@ -759,25 +797,97 @@ impl ProgramPointStates {
 
     fn insert(&mut self, point: ProgramPointRef, state: CState) -> Option<CState> {
         let prior = self.get(&point).cloned();
-        self.root = Some(program_point_insert(self.root.as_ref(), point, Some(state)));
+        self.version = std::sync::Arc::new(ProgramPointStateVersion {
+            root: Some(program_point_insert(
+                self.version.root.as_ref(),
+                point.clone(),
+                Some(state),
+            )),
+            history: Some(std::sync::Arc::new(ProgramPointStateChange {
+                point,
+                parent: self.version.history.clone(),
+            })),
+            origin: self.version.origin.clone(),
+        });
         prior
     }
 
     fn remove(&mut self, point: &ProgramPointRef) -> Option<CState> {
         let prior = self.get(point).cloned();
         if prior.is_some() {
-            self.root = Some(program_point_insert(
-                self.root.as_ref(),
-                point.clone(),
-                None,
-            ));
+            self.version = std::sync::Arc::new(ProgramPointStateVersion {
+                root: Some(program_point_insert(
+                    self.version.root.as_ref(),
+                    point.clone(),
+                    None,
+                )),
+                history: Some(std::sync::Arc::new(ProgramPointStateChange {
+                    point: point.clone(),
+                    parent: self.version.history.clone(),
+                })),
+                origin: self.version.origin.clone(),
+            });
         }
         prior
     }
 
+    /// Intersects two descendants of one exact persistent ancestor by
+    /// visiting only the keys changed after the fork.
+    ///
+    /// This is the program-point merge required by a proof-level execution
+    /// case split. Returning `None` for unrelated histories prevents a caller
+    /// from treating structurally similar maps as branches of the same proof.
+    #[allow(dead_code)]
+    fn common_descendant(&self, other: &Self, ancestor: &Self) -> Option<Self> {
+        fn changed_keys_since(
+            descendant: &ProgramPointStates,
+            ancestor: &ProgramPointStates,
+            changed: &mut BTreeSet<ProgramPointRef>,
+        ) -> bool {
+            let mut current = descendant.version.history.as_ref();
+            loop {
+                match (current, ancestor.version.history.as_ref()) {
+                    (Some(left), Some(right)) if std::sync::Arc::ptr_eq(left, right) => {
+                        return true;
+                    }
+                    (None, None) => return true,
+                    (Some(change), _) => {
+                        changed.insert(change.point.clone());
+                        current = change.parent.as_ref();
+                    }
+                    (None, Some(_)) => return false,
+                }
+            }
+        }
+
+        if !std::sync::Arc::ptr_eq(&self.version.origin, &ancestor.version.origin)
+            || !std::sync::Arc::ptr_eq(&other.version.origin, &ancestor.version.origin)
+        {
+            return None;
+        }
+        let mut changed = BTreeSet::new();
+        if !changed_keys_since(self, ancestor, &mut changed)
+            || !changed_keys_since(other, ancestor, &mut changed)
+        {
+            return None;
+        }
+        let mut common = ancestor.clone();
+        for point in changed {
+            match (self.get(&point), other.get(&point)) {
+                (Some(left), Some(right)) if left == right => {
+                    common.insert(point, left.clone());
+                }
+                _ => {
+                    common.remove(&point);
+                }
+            }
+        }
+        Some(common)
+    }
+
     fn iter(&self) -> std::vec::IntoIter<(&ProgramPointRef, &CState)> {
         let mut entries = Vec::new();
-        program_point_entries(self.root.as_deref(), &mut entries);
+        program_point_entries(self.version.root.as_deref(), &mut entries);
         entries.into_iter()
     }
 
@@ -821,6 +931,8 @@ fn program_point_node(
     left: Option<std::sync::Arc<ProgramPointStateNode>>,
     right: Option<std::sync::Arc<ProgramPointStateNode>>,
 ) -> std::sync::Arc<ProgramPointStateNode> {
+    #[cfg(test)]
+    PROGRAM_POINT_NODE_ALLOCATIONS.with(|allocations| allocations.set(allocations.get() + 1));
     let height = 1 + program_point_height(left.as_ref()).max(program_point_height(right.as_ref()));
     std::sync::Arc::new(ProgramPointStateNode {
         point,

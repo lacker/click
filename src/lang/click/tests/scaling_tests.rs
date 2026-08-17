@@ -604,3 +604,61 @@ fn scaling_assertion_rejects_a_quadratic_curve() {
     assert!(!near_linear_scaling(&quadratic));
     assert!(named_growth_diagnostic(&quadratic).contains("quadratic reference"));
 }
+
+#[test]
+fn program_point_branch_merge_visits_only_fork_local_changes() {
+    let point = |name: String| ProgramPointRef {
+        region: CodeRegionRef::Mark(name),
+        kind: ProgramPointKind::Entry,
+    };
+    let common_point = point("common".to_string());
+    let left_only = point("left-only".to_string());
+    let right_only = point("right-only".to_string());
+    let common_state = CState::new();
+    let mut samples = Vec::new();
+
+    for size in [16_usize, 64, 256, 1024, 4096] {
+        let mut ancestor = ProgramPointStates::new();
+        for index in 0..size {
+            ancestor.insert(point(format!("ambient-{index:05}")), CState::new());
+        }
+        let mut left = ancestor.clone();
+        let mut right = ancestor.clone();
+        left.insert(common_point.clone(), common_state.clone());
+        right.insert(common_point.clone(), common_state.clone());
+        left.insert(left_only.clone(), CState::new());
+        right.insert(right_only.clone(), CState::new());
+
+        let before = program_point_node_allocations();
+        let merged = left
+            .common_descendant(&right, &ancestor)
+            .expect("fork siblings should have an exact persistent ancestor");
+        let allocations = program_point_node_allocations() - before;
+        samples.push((
+            size,
+            (usize::BITS - size.leading_zeros()) as usize,
+            allocations,
+        ));
+
+        assert_eq!(merged.get(&common_point), Some(&common_state));
+        assert!(merged.get(&left_only).is_none());
+        assert!(merged.get(&right_only).is_none());
+        assert_eq!(
+            merged.get(&point(format!("ambient-{:05}", size / 2))),
+            Some(&CState::new())
+        );
+        assert_eq!(ancestor.iter().count(), size);
+
+        let unrelated = ProgramPointStates::new();
+        assert!(left.common_descendant(&right, &unrelated).is_none());
+    }
+
+    let (_, base_height, base_allocations) = samples[0];
+    for (size, height, allocations) in samples {
+        let bound = base_allocations + 8 * (height - base_height);
+        assert!(
+            allocations <= bound,
+            "size {size} program-point merge allocated {allocations} nodes (logarithmic bound {bound})"
+        );
+    }
+}
