@@ -6028,6 +6028,82 @@ fn branch_arms_retain_nested_have_proofs() {
 }
 
 #[test]
+fn explicit_branch_arms_retain_terminal_execute_search() {
+    let c_source = r#"
+        int32 choose_one_or_two(int32 flag) {
+            if (flag != 0) {
+                return 1;
+            } else {
+                return 2;
+            }
+        }
+    "#;
+    let click_source = r#"
+        verifying "choose_one_or_two.c";
+
+        int32 choose_one_or_two(int32 flag) {
+            ensures result == 1 or result == 2;
+        } by {
+            branch {
+                then {
+                    execute();
+                }
+                else {
+                    execute();
+                }
+            }
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("choose_one_or_two.c", c_source)])
+    });
+    let verified = verified.expect("terminal arm execution should advance the branch Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "choose_one_or_two.contract"
+                    && name == "surface certificate replay"
+        )),
+        "ordinary terminal arm execution must not replay its retained steps: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked terminal arms should retain an expansion");
+    let Some(ProofTactic::If(proof_if)) = tactics.first() else {
+        panic!("terminal execution branch should retain a logical if: {tactics:#?}");
+    };
+    for arm in [&proof_if.then_tactics, &proof_if.else_tactics] {
+        assert!(
+            matches!(
+                arm.get(..2),
+                Some([ProofTactic::StepUsing(entry), ProofTactic::StepUsing(ret)])
+                    if entry.is_empty() && ret.len() == 1
+            ),
+            "each terminal arm should begin with its checked entry and return steps: {arm:#?}"
+        );
+        assert!(
+            arm.iter().all(|tactic| !matches!(
+                tactic,
+                ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
+            )),
+            "terminal arm expansion must not retain smart execution: {arm:#?}"
+        );
+    }
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("choose_one_or_two.c", c_source)],
+        "choose_one_or_two",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained terminal branch should expand");
+    verify_c0_sources(&expanded, &[("choose_one_or_two.c", c_source)])
+        .expect("the explicit terminal arm steps should independently re-derive");
+}
+
+#[test]
 fn transformed_resource_branch_interface_retains_its_common_descendant() {
     let markdown = include_str!("../../../../mdtests/proof_branch_composite_resource_transform.md");
     let mdtest = crate::cli::parse_mdtest(

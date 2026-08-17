@@ -10342,6 +10342,7 @@ mod tests {
 
         let mut samples = Vec::new();
         let mut nested_samples = Vec::new();
+        let mut execute_samples = Vec::new();
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
             pure_facts.push(kernel_premise.clone());
@@ -10376,6 +10377,7 @@ mod tests {
                 .begin_execution_branch()
                 .expect("the symbolic condition should expose two theorem-search arms");
             let nested_branches = branches.clone();
+            let execute_branches = branches.clone();
             let missing = branches
                 .try_theorem_application(true, &missing_application)
                 .err()
@@ -10484,6 +10486,41 @@ mod tests {
                         && proof.steps() == [SimpleProofStep::Assumption]
                 ));
             }
+
+            let before_execute = fact_node_allocations();
+            let execute_branches = execute_branches
+                .try_execute_arm_to_exit(true)
+                .expect("then-arm execution search should run")
+                .expect("the direct then return should produce a checked descendant")
+                .try_execute_arm_to_exit(false)
+                .expect("else-arm execution search should run")
+                .expect("the direct else return should produce a checked descendant");
+            execute_samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before_execute,
+            ));
+            for take_then in [true, false] {
+                assert!(matches!(
+                    execute_branches
+                        .arm(take_then)
+                        .expect("both terminal execution arms remain feasible")
+                        .certificate()
+                        .steps(),
+                    [SimpleProofStep::StepUsing(premises)] if premises.len() == 1
+                ));
+            }
+            let terminal = execute_branches
+                .join_terminal()
+                .expect("the two checked return arms should join as terminal outcomes");
+            assert!(matches!(
+                terminal.certificate().steps(),
+                [SimpleProofStep::If {
+                    then_proof,
+                    else_proof,
+                    ..
+                }] if then_proof.steps().len() == 2 && else_proof.steps().len() == 2
+            ));
             assert!(root.certificate().steps().is_empty());
         }
         let (_, base_height, base_allocations) = samples[0];
@@ -10500,6 +10537,14 @@ mod tests {
             assert!(
                 allocations <= bound,
                 "size {size} two-arm nested proof allocated {allocations} persistent nodes (bound {bound})"
+            );
+        }
+        let (_, base_height, base_allocations) = execute_samples[0];
+        for (size, height, allocations) in execute_samples {
+            let bound = base_allocations + 128 * (height - base_height);
+            assert!(
+                allocations <= bound,
+                "size {size} two-arm terminal execution allocated {allocations} persistent nodes (bound {bound})"
             );
         }
     }

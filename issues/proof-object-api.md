@@ -1625,6 +1625,22 @@ certificates. A source regression retains explicit theorem applications
 inside both C arms, observes no ordinary replay, and independently verifies
 expansion.
 
+Explicit execution branches whose two arms both end in `execute()` now reuse
+the existing checked arm-to-exit search. Every selected statement is applied
+to the arm's current `Proof`; the terminal join retains the two exact paths as
+one logical `If` and does not reconstruct either arm from returned contexts.
+The source selector deliberately requires the symmetric terminal shape:
+mixed return/continuation arms still need a typed multi-outcome join and stay
+on the legacy driver. A later top-level effect frame also keeps the established
+legacy boundary: exporting the checked terminal outcomes and then asking the
+legacy frame driver to own them would duplicate their representation. That
+source shape was not previously complete—the legacy branch returns completed
+contexts before its continuation—and remains unsupported until the effect
+frame itself stays on Proof, as it already does inside `open`. A
+16-through-4096 unrelated-fact curve bounds the two arm searches and terminal
+join, while a source regression observes no ordinary replay, pins the
+entry-and-return steps in each arm, and independently verifies expansion.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

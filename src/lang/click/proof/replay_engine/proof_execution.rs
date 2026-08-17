@@ -35,19 +35,106 @@ fn linear_execution_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]
 
 fn linear_execution_branch_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]> {
     let tactics = linear_execution_tactics(node)?;
-    tactics
-        .iter()
-        .all(|indexed| {
-            linear_execution_simple_step(&indexed.tactic).is_some()
+    (tactics.iter().enumerate().all(|(index, indexed)| {
+        let is_execute = matches!(
+            indexed.tactic,
+            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
+        );
+        (!is_execute || index + 1 == tactics.len())
+            && (linear_execution_simple_step(&indexed.tactic).is_some()
                 || matches!(
                     indexed.tactic,
                     ProofTactic::SmartStep
                         | ProofTactic::ApplyTheorem(_)
                         | ProofTactic::Transport { .. }
                         | ProofTactic::Have(_)
-                )
+                        | ProofTactic::SmartExecute
+                        | ProofTactic::SmartExecuteAllPaths
+                ))
+    }))
+    .then_some(tactics)
+}
+
+/// Selects only arm pairs whose terminal shape has an audited Proof join.
+/// Two arms that both end in `execute()` join as terminal outcomes; arms that
+/// both stop at the shared continuation use the ordinary branch join. A mixed
+/// pair still needs the legacy multi-context representation.
+fn linear_execution_branch_pair<'a>(
+    then_branch: &'a InternalProofNode,
+    else_branch: &'a InternalProofNode,
+) -> Option<(&'a [IndexedTactic], &'a [IndexedTactic])> {
+    let then_tactics = linear_execution_branch_tactics(then_branch)?;
+    let else_tactics = linear_execution_branch_tactics(else_branch)?;
+    let ends_at_exit = |tactics: &[IndexedTactic]| {
+        tactics.last().is_some_and(|indexed| {
+            matches!(
+                indexed.tactic,
+                ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
+            )
         })
-        .then_some(tactics)
+    };
+    (ends_at_exit(then_tactics) == ends_at_exit(else_tactics))
+        .then_some((then_tactics, else_tactics))
+}
+
+fn execution_branch_tactics_end_at_exit(tactics: &[IndexedTactic]) -> bool {
+    tactics.last().is_some_and(|indexed| {
+        matches!(
+            indexed.tactic,
+            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
+        )
+    })
+}
+
+fn internal_proof_contains_frame(node: &InternalProofNode) -> bool {
+    match node {
+        InternalProofNode::Done => false,
+        InternalProofNode::Linear {
+            tactics,
+            continuation,
+        } => {
+            tactics.iter().any(|indexed| {
+                matches!(
+                    indexed.tactic,
+                    ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
+                )
+            }) || internal_proof_contains_frame(continuation)
+        }
+        InternalProofNode::Open {
+            body, continuation, ..
+        } => internal_proof_contains_frame(body) || internal_proof_contains_frame(continuation),
+        InternalProofNode::If {
+            then_branch,
+            else_branch,
+            continuation,
+            ..
+        }
+        | InternalProofNode::Branch {
+            then_branch,
+            else_branch,
+            continuation,
+            ..
+        } => {
+            internal_proof_contains_frame(then_branch)
+                || internal_proof_contains_frame(else_branch)
+                || internal_proof_contains_frame(continuation)
+        }
+    }
+}
+
+/// A terminal checked branch can currently be exported to the top-level
+/// legacy driver only when no later effect frame will consume its outcomes.
+/// Checked open scopes keep that frame on Proof and do not need this guard.
+fn exportable_linear_execution_branch_pair<'a>(
+    then_branch: &'a InternalProofNode,
+    else_branch: &'a InternalProofNode,
+    continuation: &InternalProofNode,
+) -> Option<(&'a [IndexedTactic], &'a [IndexedTactic])> {
+    let pair = linear_execution_branch_pair(then_branch, else_branch)?;
+    if execution_branch_tactics_end_at_exit(pair.0) && internal_proof_contains_frame(continuation) {
+        return None;
+    }
+    Some(pair)
 }
 
 fn solve_nested_have<'a>(
@@ -102,6 +189,14 @@ fn advance_execution_branch_arm<'a>(
                 return Ok(None);
             };
             branches = branches.join_nested(take_then, nested)?;
+        } else if matches!(
+            indexed.tactic,
+            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
+        ) {
+            let Some(next) = branches.try_execute_arm_to_exit(take_then)? else {
+                return Ok(None);
+            };
+            branches = next;
         } else {
             return Ok(None);
         }
@@ -426,10 +521,8 @@ fn advance_checked_open_scope<'a>(
     else {
         return Ok(None);
     };
-    let Some(then_tactics) = linear_execution_branch_tactics(then_branch) else {
-        return Ok(None);
-    };
-    let Some(else_tactics) = linear_execution_branch_tactics(else_branch) else {
+    let Some((then_tactics, else_tactics)) = linear_execution_branch_pair(then_branch, else_branch)
+    else {
         return Ok(None);
     };
     let branches = scope.begin_execution_branch()?;
@@ -961,8 +1054,8 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     || internal_proof_contains_source_index(continuation, wanted)
             });
             if checked_capture_supported
-                && let Some(then_tactics) = linear_execution_branch_tactics(then_branch)
-                && let Some(else_tactics) = linear_execution_branch_tactics(else_branch)
+                && let Some((then_tactics, else_tactics)) =
+                    exportable_linear_execution_branch_pair(then_branch, else_branch, continuation)
             {
                 let proof = Proof::for_execution_frontier(
                     claim_label,
