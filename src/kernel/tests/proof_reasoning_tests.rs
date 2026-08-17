@@ -995,6 +995,73 @@ fn strict_reverse_order_derives_a_false_comparison() {
 }
 
 #[test]
+fn signed_order_derivation_retains_its_exact_edge_path() {
+    let left = Bitvector32Term::Variable(Variable(202));
+    let middle = Bitvector32Term::Variable(Variable(203));
+    let right = Bitvector32Term::Variable(Variable(204));
+    let first = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(left.clone(), middle.clone()),
+        true,
+    );
+    let second = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(middle.clone(), right.clone()),
+        true,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(left.clone(), right.clone()),
+        true,
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(first.clone())
+        .assume_proposition(second.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("the signed-order chain should derive its conclusion");
+    let path = derivation
+        .signed_order_path()
+        .expect("the atomic decision should retain its selected order path");
+    assert_eq!(path.len(), 2);
+    assert_eq!(path[0].lower(), &left);
+    assert_eq!(path[0].upper(), &middle);
+    assert!(!path[0].is_strict());
+    assert_eq!(path[0].premise(), &first);
+    assert_eq!(path[1].lower(), &middle);
+    assert_eq!(path[1].upper(), &right);
+    assert!(path[1].is_strict());
+    assert_eq!(path[1].premise(), &second);
+    assert!(derivation.replay(&assumptions));
+}
+
+#[test]
+fn signed_order_derivation_retains_the_exact_negative_polarity_premise() {
+    let left = Bitvector32Term::Variable(Variable(205));
+    let right = Bitvector32Term::Variable(Variable(206));
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+        false,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(right.clone(), left.clone()),
+        true,
+    );
+    let assumptions = PureFactContext::new().assume_proposition(premise.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("the negated non-strict bound should derive reversed strict order");
+    let path = derivation
+        .signed_order_path()
+        .expect("the atomic decision should retain its normalized order edge");
+    assert_eq!(path.len(), 1);
+    assert_eq!(path[0].lower(), &right);
+    assert_eq!(path[0].upper(), &left);
+    assert!(path[0].is_strict());
+    assert_eq!(path[0].premise(), &premise);
+    assert!(derivation.replay(&assumptions));
+}
+
+#[test]
 fn signed_less_equal_and_inequality_derive_strict_order() {
     let left = Bitvector32Term::Variable(Variable(9_004));
     let right = Bitvector32Term::Variable(Variable(9_005));

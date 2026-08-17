@@ -1591,6 +1591,19 @@ pub struct PropositionDerivation {
     pub(super) rule: PropositionDerivationRule,
 }
 
+/// One exact signed-order edge retained by an atomic derivation.
+///
+/// The edge is oriented from `lower` to `upper`; `strict` distinguishes `<`
+/// from `<=`. Certificate consumers can spell this ordered path directly
+/// instead of rediscovering it from an unordered premise set.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignedOrderDerivationStep {
+    pub(super) lower: Bitvector32Term,
+    pub(super) upper: Bitvector32Term,
+    pub(super) strict: bool,
+    pub(super) premise: Proposition,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum PropositionDerivationRule {
     ContextFree,
@@ -1646,6 +1659,7 @@ pub(super) enum PropositionDerivationRule {
 pub(super) enum AtomicPropositionDerivationEvidence {
     MemoryDag(AtomicMemoryLoadEqualityEvidence),
     PointerOffsetMemoryDag(PointerOffsetEqualityEvidence),
+    SignedOrderPath(Vec<SignedOrderDerivationStep>),
     Legacy,
 }
 

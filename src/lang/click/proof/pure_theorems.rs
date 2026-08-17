@@ -347,6 +347,10 @@ fn lower_pure_simp_certificate(
                 .collect::<Option<Vec<_>>>()?;
             if premise_pairs.is_empty() {
                 ProofTactic::Normalize
+            } else if let Some(ordered) = recorded_signed_order_pairs(derivation, &premise_pairs)
+                && let Some(tactics) = plan_recorded_signed_order_path(goal, &ordered)
+            {
+                return Some(tactics);
             } else if let Ok(tactics) =
                 lower_restricted_simp_plan(goal, None, certificate, &premise_pairs)
             {
@@ -863,6 +867,41 @@ fn verify_kernel_standard_theorem_axiom(
 /// bare theorem application and a final `simp`; both smart operations select
 /// simple steps against the current `Proof`. Explicit `cases` certificates use
 /// the audited branch/open/join operations recursively.
+fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
+    certificate.steps().iter().all(|step| match step {
+        SimpleProofStep::ApplyTheoremUsing { .. }
+        | SimpleProofStep::UnfoldPredicate(_)
+        | SimpleProofStep::Assumption
+        | SimpleProofStep::Normalize
+        | SimpleProofStep::Intro
+        | SimpleProofStep::Split
+        | SimpleProofStep::Left
+        | SimpleProofStep::Right
+        | SimpleProofStep::Enumerate
+        | SimpleProofStep::Rewrite(_)
+        | SimpleProofStep::Extract(_)
+        | SimpleProofStep::Contradiction(_) => true,
+        SimpleProofStep::Cases {
+            left_proof,
+            right_proof,
+            ..
+        } => {
+            proof_supports_pure_certificate(left_proof)
+                && proof_supports_pure_certificate(right_proof)
+        }
+        SimpleProofStep::If {
+            then_proof,
+            else_proof,
+            ..
+        } => {
+            proof_supports_pure_certificate(then_proof)
+                && proof_supports_pure_certificate(else_proof)
+        }
+        SimpleProofStep::Have { proof, .. } => proof_supports_pure_certificate(proof),
+        _ => false,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn check_pure_script_with_proof(
     claim_label: &str,
@@ -873,35 +912,6 @@ fn check_pure_script_with_proof(
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Option<ProofCertificate>, ClickError> {
-    fn supported(certificate: &ProofCertificate) -> bool {
-        certificate.steps().iter().all(|step| match step {
-            SimpleProofStep::ApplyTheoremUsing { .. }
-            | SimpleProofStep::UnfoldPredicate(_)
-            | SimpleProofStep::Assumption
-            | SimpleProofStep::Normalize
-            | SimpleProofStep::Intro
-            | SimpleProofStep::Split
-            | SimpleProofStep::Left
-            | SimpleProofStep::Right
-            | SimpleProofStep::Enumerate
-            | SimpleProofStep::Rewrite(_)
-            | SimpleProofStep::Extract(_)
-            | SimpleProofStep::Contradiction(_) => true,
-            SimpleProofStep::Cases {
-                left_proof,
-                right_proof,
-                ..
-            } => supported(left_proof) && supported(right_proof),
-            SimpleProofStep::If {
-                then_proof,
-                else_proof,
-                ..
-            } => supported(then_proof) && supported(else_proof),
-            SimpleProofStep::Have { proof, .. } => supported(proof),
-            _ => false,
-        })
-    }
-
     let root = Proof::for_pure_goal(
         claim_label,
         &context.requires,
@@ -917,7 +927,7 @@ fn check_pure_script_with_proof(
     }
 
     if let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
-        && supported(&certificate)
+        && proof_supports_pure_certificate(&certificate)
     {
         let Ok(proof) = root.check_certificate(&certificate) else {
             // Until every pure simple step uses `Proof`, retain the legacy
@@ -1479,6 +1489,24 @@ pub(super) fn replay_pure_theorem_certificate(
     certificate: &ProofCertificate,
     induction_setup: Option<&PureInductionSetup>,
 ) -> Result<(), ClickError> {
+    if induction_setup.is_none() && proof_supports_pure_certificate(certificate) {
+        let root = Proof::for_pure_goal(
+            claim_label,
+            requires,
+            goal.clone(),
+            context,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+        );
+        let proof = root.check_certificate(certificate)?;
+        if !proof.is_complete() {
+            return Err(ClickError::new(format!(
+                "pure goal `{claim_label}` certificate ended before closing its goal"
+            )));
+        }
+        return Ok(());
+    }
     prove_pure_theorem_script(
         claim_label,
         requires,

@@ -2697,6 +2697,50 @@ fn restricted_simp_expands_adjacent_order_to_theorem_application() {
 }
 
 #[test]
+fn smart_simp_transcribes_a_three_edge_signed_order_path() {
+    let click_source = r#"
+        theorem three_edge_order_chain(
+            first: int32,
+            second: int32,
+            third: int32,
+            last: int32
+        ) {
+            requires first <= second;
+            requires second < third;
+            requires third <= last;
+            ensures first < last by {
+                simp();
+            }
+        }
+    "#;
+    let offset = click_source.find("simp();").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("the retained three-edge order path should expand");
+    assert!(
+        expanded.contains("apply(int32_le_lt_transitive(first, second, third)) using"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("apply(int32_lt_le_transitive(first, third, last)) using"),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_click_theorems(&expanded).expect("the transcribed order path should replay");
+}
+
+#[test]
 fn restricted_simp_expands_constant_order_weakening_to_theorem_application() {
     let click_source = r#"
         theorem three_at_least_implies_nonnegative(value: int32) {

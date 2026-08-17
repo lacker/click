@@ -45,6 +45,19 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact ordered edges selected by an atomic signed-order
+    /// decision. `None` means this derivation used another rule; an empty
+    /// path is never recorded.
+    pub fn signed_order_path(&self) -> Option<&[SignedOrderDerivationStep]> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::SignedOrderPath(path),
+                ..
+            } => Some(path),
+            _ => None,
+        }
+    }
+
     pub fn context_premises(&self) -> Vec<Proposition> {
         let mut premises = BTreeSet::new();
         self.collect_context_premises(&mut premises);
@@ -146,6 +159,28 @@ impl PropositionDerivation {
                 }
             }
         }
+    }
+}
+
+impl SignedOrderDerivationStep {
+    pub fn lower(&self) -> &Bitvector32Term {
+        &self.lower
+    }
+
+    pub fn upper(&self) -> &Bitvector32Term {
+        &self.upper
+    }
+
+    pub fn is_strict(&self) -> bool {
+        self.strict
+    }
+
+    /// Return the exact context proposition from which this normalized edge
+    /// was collected. This matters for polarity-normalized edges such as
+    /// `not (x <= y)`, whose path shape is `y < x` but whose replay premise
+    /// is not literally that positive comparison.
+    pub fn premise(&self) -> &Proposition {
+        &self.premise
     }
 }
 

@@ -902,7 +902,11 @@ impl<'a> Proof<'a> {
                 self.step_error(format!("`left` requires a disjunction goal, got {goal:?}"))
             );
         };
-        if !self.state.facts.contains(left) {
+        if !self.state.facts.contains(left)
+            && !condition_polarity_spellings(left)
+                .iter()
+                .any(|spelling| self.state.facts.contains(spelling))
+        {
             return Err(self.step_error(format!(
                 "`left` requires its selected disjunct as an exact fact: {left:?}"
             )));
@@ -918,7 +922,11 @@ impl<'a> Proof<'a> {
                 self.step_error(format!("`right` requires a disjunction goal, got {goal:?}"))
             );
         };
-        if !self.state.facts.contains(right) {
+        if !self.state.facts.contains(right)
+            && !condition_polarity_spellings(right)
+                .iter()
+                .any(|spelling| self.state.facts.contains(spelling))
+        {
             return Err(self.step_error(format!(
                 "`right` requires its selected disjunct as an exact fact: {right:?}"
             )));

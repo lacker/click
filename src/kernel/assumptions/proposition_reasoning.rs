@@ -978,7 +978,17 @@ impl PureFactContext {
             }
             _ => None,
         };
-        let result = memory_evidence.or_else(|| {
+        let signed_order_evidence = match proposition {
+            Proposition::ConditionIs(condition, value) => {
+                condition_as_order_fact(condition, *value)
+                    .and_then(|(left, right, strict)| {
+                        self.exact_signed_order_path_evidence(&left, &right, strict)
+                    })
+                    .map(AtomicPropositionDerivationEvidence::SignedOrderPath)
+            }
+            _ => None,
+        };
+        let result = memory_evidence.or(signed_order_evidence).or_else(|| {
             let proved = if for_simp {
                 match proposition {
                     Proposition::ConditionIs(condition, value) => {
@@ -1032,6 +1042,37 @@ impl PureFactContext {
                 return false;
             };
             return evidence.replays(left, right, self);
+        }
+        if let AtomicPropositionDerivationEvidence::SignedOrderPath(path) = evidence {
+            let Proposition::ConditionIs(condition, value) = proposition else {
+                return false;
+            };
+            let Some((left, right, require_strict)) = condition_as_order_fact(condition, *value)
+            else {
+                return false;
+            };
+            let mut current = &left;
+            let mut strict = false;
+            for step in path {
+                if current != &step.lower
+                    || !matches!(
+                        &step.premise,
+                        Proposition::ConditionIs(condition, value)
+                            if self.exact_condition_value(condition) == Some(*value)
+                                && condition_as_order_fact(condition, *value)
+                                    == Some((step.lower.clone(), step.upper.clone(), step.strict))
+                    )
+                {
+                    return false;
+                }
+                current = &step.upper;
+                strict |= step.strict;
+            }
+            let constant_connection = signed_bitvector_constant(current)
+                .zip(signed_bitvector_constant(&right))
+                .and_then(|(current, right)| (current <= right).then_some(current < right));
+            return (current == &right || constant_connection.is_some())
+                && (!require_strict || strict || constant_connection == Some(true));
         }
         if !decide_memo_disabled()
             && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {

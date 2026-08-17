@@ -1008,6 +1008,19 @@ refinement and closing steps instead of rebuilding and replaying a second
 replay, expansion, and independent source verification. Richer existential
 plans still fall back after a failed immutable candidate.
 
+Atomic signed-order search now retains its exact selected edge path instead
+of exposing only an unordered context-premise set. The certificate layer
+consumes that path directly and composes paths longer than two edges through
+checked nested `have` scopes and named transitivity applications. This
+exposed one remaining pure replay split: the legacy pure executor could not
+check a serialized `Have` even though `Proof::check_certificate` already
+could. Supported explicit pure certificates now replay through that same
+Proof checker, so construction, explicit source verification, and expansion
+share the audited scope/application operations. The three-edge regression
+expands two retained theorem applications and independently verifies the
+result. Other atomic decision kinds remain tracked by the child
+atomic-derivation issue.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

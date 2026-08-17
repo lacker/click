@@ -134,3 +134,22 @@ planning. The frame can therefore use the caller's explicit
 `owner->data == data` dependency instead of selecting the stronger anonymous
 memory-DAG proof. The mdtest is no longer quarantined, but the general
 typed-step and deterministic-scaling acceptance criteria above remain open.
+
+### Progress (2026-08-16: signed-order paths)
+
+Exact signed-order decisions now retain the ordered edge path selected by the
+kernel. Replay checks each recorded `<`/`<=` edge directly against the exact
+fact index and verifies the accumulated strictness; it does not ask the order
+solver to rediscover another path. Certificate lowering matches those edges
+to their Surface Click spellings in recorded order, skips deletion
+minimization and full-context recovery for a complete spelling, and
+transcribes paths of arbitrary length into nested `have` facts using the
+four named transitivity theorems. A three-edge mixed strict/non-strict
+regression expands and independently reverifies that transcription, and the
+existing unrelated-condition scaling curve remains green.
+
+This closes the exact signed-order member of the required design, not the
+issue. Equality chains, interval/overflow decisions, quantified/derived order
+edges, and memory-DAG joins still return legacy or incomplete evidence and
+must gain their corresponding typed steps before the ambient harvest and
+deletion machinery can be removed globally.

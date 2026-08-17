@@ -458,6 +458,64 @@ impl PureFactContext {
         self.has_order_path_in_facts(left, right, require_strict, &order_facts)
     }
 
+    /// Retain the exact signed-order edges selected by a deterministic path
+    /// decision. This deliberately accepts only syntactic edge joins (plus a
+    /// context-free constant tail): equality, memory-DAG, quantified, and
+    /// derived-edge joins need their own typed evidence before they may be
+    /// exported as certificate provenance.
+    pub(in crate::kernel) fn exact_signed_order_path_evidence(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        require_strict: bool,
+    ) -> Option<Vec<SignedOrderDerivationStep>> {
+        // Keep the exact source proposition alongside the normalized edge.
+        // `condition_as_order_fact` intentionally normalizes polarity (for
+        // example, false `x <= y` becomes `y < x`); replay must check the
+        // proposition that was actually present, not merely the normalized
+        // spelling. This collection is local to derivation construction so
+        // the durable evidence remains self-contained.
+        let order_facts = self
+            .condition_facts
+            .iter()
+            .filter_map(|(condition, value)| {
+                condition_as_order_fact(condition, *value).map(|(lower, upper, strict)| {
+                    SignedOrderDerivationStep {
+                        lower,
+                        upper,
+                        strict,
+                        premise: Proposition::ConditionIs(condition.clone(), *value),
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut stack = vec![(left.clone(), false, Vec::new())];
+        let mut seen = BTreeSet::new();
+        while let Some((current, strict_so_far, path)) = stack.pop() {
+            if !seen.insert((current.clone(), strict_so_far)) {
+                continue;
+            }
+            let constant_connection = signed_bitvector_constant(&current)
+                .zip(signed_bitvector_constant(right))
+                .and_then(|(current, right)| (current <= right).then_some(current < right));
+            if (current == *right || constant_connection.is_some())
+                && (!require_strict || strict_so_far || constant_connection == Some(true))
+                && !path.is_empty()
+            {
+                return Some(path);
+            }
+            for edge in order_facts.iter().rev() {
+                if current != edge.lower {
+                    continue;
+                }
+                let mut extended = path.clone();
+                extended.push(edge.clone());
+                stack.push((edge.upper.clone(), strict_so_far || edge.strict, extended));
+            }
+        }
+        None
+    }
+
     pub(in crate::kernel) fn has_exact_order_path(
         &self,
         left: &Bitvector32Term,

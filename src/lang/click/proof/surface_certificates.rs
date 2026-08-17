@@ -256,7 +256,15 @@ pub(super) fn lower_surface_atomic_derivation(
         .is_ok()
         .then_some(())
     };
+    let typed_order_pairs = recorded_signed_order_pairs(derivation, &premise_pairs);
+    let typed_order_path_spelled = typed_order_pairs
+        .as_ref()
+        .is_some_and(|pairs| replay_kind(pairs).is_some());
+    if let Some(typed_order_pairs) = typed_order_pairs.filter(|_| typed_order_path_spelled) {
+        premise_pairs = typed_order_pairs;
+    }
     if !surface_normalizes_context_free
+        && !typed_order_path_spelled
         && (premise_pairs.is_empty() || replay_kind(&premise_pairs).is_none())
     {
         // Internal derivations are minimized before their kernel facts are
@@ -328,18 +336,20 @@ pub(super) fn lower_surface_atomic_derivation(
             )));
         }
     }
-    let mut index = 0;
-    while index < premise_pairs.len() {
-        let mut reduced = premise_pairs.clone();
-        reduced.remove(index);
-        if reduced.is_empty() && !surface_normalizes_context_free {
-            index += 1;
-            continue;
-        }
-        if replay_kind(&reduced).is_some() {
-            premise_pairs = reduced;
-        } else {
-            index += 1;
+    if !typed_order_path_spelled {
+        let mut index = 0;
+        while index < premise_pairs.len() {
+            let mut reduced = premise_pairs.clone();
+            reduced.remove(index);
+            if reduced.is_empty() && !surface_normalizes_context_free {
+                index += 1;
+                continue;
+            }
+            if replay_kind(&reduced).is_some() {
+                premise_pairs = reduced;
+            } else {
+                index += 1;
+            }
         }
     }
     if premise_pairs.is_empty() && surface_normalizes_context_free {
@@ -459,6 +469,16 @@ pub(super) fn lower_surface_atomic_derivation(
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "atomic derivation produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if typed_order_path_spelled
+        && let Some(tactics) = plan_recorded_signed_order_path(&lowered_conclusion, &premise_pairs)
+    {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded signed-order path produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -2783,6 +2803,117 @@ fn signed_nonstrict_parts(
         ) => Some((right, left)),
         _ => None,
     }
+}
+
+/// Transcribe one kernel-selected signed-order path. Each intermediate edge
+/// is established with the matching named transitivity theorem and retained
+/// as a nested `have`; the final two-edge suffix uses the ordinary exact
+/// named-rule translator so the original goal orientation is preserved.
+pub(super) fn recorded_signed_order_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    derivation.signed_order_path().and_then(|path| {
+        path.iter()
+            .map(|step| {
+                premise_pairs
+                    .iter()
+                    .find(|(kernel, _)| kernel == step.premise())
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(|pairs| pairs.into_iter().cloned().collect::<Vec<_>>())
+    })
+}
+
+pub(super) fn plan_recorded_signed_order_path(
+    goal: &Proposition,
+    path: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    if path.len() < 2 {
+        return plan_explicit_named_signed_rule(goal, path);
+    }
+    let mut tactics = Vec::new();
+    let mut current = path[0].clone();
+    for next in &path[1..path.len() - 1] {
+        let (current_lower, current_upper, current_strict) =
+            if let Some((lower, upper)) = signed_strict_parts(&current.0) {
+                (lower.clone(), upper.clone(), true)
+            } else {
+                let (lower, upper) = signed_nonstrict_parts(&current.0)?;
+                (lower.clone(), upper.clone(), false)
+            };
+        let (next_lower, next_upper, next_strict) =
+            if let Some((lower, upper)) = signed_strict_parts(&next.0) {
+                (lower.clone(), upper.clone(), true)
+            } else {
+                let (lower, upper) = signed_nonstrict_parts(&next.0)?;
+                (lower.clone(), upper.clone(), false)
+            };
+        if current_upper != next_lower {
+            return None;
+        }
+        let (surface_lower, surface_middle) = if current_strict {
+            surface_strict_parts(&current.1)?
+        } else {
+            surface_nonstrict_parts(&current.1)?
+        };
+        let (_, surface_upper) = if next_strict {
+            surface_strict_parts(&next.1)?
+        } else {
+            surface_nonstrict_parts(&next.1)?
+        };
+        let strict = current_strict || next_strict;
+        let theorem = match (current_strict, next_strict) {
+            (false, false) => "int32_le_transitive",
+            (false, true) => "int32_le_lt_transitive",
+            (true, false) => "int32_lt_le_transitive",
+            (true, true) => "int32_lt_transitive",
+        };
+        let surface_target = ClickProposition::Comparison {
+            left: surface_lower.clone(),
+            operator: if strict {
+                ComparisonOperator::LessThan
+            } else {
+                ComparisonOperator::LessEqual
+            },
+            right: surface_upper.clone(),
+        };
+        let kernel_target = Proposition::ConditionIs(
+            if strict {
+                ConditionTerm::Bitvector32SignedLessThan(
+                    Box::new(current_lower),
+                    Box::new(next_upper),
+                )
+            } else {
+                ConditionTerm::Bitvector32SignedLessEqual(
+                    Box::new(current_lower),
+                    Box::new(next_upper),
+                )
+            },
+            true,
+        );
+        let proof = SourceProof::Script(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: theorem.to_string(),
+                    arguments: vec![surface_lower, surface_middle, surface_upper],
+                },
+                premises: vec![current.1.clone(), next.1.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+        tactics.push(ProofTactic::Have(ProofHave {
+            proposition: surface_target.clone(),
+            proof,
+        }));
+        current = (kernel_target, surface_target);
+    }
+    let final_edge = path.last()?.clone();
+    tactics.extend(plan_explicit_named_signed_rule(
+        goal,
+        &[current, final_edge],
+    )?);
+    Some(tactics)
 }
 
 /// The goal-side counterpart of [`signed_strict_parts`]. A named-rule
