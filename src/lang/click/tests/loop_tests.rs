@@ -134,6 +134,78 @@ fn loop_initialization_theorem_search_retains_checked_point_proof() {
 }
 
 #[test]
+fn loop_initialization_simp_retains_checked_point_proof() {
+    let c_source = r#"
+            int32 initialize_by_simp(int32 x) {
+                while (x < 1) {
+                    x = 0;
+                }
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "initialize_by_simp.c";
+
+            int32 initialize_by_simp(int32 x) {
+                requires x >= 0;
+                ensures result >= 0;
+            } by {
+                loop {
+                    invariant x >= 0;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("initialize_by_simp.c", c_source)])
+    });
+    verified.expect("loop initialization simp should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim.contains("loop(0).initialize")
+                    && name == "surface certificate replay"
+        )),
+        "the checked initialization simp must not be independently replayed: {events:#?}"
+    );
+
+    let offset = click_source
+        .find("initialize by simp")
+        .expect("initialization proof should contain its smart simp")
+        + "initialize by ".len();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("initialize_by_simp.c", c_source)],
+        line,
+        column,
+    )
+    .expect("the retained initialization closer should expand");
+    assert!(!expanded.contains("initialize by simp"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("initialize_by_simp.c", c_source)])
+        .expect("expanded initialization closer should independently verify");
+}
+
+#[test]
 fn frontier_local_loop_rejects_a_non_loop_frontier() {
     let c_source = r#"
             int32 count_to_three() {

@@ -521,7 +521,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     // but only `Proof::apply_step` installs its conclusion and provenance.
     // This replaces the former source rewrite that copied every theorem
     // requirement into an unchecked `apply using` certificate.
-    if let SourceProof::Script(tactics) = proof {
+    if Proof::supports_linear_smart_source(proof) {
         let root = Proof::for_point_goal(
             claim_label,
             proof_index,
@@ -539,7 +539,14 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             &[],
             &[],
         );
-        if let Some(checked) = root.try_linear_smart_script(tactics)? {
+        let checked = match proof {
+            SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
+                root.try_simp_closure()
+            }
+            SourceProof::Script(tactics) => root.try_linear_smart_script(tactics)?,
+            SourceProof::Tactic(SmartTactic::Frame) => None,
+        };
+        if let Some(checked) = checked {
             if !checked.is_complete() {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` proof {proof_index}: checked point proof retained an open goal"
@@ -548,14 +555,27 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             let certificate = checked.certificate();
             if let Some(source_index) =
                 selected_tactic_index_for_site(expansion_capture.as_deref(), proof_site)
-                && let Some(tactic) = certificate.to_proof_tactics().get(source_index)
             {
-                record_proof_site_tactic_expansion(
-                    expansion_capture.as_deref_mut(),
-                    proof_site,
-                    source_index,
-                    std::slice::from_ref(tactic),
-                );
+                match proof {
+                    SourceProof::Default | SourceProof::Tactic(_) => {
+                        record_proof_site_tactic_expansion(
+                            expansion_capture.as_deref_mut(),
+                            proof_site,
+                            source_index,
+                            &certificate.to_proof_tactics(),
+                        );
+                    }
+                    SourceProof::Script(_) => {
+                        if let Some(tactic) = certificate.to_proof_tactics().get(source_index) {
+                            record_proof_site_tactic_expansion(
+                                expansion_capture.as_deref_mut(),
+                                proof_site,
+                                source_index,
+                                std::slice::from_ref(tactic),
+                            );
+                        }
+                    }
+                }
             }
             return Ok(PlannedPointPureGoal {
                 fact,

@@ -1229,6 +1229,17 @@ expands the retained `ApplyTheoremUsing`, and independently verifies that
 serialization; the existing 16-through-4096 point-application curve covers
 the shared selection and transition path used here.
 
+Default and `by simp` loop-invariant initialization now enter that same point
+`Proof` capability boundary before the legacy atomic planner. Direct logical
+closure and every already-typed atomic path retain their accepted simple
+steps and return the checked invariant fact set to the phase gateway, so they
+also skip ordinary replay. Unsupported smart shapes still fall back without
+changing diagnostics. The capability query is syntax-only and runs before
+constructing the point proof, so fully explicit initialization scripts do not
+pay to rebuild persistent fact indexes. A focused assumption-closure
+regression checks retained expansion and independent verification; the
+existing point-simp scaling curves cover the shared closure implementation.
+
 Automatic execution branches expose a separate structural requirement. A C
 branch that reaches distinct function-exit outcomes expands as a logical
 `If`, not as the existing equal-state execution `Branch`, so it needs a
