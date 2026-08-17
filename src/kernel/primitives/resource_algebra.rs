@@ -187,6 +187,16 @@ impl ResourceContext {
         std::sync::Arc::ptr_eq(&self.storage, &other.storage)
     }
 
+    /// Whether this snapshot contains the exact named representation.
+    ///
+    /// This deliberately does not use proof-aware resource entailment. A
+    /// structural Proof join may retain an owned interface without
+    /// normalization only when the interface already names an entry in the
+    /// common persistent snapshot.
+    pub(crate) fn contains_exact_representation(&self, fact: &CResourceFact) -> bool {
+        self.storage.index.exact.contains_key(fact)
+    }
+
     fn iter(&self) -> impl DoubleEndedIterator<Item = &CResourceFact> + ExactSizeIterator {
         self.storage.facts.iter().map(|(_, fact)| fact)
     }

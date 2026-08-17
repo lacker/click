@@ -1536,10 +1536,18 @@ statement; the join retains every enclosing branch completion instead of
 trusting one arm's replay state. Ordinary verification of the nested source
 performs no surface-certificate replay, expansion independently verifies the
 result, and a 16-through-4096 ambient-fact regression bounds the local join
-work. Proper common-resource deltas from differently edited arm snapshots and
-two-arm ownership-exporting interfaces intentionally remain on the legacy
-structural path until resource snapshots expose an output-sensitive
-changed-key join and incremental normalization operation.
+work. A two-arm ownership export also crosses the seam when every owned fact
+is already an exact entry in the arms' shared persistent resource snapshot.
+The capability check lowers only the explicit interface, probes the exact
+resource index, and retains that snapshot unchanged; an entailed but
+differently represented quantity remains rejected. Ordinary verification and
+independent expansion cover the source path, while a 16-through-4096
+unrelated-resource curve bounds the exact lookup and join. Proper
+common-resource deltas from differently edited arm snapshots, and ownership
+interfaces that must consume or normalize another representation,
+intentionally remain on the legacy structural path until resource snapshots
+expose an output-sensitive changed-key join and incremental normalization
+operation.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

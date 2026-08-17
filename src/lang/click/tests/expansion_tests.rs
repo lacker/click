@@ -5442,6 +5442,89 @@ fn branch_interface_retains_its_checked_abstract_join() {
 }
 
 #[test]
+fn branch_interface_retains_exact_unchanged_ownership() {
+    let c_source = r#"
+        int32 preserve_marker(int32 x, int32 flag) {
+            int32 y;
+            if (flag != 0) {
+                y = 1;
+            } else {
+                y = 2;
+            }
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        abstract resource marker(x: int32);
+
+        verifying "preserve_marker.c";
+
+        int32 preserve_marker(int32 x, int32 flag) {
+            owns marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            step();
+            branch {
+                ensuring {
+                    fact y >= 0;
+                    owns marker(x);
+                }
+                then { step(); }
+                else { step(); }
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("preserve_marker.c", c_source)])
+    });
+    let verified = verified.expect("the exact owned interface should stay on Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "preserve_marker.contract"
+                    && name == "surface certificate replay"
+        )),
+        "an unchanged exact ownership export must retain its checked Proof: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the exact owned interface should retain an expansion");
+    assert!(
+        matches!(
+            tactics.get(1),
+            Some(ProofTactic::Branch(branch))
+                if matches!(
+                    branch.ensuring.as_deref(),
+                    Some([
+                        ProofAssertion::Fact(_),
+                        ProofAssertion::Resource(ResourceClause::Declared {
+                            access: ResourceAccessMode::Own,
+                            name,
+                            ..
+                        }),
+                    ]) if name == "marker"
+                )
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("preserve_marker.c", c_source)],
+        "preserve_marker",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained exact owned interface should expand");
+    verify_c0_sources(&expanded, &[("preserve_marker.c", c_source)])
+        .expect("the exact owned interface should independently re-derive");
+}
+
+#[test]
 fn decided_branch_interface_retains_the_surviving_checked_state() {
     let c_source = r#"
         int32 selected_nonnegative(int32 x) {
