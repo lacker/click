@@ -2251,6 +2251,18 @@ pub(super) fn certification_proves_proposition(
         {
             true
         }
+        // `defined(value + 1)` lowers to this exact non-overflow condition.
+        // Contract certification deliberately avoids the fuel-dependent simp
+        // solver, so apply the same narrow named rule as the surface proof:
+        // one indexed `value < INT32_MAX` fact is sufficient.
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedAddOverflows(value, amount),
+            false,
+        ) if amount.as_ref() == &Bitvector32Term::Constant(1)
+            && has_exact_strict_increment_max_bound(assumptions, value) =>
+        {
+            true
+        }
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
             if range_folds_alpha_equivalent(left, right) =>
         {
@@ -2416,6 +2428,33 @@ pub(super) fn certification_proves_proposition(
         }
         _ => assumptions.proves(proposition),
     }
+}
+
+fn has_exact_strict_increment_max_bound(
+    assumptions: &PureFactContext,
+    value: &Bitvector32Term,
+) -> bool {
+    let int_max = Bitvector32Term::Constant(i32::MAX as u32);
+    [
+        (
+            ConditionTerm::signed_less_than(value.clone(), int_max.clone()),
+            true,
+        ),
+        (
+            ConditionTerm::signed_greater_than(int_max.clone(), value.clone()),
+            true,
+        ),
+        (
+            ConditionTerm::signed_less_equal(int_max.clone(), value.clone()),
+            false,
+        ),
+        (
+            ConditionTerm::signed_greater_equal(value.clone(), int_max),
+            false,
+        ),
+    ]
+    .into_iter()
+    .any(|(condition, expected)| assumptions.exact_condition_value(&condition) == Some(expected))
 }
 
 fn match_quantified_int32_term(

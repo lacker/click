@@ -212,12 +212,13 @@ typed evidence and direct Proof operations.
 
 ### Progress (2026-08-16: first typed arithmetic rules)
 
-The atomic int32 increment-upper-bound and increment-strictly-increases
-decisions now record their exact strict source edge as typed evidence when a
-rule fires. This is not inferred later from a minimized premise bag: replay
-checks the retained edge orientation, strictness, exact source proposition,
-increment shape, and rule-specific goal operands directly. Reversed
-`upper > value` source regressions pin that the original premise survives.
+The atomic int32 increment-upper-bound, increment-strictly-increases, and
+increment-below-max-definedness decisions now record their exact strict
+source edge as typed evidence when a rule fires. This is not inferred later
+from a minimized premise bag: replay checks the retained edge orientation,
+strictness, exact source proposition, increment shape, and rule-specific goal
+operands directly. Reversed `upper > value` and `INT32_MAX > value` source
+regressions pin that the original premise survives.
 
 Standalone pure `simp() using` now has a restricted Proof query shared by all
 currently typed atomic paths: it lowers only the explicitly listed premises,
@@ -227,10 +228,17 @@ Point/outcome `simp` consumes the new increment evidence through the same
 theorem-application seam. Ordinary verification no longer constructs and
 independently replays these certificates, while expansion still emits and
 independently verifies `int32_increment_upper_bound`,
-`int32_increment_strictly_increases`, and exact equality paths.
+`int32_increment_strictly_increases`,
+`int32_increment_below_max_is_defined`, and exact equality paths.
 Deterministic 16-through-4096 unrelated-fact curves cover both unrestricted
 point search and restricted pure search, including rejected-premise
 transactionality.
+
+A real post-execution `ensures defined(value + 1)` regression exposed that
+contract certification possessed the exact maximum bound but intentionally
+did not invoke the smart overflow solver. Certification now has the same
+narrow, fuel-free one-premise rule as the named theorem; this does not admit
+general interval reconstruction into the simple checker.
 
 These are the first members of the interval/overflow family, not completion
 of that family. The other named increment, predecessor,

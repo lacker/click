@@ -1770,6 +1770,56 @@ fn post_execution_simp_expands_successor_strict_increase() {
 }
 
 #[test]
+fn post_execution_simp_expands_increment_definedness() {
+    let c_source = r#"
+        int32 increment(int32 x) {
+            return x + 1;
+        }
+    "#;
+    let click_source = r#"
+        verifying "increment.c";
+
+        int32 increment(int32 x) {
+            requires 2147483647 > x;
+            ensures defined(x + 1);
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("increment.c", c_source)])
+    });
+    verified.expect("the typed increment-definedness rule should verify through the point Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "increment.contract"
+                    && (name == "surface certificate replay"
+                        || name == "derivation lowering: ambient rewrite harvest")
+        )),
+        "the retained increment-definedness rule must not enter legacy certificate search: {events:#?}"
+    );
+    let offset = click_source.rfind("simp()").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("increment.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("post-execution increment-definedness proof should expand");
+    assert!(
+        expanded.contains("apply(int32_increment_below_max_is_defined("),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_c0_sources(&expanded, &[("increment.c", c_source)])
+        .expect("expanded increment-definedness proof should replay");
+}
+
+#[test]
 fn post_execution_simp_expands_increment_lower_bound() {
     let c_source = r#"
         int32 increment_nonnegative(int32 x) {
@@ -2497,6 +2547,42 @@ fn restricted_simp_expands_strict_increment_to_theorem_application() {
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[]).expect("strict increment certificate should replay");
+}
+
+#[test]
+fn simp_expands_increment_definedness_to_theorem_application() {
+    let click_source = r#"
+        theorem increment_is_defined(value: int32) {
+            requires value < 2147483647;
+            ensures defined(value + 1) by {
+                simp();
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the typed increment-definedness rule should verify through the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "increment_is_defined.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained pure increment-definedness rule must not use construction replay: {events:#?}"
+    );
+    let offset = click_source.find("simp()").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("increment-definedness simp should expand");
+    assert!(
+        expanded.contains("apply(int32_increment_below_max_is_defined(value)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("value < 2147483647;"), "{expanded}");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded increment-definedness proof should replay");
 }
 
 #[test]

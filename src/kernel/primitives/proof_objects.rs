@@ -94,6 +94,18 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact `value < INT32_MAX` premise selected when the atomic
+    /// prover established that `value + 1` is defined.
+    pub fn int32_increment_below_max_is_defined_step(&self) -> Option<&SignedOrderDerivationStep> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::Int32IncrementBelowMaxIsDefined(step),
+                ..
+            } => Some(step),
+            _ => None,
+        }
+    }
+
     pub fn context_premises(&self) -> Vec<Proposition> {
         let mut premises = BTreeSet::new();
         self.collect_context_premises(&mut premises);

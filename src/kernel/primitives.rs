@@ -1673,6 +1673,7 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     SignedOrderPath(Vec<SignedOrderDerivationStep>),
     Int32IncrementUpperBound(SignedOrderDerivationStep),
     Int32IncrementStrictlyIncreases(SignedOrderDerivationStep),
+    Int32IncrementBelowMaxIsDefined(SignedOrderDerivationStep),
     Legacy,
 }
 

@@ -1843,6 +1843,17 @@ impl<'a> Proof<'a> {
                     &recorded,
                     point_application_closes_goal,
                 )
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_increment_below_max_is_defined_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_increment_below_max_is_defined_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
             })?;
         let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
         let proof = self.check_certificate(&candidate).ok()?;
@@ -7106,6 +7117,11 @@ mod tests {
             operator: ComparisonOperator::LessThan,
             right: expression(upper.clone()),
         };
+        let definedness_premise = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::LessThan,
+            right: expression(Bitvector32Term::Constant(i32::MAX as u32)),
+        };
         let surface_bound_goal = ClickProposition::Comparison {
             left: ContractExpression::Add(
                 Box::new(expression(value.clone())),
@@ -7118,6 +7134,12 @@ mod tests {
             left: expression(value.clone()),
             operator: ComparisonOperator::LessThan,
             right: ContractExpression::Add(
+                Box::new(expression(value.clone())),
+                Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
+            ),
+        };
+        let surface_defined_goal = ClickProposition::Defined {
+            expression: ContractExpression::Add(
                 Box::new(expression(value.clone())),
                 Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
             ),
@@ -7138,24 +7160,39 @@ mod tests {
             .expect("the fixed increment proposition should lower")
         };
         let kernel_premise = lower(&premise);
+        let kernel_definedness_premise = lower(&definedness_premise);
         let goals = [
             (
                 lower(&surface_bound_goal),
                 "int32_increment_upper_bound",
                 "increment bound",
+                &premise,
+                &kernel_premise,
             ),
             (
                 lower(&surface_strict_goal),
                 "int32_increment_strictly_increases",
                 "strict increment",
+                &premise,
+                &kernel_premise,
+            ),
+            (
+                lower(&surface_defined_goal),
+                "int32_increment_below_max_is_defined",
+                "increment definedness",
+                &definedness_premise,
+                &kernel_definedness_premise,
             ),
         ];
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(&premise, &kernel_premise)
             .expect("the exact strict premise should be indexed");
+        surface_propositions
+            .record_lowering(&definedness_premise, &kernel_definedness_premise)
+            .expect("the exact maximum premise should be indexed");
 
-        for (goal, theorem_name, label) in goals {
+        for (goal, theorem_name, label, surface_premise, kernel_premise) in goals {
             for size in [16_u32, 64, 256, 1024, 4096] {
                 let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
                 facts.push(kernel_premise.clone());
@@ -7189,12 +7226,16 @@ mod tests {
                     "size {size} point {label} simp allocated {allocations} persistent nodes (bound {allocation_bound})"
                 );
                 assert!(closed.is_complete());
-                assert!(matches!(
-                    closed.certificate().steps(),
-                    [SimpleProofStep::ApplyTheoremUsing { application, premises }]
-                        if application.name == theorem_name
-                            && premises == std::slice::from_ref(&premise)
-                ));
+                assert!(
+                    matches!(
+                        closed.certificate().steps(),
+                        [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                            if application.name == theorem_name
+                                && premises == std::slice::from_ref(surface_premise)
+                    ),
+                    "{label} retained unexpected point steps: {:#?}",
+                    closed.certificate().steps()
+                );
                 assert!(Arc::ptr_eq(&root.state, &retained_root.state));
                 assert!(root.certificate().steps().is_empty());
 
@@ -7222,7 +7263,7 @@ mod tests {
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
                 let before_restricted = fact_node_allocations();
                 let pure_closed = pure_root
-                    .try_restricted_simp_closure(std::slice::from_ref(&premise))
+                    .try_restricted_simp_closure(std::slice::from_ref(surface_premise))
                     .expect("restricted simp should retain the checked typed increment rule");
                 let restricted_allocations = fact_node_allocations() - before_restricted;
                 assert!(
@@ -7236,7 +7277,7 @@ mod tests {
                         SimpleProofStep::ApplyTheoremUsing { application, premises },
                         SimpleProofStep::Assumption,
                     ] if application.name == theorem_name
-                        && premises == std::slice::from_ref(&premise)
+                        && premises == std::slice::from_ref(surface_premise)
                 ));
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
                 assert!(pure_root.certificate().steps().is_empty());

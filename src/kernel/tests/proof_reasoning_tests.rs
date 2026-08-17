@@ -1122,10 +1122,40 @@ fn increment_strictly_increases_derivation_retains_its_exact_strict_premise() {
 }
 
 #[test]
+fn increment_definedness_derivation_retains_its_exact_max_bound() {
+    let value = Bitvector32Term::Variable(Variable(211));
+    let int_max = Bitvector32Term::Constant(i32::MAX as u32);
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_than(int_max.clone(), value.clone()),
+        true,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedAddOverflows(
+            Box::new(value.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        ),
+        false,
+    );
+    let assumptions = PureFactContext::new().assume_proposition(premise.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("the strict maximum bound should prove increment definedness");
+    let step = derivation
+        .int32_increment_below_max_is_defined_step()
+        .expect("the atomic decision should retain its named-rule premise");
+    assert_eq!(step.lower(), &value);
+    assert_eq!(step.upper(), &int_max);
+    assert!(step.is_strict());
+    assert_eq!(step.premise(), &premise);
+    assert!(derivation.replay(&assumptions));
+}
+
+#[test]
 fn bitvector_equality_derivation_retains_its_exact_oriented_path() {
-    let left = Bitvector32Term::Variable(Variable(211));
-    let middle = Bitvector32Term::Variable(Variable(212));
-    let right = Bitvector32Term::Variable(Variable(213));
+    let left = Bitvector32Term::Variable(Variable(212));
+    let middle = Bitvector32Term::Variable(Variable(213));
+    let right = Bitvector32Term::Variable(Variable(214));
     let first = Proposition::ConditionIs(ConditionTerm::equal(middle.clone(), left.clone()), true);
     let second =
         Proposition::ConditionIs(ConditionTerm::equal(middle.clone(), right.clone()), true);
