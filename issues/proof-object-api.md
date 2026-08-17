@@ -1392,9 +1392,14 @@ body's exact context and provenance node. The outer scope therefore embeds
 one retained `Branch` child and later one retained `Open`; it does not infer
 either structure from final replay contexts. A source regression covers an
 empty C branch inside `open`, observes no ordinary construction replay, pins
-the nested certificate shape, and independently verifies expansion. Branches
-with one feasible arm, assertions, structural arm bodies, or a structural
-continuation still take the legacy path.
+the nested certificate shape, and independently verifies expansion. The
+checked join now feeds its returned scope body back into the same structural
+driver, so a following supported continuation remains on `Proof`; scoped
+smart `step()` selects its concrete `StepUsing` on that child and retains the
+accepted descendant directly. The regression keeps the return step inside
+the scope and pins the resulting `Branch; StepUsing` child certificate.
+Branches with one feasible arm, assertions, or structural arm bodies still
+take the legacy path.
 
 Straight-line smart `execute()` inside an open resource scope now searches on
 the scope's checked child `Proof` itself. The indexed statement query selects

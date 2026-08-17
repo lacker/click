@@ -71,7 +71,8 @@ fn checked_open_scope_can_service_capture(
             indexed.source_index == wanted
                 && matches!(
                     indexed.tactic,
-                    ProofTactic::SmartExecute
+                    ProofTactic::SmartStep
+                        | ProofTactic::SmartExecute
                         | ProofTactic::SmartExecuteAllPaths
                         | ProofTactic::SmartFrame(_)
                         | ProofTactic::ExecuteUntil(_)
@@ -99,6 +100,23 @@ fn advance_linear_open_scope<'a>(
             } else {
                 scope.apply_step(step)?
             };
+            continue;
+        }
+        if matches!(indexed.tactic, ProofTactic::SmartStep) {
+            let checkpoint = scope.checkpoint();
+            let Some(stepped) = scope.try_smart_step()? else {
+                return Ok(None);
+            };
+            scope = stepped;
+            if let Some(site) = proof_site {
+                let certificate = scope.certificate_since(&checkpoint)?;
+                record_proof_site_tactic_expansion(
+                    expansion_capture.as_deref_mut(),
+                    site,
+                    indexed.source_index,
+                    &certificate.to_proof_tactics(),
+                );
+            }
             continue;
         }
         if matches!(
@@ -289,9 +307,6 @@ fn advance_checked_open_scope<'a>(
     else {
         return Ok(None);
     };
-    if !matches!(continuation.as_ref(), InternalProofNode::Done) {
-        return Ok(None);
-    }
     let Some(then_steps) = linear_execution_simple_steps(then_branch) else {
         return Ok(None);
     };
@@ -310,7 +325,8 @@ fn advance_checked_open_scope<'a>(
     for step in else_steps {
         branches = branches.apply_step(false, step)?;
     }
-    scope.join_execution_branch(branches, empty).map(Some)
+    let scope = scope.join_execution_branch(branches, empty)?;
+    advance_checked_open_scope(scope, continuation, expansion_capture, proof_site)
 }
 
 /// Checks one supported `open` body on the same Proof that owns its entry and

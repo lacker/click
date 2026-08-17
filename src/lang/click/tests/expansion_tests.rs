@@ -5393,8 +5393,8 @@ fn open_scope_retains_its_checked_execution_branch() {
                     else {
                     }
                 }
+                step();
             }
-            step();
             frame();
             simp();
         }
@@ -5421,10 +5421,11 @@ fn open_scope_retains_its_checked_execution_branch() {
             Some(ProofTactic::Open(open))
                 if matches!(
                     open.tactics.as_slice(),
-                    [ProofTactic::Branch(branch)]
+                    [ProofTactic::Branch(branch), ProofTactic::StepUsing(premises)]
                         if branch.ensuring.is_none()
                             && branch.then_tactics.is_empty()
                             && branch.else_tactics.is_empty()
+                            && premises.len() == 1
                 )
         ),
         "{tactics:#?}"
