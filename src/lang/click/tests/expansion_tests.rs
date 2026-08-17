@@ -4595,6 +4595,90 @@ fn linear_execution_open_retains_one_checked_scope_and_replays() {
 }
 
 #[test]
+fn linear_open_have_retains_the_selected_theorem_application() {
+    let c_source = r#"
+        int32 two_steps(int32 x) {
+            x = x;
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        theorem int32_reflexive(value: int32) {
+            ensures value == value by {
+                normalize();
+            }
+        }
+
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "two_steps.c";
+
+        int32 two_steps(int32 x) {
+            owns marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            open(marker(x)) {
+                have x == x by {
+                    apply(int32_reflexive(x));
+                }
+                step();
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("two_steps.c", c_source)])
+    });
+    let verified = verified.expect("the nested theorem application should advance the open Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "two_steps.contract" && name == "surface certificate replay"
+        )),
+        "ordinary nested-scope construction must not replay its retained theorem step: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked grouped proof should retain its nested expansion");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(open))
+                if matches!(
+                    open.tactics.as_slice(),
+                    [ProofTactic::Have(have), ProofTactic::StepUsing(_)]
+                        if matches!(
+                            &have.proof,
+                            SourceProof::Script(body)
+                                if matches!(
+                                    body.as_slice(),
+                                    [ProofTactic::ApplyTheoremUsing { application, premises }]
+                                        if application.name == "int32_reflexive" && premises.is_empty()
+                                )
+                        )
+                )
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("two_steps.c", c_source)],
+        "two_steps",
+        CProofClaim::Grouped,
+    )
+    .expect("the grouped nested open proof should expand");
+    verify_c0_sources(&expanded, &[("two_steps.c", c_source)])
+        .expect("the retained nested theorem application should independently replay");
+}
+
+#[test]
 fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
     let c_source = r#"
             int32 choose(int32 value) {

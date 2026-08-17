@@ -1,41 +1,81 @@
 use super::*;
 
-fn linear_execution_simple_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofStep>> {
+fn linear_execution_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
+    let certificate = ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).ok()?;
+    let [step] = certificate.steps() else {
+        return None;
+    };
+    matches!(
+        step,
+        SimpleProofStep::Mark(_)
+            | SimpleProofStep::Step
+            | SimpleProofStep::StepUsing(_)
+            | SimpleProofStep::TransportUsing { .. }
+            | SimpleProofStep::UnfoldPredicate(_)
+            | SimpleProofStep::UnfoldResource(_)
+            | SimpleProofStep::FoldResource(_)
+            | SimpleProofStep::ObserveResource(_)
+            | SimpleProofStep::ApplyTheoremUsing { .. }
+            | SimpleProofStep::CloseInvariants
+    )
+    .then(|| step.clone())
+}
+
+fn linear_execution_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]> {
     match node {
-        InternalProofNode::Done => Some(Vec::new()),
+        InternalProofNode::Done => Some(&[]),
         InternalProofNode::Linear {
             tactics,
             continuation,
-        } if matches!(continuation.as_ref(), InternalProofNode::Done) => {
-            let mut steps = Vec::with_capacity(tactics.len());
-            for indexed in tactics {
-                let certificate =
-                    ProofCertificate::from_proof_tactics(std::slice::from_ref(&indexed.tactic))
-                        .ok()?;
-                let [step] = certificate.steps() else {
-                    return None;
-                };
-                if !matches!(
-                    step,
-                    SimpleProofStep::Mark(_)
-                        | SimpleProofStep::Step
-                        | SimpleProofStep::StepUsing(_)
-                        | SimpleProofStep::TransportUsing { .. }
-                        | SimpleProofStep::UnfoldPredicate(_)
-                        | SimpleProofStep::UnfoldResource(_)
-                        | SimpleProofStep::FoldResource(_)
-                        | SimpleProofStep::ObserveResource(_)
-                        | SimpleProofStep::ApplyTheoremUsing { .. }
-                        | SimpleProofStep::CloseInvariants
-                ) {
-                    return None;
-                }
-                steps.push(step.clone());
-            }
-            Some(steps)
-        }
+        } if matches!(continuation.as_ref(), InternalProofNode::Done) => Some(tactics),
         _ => None,
     }
+}
+
+fn linear_execution_simple_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofStep>> {
+    linear_execution_tactics(node)?
+        .iter()
+        .map(|indexed| linear_execution_simple_step(&indexed.tactic))
+        .collect()
+}
+
+/// Advances a linear resource scope one checked node at a time. A nested
+/// `have` is joined back through the scope API, so its selected theorem steps
+/// and its published proposition are retained by the same immutable proof.
+fn advance_linear_open_scope<'a>(
+    mut scope: ProofScope<'a>,
+    tactics: &[IndexedTactic],
+) -> Result<Option<ProofScope<'a>>, ClickError> {
+    for indexed in tactics {
+        if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
+            scope = scope.apply_step(step)?;
+            continue;
+        }
+        let ProofTactic::Have(have) = &indexed.tactic else {
+            return Ok(None);
+        };
+        let nested = scope.begin_have(have.proposition.clone())?;
+        let selected = match &have.proof {
+            SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
+                nested.try_simp_closure()
+            }
+            SourceProof::Script(body) => {
+                if let Some(selected) = nested.try_linear_smart_script(body)? {
+                    Some(selected)
+                } else if let Ok(certificate) = ProofCertificate::from_proof_tactics(body) {
+                    nested.apply_candidate_certificate(&certificate).ok()
+                } else {
+                    None
+                }
+            }
+            SourceProof::Tactic(SmartTactic::Frame) => None,
+        };
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        scope = scope.join_nested(selected)?;
+    }
+    Ok(Some(scope))
 }
 
 /// Checks one linear all-simple `open` body on the same Proof that owns its
@@ -47,7 +87,7 @@ fn execute_linear_open_scope<'a>(
     context: ProofReplayContext,
     resource: ResourceClause,
     source_index: usize,
-    steps: &[SimpleProofStep],
+    tactics: &[IndexedTactic],
     function_block: &'a FunctionBlock,
     parsed_function: &'a syntax::C0Function,
     claim_label: &'a str,
@@ -59,7 +99,7 @@ fn execute_linear_open_scope<'a>(
     function: &'a CFunction,
     arguments: &'a [CExpression],
     tactic_index: usize,
-) -> Result<ProofReplayContext, ClickError> {
+) -> Result<Option<ProofReplayContext>, ClickError> {
     let root = Proof::for_execution_frontier(
         claim_label,
         tactic_index,
@@ -74,10 +114,10 @@ fn execute_linear_open_scope<'a>(
         click_function_environment,
         theorem_environment,
     );
-    let mut scope = root.begin_open(resource, source_index)?;
-    for step in steps {
-        scope = scope.apply_step(step.clone())?;
-    }
+    let scope = root.begin_open(resource, source_index)?;
+    let Some(scope) = advance_linear_open_scope(scope, tactics)? else {
+        return Ok(None);
+    };
     let proof = scope.join()?;
     let certificate = proof.certificate();
     let mut context = proof.into_execution_context()?;
@@ -87,7 +127,7 @@ fn execute_linear_open_scope<'a>(
             .proof_certificate_builder
             .push_step(step.clone());
     }
-    Ok(context)
+    Ok(Some(context))
 }
 
 #[inline(never)]
@@ -109,14 +149,14 @@ fn try_execute_linear_open_scope<'a>(
     arguments: &'a [CExpression],
     tactic_index: usize,
 ) -> Result<Option<ProofReplayContext>, ClickError> {
-    let Some(steps) = linear_execution_simple_steps(body) else {
+    let Some(tactics) = linear_execution_tactics(body) else {
         return Ok(None);
     };
     execute_linear_open_scope(
         context.clone(),
         resource,
         source_index,
-        &steps,
+        tactics,
         function_block,
         parsed_function,
         claim_label,
@@ -129,7 +169,6 @@ fn try_execute_linear_open_scope<'a>(
         arguments,
         tactic_index,
     )
-    .map(Some)
 }
 
 #[inline(never)]

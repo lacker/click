@@ -1074,7 +1074,8 @@ impl<'a> Proof<'a> {
         }
         match (&self.state.goal, self.context.as_ref()) {
             (Goal::Proposition(_), _) | (Goal::ExecutionFrontier, ProofContext::Point(_)) => {}
-            (Goal::ExecutionFrontier, ProofContext::Pure(_) | ProofContext::Execution(_)) => {
+            (Goal::ExecutionFrontier, ProofContext::Execution(_)) => {}
+            (Goal::ExecutionFrontier, ProofContext::Pure(_)) => {
                 return Err(self.step_error("`have` requires a proposition or point context"));
             }
         }
@@ -1089,7 +1090,12 @@ impl<'a> Proof<'a> {
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
-                execution: None,
+                // An execution `have` borrows the current immutable frontier
+                // solely as its proposition-lowering/theorem context. The
+                // nested goal cannot publish a changed frontier: `join`
+                // restores the exact root execution state and exposes only
+                // the stated proposition.
+                execution: self.state.execution.clone(),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -1120,6 +1126,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`open` requires an execution-frontier proof"));
         };
+        self.require_execution_frontier("`open`")?;
         let mut execution =
             self.state.execution.clone().ok_or_else(|| {
                 self.step_error("execution-frontier proof lost its semantic state")
@@ -1566,9 +1573,28 @@ impl<'a> Proof<'a> {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })
             }
-            ProofContext::Execution(_) => Err(self.step_error(format!(
-                "{description} is not an execution-frontier proposition"
-            ))),
+            ProofContext::Execution(context) => {
+                let execution = self.state.execution.as_ref().ok_or_else(|| {
+                    self.step_error("execution proposition proof lost its semantic frontier")
+                })?;
+                let surface = self.substitute_point_locals_in_proposition(surface)?;
+                let pre_state = execution.replay.old_reference_state(&execution.state);
+                lower_point_proposition_with_assumptions(
+                    &surface,
+                    self.state.facts.assumptions(),
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    pre_state,
+                    &execution.state,
+                    None,
+                    &execution.replay.program_point_states,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+                .map_err(|message| {
+                    self.step_error(format!("could not lower {description}: {message}"))
+                })
+            }
         }
     }
 
@@ -1604,9 +1630,7 @@ impl<'a> Proof<'a> {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })
             }
-            ProofContext::Execution(_) => Err(self.step_error(format!(
-                "{description} is not an execution-frontier proposition"
-            ))),
+            ProofContext::Execution(_) => self.lower_surface_proposition(surface, description),
         }
     }
 
@@ -1771,6 +1795,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`observe` requires an execution-frontier proof"));
         };
+        self.require_execution_frontier("`observe`")?;
         let mut execution =
             self.state.execution.clone().ok_or_else(|| {
                 self.step_error("execution-frontier proof lost its semantic state")
@@ -1820,6 +1845,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("resource `unfold` requires an execution-frontier proof"));
         };
+        self.require_execution_frontier("resource `unfold`")?;
         let mut execution =
             self.state.execution.clone().ok_or_else(|| {
                 self.step_error("execution-frontier proof lost its semantic state")
@@ -1862,6 +1888,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("resource `fold` requires an execution-frontier proof"));
         };
+        self.require_execution_frontier("resource `fold`")?;
         let mut execution =
             self.state.execution.clone().ok_or_else(|| {
                 self.step_error("execution-frontier proof lost its semantic state")
@@ -2362,6 +2389,9 @@ impl<'a> Proof<'a> {
                         }
                         ProofContext::Point(_) => {
                             proof.select_point_theorem_application_step(application)?
+                        }
+                        ProofContext::Execution(_) if proof.goal().is_some() => {
+                            proof.select_execution_theorem_application_step(application)?
                         }
                         ProofContext::Execution(_) => return Ok(None),
                     };
@@ -3187,12 +3217,13 @@ impl<'a> Proof<'a> {
                 .function_entry_derivations
                 .insert(derivation);
         }
+        let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
         Ok(ProofState {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
-            complete: false,
+            complete,
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
             execution: Some(execution),
@@ -3725,6 +3756,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`step using` requires an execution-frontier proof"));
         };
+        self.require_execution_frontier("`step using`")?;
         let mut execution =
             self.state.execution.clone().ok_or_else(|| {
                 self.step_error("execution-frontier proof lost its semantic state")
@@ -3761,6 +3793,7 @@ impl<'a> Proof<'a> {
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
             return Err(self.step_error("`mark` requires an execution-frontier proof"));
         }
+        self.require_execution_frontier("`mark`")?;
         let mut execution =
             self.state.execution.clone().ok_or_else(|| {
                 self.step_error("execution-frontier proof lost its semantic state")
@@ -3793,6 +3826,7 @@ impl<'a> Proof<'a> {
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
             return Err(self.step_error("`close_invariants` requires an execution-frontier proof"));
         }
+        self.require_execution_frontier("`close_invariants`")?;
         let mut execution =
             self.state.execution.clone().ok_or_else(|| {
                 self.step_error("execution-frontier proof lost its semantic state")
@@ -3885,6 +3919,16 @@ impl<'a> Proof<'a> {
 
     fn proposition_goal(&self, message: &str) -> Result<&Proposition, ClickError> {
         self.goal().ok_or_else(|| self.step_error(message))
+    }
+
+    fn require_execution_frontier(&self, operation: &str) -> Result<(), ClickError> {
+        matches!(self.state.goal, Goal::ExecutionFrontier)
+            .then_some(())
+            .ok_or_else(|| {
+                self.step_error(format!(
+                    "{operation} cannot advance C execution inside a proposition proof"
+                ))
+            })
     }
 
     fn closed_state(&self) -> ProofState {
@@ -4698,6 +4742,56 @@ impl<'a> ProofScope<'a> {
         self.body.goal()
     }
 
+    /// Opens one proposition subproof at the current scope body's frontier.
+    ///
+    /// The returned scope is rooted at this scope's current checked body. It
+    /// can only be incorporated back through `join_nested`, which verifies
+    /// that exact ancestry before advancing the outer scope.
+    pub(super) fn begin_have(
+        &self,
+        proposition: ClickProposition,
+    ) -> Result<ProofScope<'a>, ClickError> {
+        self.body.begin_have(proposition)
+    }
+
+    /// Incorporates one completed scope rooted at the current body as the
+    /// outer scope's next checked structural node.
+    ///
+    /// This is the scope analogue of `Proof::apply_step`: callers cannot
+    /// replace the body with an unrelated checked proof or skip intervening
+    /// nodes. The nested join owns its exact `Have` certificate and exposes
+    /// only that operation's output-sized fact delta to the outer scope.
+    pub(super) fn join_nested(&self, nested: ProofScope<'a>) -> Result<Self, ClickError> {
+        if !Arc::ptr_eq(&nested.root.context, &self.body.context)
+            || !Arc::ptr_eq(&nested.root.node, &self.body.node)
+        {
+            return Err(self
+                .root
+                .step_error("nested proof scope is not rooted at the current scope body"));
+        }
+        let body = nested.join()?;
+        let Some(parent) = body.node.parent.as_ref() else {
+            return Err(self
+                .root
+                .step_error("nested proof scope produced a root without provenance"));
+        };
+        if !Arc::ptr_eq(parent, &self.body.node) {
+            return Err(self
+                .root
+                .step_error("nested proof scope did not produce one direct checked successor"));
+        }
+        let mut next = self.clone();
+        if matches!(self.structure.as_ref(), ProofScopeStructure::Open { .. }) {
+            for fact in body.added_facts() {
+                if !next.introduced_facts.contains(fact) {
+                    next.introduced_facts.push(fact.clone());
+                }
+            }
+        }
+        next.body = body;
+        Ok(next)
+    }
+
     /// Applies one ordinary checked step inside the nested body. Failed
     /// candidates leave the enclosing scope value unchanged.
     #[allow(dead_code)]
@@ -4793,7 +4887,7 @@ impl<'a> ProofScope<'a> {
                         complete: false,
                         added_facts: Arc::new(vec![kernel.clone()]),
                         checked_facts: Arc::new(vec![kernel]),
-                        execution: None,
+                        execution: self.root.state.execution.clone(),
                     }),
                     node: Arc::new(ProofNode {
                         parent: Some(self.root.node.clone()),
@@ -10427,6 +10521,11 @@ mod tests {
         .expect("the owned marker resource should lower");
         let state =
             empty_state.with_resource_context(ResourceContext::new().unchecked_with_fact(lowered));
+        let reflexive = ClickProposition::Comparison {
+            left: ContractExpression::CBinding("x".to_string()),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CBinding("x".to_string()),
+        };
 
         for size in [16_u32, 64, 256, 1024, 4096] {
             let root = Proof::for_execution_frontier(
@@ -10456,6 +10555,19 @@ mod tests {
             let scope = root
                 .begin_open(resource.clone(), 0)
                 .expect("the held marker should open");
+            let rejected = scope
+                .begin_have(reflexive.clone())
+                .expect("the open scope should begin a rejected proposition subproof");
+            assert!(rejected.apply_step(SimpleProofStep::Step).is_err());
+            assert!(rejected.body().certificate().steps().is_empty());
+            let nested = scope
+                .begin_have(reflexive.clone())
+                .expect("the open scope should begin a proposition subproof")
+                .apply_step(SimpleProofStep::Assumption)
+                .expect("the exposed marker fact should close the nested proof");
+            let scope = scope
+                .join_nested(nested)
+                .expect("the checked have should advance the open scope");
             let scope = scope
                 .apply_step(SimpleProofStep::Step)
                 .expect("the open body should advance one statement");
@@ -10471,11 +10583,32 @@ mod tests {
                 closed.certificate().steps(),
                 &[SimpleProofStep::Open {
                     resource: resource.clone(),
-                    proof: Box::new(ProofCertificate::from_steps(vec![SimpleProofStep::Step])),
+                    proof: Box::new(ProofCertificate::from_steps(vec![
+                        SimpleProofStep::Have {
+                            proposition: reflexive.clone(),
+                            proof: Box::new(ProofCertificate::from_steps(vec![
+                                SimpleProofStep::Assumption,
+                            ])),
+                        },
+                        SimpleProofStep::Step,
+                    ])),
                 }]
             );
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());
+            let sibling_scope = root
+                .begin_open(resource.clone(), 0)
+                .expect("the retained root should open a sibling scope");
+            let sibling_nested = sibling_scope
+                .begin_have(reflexive.clone())
+                .expect("the sibling should begin its own nested proof")
+                .apply_step(SimpleProofStep::Assumption)
+                .expect("the sibling nested proof should close");
+            let unrelated_scope = root
+                .begin_open(resource.clone(), 0)
+                .expect("the retained root should open an unrelated scope");
+            assert!(unrelated_scope.join_nested(sibling_nested).is_err());
+            assert!(unrelated_scope.body().certificate().steps().is_empty());
             assert!(
                 closed
                     .state

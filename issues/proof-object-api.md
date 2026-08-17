@@ -1366,6 +1366,19 @@ large optional execution successor are outlined from the recursive structural
 driver; the unchanged deep pure-case canary caught the initial stack-frame
 growth and now pins that boundary.
 
+Linear open scopes can now incorporate a completed nested `have` as one direct
+checked child node. The inner proposition proof borrows the execution Proof's
+immutable point snapshot for lowering and indexed theorem selection, but it
+cannot advance C execution, open or mutate a resource representation, mark a
+point, or close loop invariants. Its join restores the exact outer execution
+frontier and publishes only the stated proposition; the outer scope verifies
+the child's exact ancestry before accepting it. A source regression selects a
+bare theorem application inside `open { have ... }`, observes no ordinary
+surface-certificate replay, retains the nested `ApplyTheoremUsing`, and
+independently verifies expansion. The existing 16-through-4096 open-scope
+curve now includes the nested-scope join, exact nested certificate identity,
+and a rejected C-step attempt inside the proposition proof.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
