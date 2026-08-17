@@ -292,7 +292,6 @@ impl<T> PersistentSequence<T> {
         self.iter().cloned().collect()
     }
 
-    #[cfg(test)]
     pub(super) fn shares_tail_with(&self, other: &Self) -> bool {
         match (&self.tail, &other.tail) {
             (Some(left), Some(right)) => Arc::ptr_eq(left, right),

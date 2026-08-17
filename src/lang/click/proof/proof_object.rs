@@ -87,6 +87,21 @@ struct ExecutionProofArm<'a> {
     condition_theorem: Theorem,
 }
 
+/// The exact nonterminal frontier reached after a checked C branch completes.
+///
+/// A branch at the end of an enclosing arm has no direct `remaining`
+/// statement. In that case execution resumes by popping the already-owned
+/// persistent continuation stack. Deriving that structural result from the
+/// root lets both descendants be checked against one independently computed
+/// frontier rather than selecting either arm's replay state.
+#[derive(Clone)]
+struct ExecutionBranchJoinContinuation {
+    remaining: Arc<CStatement>,
+    next_statement_index: usize,
+    continuations: PersistentSequence<ProofExecutionContinuation>,
+    completed_enclosing_branches: Vec<usize>,
+}
+
 /// One nested proposition proof owned by an audited scope operation.
 #[derive(Clone)]
 pub(super) struct ProofScope<'a> {
@@ -5036,6 +5051,35 @@ impl<'a> ExecutionOutcomeProofBranches<'a> {
 }
 
 impl<'a> ExecutionProofBranches<'a> {
+    fn derived_join_continuation(&self) -> Option<ExecutionBranchJoinContinuation> {
+        let root_execution = self.root.state.execution.as_ref()?;
+        let mut continuations = root_execution.replay.frontier.continuations.clone();
+        if let Some(remaining) = &self.continuation_remaining {
+            return Some(ExecutionBranchJoinContinuation {
+                remaining: remaining.clone(),
+                next_statement_index: self.continuation_index,
+                continuations,
+                completed_enclosing_branches: Vec::new(),
+            });
+        }
+
+        let mut completed_enclosing_branches = Vec::new();
+        while let Some(continuation) = continuations.pop() {
+            if let ProofExecutionContinuationKind::Branch { statement_index } = continuation.kind {
+                completed_enclosing_branches.push(statement_index);
+            }
+            if let Some(remaining) = continuation.remaining {
+                return Some(ExecutionBranchJoinContinuation {
+                    remaining,
+                    next_statement_index: continuation.next_statement_index,
+                    continuations,
+                    completed_enclosing_branches,
+                });
+            }
+        }
+        None
+    }
+
     /// Re-derives one logical arm from its retained Surface certificate.
     /// Terminal and decided branches record one synthetic branch-entry
     /// `step using` (two for an empty C arm); those structural entry steps are
@@ -5177,19 +5221,20 @@ impl<'a> ExecutionProofBranches<'a> {
         })
     }
 
-    /// Whether an interface join owns a direct continuation and can retain
-    /// the complete exact common resource context without enumerating it.
+    /// Whether an interface join owns a structural continuation and can
+    /// retain the complete exact common resource context without enumerating
+    /// it.
     ///
     /// Resource snapshots do not yet expose a persistent changed-key merge,
     /// so differently edited contexts remain on the legacy structural path.
-    /// A branch whose continuation belongs to an enclosing C arm remains
-    /// there too. Identical snapshots share one storage root and are retained
-    /// in O(1).
+    /// Identical snapshots share one storage root and are retained in O(1).
+    /// End-of-arm joins derive their continuation by popping the root's
+    /// persistent enclosing-continuation stack exactly as C execution does.
     pub(super) fn supports_interface_join(&self, assertions: &[ProofAssertion]) -> bool {
         if self.sole_feasible_arm().is_some() {
             return true;
         }
-        if self.continuation_remaining.is_none() {
+        if self.derived_join_continuation().is_none() {
             return false;
         }
         if branch_interface_exports_ownership(assertions) {
@@ -5865,6 +5910,10 @@ impl<'a> ExecutionProofBranches<'a> {
         if self.sole_feasible_arm().is_some() {
             return self.finish_decided_with_interface(assertions);
         }
+        let join_continuation = self.derived_join_continuation().ok_or_else(|| {
+            self.root
+                .step_error("execution `branch` has no shared continuation statement")
+        })?;
         let [Some(then_arm), Some(else_arm)] = self.arms else {
             return Err(self
                 .root
@@ -5879,10 +5928,6 @@ impl<'a> ExecutionProofBranches<'a> {
             self.root
                 .step_error("execution branch root lost its semantic state")
         })?;
-        let continuation_remaining = self.continuation_remaining.clone().ok_or_else(|| {
-            self.root
-                .step_error("execution `branch` has no shared continuation statement")
-        })?;
         let validate_arm = |name: &str,
                             expected: bool,
                             arm: &ExecutionProofArm<'a>|
@@ -5895,8 +5940,27 @@ impl<'a> ExecutionProofBranches<'a> {
                 .replay
                 .completed_branch_regions
                 .contains(&self.statement_index)
-                || execution.replay.frontier.continuations.len() > self.initial_continuation_depth
-                || execution.replay.frontier.next_statement_index != self.continuation_index
+                || join_continuation
+                    .completed_enclosing_branches
+                    .iter()
+                    .any(|statement_index| {
+                        !execution
+                            .replay
+                            .completed_branch_regions
+                            .contains(statement_index)
+                    })
+                || !execution
+                    .replay
+                    .frontier
+                    .continuations
+                    .shares_tail_with(&join_continuation.continuations)
+                || execution.replay.frontier.next_statement_index
+                    != join_continuation.next_statement_index
+                || !matches!(
+                    &execution.replay.frontier.point,
+                    ProofExecutionPoint::StatementEntry { remaining }
+                        if remaining.as_ref() == join_continuation.remaining.as_ref()
+                )
                 || execution.replay.is_at_function_exit()
             {
                 return Err(self.root.step_error(format!(
@@ -5979,7 +6043,7 @@ impl<'a> ExecutionProofBranches<'a> {
         stable_join_locals
             .retain(|name, value| else_execution.state.locals().get(name) == Some(value));
         let target = ProgramPointRef {
-            region: CodeRegionRef::Statement(self.continuation_index),
+            region: CodeRegionRef::Statement(join_continuation.next_statement_index),
             kind: ProgramPointKind::Entry,
         };
 
@@ -6069,10 +6133,17 @@ impl<'a> ExecutionProofBranches<'a> {
             .replay
             .completed_branch_regions
             .insert(self.statement_index);
-        execution.replay.frontier.next_statement_index = self.continuation_index;
+        for statement_index in &join_continuation.completed_enclosing_branches {
+            execution
+                .replay
+                .completed_branch_regions
+                .insert(*statement_index);
+        }
+        execution.replay.frontier.next_statement_index = join_continuation.next_statement_index;
+        execution.replay.frontier.continuations = join_continuation.continuations;
         execution.replay.frontier.execution_start_state = Some(self.execution_start_state);
         execution.replay.frontier.point = ProofExecutionPoint::StatementEntry {
-            remaining: continuation_remaining,
+            remaining: join_continuation.remaining,
         };
         execution.replay.has_structured_branch_history = true;
         execution.replay.execution_abstraction = true;
@@ -13755,6 +13826,141 @@ mod tests {
         assert!(error.message().contains("did not establish fact"));
         assert!(Arc::ptr_eq(&root.state, &retained.state));
         assert!(root.certificate().steps().is_empty());
+    }
+
+    #[test]
+    fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 nested(int32 x, int32 flag) {
+                    ensures nonnegative_result: result >= 0 by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let parsed_function = syntax::parse_function(
+            "int32 nested(int32 x, int32 flag) { if (flag != 0) { if (x < 0) { x = 1; } else { x = 2; } } else { x = 3; } return x; }",
+        )
+        .expect("test nested interface branch should parse");
+        let function = parsed_function.to_kernel_function();
+        let arguments = vec![
+            CExpression::Value(CValue::Int32(Bitvector32Term::Variable(Variable(73_000)))),
+            CExpression::Value(CValue::Int32(Bitvector32Term::Variable(Variable(73_001)))),
+        ];
+        let function_environment = CExecutionEnvironment::new();
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+        let nonnegative = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+            operator: ComparisonOperator::GreaterEqual,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+        let make_root = |size: u32| {
+            let mut replay = TacticReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..TacticReplayState::default()
+            };
+            replay.frontier.next_statement_index = 0;
+            Proof::for_execution_frontier(
+                "nested branch interface proof",
+                0,
+                ProofReplayContext {
+                    state: CState::new(),
+                    pure_facts: (0..size).map(indexed_fact).collect(),
+                    replay,
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            )
+        };
+
+        let mut samples = Vec::new();
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let outer = make_root(size)
+                .begin_execution_branch()
+                .expect("outer symbolic condition should expose both arms");
+            let outer_statement = outer.statement_index;
+            let outer_then = outer
+                .arm(true)
+                .expect("outer then arm should be feasible")
+                .clone();
+            let nested = outer_then
+                .begin_execution_branch()
+                .expect("nested symbolic condition should expose both arms")
+                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+                .expect("nested then assignment should check")
+                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .expect("nested else assignment should check");
+            let nested_statement = nested.statement_index;
+            assert!(nested.continuation_remaining.is_none());
+            assert!(nested.supports_interface_join(&[ProofAssertion::Fact(nonnegative.clone())]));
+
+            let before = fact_node_allocations();
+            let joined = nested
+                .join_with_interface(vec![ProofAssertion::Fact(nonnegative.clone())])
+                .expect("nested end-of-arm interface should reach the outer continuation");
+            samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before,
+            ));
+            let execution = joined
+                .state
+                .execution
+                .as_ref()
+                .expect("nested join should retain execution");
+            assert!(
+                execution
+                    .replay
+                    .completed_branch_regions
+                    .contains(&nested_statement)
+            );
+            assert!(
+                execution
+                    .replay
+                    .completed_branch_regions
+                    .contains(&outer_statement)
+            );
+            assert!(matches!(
+                joined.certificate().steps(),
+                [SimpleProofStep::Branch {
+                    ensuring: Some(assertions),
+                    ..
+                }] if assertions == std::slice::from_ref(&ProofAssertion::Fact(nonnegative.clone()))
+            ));
+            let completed = joined
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("derived enclosing continuation should execute the return");
+            assert!(
+                completed
+                    .state
+                    .execution
+                    .as_ref()
+                    .expect("completed nested proof retains execution")
+                    .replay
+                    .is_at_function_exit()
+            );
+        }
+        let (_, base_height, base_allocations) = samples[0];
+        for (size, height, allocations) in samples {
+            let bound = base_allocations + 64 * (height - base_height);
+            assert!(
+                allocations <= bound,
+                "size {size} nested branch interface allocated {allocations} persistent nodes (bound {bound})"
+            );
+        }
     }
 
     #[test]

@@ -1528,11 +1528,18 @@ re-verifies. Rejection leaves the root unchanged, and a deterministic
 tree height. A one-feasible interface now validates directly on the surviving
 arm without abstraction or resource merging, retains that checked state, and
 records a `Branch` with an empty impossible arm; this case can therefore carry
-ownership assertions safely. Proper common-resource deltas from differently
-edited arm snapshots, two-arm ownership-exporting interfaces, and nested
-end-of-arm continuations intentionally remain on the legacy structural path
-until resource snapshots expose an output-sensitive changed-key join and
-incremental normalization operation.
+ownership assertions safely. Nested end-of-arm interfaces now derive their
+shared frontier by popping the root Proof's persistent enclosing-continuation
+stack, exactly as C execution does. Both descendants must share the resulting
+stack tail by identity and match its statement index and remaining C
+statement; the join retains every enclosing branch completion instead of
+trusting one arm's replay state. Ordinary verification of the nested source
+performs no surface-certificate replay, expansion independently verifies the
+result, and a 16-through-4096 ambient-fact regression bounds the local join
+work. Proper common-resource deltas from differently edited arm snapshots and
+two-arm ownership-exporting interfaces intentionally remain on the legacy
+structural path until resource snapshots expose an output-sensitive
+changed-key join and incremental normalization operation.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

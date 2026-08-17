@@ -432,6 +432,20 @@ int32 nested_nonnegative(int32 x, int32 flag) {
     }
 }
 "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("nested.c", c_source)])
+    });
+    verified.expect("nested end-of-arm interfaces should verify through retained Proofs");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "nested_nonnegative.contract"
+                    && name == "surface certificate replay"
+        )),
+        "nested end-of-arm interfaces must retain their checked Proof successors: {events:#?}"
+    );
+
     let selected_offset = click_source
         .find("        simp();")
         .expect("common simp should exist")
