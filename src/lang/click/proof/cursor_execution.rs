@@ -17,14 +17,58 @@ pub(super) fn apply_branch_interface(
     stable_join_locals: &BTreeMap<String, CValue>,
     needs_abstraction: bool,
 ) -> Result<(), ClickError> {
+    let mut indexed_facts = ProofFacts::from_ordered(available_pure_facts);
+    apply_branch_interface_with_proof_facts(
+        target,
+        assertions,
+        tactic_index,
+        replay,
+        state,
+        &mut indexed_facts,
+        parameters,
+        arguments,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        claim_label,
+        stable_join_locals,
+        needs_abstraction,
+    )?;
+    *available_pure_facts = indexed_facts.to_vec();
+    Ok(())
+}
+
+/// Checks and applies one explicit branch interface against an incrementally
+/// indexed proof fact context.
+///
+/// The legacy cursor wrapper above materializes its vector at the boundary.
+/// Proof-owned structural joins call this operation directly, so checking an
+/// interface does not clone or re-index unrelated ambient facts.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn apply_branch_interface_with_proof_facts(
+    target: &ProgramPointRef,
+    assertions: &[ProofAssertion],
+    tactic_index: usize,
+    replay: &mut TacticReplayState,
+    state: &mut CState,
+    available_pure_facts: &mut ProofFacts,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    claim_label: &str,
+    stable_join_locals: &BTreeMap<String, CValue>,
+    needs_abstraction: bool,
+) -> Result<(), ClickError> {
     let mut concrete_facts = available_pure_facts.clone();
     let mut established_interface_resources = Vec::new();
     for assertion in assertions {
         match assertion {
             ProofAssertion::Fact(surface_fact) => {
-                let fact = lower_point_proposition(
+                let fact = lower_point_proposition_with_assumptions(
                         surface_fact,
-                        &concrete_facts,
+                        concrete_facts.assumptions(),
                         parameters,
                         arguments,
                         replay.old_reference_state(state),
@@ -42,13 +86,14 @@ pub(super) fn apply_branch_interface(
                 replay
                     .surface_propositions
                     .record_lowering(surface_fact, &fact)?;
-                let assumptions = assumptions_from_propositions(&concrete_facts);
-                if !concrete_facts.contains(&fact) && !assumptions.proves(&fact) {
+                if !concrete_facts.contains_top_level(&fact)
+                    && !concrete_facts.assumptions().proves(&fact)
+                {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: `branch ensuring` did not establish fact: {}",
                         describe_missing_pure_fact(
                             &fact,
-                            &concrete_facts,
+                            &concrete_facts.to_vec(),
                             state.resources().facts(),
                             parameters,
                             arguments,
@@ -56,14 +101,13 @@ pub(super) fn apply_branch_interface(
                         )
                     )));
                 }
-                if !concrete_facts.contains(&fact) {
-                    concrete_facts.push(fact);
+                if !concrete_facts.contains_top_level(&fact) {
+                    concrete_facts = concrete_facts.with_fact(fact);
                 }
             }
             ProofAssertion::Resource(resource) => {
                 let expected =
                     lower_resource_clause_at_state(resource, parameters, arguments, state)?;
-                let assumptions = assumptions_from_propositions(&concrete_facts);
                 let is_observed_core = resource_is_direct_observed_core(
                     resource,
                     &established_interface_resources,
@@ -71,12 +115,16 @@ pub(super) fn apply_branch_interface(
                     claim_label,
                     tactic_index,
                 )?;
-                if !is_observed_core && !state.resources().satisfies_fact(&expected, &assumptions) {
+                if !is_observed_core
+                    && !state
+                        .resources()
+                        .satisfies_fact(&expected, concrete_facts.assumptions())
+                {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: `branch ensuring` did not establish resource fact: {}",
                         describe_missing_resource_fact(
                             &expected,
-                            &concrete_facts,
+                            &concrete_facts.to_vec(),
                             state.resources().facts(),
                             parameters,
                             arguments,
@@ -114,6 +162,9 @@ pub(super) fn apply_branch_interface(
     replay.execution_abstraction = true;
 
     let mut exported_resources = ResourceContext::new();
+    // This vector contains only facts explicitly exported by the interface
+    // (and their local definitional projections), so materializing it is
+    // output-sized rather than proportional to the ambient proof context.
     let mut exported_pure_facts = Vec::new();
     for assertion in assertions {
         if let ProofAssertion::Resource(resource) = assertion {
@@ -150,13 +201,14 @@ pub(super) fn apply_branch_interface(
             if !entry_loadables.is_empty() {
                 let mut pre_advance_facts = concrete_facts.clone();
                 for fact in &replay.effect_facts {
-                    if !pre_advance_facts.contains(fact.proposition()) {
-                        pre_advance_facts.push(fact.proposition().clone());
+                    if !pre_advance_facts.contains_top_level(fact.proposition()) {
+                        pre_advance_facts = pre_advance_facts.with_fact(fact.proposition().clone());
                     }
                 }
-                let pre_advance = assumptions_from_propositions(&pre_advance_facts);
                 for fact in entry_loadables {
-                    if pre_advance.proves(&fact) && !exported_pure_facts.contains(&fact) {
+                    if pre_advance_facts.assumptions().proves(&fact)
+                        && !exported_pure_facts.contains(&fact)
+                    {
                         exported_pure_facts.push(fact);
                     }
                 }
@@ -250,7 +302,7 @@ pub(super) fn apply_branch_interface(
         .program_point_states
         .insert(target.clone(), abstract_state.clone());
     *state = abstract_state;
-    *available_pure_facts = exported_pure_facts;
+    *available_pure_facts = ProofFacts::from_ordered(&exported_pure_facts);
     Ok(())
 }
 

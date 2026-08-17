@@ -179,8 +179,11 @@ impl ResourceContext {
         Self::default()
     }
 
-    #[cfg(test)]
-    pub(in crate::kernel) fn shares_storage_with(&self, other: &Self) -> bool {
+    /// Whether two resource snapshots are the exact same persistent value.
+    ///
+    /// Proof joins use this constant-time identity check to retain a resource
+    /// context that was untouched in every arm without enumerating it.
+    pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.storage, &other.storage)
     }
 
@@ -594,7 +597,7 @@ impl ResourceContext {
 
     /// Extends a context whose validity has already been checked, validating
     /// only pairs that contain at least one newly added fact.
-    pub(in crate::kernel) fn try_compose_into_valid_context_delaying_normalization(
+    pub(crate) fn try_compose_into_valid_context_delaying_normalization(
         mut self,
         facts: impl IntoIterator<Item = CResourceFact>,
         assumptions: &PureFactContext,

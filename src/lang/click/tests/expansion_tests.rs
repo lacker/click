@@ -5365,6 +5365,162 @@ fn linear_open_have_retains_the_selected_theorem_application() {
 }
 
 #[test]
+fn branch_interface_retains_its_checked_abstract_join() {
+    let c_source = r#"
+        int32 nonnegative(int32 x) {
+            if (x < 0) {
+                x = 1;
+            } else {
+                x = 2;
+            }
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "nonnegative.c";
+
+        int32 nonnegative(int32 x) {
+            immutable;
+            ensures result >= 0;
+        } by {
+            branch {
+                ensuring {
+                    fact x >= 0;
+                }
+                then { step(); }
+                else { step(); }
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("nonnegative.c", c_source)])
+    });
+    let verified = verified.expect("the checked branch interface should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "nonnegative.contract" && name == "surface certificate replay"
+        )),
+        "branch-interface construction must retain its checked Proof directly: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked branch interface should retain an expansion");
+    assert!(
+        matches!(
+            tactics.as_slice(),
+            [
+                ProofTactic::Branch(branch),
+                ProofTactic::StepUsing(_),
+                ProofTactic::FrameUsing { .. },
+                ..
+            ] if matches!(
+                branch.ensuring.as_deref(),
+                Some([ProofAssertion::Fact(ClickProposition::Comparison {
+                    operator: ComparisonOperator::GreaterEqual,
+                    ..
+                })])
+            ) && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("nonnegative.c", c_source)],
+        "nonnegative",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained branch interface should expand");
+    verify_c0_sources(&expanded, &[("nonnegative.c", c_source)])
+        .expect("the retained branch-interface certificate should independently re-derive");
+}
+
+#[test]
+fn open_scope_retains_its_checked_branch_interface() {
+    let c_source = r#"
+        int32 scoped_nonnegative(int32 x) {
+            if (x < 0) {
+                x = 1;
+            } else {
+                x = 2;
+            }
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "scoped_nonnegative.c";
+
+        int32 scoped_nonnegative(int32 x) {
+            owns marker(x);
+            immutable;
+            ensures result >= 0;
+        } by {
+            open(marker(x)) {
+                branch {
+                    ensuring {
+                        fact x >= 0;
+                    }
+                    then { step(); }
+                    else { step(); }
+                }
+                step();
+            }
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("scoped_nonnegative.c", c_source)])
+    });
+    let verified = verified.expect("the scoped branch interface should stay on Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "scoped_nonnegative.contract" && name == "surface certificate replay"
+        )),
+        "scoped branch-interface construction must retain checked structure: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the scoped branch interface should retain its expansion");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(open))
+                if matches!(
+                    open.tactics.as_slice(),
+                    [ProofTactic::Branch(branch), ProofTactic::StepUsing(_)]
+                        if branch.ensuring.is_some()
+                            && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                            && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                )
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("scoped_nonnegative.c", c_source)],
+        "scoped_nonnegative",
+        CProofClaim::Grouped,
+    )
+    .expect("the scoped branch interface should expand");
+    verify_c0_sources(&expanded, &[("scoped_nonnegative.c", c_source)])
+        .expect("the scoped retained interface should independently re-derive");
+}
+
+#[test]
 fn open_scope_retains_its_checked_execution_branch() {
     let c_source = r#"
         int32 empty_branch(int32 x) {

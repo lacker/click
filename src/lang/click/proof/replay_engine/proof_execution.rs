@@ -307,7 +307,7 @@ fn advance_checked_open_scope<'a>(
             branches = branches.check_logical_arm_certificate(true, &then_proof)?;
             branches = branches.check_logical_arm_certificate(false, &else_proof)?;
         }
-        let scope = scope.join_execution_branch(branches, false)?;
+        let scope = scope.join_execution_branch(branches, false, None)?;
         let actual = scope.certificate_since(&checkpoint)?;
         let expected = ProofCertificate::from_steps(vec![SimpleProofStep::If {
             condition: condition.clone(),
@@ -350,7 +350,7 @@ fn advance_checked_open_scope<'a>(
         return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);
     }
     let InternalProofNode::Branch {
-        ensuring: None,
+        ensuring,
         then_branch,
         else_branch,
         continuation,
@@ -367,6 +367,11 @@ fn advance_checked_open_scope<'a>(
     };
     let branches = scope.begin_execution_branch()?;
     let feasible_arm = branches.sole_feasible_arm();
+    if ensuring.as_ref().is_some_and(|assertions| {
+        feasible_arm.is_some() || !branches.supports_interface_join(assertions)
+    }) {
+        return Ok(None);
+    }
     let empty = then_tactics.is_empty() && else_tactics.is_empty();
     let mut branches = Some(branches);
     if feasible_arm.is_none_or(|take_then| take_then) {
@@ -385,7 +390,7 @@ fn advance_checked_open_scope<'a>(
     let Some(branches) = branches else {
         return Ok(None);
     };
-    let scope = scope.join_execution_branch(branches, empty)?;
+    let scope = scope.join_execution_branch(branches, empty, ensuring.clone())?;
     advance_checked_open_scope(scope, continuation, expansion_capture, proof_site)
 }
 
@@ -888,7 +893,6 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     || internal_proof_contains_source_index(continuation, wanted)
             });
             if checked_capture_supported
-                && ensuring.is_none()
                 && let Some(then_tactics) = linear_execution_branch_tactics(then_branch)
                 && let Some(else_tactics) = linear_execution_branch_tactics(else_branch)
             {
@@ -909,25 +913,38 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 let checkpoint = proof.checkpoint();
                 let branches = proof.begin_execution_branch()?;
                 let feasible_arm = branches.sole_feasible_arm();
+                let checked_interface_supported = ensuring.as_ref().is_none_or(|assertions| {
+                    feasible_arm.is_none() && branches.supports_interface_join(assertions)
+                });
                 let empty = then_tactics.is_empty() && else_tactics.is_empty();
-                let checked = (|| {
-                    let branches = if feasible_arm.is_none_or(|take_then| take_then) {
-                        advance_execution_branch_arm(branches, true, then_tactics)?
-                    } else {
-                        Some(branches)
-                    };
-                    let branches = if feasible_arm.is_none_or(|take_then| !take_then) {
-                        let Some(branches) = branches else {
-                            return Ok(None);
+                let checked = if checked_interface_supported {
+                    (|| {
+                        let branches = if feasible_arm.is_none_or(|take_then| take_then) {
+                            advance_execution_branch_arm(branches, true, then_tactics)?
+                        } else {
+                            Some(branches)
                         };
-                        advance_execution_branch_arm(branches, false, else_tactics)?
+                        let branches = if feasible_arm.is_none_or(|take_then| !take_then) {
+                            let Some(branches) = branches else {
+                                return Ok(None);
+                            };
+                            advance_execution_branch_arm(branches, false, else_tactics)?
+                        } else {
+                            branches
+                        };
+                        Ok::<_, ClickError>(branches)
+                    })()?
+                } else {
+                    None
+                };
+                if let Some(branches) = checked
+                    && checked_interface_supported
+                {
+                    let proof = if let Some(assertions) = ensuring {
+                        branches.join_with_interface(assertions.clone())?
                     } else {
-                        branches
+                        join_linear_execution_branches(branches, empty)?
                     };
-                    Ok::<_, ClickError>(branches)
-                })()?;
-                if let Some(branches) = checked {
-                    let proof = join_linear_execution_branches(branches, empty)?;
                     let certificate = proof.certificate_since(&checkpoint)?;
                     let mut joined_context = proof.into_execution_context()?;
                     if let Some(site) = joined_context.replay.proof_site.as_ref() {

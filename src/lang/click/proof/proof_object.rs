@@ -115,6 +115,26 @@ enum ProofBranchStructure {
     If { condition: ClickProposition },
 }
 
+fn branch_interface_exports_ownership(assertions: &[ProofAssertion]) -> bool {
+    assertions.iter().any(|assertion| {
+        let ProofAssertion::Resource(resource) = assertion else {
+            return false;
+        };
+        let mut resource = resource;
+        while let ResourceClause::Quantified { resource: body, .. } = resource {
+            resource = body;
+        }
+        matches!(
+            resource,
+            ResourceClause::Write(_)
+                | ResourceClause::Declared {
+                    access: ResourceAccessMode::Own,
+                    ..
+                }
+        )
+    })
+}
+
 fn explicit_linear_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
     let certificate = ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).ok()?;
     let [step] = certificate.steps() else {
@@ -5157,6 +5177,36 @@ impl<'a> ExecutionProofBranches<'a> {
         })
     }
 
+    /// Whether an interface join owns a direct continuation and can retain
+    /// the complete exact common resource context without enumerating it.
+    ///
+    /// Resource snapshots do not yet expose a persistent changed-key merge,
+    /// so differently edited contexts remain on the legacy structural path.
+    /// A branch whose continuation belongs to an enclosing C arm remains
+    /// there too. Identical snapshots share one storage root and are retained
+    /// in O(1).
+    pub(super) fn supports_interface_join(&self, assertions: &[ProofAssertion]) -> bool {
+        if self.continuation_remaining.is_none() {
+            return false;
+        }
+        if branch_interface_exports_ownership(assertions) {
+            return false;
+        }
+        let [Some(then_arm), Some(else_arm)] = &self.arms else {
+            return false;
+        };
+        let Some(then_execution) = then_arm.proof.state.execution.as_ref() else {
+            return false;
+        };
+        let Some(else_execution) = else_arm.proof.state.execution.as_ref() else {
+            return false;
+        };
+        then_execution
+            .state
+            .resources()
+            .shares_storage_with(else_execution.state.resources())
+    }
+
     #[cfg(test)]
     fn arm(&self, take_then: bool) -> Option<&Proof<'a>> {
         self.arms[usize::from(!take_then)]
@@ -5325,6 +5375,29 @@ impl<'a> ExecutionProofBranches<'a> {
                 .root
                 .step_error("a terminal execution `branch` requires both feasible arms"));
         };
+        if !then_arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .expect("interface arm retains execution")
+            .state
+            .resources()
+            .shares_storage_with(
+                else_arm
+                    .proof
+                    .state
+                    .execution
+                    .as_ref()
+                    .expect("interface arm retains execution")
+                    .state
+                    .resources(),
+            )
+        {
+            return Err(self.root.step_error(
+                "checked `branch ensuring` cannot yet retain a proper common resource delta",
+            ));
+        }
         let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
             self.root
                 .step_error("execution branch root lost its semantic state")
@@ -5775,6 +5848,349 @@ impl<'a> ExecutionProofBranches<'a> {
         })
     }
 
+    /// Joins two checked C branch descendants through one explicit common
+    /// frontier interface.
+    ///
+    /// Each arm is independently checked and abstracted before any result is
+    /// selected. The operation accepts the join only when those abstract
+    /// semantic states and exported facts agree exactly, then records the
+    /// corresponding `Branch { ensuring, .. }` certificate atomically.
+    pub(super) fn join_with_interface(
+        self,
+        assertions: Vec<ProofAssertion>,
+    ) -> Result<Proof<'a>, ClickError> {
+        let [Some(then_arm), Some(else_arm)] = self.arms else {
+            return Err(self.root.step_error(
+                "checked `branch ensuring` currently requires two feasible continuing arms",
+            ));
+        };
+        if branch_interface_exports_ownership(&assertions) {
+            return Err(self.root.step_error(
+                "checked `branch ensuring` cannot yet normalize exported ownership incrementally",
+            ));
+        }
+        let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
+            self.root
+                .step_error("execution branch root lost its semantic state")
+        })?;
+        let continuation_remaining = self.continuation_remaining.clone().ok_or_else(|| {
+            self.root
+                .step_error("execution `branch` has no shared continuation statement")
+        })?;
+        let validate_arm = |name: &str,
+                            expected: bool,
+                            arm: &ExecutionProofArm<'a>|
+         -> Result<(), ClickError> {
+            let execution = arm.proof.state.execution.as_ref().ok_or_else(|| {
+                self.root
+                    .step_error(format!("{name} branch arm lost its execution state"))
+            })?;
+            if !execution
+                .replay
+                .completed_branch_regions
+                .contains(&self.statement_index)
+                || execution.replay.frontier.continuations.len() > self.initial_continuation_depth
+                || execution.replay.frontier.next_statement_index != self.continuation_index
+                || execution.replay.is_at_function_exit()
+            {
+                return Err(self.root.step_error(format!(
+                    "{name} `branch ensuring` arm has not reached its shared continuation"
+                )));
+            }
+            if !matches!(
+                implication_body(arm.condition_theorem.proposition()),
+                Proposition::CConditionEvaluates {
+                    outcome: CConditionOutcome::Value(actual),
+                    ..
+                } if *actual == expected
+            ) {
+                return Err(self
+                    .root
+                    .step_error(format!("{name} arm retained the wrong condition theorem")));
+            }
+            let replay = &execution.replay;
+            if replay.function_entry_execution_prerequisites.len()
+                != root_execution
+                    .replay
+                    .function_entry_execution_prerequisites
+                    .len()
+                    + arm.introduced_function_entry_prerequisites.len()
+                || replay.function_entry_derivations.len()
+                    != root_execution.replay.function_entry_derivations.len()
+                        + arm.introduced_function_entry_derivations.len()
+                || replay.frontier_loop_clauses.len()
+                    != root_execution.replay.frontier_loop_clauses.len()
+                || replay.frontier_loop_rules.len()
+                    != root_execution.replay.frontier_loop_rules.len()
+                || replay.unfolded_predicates.len()
+                    != root_execution.replay.unfolded_predicates.len()
+                        + arm.introduced_unfolded_predicates.len()
+                || replay.planned_statement_transitions.len()
+                    != root_execution.replay.planned_statement_transitions.len()
+            {
+                return Err(self.root.step_error(format!(
+                        "{name} execution arm changed replay metadata that the checked interface join has not migrated"
+                    )));
+            }
+            Ok(())
+        };
+        validate_arm("then", true, &then_arm)?;
+        validate_arm("else", false, &else_arm)?;
+
+        let then_proof = then_arm.proof.certificate_since(&self.root_checkpoint)?;
+        let else_proof = else_arm.proof.certificate_since(&self.root_checkpoint)?;
+        let then_execution = then_arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .expect("validated then execution state");
+        let else_execution = else_arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .expect("validated else execution state");
+        let common_program_points = then_execution
+            .replay
+            .program_point_states
+            .common_descendant(
+                &else_execution.replay.program_point_states,
+                &root_execution.replay.program_point_states,
+            )
+            .ok_or_else(|| {
+                self.root.step_error(
+                    "`branch ensuring` arms do not descend from the root program-point state",
+                )
+            })?;
+
+        let mut stable_join_locals = then_execution
+            .state
+            .locals()
+            .object_values()
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        stable_join_locals
+            .retain(|name, value| else_execution.state.locals().get(name) == Some(value));
+        let target = ProgramPointRef {
+            region: CodeRegionRef::Statement(self.continuation_index),
+            kind: ProgramPointKind::Entry,
+        };
+
+        let abstract_arm =
+            |arm: &ExecutionProofArm<'a>| -> Result<(ExecutionProofState, ProofFacts), ClickError> {
+                let mut execution = arm
+                    .proof
+                    .state
+                    .execution
+                    .as_ref()
+                    .expect("validated interface arm execution")
+                    .clone();
+                let mut facts = arm.proof.state.facts.clone();
+                let mut state = (*execution.state).clone();
+                let ProofContext::Execution(context) = self.root.context.as_ref() else {
+                    unreachable!("execution branch retained a non-execution context")
+                };
+                apply_branch_interface_with_proof_facts(
+                    &target,
+                    &assertions,
+                    context.tactic_index,
+                    &mut execution.replay,
+                    &mut state,
+                    &mut facts,
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                    context.resource_environment,
+                    context.claim_label,
+                    &stable_join_locals,
+                    true,
+                )
+                .map_err(|error| add_proof_branch_path(error, &execution.branch_path))?;
+                execution.state = state.into();
+                Ok((execution, facts))
+            };
+        let (mut then_abstract, then_interface_facts) = abstract_arm(&then_arm)?;
+        let (else_abstract, else_interface_facts) = abstract_arm(&else_arm)?;
+
+        let then_interface_vec = then_interface_facts.to_vec();
+        let else_interface_vec = else_interface_facts.to_vec();
+        if then_interface_vec != else_interface_vec || *then_abstract.state != *else_abstract.state
+        {
+            return Err(self.root.step_error(
+                "`branch ensuring` arms produced different abstract successor states",
+            ));
+        }
+
+        // Neither arm edited this exact persistent resource value. Retain it
+        // without enumeration, then validate only the output-sized interface
+        // additions against that already-valid context.
+        let mut resources = then_execution.state.resources().clone();
+        let additions = then_abstract
+            .state
+            .resources()
+            .facts()
+            .iter()
+            .filter(|fact| !resources.satisfies_fact(fact, then_interface_facts.assumptions()))
+            .cloned()
+            .collect::<Vec<_>>();
+        resources = resources
+            .try_compose_into_valid_context_delaying_normalization(
+                additions,
+                then_interface_facts.assumptions(),
+            )
+            .map_err(|error| {
+                self.root.step_error(format!(
+                    "invalid automatic common `branch ensuring` resource interface: {error:?}"
+                ))
+            })?;
+        let state = (*then_abstract.state)
+            .clone()
+            .with_resource_context(resources);
+        then_abstract.state = state.into();
+
+        let abstract_state = (*then_abstract.state).clone();
+        let mut execution = root_execution.clone();
+        execution.state = abstract_state.clone().into();
+        execution.replay.program_point_states = common_program_points;
+        execution
+            .replay
+            .program_point_states
+            .insert(target, abstract_state.clone());
+        execution.replay.completed_branch_regions.clear();
+        execution
+            .replay
+            .completed_branch_regions
+            .insert(self.statement_index);
+        execution.replay.frontier.next_statement_index = self.continuation_index;
+        execution.replay.frontier.execution_start_state = Some(self.execution_start_state);
+        execution.replay.frontier.point = ProofExecutionPoint::StatementEntry {
+            remaining: continuation_remaining,
+        };
+        execution.replay.has_structured_branch_history = true;
+        execution.replay.execution_abstraction = true;
+        execution.replay.unfolded_predicates.clear();
+        execution.replay.case_assumptions.clear();
+        execution.replay.next_opaque_call = then_abstract
+            .replay
+            .next_opaque_call
+            .max(else_abstract.replay.next_opaque_call);
+        execution.replay.next_verification_variable = then_abstract
+            .replay
+            .next_verification_variable
+            .max(else_abstract.replay.next_verification_variable);
+        for effect in then_arm
+            .introduced_effect_facts
+            .iter()
+            .chain(&else_arm.introduced_effect_facts)
+        {
+            append_execution_effect_facts(
+                &mut execution.replay.effect_facts,
+                std::slice::from_ref(effect),
+            );
+        }
+        for fact in then_arm
+            .introduced_function_entry_prerequisites
+            .iter()
+            .chain(&else_arm.introduced_function_entry_prerequisites)
+        {
+            execution
+                .replay
+                .function_entry_execution_prerequisites
+                .insert(fact.clone());
+        }
+        for theorem in then_arm
+            .introduced_function_entry_derivations
+            .iter()
+            .chain(&else_arm.introduced_function_entry_derivations)
+        {
+            execution
+                .replay
+                .function_entry_derivations
+                .insert(theorem.clone());
+        }
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        execution.branch_path.clear();
+        let ProofContext::Execution(context) = self.root.context.as_ref() else {
+            unreachable!("execution branch retained a non-execution context")
+        };
+        record_statement_program_point_state(
+            &mut execution.replay,
+            context.function_block,
+            self.statement_index,
+            ProgramPointKind::Exit,
+            abstract_state,
+        );
+        record_current_statement_entry(
+            &mut execution.replay,
+            &execution.state,
+            context.function_block,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "branch ensuring",
+        )?;
+
+        let mut facts = self.root.state.facts.clone();
+        let mut added_facts = Vec::new();
+        let mut retain_fact = |fact: &Proposition| -> Result<(), ClickError> {
+            if !facts.contains_top_level(fact) {
+                facts = facts.with_fact(fact.clone());
+                added_facts.push(fact.clone());
+            }
+            for surface in then_abstract.replay.surface_propositions.surfaces(fact) {
+                if else_abstract
+                    .replay
+                    .surface_propositions
+                    .surfaces(fact)
+                    .any(|candidate| candidate == surface)
+                {
+                    execution
+                        .replay
+                        .surface_propositions
+                        .record_lowering(surface, fact)?;
+                }
+            }
+            Ok(())
+        };
+        for fact in &then_interface_vec {
+            retain_fact(fact)?;
+        }
+        for fact in &then_arm.introduced_facts {
+            if else_arm.introduced_facts.contains(fact)
+                && then_arm.proof.state.facts.contains(fact)
+                && else_arm.proof.state.facts.contains(fact)
+            {
+                retain_fact(fact)?;
+            }
+        }
+
+        Ok(Proof {
+            context: self.root.context.clone(),
+            state: Arc::new(ProofState {
+                facts,
+                locals: self.root.state.locals.clone(),
+                unfolded_predicates: self.root.state.unfolded_predicates.clone(),
+                goal: self.root.state.goal.clone(),
+                complete: false,
+                added_facts: Arc::new(added_facts.clone()),
+                checked_facts: Arc::new(added_facts),
+                execution: Some(execution),
+            }),
+            node: Arc::new(ProofNode {
+                parent: Some(self.root.node.clone()),
+                step: Some(Arc::new(SimpleProofStep::Branch {
+                    ensuring: Some(assertions),
+                    then_proof: Box::new(then_proof),
+                    else_proof: Box::new(else_proof),
+                })),
+                depth: self.root.node.depth + 1,
+            }),
+        })
+    }
+
     /// Preserves the original empty-arm entry point for callers that require
     /// the branch to contain no body steps.
     pub(super) fn join_empty(self) -> Result<Proof<'a>, ClickError> {
@@ -6124,6 +6540,7 @@ impl<'a> ProofScope<'a> {
         &self,
         branches: ExecutionProofBranches<'a>,
         empty: bool,
+        ensuring: Option<Vec<ProofAssertion>>,
     ) -> Result<Self, ClickError> {
         if !Arc::ptr_eq(&branches.root.context, &self.body.context)
             || !Arc::ptr_eq(&branches.root.node, &self.body.node)
@@ -6132,7 +6549,9 @@ impl<'a> ProofScope<'a> {
                 .root
                 .step_error("execution branches are not rooted at the current scope body"));
         }
-        let body = if branches.sole_feasible_arm().is_some() {
+        let body = if let Some(assertions) = ensuring {
+            branches.join_with_interface(assertions)?
+        } else if branches.sole_feasible_arm().is_some() {
             branches.finish_decided()?
         } else if branches.both_arms_at_function_exit() {
             branches.join_terminal()?
@@ -13041,6 +13460,146 @@ mod tests {
                 "size {size} nonempty branch join allocated {allocations} persistent nodes (logarithmic bound {allocation_bound})"
             );
         }
+    }
+
+    #[test]
+    fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 nonnegative(int32 x) {
+                    ensures nonnegative_result: result >= 0 by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let parsed_function = syntax::parse_function(
+            "int32 nonnegative(int32 x) { if (x < 0) { x = 1; } else { x = 2; } return x; }",
+        )
+        .expect("test interface branch should parse");
+        let function = parsed_function.to_kernel_function();
+        let arguments = vec![CExpression::Value(CValue::Int32(
+            Bitvector32Term::Variable(Variable(72_000)),
+        ))];
+        let function_environment = CExecutionEnvironment::new();
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+        let variable =
+            |name: &str| ContractExpression::CFragment(CExpression::Variable(name.to_string()));
+        let value = |constant| ContractExpression::CFragment(CExpression::Value(int32(constant)));
+        let nonnegative = ClickProposition::Comparison {
+            left: variable("x"),
+            operator: ComparisonOperator::GreaterEqual,
+            right: value(0),
+        };
+        let negative = ClickProposition::Comparison {
+            left: variable("x"),
+            operator: ComparisonOperator::LessThan,
+            right: value(0),
+        };
+        let make_root = |size: u32| {
+            let mut replay = TacticReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..TacticReplayState::default()
+            };
+            replay.frontier.next_statement_index = 0;
+            Proof::for_execution_frontier(
+                "branch interface proof",
+                0,
+                ProofReplayContext {
+                    state: CState::new(),
+                    pure_facts: (0..size).map(indexed_fact).collect(),
+                    replay,
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            )
+        };
+
+        let mut samples = Vec::new();
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let root = make_root(size);
+            let branches = root
+                .begin_execution_branch()
+                .expect("symbolic condition should open both interface arms")
+                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+                .expect("then assignment should check")
+                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .expect("else assignment should check");
+            let before = fact_node_allocations();
+            let joined = branches
+                .join_with_interface(vec![ProofAssertion::Fact(nonnegative.clone())])
+                .expect("both assignments should establish the interface");
+            samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before,
+            ));
+            assert!(matches!(
+                joined.certificate().steps(),
+                [SimpleProofStep::Branch {
+                    ensuring: Some(assertions),
+                    then_proof,
+                    else_proof,
+                }] if assertions == std::slice::from_ref(&ProofAssertion::Fact(nonnegative.clone()))
+                    && matches!(then_proof.steps(), [SimpleProofStep::StepUsing(_)])
+                    && matches!(else_proof.steps(), [SimpleProofStep::StepUsing(_)])
+            ));
+            assert!(
+                joined
+                    .added_facts()
+                    .iter()
+                    .all(|fact| !(0..size).any(|index| *fact == indexed_fact(index))),
+                "the interface node must not copy ambient facts into its delta"
+            );
+            let completed = joined
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("the abstract joined frontier should execute its return");
+            assert!(
+                completed
+                    .state
+                    .execution
+                    .as_ref()
+                    .expect("completed interface proof retains execution")
+                    .replay
+                    .is_at_function_exit()
+            );
+        }
+        let (_, base_height, base_allocations) = samples[0];
+        for (size, height, allocations) in samples {
+            let bound = base_allocations + 48 * (height - base_height);
+            assert!(
+                allocations <= bound,
+                "size {size} branch interface allocated {allocations} persistent nodes (bound {bound})"
+            );
+        }
+
+        let root = make_root(16);
+        let retained = root.clone();
+        let error = root
+            .begin_execution_branch()
+            .expect("rejection test should open both arms")
+            .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+            .expect("then assignment should check")
+            .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+            .expect("else assignment should check")
+            .join_with_interface(vec![ProofAssertion::Fact(negative)])
+            .err()
+            .expect("each arm must independently establish the interface");
+        assert!(error.message().contains("did not establish fact"));
+        assert!(Arc::ptr_eq(&root.state, &retained.state));
+        assert!(root.certificate().steps().is_empty());
     }
 
     #[test]

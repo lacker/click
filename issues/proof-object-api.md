@@ -1510,6 +1510,27 @@ exactly before proceeding to a later outcome partition. Structured `if` and
 `branch` nodes now retain their source index, so this checked path does not
 borrow provenance from either leaf.
 
+The first explicit `branch ensuring` join now belongs to the same structural
+API. `ExecutionProofBranches::join_with_interface` checks and abstracts every
+continuing arm independently against the declared pure/resource interface,
+requires the abstract successor states and exported fact sequence to agree
+exactly, and installs the resulting `SimpleProofStep::Branch` atomically. Pure
+and non-owning `views` interfaces cross this seam; ownership-exporting
+interfaces still require resource normalization described below. The
+checker consumes the persistent `ProofFacts` assumption index directly, so it
+does not clone or rebuild the ambient fact context. When both arms retain the
+same persistent resource snapshot, the join preserves that complete common
+context in O(1) and validates only the interface's output-sized additions.
+Top-level and scoped linear branches use this path, ordinary verification does
+not enter surface-certificate replay, and the retained expansion independently
+re-verifies. Rejection leaves the root unchanged, and a deterministic
+16-through-4096 unrelated-fact regression bounds persistent allocation by
+tree height. Proper common-resource deltas from differently edited arm
+snapshots, ownership-exporting interfaces, nested end-of-arm continuations,
+and one-feasible `branch ensuring` intentionally remain on the legacy
+structural path until resource snapshots expose an output-sensitive
+changed-key join and incremental normalization operation.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
