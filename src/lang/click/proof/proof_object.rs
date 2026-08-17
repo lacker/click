@@ -2118,17 +2118,18 @@ impl<'a> Proof<'a> {
         source_proof_contains_linear_search(proof) && source_proof_is_supported(proof)
     }
 
-    /// Tries the bounded terminal statement candidate whose complete premise
-    /// set is visible before executing the statement: its exact expression-
+    /// Tries the bounded linear statement candidate whose complete premise set
+    /// is visible before executing the statement: its exact expression-
     /// definedness requirements.
     ///
     /// This is deliberately narrower than general smart `step` planning. It
-    /// accepts only a return frontier whose proof facts consist exactly of
-    /// those requirements, with no effect or resource context that would need
-    /// preservation. Selection performs indexed fact/surface lookups only;
-    /// the C transition runs once, when the resulting `StepUsing` is submitted
-    /// to `apply_step` and retained by the returned descendant.
-    pub(super) fn try_exact_definedness_return_step(&self) -> Result<Option<Self>, ClickError> {
+    /// accepts only a non-branching, non-loop frontier whose proof facts
+    /// consist exactly of those requirements, with no effect or resource
+    /// context that would need preservation. Selection performs indexed
+    /// fact/surface lookups only; the C transition runs once, when the
+    /// resulting `StepUsing` is submitted to `apply_step` and retained by the
+    /// returned descendant.
+    pub(super) fn try_exact_definedness_statement_step(&self) -> Result<Option<Self>, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Ok(None);
         };
@@ -2150,7 +2151,7 @@ impl<'a> Proof<'a> {
             context.tactic_index,
             "smart step selection",
         )?;
-        if !matches!(statement, CStatement::Return(_)) {
+        if matches!(statement, CStatement::If { .. } | CStatement::While { .. }) {
             return Ok(None);
         }
         let mut required = statement_expression_definedness(&current_state, &statement)
@@ -8907,7 +8908,7 @@ mod tests {
             let retained_root = root.clone();
             let before_selection = fact_node_allocations();
             assert!(
-                root.try_exact_definedness_return_step()
+                root.try_exact_definedness_statement_step()
                     .expect("bounded smart-step selection should remain available")
                     .is_none(),
                 "unrelated ambient facts require the richer transport planner"

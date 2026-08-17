@@ -579,7 +579,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     Ok(Some((goal, certificate)))
 }
 
-/// Tries the terminal smart statement candidate whose complete exact
+/// Tries the linear smart statement candidate whose complete exact
 /// definedness premise set is available through the immutable Proof.
 ///
 /// Keep this operation and its result outlined from the recursive proof
@@ -587,7 +587,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
 /// growth in that caller's stack frame.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
-fn try_exact_definedness_return_step_on_proof<'a>(
+fn try_exact_definedness_step_on_proof<'a>(
     state: &mut CState,
     pure_facts: &mut Vec<Proposition>,
     replay: &mut TacticReplayState,
@@ -622,7 +622,7 @@ fn try_exact_definedness_return_step_on_proof<'a>(
         click_function_environment,
         theorem_environment,
     );
-    match root.try_exact_definedness_return_step()? {
+    match root.try_exact_definedness_statement_step()? {
         Some(proof) => {
             let certificate = proof.certificate();
             let context = proof.into_execution_context()?;
@@ -1117,7 +1117,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::SmartStep => {
-                if try_exact_definedness_return_step_on_proof(
+                if try_exact_definedness_step_on_proof(
                     &mut state,
                     &mut requirement_pure_facts,
                     &mut replay,

@@ -359,27 +359,29 @@ successor back out, and append its retained step. They no longer use
 `complete_smart_tactic` or ordinary per-tactic replay. Multi-step and
 branching plans remain on the legacy path pending structured proof goals.
 
-Terminal smart `step()` now searches on `Proof` directly when its complete
-premise set is knowable before execution: the return expression's exact
+Linear smart `step()` now searches on `Proof` directly when its complete
+premise set is knowable before execution: the statement expression's exact
 definedness requirements. The query uses the persistent atomic-reasoning and
 surface-spelling indexes to select the requirements' explicit context
 premises, then submits one `StepUsing` to the same `Proof`; the C transition
 runs only in `apply_step`, and the successor retains that operation as both
-semantic state and certificate. The path admits the empty fact-free case and
-signed-overflow cases such as `return x + 1`, but only when those selected
-premises are the complete ambient proof-fact set and there are no effect or
-resource facts to preserve. A rejected candidate leaves the root intact and
-falls through to the richer transport planner; deadline failure is not
-swallowed as rejection.
+semantic state and certificate. The path admits fact-free assignments and
+returns, plus signed-overflow cases such as `return x + 1`, but only when those
+selected premises are the complete ambient proof-fact set and there are no
+effect or resource facts to preserve. Branch and loop frontiers remain on
+their structural paths. A rejected candidate leaves the root intact and falls
+through to the richer transport planner; deadline failure is not swallowed as
+rejection.
 
 Focused counter regressions require zero mutable planning transitions for
-both the empty and overflow-premise returns, and expansion independently
-verifies both retained forms. The existing 16-through-4096 unrelated-fact
+the empty assignment/return path and the overflow-premise return, and
+expansion independently verifies both retained forms. The existing
+16-through-4096 unrelated-fact
 curve additionally requires this bounded query to reject without allocating
 any persistent fact nodes, rather than scanning or cloning the ambient facts.
-Nonterminal statements and terminal statements with unrelated facts still
-retain automatic transport planning because a current or later postcondition
-may depend on facts that smart `step()` must carry forward. This is the first
+Statements with unrelated facts still retain automatic transport planning
+because a current or later postcondition may depend on facts that smart
+`step()` must carry forward. This is the first
 execution search path where smart selection operates on proof objects, not
 merely where planner output is checked by one afterward.
 

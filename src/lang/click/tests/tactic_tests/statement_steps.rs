@@ -416,6 +416,64 @@ fn no_premise_smart_step_searches_directly_on_proof() {
 }
 
 #[test]
+fn fact_free_linear_smart_steps_search_directly_on_proof() {
+    let c_source = r#"
+            int32 set_one(int32 x) {
+                x = 1;
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "set_one.c";
+
+            int32 set_one(int32 x) {
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                normalize();
+            }
+        "#;
+
+    let ((verified, events), planning_transitions) = count_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| {
+            verify_c0_sources(click_source, &[("set_one.c", c_source)])
+        })
+    });
+    let verified = verified.expect("fact-free linear smart steps should verify through Proof");
+    assert_eq!(
+        planning_transitions, 0,
+        "neither linear statement should execute on a mutable planning context"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "set_one.contract" && name == "surface certificate replay"
+        )),
+        "the retained Proof path must not pass through ordinary construction replay: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked linear path should retain its expansion");
+    assert!(matches!(
+        expanded.as_slice(),
+        [ProofTactic::StepUsing(first), ProofTactic::StepUsing(second), ProofTactic::Normalize]
+            if first.is_empty() && second.is_empty()
+    ));
+
+    let expanded_source = expand_c0_claim_source(
+        click_source,
+        &[("set_one.c", c_source)],
+        "set_one",
+        CProofClaim::Grouped,
+    )
+    .expect("the direct linear smart steps should expand into source");
+    verify_c0_sources(&expanded_source, &[("set_one.c", c_source)])
+        .expect("the retained linear steps should independently reverify");
+}
+
+#[test]
 fn execute_rest_return_certificate_omits_unused_ambient_facts() {
     let c_source = r#"
             int32 return_x(int32 x) {
