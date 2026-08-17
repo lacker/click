@@ -58,6 +58,18 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact oriented ground-int32 equality edges selected by an
+    /// atomic equality decision.
+    pub fn bitvector_equality_path(&self) -> Option<&[BitvectorEqualityDerivationStep]> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::BitvectorEqualityPath(path),
+                ..
+            } => Some(path),
+            _ => None,
+        }
+    }
+
     pub fn context_premises(&self) -> Vec<Proposition> {
         let mut premises = BTreeSet::new();
         self.collect_context_premises(&mut premises);
@@ -179,6 +191,20 @@ impl SignedOrderDerivationStep {
     /// was collected. This matters for polarity-normalized edges such as
     /// `not (x <= y)`, whose path shape is `y < x` but whose replay premise
     /// is not literally that positive comparison.
+    pub fn premise(&self) -> &Proposition {
+        &self.premise
+    }
+}
+
+impl BitvectorEqualityDerivationStep {
+    pub fn source(&self) -> &Bitvector32Term {
+        &self.source
+    }
+
+    pub fn target(&self) -> &Bitvector32Term {
+        &self.target
+    }
+
     pub fn premise(&self) -> &Proposition {
         &self.premise
     }

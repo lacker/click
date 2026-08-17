@@ -1766,8 +1766,9 @@ impl<'a> Proof<'a> {
                     .map(|surface| (premise.clone(), surface))
             })
             .collect::<Option<Vec<_>>>()?;
-        let ordered = recorded_signed_order_pairs(derivation, &premise_pairs)?;
-        let tactics = plan_recorded_signed_order_path(goal, &ordered)?;
+        let tactics = recorded_signed_order_pairs(derivation, &premise_pairs)
+            .and_then(|ordered| plan_recorded_signed_order_path(goal, &ordered))
+            .or_else(|| plan_recorded_bitvector_equality_path(goal, derivation, &premise_pairs))?;
         let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
         let proof = self.check_certificate(&candidate).ok()?;
         proof.is_complete().then_some(proof)

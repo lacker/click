@@ -2916,6 +2916,86 @@ pub(super) fn plan_recorded_signed_order_path(
     Some(tactics)
 }
 
+fn orient_surface_bitvector_equality(
+    step: &BitvectorEqualityDerivationStep,
+    surface: &ClickProposition,
+) -> Option<ClickProposition> {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(premise_left, premise_right),
+        true,
+    ) = step.premise()
+    else {
+        return None;
+    };
+    let reverse = step.source() == premise_right.as_ref() && step.target() == premise_left.as_ref();
+    if !reverse
+        && !(step.source() == premise_left.as_ref() && step.target() == premise_right.as_ref())
+    {
+        return None;
+    }
+    fn oriented(surface: &ClickProposition, reverse: bool) -> Option<ClickProposition> {
+        match surface {
+            ClickProposition::At {
+                selector,
+                proposition,
+            } => Some(ClickProposition::At {
+                selector: selector.clone(),
+                proposition: Box::new(oriented(proposition, reverse)?),
+            }),
+            ClickProposition::Comparison {
+                left,
+                operator: ComparisonOperator::Equal,
+                right,
+            } => Some(ClickProposition::Comparison {
+                left: if reverse { right.clone() } else { left.clone() },
+                operator: ComparisonOperator::Equal,
+                right: if reverse { left.clone() } else { right.clone() },
+            }),
+            _ => None,
+        }
+    }
+    oriented(surface, reverse)
+}
+
+/// Transcribe the exact equality path retained by the kernel. Each edge is
+/// oriented in the direction selected by the path, even when its source
+/// premise was written in reverse. Rewriting the goal along every edge must
+/// end in a context-free reflexive proposition.
+pub(super) fn plan_recorded_bitvector_equality_path(
+    goal: &Proposition,
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let path = derivation.bitvector_equality_path()?;
+    let available = premise_pairs
+        .iter()
+        .map(|(kernel, _)| kernel.clone())
+        .collect::<Vec<_>>();
+    let mut current = goal.clone();
+    let mut tactics = Vec::with_capacity(path.len() + 1);
+    for step in path {
+        let (_, surface) = premise_pairs
+            .iter()
+            .find(|(kernel, _)| kernel == step.premise())?;
+        let oriented_surface = orient_surface_bitvector_equality(step, surface)?;
+        let oriented_kernel = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(step.source().clone()),
+                Box::new(step.target().clone()),
+            ),
+            true,
+        );
+        current =
+            rewrite_proposition_by_exact_equality(&current, &oriented_kernel, &available).ok()?;
+        tactics.push(ProofTactic::Rewrite(oriented_surface));
+    }
+    if !normalizes_context_free(&current) {
+        return None;
+    }
+    tactics.push(ProofTactic::Normalize);
+    Some(tactics)
+}
+
 /// The goal-side counterpart of [`signed_strict_parts`]. A named-rule
 /// certificate closes with `assumption` against the applied theorem's exact
 /// conclusion, so a rule whose theorem concludes `<` may only fire when the

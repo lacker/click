@@ -365,11 +365,63 @@ impl PureFactContext {
                 return true;
             }
             if let Some(neighbors) = equality_index.get(&term) {
-                stack.extend(neighbors.iter().cloned());
+                stack.extend(neighbors.keys().cloned());
             }
         }
 
         false
+    }
+
+    /// Retain one deterministic path made only from exact int32 equality
+    /// conditions. Memory-canonicalized and pointer-offset-derived graph
+    /// edges deliberately remain for their own typed evidence kinds.
+    pub(in crate::kernel) fn exact_bitvector_equality_path_evidence(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<Vec<BitvectorEqualityDerivationStep>> {
+        if left == right
+            || equality_graph_term_key(left) != *left
+            || equality_graph_term_key(right) != *right
+        {
+            return None;
+        }
+        let equality_index = self.bitvector_equality_index();
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![(left.clone(), Vec::new())];
+        while let Some((current, path)) = stack.pop() {
+            if !seen.insert(current.clone()) {
+                continue;
+            }
+            if current == *right && !path.is_empty() {
+                return Some(path);
+            }
+            let Some(neighbors) = equality_index.get(&current) else {
+                continue;
+            };
+            for (neighbor, premise) in neighbors.iter().rev() {
+                let Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(premise_left, premise_right),
+                    true,
+                ) = premise
+                else {
+                    continue;
+                };
+                if equality_graph_term_key(premise_left) != **premise_left
+                    || equality_graph_term_key(premise_right) != **premise_right
+                {
+                    continue;
+                }
+                let mut extended = path.clone();
+                extended.push(BitvectorEqualityDerivationStep {
+                    source: current.clone(),
+                    target: neighbor.clone(),
+                    premise: premise.clone(),
+                });
+                stack.push((neighbor.clone(), extended));
+            }
+        }
+        None
     }
 
     pub(in crate::kernel) fn simplify_condition_under_assumptions(

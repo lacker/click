@@ -1062,6 +1062,35 @@ fn signed_order_derivation_retains_the_exact_negative_polarity_premise() {
 }
 
 #[test]
+fn bitvector_equality_derivation_retains_its_exact_oriented_path() {
+    let left = Bitvector32Term::Variable(Variable(207));
+    let middle = Bitvector32Term::Variable(Variable(208));
+    let right = Bitvector32Term::Variable(Variable(209));
+    let first = Proposition::ConditionIs(ConditionTerm::equal(middle.clone(), left.clone()), true);
+    let second =
+        Proposition::ConditionIs(ConditionTerm::equal(middle.clone(), right.clone()), true);
+    let goal = Proposition::ConditionIs(ConditionTerm::equal(left.clone(), right.clone()), true);
+    let assumptions = PureFactContext::new()
+        .assume_proposition(first.clone())
+        .assume_proposition(second.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("the exact equality chain should derive its conclusion");
+    let path = derivation
+        .bitvector_equality_path()
+        .expect("the atomic decision should retain its selected equality path");
+    assert_eq!(path.len(), 2);
+    assert_eq!(path[0].source(), &left);
+    assert_eq!(path[0].target(), &middle);
+    assert_eq!(path[0].premise(), &first);
+    assert_eq!(path[1].source(), &middle);
+    assert_eq!(path[1].target(), &right);
+    assert_eq!(path[1].premise(), &second);
+    assert!(derivation.replay(&assumptions));
+}
+
+#[test]
 fn signed_less_equal_and_inequality_derive_strict_order() {
     let left = Bitvector32Term::Variable(Variable(9_004));
     let right = Bitvector32Term::Variable(Variable(9_005));

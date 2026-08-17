@@ -149,10 +149,11 @@ regression expands and independently reverifies that transcription, and the
 existing unrelated-condition scaling curve remains green.
 
 This closes the exact signed-order member of the required design, not the
-issue. Equality chains, interval/overflow decisions, quantified/derived order
-edges, and memory-DAG joins still return legacy or incomplete evidence and
-must gain their corresponding typed steps before the ambient harvest and
-deletion machinery can be removed globally.
+issue. Interval/overflow decisions, quantified/derived order edges,
+memory-canonicalized and pointer-offset-derived equality edges, and memory-DAG
+joins still return legacy or incomplete evidence and must gain their
+corresponding typed steps before the ambient harvest and deletion machinery
+can be removed globally.
 
 The pure smart-tactic consumer now also uses this provenance at the Proof
 boundary. Its requirement spellings live in the existing persistent
@@ -166,3 +167,22 @@ migration work under the proof-object issue.
 A deterministic 16-through-4096 unrelated-fact regression pins logarithmic
 persistent updates for the same retained theorem path; the order search itself
 remains the separately measured near-linear smart-planning phase.
+
+### Progress (2026-08-16: exact int32 equality paths)
+
+The existing lazily shared equality graph now retains one exact source
+proposition on each edge. Exact ground-int32 equality decisions record the
+oriented path they traverse; replay checks every source condition by indexed
+lookup and follows the recorded endpoints without rerunning graph search.
+Memory-canonicalized vertices and pointer-offset-derived edges are excluded
+from this evidence kind until their distinct proof rules are typed.
+
+Pure certificate selection orients each recorded source spelling, emits the
+ordered `rewrite` steps, and finishes the resulting reflexive goal with
+`normalize`. The smart tactic submits that candidate to the immutable `Proof`
+and retains the accepted descendant, so ordinary verification emits no
+`surface certificate replay`; expansion independently reparses and verifies a
+three-edge path, including a source equality written in reverse. The existing
+equality-index regression confirms many graph queries still share one ambient
+fact-index build. Point/outcome certificate lowering remains to consume this
+typed path directly.

@@ -2753,6 +2753,58 @@ fn smart_simp_transcribes_a_three_edge_signed_order_path() {
 }
 
 #[test]
+fn smart_simp_transcribes_a_three_edge_bitvector_equality_path() {
+    let click_source = r#"
+        theorem three_edge_equality_chain(
+            first: int32,
+            second: int32,
+            third: int32,
+            last: int32
+        ) {
+            requires second == first;
+            requires second == third;
+            requires third == last;
+            ensures first == last by {
+                simp();
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the checked equality-path Proof should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "three_edge_equality_chain.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "equality simp should construct its Proof through checked rewrites: {events:#?}"
+    );
+
+    let offset = click_source.find("simp();").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("the retained three-edge equality path should expand");
+    assert!(expanded.contains("rewrite(first == second);"), "{expanded}");
+    assert!(expanded.contains("rewrite(second == third);"), "{expanded}");
+    assert!(expanded.contains("rewrite(third == last);"), "{expanded}");
+    assert!(expanded.contains("normalize();"), "{expanded}");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_click_theorems(&expanded).expect("the transcribed equality path should replay");
+}
+
+#[test]
 fn restricted_simp_expands_constant_order_weakening_to_theorem_application() {
     let click_source = r#"
         theorem three_at_least_implies_nonnegative(value: int32) {

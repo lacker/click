@@ -1604,6 +1604,16 @@ pub struct SignedOrderDerivationStep {
     pub(super) premise: Proposition,
 }
 
+/// One exact ground-int32 equality edge retained in the orientation selected
+/// by an atomic derivation. `premise` is the exact context proposition; the
+/// source/target orientation may be the reverse of its written equality.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BitvectorEqualityDerivationStep {
+    pub(super) source: Bitvector32Term,
+    pub(super) target: Bitvector32Term,
+    pub(super) premise: Proposition,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum PropositionDerivationRule {
     ContextFree,
@@ -1659,6 +1669,7 @@ pub(super) enum PropositionDerivationRule {
 pub(super) enum AtomicPropositionDerivationEvidence {
     MemoryDag(AtomicMemoryLoadEqualityEvidence),
     PointerOffsetMemoryDag(PointerOffsetEqualityEvidence),
+    BitvectorEqualityPath(Vec<BitvectorEqualityDerivationStep>),
     SignedOrderPath(Vec<SignedOrderDerivationStep>),
     Legacy,
 }
@@ -1679,11 +1690,13 @@ pub struct PureFactContext {
     pub(super) memory_load_condition_facts:
         std::sync::Arc<std::sync::OnceLock<BTreeMap<(PointerBlock, u64), BTreeSet<ConditionTerm>>>>,
     /// True bitvector and int32-scaled pointer-offset equalities, indexed as
-    /// an undirected adjacency graph. Memory-load vertices use their
+    /// an undirected adjacency graph whose edges retain one exact source
+    /// proposition. Memory-load vertices use their
     /// assumption-free canonical snapshot spelling. Derived lazily from
     /// `condition_facts` and shared by unchanged clones.
-    pub(super) bitvector_equality_facts:
-        std::sync::Arc<std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeSet<Bitvector32Term>>>>,
+    pub(super) bitvector_equality_facts: std::sync::Arc<
+        std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>>>,
+    >,
     pub(super) prop_facts: std::sync::Arc<BTreeSet<Proposition>>,
     pub(super) resource_compositions: std::sync::Arc<BTreeSet<ResourceContext>>,
     pub(super) memory_loadable_facts: std::sync::Arc<BTreeMap<PointerBlock, BTreeSet<Proposition>>>,

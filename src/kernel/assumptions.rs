@@ -1171,9 +1171,12 @@ impl PureFactContext {
         self.bitvector_equality_facts = std::sync::Arc::new(std::sync::OnceLock::new());
     }
 
-    fn bitvector_equality_index(&self) -> &BTreeMap<Bitvector32Term, BTreeSet<Bitvector32Term>> {
+    fn bitvector_equality_index(
+        &self,
+    ) -> &BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>> {
         self.bitvector_equality_facts.get_or_init(|| {
-            let mut index = BTreeMap::<Bitvector32Term, BTreeSet<Bitvector32Term>>::new();
+            let mut index =
+                BTreeMap::<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>>::new();
             for (condition, value) in self.condition_facts.iter() {
                 #[cfg(test)]
                 BITVECTOR_EQUALITY_INDEX_FACT_VISITS.with(|visits| visits.set(visits.get() + 1));
@@ -1195,8 +1198,17 @@ impl PureFactContext {
                 };
                 let left = equality_graph_term_key(&left);
                 let right = equality_graph_term_key(&right);
-                index.entry(left.clone()).or_default().insert(right.clone());
-                index.entry(right).or_default().insert(left);
+                let premise = Proposition::ConditionIs(condition.clone(), true);
+                index
+                    .entry(left.clone())
+                    .or_default()
+                    .entry(right.clone())
+                    .or_insert_with(|| premise.clone());
+                index
+                    .entry(right)
+                    .or_default()
+                    .entry(left)
+                    .or_insert(premise);
             }
             index
         })
@@ -1294,7 +1306,7 @@ impl PureFactContext {
                 stack.push(equality_graph_term_key(&simplified));
             }
             if let Some(neighbors) = index.get(&current) {
-                stack.extend(neighbors.iter().cloned());
+                stack.extend(neighbors.keys().cloned());
             }
         }
         // Adopt the representative only when it genuinely lowers the term —

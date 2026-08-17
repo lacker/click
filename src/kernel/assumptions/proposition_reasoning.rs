@@ -988,25 +988,34 @@ impl PureFactContext {
             }
             _ => None,
         };
-        let result = memory_evidence.or(signed_order_evidence).or_else(|| {
-            let proved = if for_simp {
-                match proposition {
-                    Proposition::ConditionIs(condition, value) => {
-                        self.decide_condition_for_simp(condition) == Some(*value)
-                    }
-                    Proposition::Not(body) => match body.as_ref() {
+        let equality_path_evidence = match proposition {
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => self
+                .exact_bitvector_equality_path_evidence(left, right)
+                .map(AtomicPropositionDerivationEvidence::BitvectorEqualityPath),
+            _ => None,
+        };
+        let result = memory_evidence
+            .or(equality_path_evidence)
+            .or(signed_order_evidence)
+            .or_else(|| {
+                let proved = if for_simp {
+                    match proposition {
                         Proposition::ConditionIs(condition, value) => {
-                            self.decide_condition_for_simp(condition) == Some(!*value)
+                            self.decide_condition_for_simp(condition) == Some(*value)
                         }
-                        _ => self.prop_facts.contains(proposition),
-                    },
-                    _ => self.proves_atomic_without_search(proposition),
-                }
-            } else {
-                self.proves_atomic_without_search(proposition)
-            };
-            proved.then_some(AtomicPropositionDerivationEvidence::Legacy)
-        });
+                        Proposition::Not(body) => match body.as_ref() {
+                            Proposition::ConditionIs(condition, value) => {
+                                self.decide_condition_for_simp(condition) == Some(!*value)
+                            }
+                            _ => self.prop_facts.contains(proposition),
+                        },
+                        _ => self.proves_atomic_without_search(proposition),
+                    }
+                } else {
+                    self.proves_atomic_without_search(proposition)
+                };
+                proved.then_some(AtomicPropositionDerivationEvidence::Legacy)
+            });
         if !decide_memo_disabled()
             && (result.is_some() || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before)
         {
@@ -1042,6 +1051,35 @@ impl PureFactContext {
                 return false;
             };
             return evidence.replays(left, right, self);
+        }
+        if let AtomicPropositionDerivationEvidence::BitvectorEqualityPath(path) = evidence {
+            let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+                proposition
+            else {
+                return false;
+            };
+            let mut current = left.as_ref();
+            for step in path {
+                let Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(premise_left, premise_right),
+                    true,
+                ) = &step.premise
+                else {
+                    return false;
+                };
+                if current != &step.source
+                    || self.exact_condition_value(&ConditionTerm::equal(
+                        premise_left.as_ref().clone(),
+                        premise_right.as_ref().clone(),
+                    )) != Some(true)
+                    || !((step.source == **premise_left && step.target == **premise_right)
+                        || (step.source == **premise_right && step.target == **premise_left))
+                {
+                    return false;
+                }
+                current = &step.target;
+            }
+            return current == right.as_ref();
         }
         if let AtomicPropositionDerivationEvidence::SignedOrderPath(path) = evidence {
             let Proposition::ConditionIs(condition, value) = proposition else {
@@ -2460,7 +2498,7 @@ impl PureFactContext {
         /// with an addend the equality graph can rewrite inside the add rule.
         fn order_endpoint_is_theory_sensitive(
             term: &Bitvector32Term,
-            equality_index: &BTreeMap<Bitvector32Term, BTreeSet<Bitvector32Term>>,
+            equality_index: &BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>>,
         ) -> bool {
             match term {
                 Bitvector32Term::MemoryLoad(_, _)
@@ -2566,7 +2604,7 @@ impl PureFactContext {
         /// walked.
         fn key_component(
             key: Bitvector32Term,
-            equality_index: &BTreeMap<Bitvector32Term, BTreeSet<Bitvector32Term>>,
+            equality_index: &BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>>,
             class_of_key: &mut BTreeMap<Bitvector32Term, usize>,
             next_class: &mut usize,
         ) -> usize {
@@ -2582,7 +2620,7 @@ impl PureFactContext {
                     continue;
                 }
                 if let Some(neighbors) = equality_index.get(&term) {
-                    stack.extend(neighbors.iter().cloned());
+                    stack.extend(neighbors.keys().cloned());
                 }
             }
             class

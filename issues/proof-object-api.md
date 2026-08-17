@@ -1037,6 +1037,17 @@ three-edge proof fixed, checks ancestor isolation and the retained
 `Have`/application/closer structure, and bounds its persistent fact updates by
 the logarithmic tree height.
 
+Exact ground-int32 equality chains use the same Proof-search boundary now.
+The kernel's shared equality graph retains the exact source proposition for
+each edge, and its typed derivation exposes the selected orientation. Pure
+`simp` converts that path into ordered `Rewrite` steps plus `Normalize`, then
+checks the candidate against the current immutable `Proof`; it never first
+mutates a semantic goal or independently reconstructs the chain. A three-edge
+regression includes a reverse-oriented source equality, observes no ordinary
+surface-certificate replay, expands the retained path, and independently
+verifies it. Memory-derived equality edges and point/outcome consumption stay
+with the child atomic-derivation work.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

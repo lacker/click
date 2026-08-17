@@ -362,6 +362,10 @@ fn lower_pure_simp_certificate(
                 && let Some(tactics) = plan_recorded_signed_order_path(goal, &ordered)
             {
                 return Some(tactics);
+            } else if let Some(tactics) =
+                plan_recorded_bitvector_equality_path(goal, derivation, &premise_pairs)
+            {
+                return Some(tactics);
             } else if let Ok(tactics) =
                 lower_restricted_simp_plan(goal, None, certificate, &premise_pairs)
             {
