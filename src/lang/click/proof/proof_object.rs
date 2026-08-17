@@ -4792,6 +4792,57 @@ impl<'a> ProofScope<'a> {
         Ok(next)
     }
 
+    /// Opens the C branch at this scope body's current execution frontier.
+    /// The branch container remains rooted at the body until both arms are
+    /// checked and `join_execution_branch` accepts its direct successor.
+    pub(super) fn begin_execution_branch(&self) -> Result<ExecutionProofBranches<'a>, ClickError> {
+        self.body.begin_execution_branch()
+    }
+
+    /// Joins checked C arms as the next direct structural node of this scope.
+    ///
+    /// The exact-root checks prevent a branch searched from a sibling scope
+    /// from being spliced into this one. Only facts common to the audited join
+    /// are exposed as the outer scope's output-sized delta.
+    pub(super) fn join_execution_branch(
+        &self,
+        branches: ExecutionProofBranches<'a>,
+        empty: bool,
+    ) -> Result<Self, ClickError> {
+        if !Arc::ptr_eq(&branches.root.context, &self.body.context)
+            || !Arc::ptr_eq(&branches.root.node, &self.body.node)
+        {
+            return Err(self
+                .root
+                .step_error("execution branches are not rooted at the current scope body"));
+        }
+        let body = if branches.both_arms_at_function_exit() {
+            branches.join_terminal()?
+        } else if empty {
+            branches.join_empty()?
+        } else {
+            branches.join()?
+        };
+        let Some(parent) = body.node.parent.as_ref() else {
+            return Err(self
+                .root
+                .step_error("execution branch join produced a root without provenance"));
+        };
+        if !Arc::ptr_eq(parent, &self.body.node) {
+            return Err(self
+                .root
+                .step_error("execution branch join did not produce one direct checked successor"));
+        }
+        let mut next = self.clone();
+        for fact in body.added_facts() {
+            if !next.introduced_facts.contains(fact) {
+                next.introduced_facts.push(fact.clone());
+            }
+        }
+        next.body = body;
+        Ok(next)
+    }
+
     /// Applies one ordinary checked step inside the nested body. Failed
     /// candidates leave the enclosing scope value unchanged.
     #[allow(dead_code)]

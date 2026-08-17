@@ -1360,11 +1360,12 @@ entry transactionality, exact nested certificate identity, and both immediate
 and return-deferred joins. Ordinary verification now selects this scope for a
 linear explicit open body without construction replay, while expansion
 independently verifies the serialized scope. Open bodies with structural
-branches still use the legacy multi-result driver until its join can retain
-the corresponding branch-aware child Proofs. The linear-scope probe and its
-large optional execution successor are outlined from the recursive structural
-driver; the unchanged deep pure-case canary caught the initial stack-frame
-growth and now pins that boundary.
+branches still use the legacy multi-result driver unless the body is one
+checked branch with two feasible linear-simple arms; deeper structural bodies
+remain to migrate. The retained-scope probe and its large optional execution
+successor are outlined from the recursive structural driver; the unchanged
+deep pure-case canary caught the initial stack-frame growth and now pins that
+boundary.
 
 Linear open scopes can now incorporate a completed nested `have` as one direct
 checked child node. The inner proposition proof borrows the execution Proof's
@@ -1378,6 +1379,18 @@ surface-certificate replay, retains the nested `ApplyTheoremUsing`, and
 independently verifies expansion. The existing 16-through-4096 open-scope
 curve now includes the nested-scope join, exact nested certificate identity,
 and a rejected C-step attempt inside the proposition proof.
+
+The first branch-aware open body now composes the existing audited containers
+directly. `ProofScope::begin_execution_branch` opens the C frontier owned by
+the scope body, the arm search applies only checked simple steps, and
+`join_execution_branch` accepts the result only when its root is the current
+body's exact context and provenance node. The outer scope therefore embeds
+one retained `Branch` child and later one retained `Open`; it does not infer
+either structure from final replay contexts. A source regression covers an
+empty C branch inside `open`, observes no ordinary construction replay, pins
+the nested certificate shape, and independently verifies expansion. Branches
+with one feasible arm, assertions, structural arm bodies, or a structural
+continuation still take the legacy path.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

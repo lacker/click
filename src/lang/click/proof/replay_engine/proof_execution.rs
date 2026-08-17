@@ -78,16 +78,57 @@ fn advance_linear_open_scope<'a>(
     Ok(Some(scope))
 }
 
-/// Checks one linear all-simple `open` body on the same Proof that owns its
-/// entry and close transitions. Kept out of the recursive structural driver
-/// frame for the same stack-bound reason as the resource-step adapter.
+fn advance_checked_open_scope<'a>(
+    scope: ProofScope<'a>,
+    body: &InternalProofNode,
+) -> Result<Option<ProofScope<'a>>, ClickError> {
+    if let Some(tactics) = linear_execution_tactics(body) {
+        return advance_linear_open_scope(scope, tactics);
+    }
+    let InternalProofNode::Branch {
+        ensuring: None,
+        then_branch,
+        else_branch,
+        continuation,
+        ..
+    } = body
+    else {
+        return Ok(None);
+    };
+    if !matches!(continuation.as_ref(), InternalProofNode::Done) {
+        return Ok(None);
+    }
+    let Some(then_steps) = linear_execution_simple_steps(then_branch) else {
+        return Ok(None);
+    };
+    let Some(else_steps) = linear_execution_simple_steps(else_branch) else {
+        return Ok(None);
+    };
+    let branches = scope.begin_execution_branch()?;
+    if !branches.has_both_feasible_arms() {
+        return Ok(None);
+    }
+    let empty = then_steps.is_empty() && else_steps.is_empty();
+    let mut branches = branches;
+    for step in then_steps {
+        branches = branches.apply_step(true, step)?;
+    }
+    for step in else_steps {
+        branches = branches.apply_step(false, step)?;
+    }
+    scope.join_execution_branch(branches, empty).map(Some)
+}
+
+/// Checks one supported `open` body on the same Proof that owns its entry and
+/// close transitions. Kept out of the recursive structural driver frame for
+/// the same stack-bound reason as the resource-step adapter.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
-fn execute_linear_open_scope<'a>(
+fn execute_checked_open_scope<'a>(
     context: ProofReplayContext,
     resource: ResourceClause,
     source_index: usize,
-    tactics: &[IndexedTactic],
+    body: &InternalProofNode,
     function_block: &'a FunctionBlock,
     parsed_function: &'a syntax::C0Function,
     claim_label: &'a str,
@@ -115,7 +156,7 @@ fn execute_linear_open_scope<'a>(
         theorem_environment,
     );
     let scope = root.begin_open(resource, source_index)?;
-    let Some(scope) = advance_linear_open_scope(scope, tactics)? else {
+    let Some(scope) = advance_checked_open_scope(scope, body)? else {
         return Ok(None);
     };
     let proof = scope.join()?;
@@ -132,7 +173,7 @@ fn execute_linear_open_scope<'a>(
 
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
-fn try_execute_linear_open_scope<'a>(
+fn try_execute_checked_open_scope<'a>(
     context: &ProofReplayContext,
     body: &InternalProofNode,
     resource: ResourceClause,
@@ -149,14 +190,11 @@ fn try_execute_linear_open_scope<'a>(
     arguments: &'a [CExpression],
     tactic_index: usize,
 ) -> Result<Option<ProofReplayContext>, ClickError> {
-    let Some(tactics) = linear_execution_tactics(body) else {
-        return Ok(None);
-    };
-    execute_linear_open_scope(
+    execute_checked_open_scope(
         context.clone(),
         resource,
         source_index,
-        tactics,
+        body,
         function_block,
         parsed_function,
         claim_label,
@@ -173,7 +211,7 @@ fn try_execute_linear_open_scope<'a>(
 
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
-fn try_execute_linear_open_scope_and_continue<'a>(
+fn try_execute_checked_open_scope_and_continue<'a>(
     context: &ProofReplayContext,
     body: &InternalProofNode,
     continuation: &InternalProofNode,
@@ -192,7 +230,7 @@ fn try_execute_linear_open_scope_and_continue<'a>(
     arguments: &'a [CExpression],
     tactic_index: usize,
 ) -> Result<Option<Vec<ProofReplayContext>>, ClickError> {
-    let Some(context) = try_execute_linear_open_scope(
+    let Some(context) = try_execute_checked_open_scope(
         context,
         body,
         resource,
@@ -314,7 +352,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             continuation,
         } => {
             if expansion_capture.is_none() {
-                let linear = try_execute_linear_open_scope_and_continue(
+                let checked = try_execute_checked_open_scope_and_continue(
                     &context,
                     body,
                     continuation,
@@ -333,7 +371,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     arguments,
                     *index,
                 )?;
-                if let Some(contexts) = linear {
+                if let Some(contexts) = checked {
                     return Ok(contexts);
                 }
             }

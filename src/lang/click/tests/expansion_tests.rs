@@ -4679,6 +4679,82 @@ fn linear_open_have_retains_the_selected_theorem_application() {
 }
 
 #[test]
+fn open_scope_retains_its_checked_execution_branch() {
+    let c_source = r#"
+        int32 empty_branch(int32 x) {
+            if (x < 0) {
+            } else {
+            }
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "empty_branch.c";
+
+        int32 empty_branch(int32 x) {
+            owns marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            open(marker(x)) {
+                branch {
+                    then {
+                    }
+                    else {
+                    }
+                }
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("empty_branch.c", c_source)])
+    });
+    let verified = verified.expect("the execution branch should join inside the open Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "empty_branch.contract" && name == "surface certificate replay"
+        )),
+        "ordinary scoped branch construction must retain its checked structure: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked grouped proof should retain its scoped branch");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(open))
+                if matches!(
+                    open.tactics.as_slice(),
+                    [ProofTactic::Branch(branch)]
+                        if branch.ensuring.is_none()
+                            && branch.then_tactics.is_empty()
+                            && branch.else_tactics.is_empty()
+                )
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("empty_branch.c", c_source)],
+        "empty_branch",
+        CProofClaim::Grouped,
+    )
+    .expect("the grouped scoped branch should expand");
+    verify_c0_sources(&expanded, &[("empty_branch.c", c_source)])
+        .expect("the retained scoped branch should independently replay");
+}
+
+#[test]
 fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
     let c_source = r#"
             int32 choose(int32 value) {
