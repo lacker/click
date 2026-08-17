@@ -1007,13 +1007,40 @@ impl PureFactContext {
                     ConditionTerm::signed_less_equal(left.as_ref().clone(), right.as_ref().clone());
                 let less_than =
                     ConditionTerm::signed_less_than(left.as_ref().clone(), right.as_ref().clone());
-                (self.exact_condition_value(&less_equal) == Some(true)
-                    && self.exact_condition_value(&less_than) == Some(false))
+                let less_equal = Proposition::ConditionIs(less_equal, true);
+                let not_less_than = Proposition::ConditionIs(less_than, false);
+                (self.contains_assumed_exact(&less_equal)
+                    && self.contains_assumed_exact(&not_less_than))
                 .then(|| {
                     AtomicPropositionDerivationEvidence::Int32LeAndNotLtImpliesEquality(Box::new(
                         Int32LeAndNotLtEqualityEvidence {
-                            less_equal: Proposition::ConditionIs(less_equal, true),
-                            not_less_than: Proposition::ConditionIs(less_than, false),
+                            less_equal,
+                            not_less_than,
+                        },
+                    ))
+                })
+            }
+            _ => None,
+        };
+        let ge_and_not_gt_equality_evidence = match proposition {
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
+                let greater_equal = ConditionTerm::signed_greater_equal(
+                    left.as_ref().clone(),
+                    right.as_ref().clone(),
+                );
+                let greater_than = ConditionTerm::signed_greater_than(
+                    left.as_ref().clone(),
+                    right.as_ref().clone(),
+                );
+                let greater_equal = Proposition::ConditionIs(greater_equal, true);
+                let not_greater_than = Proposition::ConditionIs(greater_than, false);
+                (self.contains_assumed_exact(&greater_equal)
+                    && self.contains_assumed_exact(&not_greater_than))
+                .then(|| {
+                    AtomicPropositionDerivationEvidence::Int32GeAndNotGtImpliesEquality(Box::new(
+                        Int32GeAndNotGtEqualityEvidence {
+                            greater_equal,
+                            not_greater_than,
                         },
                     ))
                 })
@@ -1199,6 +1226,7 @@ impl PureFactContext {
         let result = memory_evidence
             .or(equality_path_evidence)
             .or(le_and_not_lt_equality_evidence)
+            .or(ge_and_not_gt_equality_evidence)
             .or(signed_order_evidence)
             .or(increment_upper_bound_evidence)
             .or(increment_strictly_increases_evidence)
@@ -1562,10 +1590,27 @@ impl PureFactContext {
                 ConditionTerm::signed_less_equal(left.as_ref().clone(), right.as_ref().clone());
             let less_than =
                 ConditionTerm::signed_less_than(left.as_ref().clone(), right.as_ref().clone());
-            return evidence.less_equal == Proposition::ConditionIs(less_equal.clone(), true)
-                && evidence.not_less_than == Proposition::ConditionIs(less_than.clone(), false)
-                && self.exact_condition_value(&less_equal) == Some(true)
-                && self.exact_condition_value(&less_than) == Some(false);
+            return evidence.less_equal == Proposition::ConditionIs(less_equal, true)
+                && evidence.not_less_than == Proposition::ConditionIs(less_than, false)
+                && self.contains_assumed_exact(&evidence.less_equal)
+                && self.contains_assumed_exact(&evidence.not_less_than);
+        }
+        if let AtomicPropositionDerivationEvidence::Int32GeAndNotGtImpliesEquality(evidence) =
+            evidence
+        {
+            let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+                proposition
+            else {
+                return false;
+            };
+            let greater_equal =
+                ConditionTerm::signed_greater_equal(left.as_ref().clone(), right.as_ref().clone());
+            let greater_than =
+                ConditionTerm::signed_greater_than(left.as_ref().clone(), right.as_ref().clone());
+            return evidence.greater_equal == Proposition::ConditionIs(greater_equal, true)
+                && evidence.not_greater_than == Proposition::ConditionIs(greater_than, false)
+                && self.contains_assumed_exact(&evidence.greater_equal)
+                && self.contains_assumed_exact(&evidence.not_greater_than);
         }
         if !decide_memo_disabled()
             && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {

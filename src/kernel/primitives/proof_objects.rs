@@ -256,6 +256,21 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact `left >= right` and `not (left > right)` premises
+    /// selected when the atomic prover established int32 equality.
+    pub fn int32_ge_and_not_gt_implies_equality_premises(
+        &self,
+    ) -> Option<(&Proposition, &Proposition)> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32GeAndNotGtImpliesEquality(evidence),
+                ..
+            } => Some((&evidence.greater_equal, &evidence.not_greater_than)),
+            _ => None,
+        }
+    }
+
     pub fn context_premises(&self) -> Vec<Proposition> {
         let mut premises = BTreeSet::new();
         self.collect_context_premises(&mut premises);

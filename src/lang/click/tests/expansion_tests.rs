@@ -2248,6 +2248,19 @@ fn post_execution_simp_expands_greater_order_equality() {
             simp();
         }
     "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity_zero.c", c_source)])
+    });
+    verified.expect("post-execution >=/not-> equality should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity_zero.ensures_0" && name == "surface certificate replay"
+        )),
+        "the outcome equality theorem must not use construction replay: {events:#?}"
+    );
+
     let offset = click_source.rfind("simp()").unwrap();
     let line = click_source[..offset]
         .bytes()
@@ -3174,11 +3187,19 @@ fn smart_simp_transcribes_a_three_edge_bitvector_equality_path() {
 }
 
 #[test]
-fn smart_simp_retains_le_and_not_lt_as_one_named_equality_step() {
+fn smart_simp_retains_both_signed_equality_rules_as_named_steps() {
     let click_source = r#"
         theorem le_and_not_lt_are_equal(left: int32, right: int32) {
             requires left <= right;
             requires not (left < right);
+            ensures left == right by {
+                simp();
+            }
+        }
+
+        theorem ge_and_not_gt_are_equal(left: int32, right: int32) {
+            requires left >= right;
+            requires not (left > right);
             ensures left == right by {
                 simp();
             }
@@ -3191,7 +3212,8 @@ fn smart_simp_retains_le_and_not_lt_as_one_named_equality_step() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "le_and_not_lt_are_equal.ensures_0"
+                if (claim == "le_and_not_lt_are_equal.ensures_0"
+                    || claim == "ge_and_not_gt_are_equal.ensures_0")
                     && name == "surface certificate replay"
         )),
         "the named equality step must not use construction replay: {events:#?}"
@@ -3215,10 +3237,28 @@ fn smart_simp_retains_le_and_not_lt_as_one_named_equality_step() {
         expanded.contains("apply(int32_le_and_not_lt_implies_eq(left, right)) using"),
         "{expanded}"
     );
-    assert!(expanded.contains("left <= right;"), "{expanded}");
-    assert!(expanded.contains("not (left < right);"), "{expanded}");
-    assert!(!expanded.contains("simp();"), "{expanded}");
     verify_click_theorems(&expanded).expect("the named equality step should independently replay");
+
+    let offset = click_source.rfind("simp();").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("the retained >=/not-> equality theorem should expand");
+    assert!(
+        expanded.contains("apply(int32_ge_and_not_gt_implies_eq(left, right)) using"),
+        "{expanded}"
+    );
+    verify_click_theorems(&expanded)
+        .expect("the named >=/not-> equality step should independently replay");
 }
 
 #[test]

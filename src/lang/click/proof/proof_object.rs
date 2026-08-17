@@ -1959,6 +1959,17 @@ impl<'a> Proof<'a> {
                     &recorded,
                     point_application_closes_goal,
                 )
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_ge_and_not_gt_implies_equality_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_ge_and_not_gt_implies_equality_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
             })?;
         let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
         let proof = self.check_certificate(&candidate).ok()?;
@@ -8458,6 +8469,114 @@ mod tests {
                     && premises.as_slice() == selected
             ));
             assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+        }
+    }
+
+    #[test]
+    fn ge_and_not_gt_equality_simp_retains_one_indexed_theorem_application() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("the standard equality theorem should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test C function should parse");
+        let state = CState::new();
+        let arguments = Vec::new();
+        let program_point_states = ProgramPointStates::new();
+        let left = Bitvector32Term::Variable(Variable(8_178_102));
+        let right = Bitvector32Term::Variable(Variable(8_178_103));
+        let expression = |term: Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term)))
+        };
+        let greater_equal = ClickProposition::Comparison {
+            left: expression(left.clone()),
+            operator: ComparisonOperator::GreaterEqual,
+            right: expression(right.clone()),
+        };
+        let not_greater_than = ClickProposition::Not(Box::new(ClickProposition::Comparison {
+            left: expression(left.clone()),
+            operator: ComparisonOperator::GreaterThan,
+            right: expression(right.clone()),
+        }));
+        let equality = ClickProposition::Comparison {
+            left: expression(left),
+            operator: ComparisonOperator::Equal,
+            right: expression(right),
+        };
+        let lower_surface = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the fixed equality proposition should lower")
+        };
+        let kernel_greater_equal = lower_surface(&greater_equal);
+        let kernel_not_greater_than = lower_surface(&not_greater_than);
+        let kernel_equality = lower_surface(&equality);
+        let selected = [greater_equal.clone(), not_greater_than.clone()];
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
+            .record_lowering(&greater_equal, &kernel_greater_equal)
+            .expect("the >= premise should be indexed");
+        surface_propositions
+            .record_lowering(&not_greater_than, &kernel_not_greater_than)
+            .expect("the not-> premise should be indexed");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.extend([
+                kernel_greater_equal.clone(),
+                kernel_not_greater_than.clone(),
+            ]);
+            let root = Proof::for_point_goal(
+                "persistent point >=/not-> equality simp",
+                0,
+                &facts,
+                kernel_equality.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("the typed >=/not-> rule should build one checked Proof descendant");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 96 * logarithmic_height + 384;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} point >=/not-> equality simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                    if application.name == "int32_ge_and_not_gt_implies_eq"
+                        && premises.as_slice() == selected
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
         }
     }
 

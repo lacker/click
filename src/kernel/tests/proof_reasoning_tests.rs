@@ -41,6 +41,36 @@ fn int32_le_and_not_lt_equality_derivation_retains_both_exact_premises() {
 }
 
 #[test]
+fn int32_ge_and_not_gt_equality_derivation_retains_both_exact_premises() {
+    let left = Bitvector32Term::Variable(Variable(90_002));
+    let right = Bitvector32Term::Variable(Variable(90_003));
+    let greater_equal = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+        true,
+    );
+    let not_greater_than = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+        false,
+    );
+    let goal = Proposition::ConditionIs(ConditionTerm::equal(left, right), true);
+    let assumptions = PureFactContext::new()
+        .assume_proposition(greater_equal.clone())
+        .assume_proposition(not_greater_than.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect(">= plus not-> should derive int32 equality");
+    assert_eq!(
+        derivation.int32_ge_and_not_gt_implies_equality_premises(),
+        Some((&greater_equal, &not_greater_than))
+    );
+    assert!(derivation.replay(&assumptions));
+
+    let missing = PureFactContext::new().assume_proposition(greater_equal);
+    assert!(!derivation.replay(&missing));
+}
+
+#[test]
 fn conjunction_builder_has_logarithmic_depth() {
     fn conjunction_depth(proposition: &Proposition) -> usize {
         match proposition {

@@ -1165,17 +1165,22 @@ leave the ancestor unchanged, and the common 16-through-4096 unrelated-fact
 curve covers the nested structure. Derived predecessor variants that require
 equality rewriting, rather than the direct `1 <= value` edge, remain pending.
 
-The two-premise signed equality decision now uses the same theorem seam.
-Search retains the exact `left <= right` and `not (left < right)` condition
-facts, selects their Surface spellings through fixed-size polarity probes,
-and applies `int32_le_and_not_lt_implies_eq` once to the immutable `Proof`.
+The two complementary two-premise signed equality decisions now use the same
+theorem seam. Search retains either the exact `left <= right` and
+`not (left < right)` pair or the exact `left >= right` and
+`not (left > right)` pair, selects their Surface spellings through fixed-size
+polarity probes, and applies the corresponding
+`int32_le_and_not_lt_implies_eq` or `int32_ge_and_not_gt_implies_eq` theorem
+once to the immutable `Proof`. Evidence selection uses exact assumed-fact
+membership rather than asking the order solver for an equivalent orientation,
+so it cannot silently replace the source-supported named rule with its dual.
 This closes the common kernel-versus-Surface polarity mismatch without
-scanning ambient facts. Pure and point descendants retain only that named
-application (plus the pure goal's ordinary `assumption`), rejected premise
-subsets leave their ancestor untouched, and deterministic 16-through-4096
-coverage bounds persistent updates logarithmically. The source regression
-observes no ordinary construction replay and independently verifies the
-expanded theorem step.
+scanning ambient facts. Pure and point descendants retain only the selected
+named application (plus the pure goal's ordinary `assumption`), rejected
+premise subsets leave their ancestor untouched, and deterministic
+16-through-4096 coverage bounds persistent updates logarithmically. Source
+regressions observe no ordinary construction replay and independently verify
+the expanded theorem steps.
 
 Mid-execution bare theorem application now crosses the same query/transition
 seam. The smart form asks its immutable execution-frontier `Proof` for one

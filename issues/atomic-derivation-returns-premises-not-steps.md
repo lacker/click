@@ -287,6 +287,18 @@ Rejected source omission is transactional, and the shared 16-through-4096
 unrelated-fact curve keeps the retained two-application derivation within the
 logarithmic persistent-update bound.
 
+The two signed equality rules now retain their exact source-supported theorem
+orientation. `left <= right` plus `not (left < right)` records
+`int32_le_and_not_lt_implies_eq`; the dual `left >= right` plus
+`not (left > right)` records `int32_ge_and_not_gt_implies_eq`. Selection and
+replay use exact indexed fact membership, not a derived equivalent order fact,
+so neither rule can be reconstructed from anonymous solver aftermath. Pure,
+point, and outcome smart `simp` submit the selected application directly to
+the immutable `Proof`; fixed-size polarity probes recover Surface spellings
+without an ambient scan. Deterministic 16-through-4096 coverage pins the
+persistent-update bound, and expansion independently verifies both named
+applications.
+
 Multi-premise evidence is stored behind an indirection. Inlining the two
 retained propositions in the evidence enum enlarged unrelated recursive proof
 frames enough to overflow the existing deeply branched `sort3` expansion.
