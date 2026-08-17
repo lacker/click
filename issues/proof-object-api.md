@@ -1214,6 +1214,21 @@ persistent-index reconstruction during selection and logarithmic checked
 updates; a source regression observes no ordinary construction replay,
 retains the explicit premise, expands it, and independently verifies it.
 
+Loop-invariant initialization theorem search now uses that point theorem seam
+as well. The structural point-goal planner no longer rewrites a bare `apply`
+by copying every declared theorem requirement into a second, unchecked
+`apply using` representation. It builds the invariant's point `Proof`, asks
+the shared query for the concrete application, and advances only through
+`apply_step`. The loop initialization gateway carries an explicit
+`certificate_already_checked` result: when every invariant body was retained
+by its successful `Proof`, it uses the corresponding checked fact set directly
+instead of independently replaying the generated phase certificate. Explicit
+source certificates and smart shapes not yet migrated still take the replay
+path. A focused initialization regression observes no ordinary replay,
+expands the retained `ApplyTheoremUsing`, and independently verifies that
+serialization; the existing 16-through-4096 point-application curve covers
+the shared selection and transition path used here.
+
 Automatic execution branches expose a separate structural requirement. A C
 branch that reaches distinct function-exit outcomes expands as a logical
 `If`, not as the existing equal-state execution `Branch`, so it needs a

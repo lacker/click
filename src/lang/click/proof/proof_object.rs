@@ -406,7 +406,6 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[cfg(test)]
     pub(super) fn for_point_goal(
         claim_label: &'a str,
         tactic_index: usize,

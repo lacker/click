@@ -466,6 +466,14 @@ fn split_execution_proof_branch_contexts(
     Ok((then_contexts, else_contexts))
 }
 
+pub(in crate::lang::click::proof) struct PlannedPointPureGoal {
+    pub(in crate::lang::click::proof) fact: Proposition,
+    pub(in crate::lang::click::proof) certificate: ProofCertificate,
+    /// True only when the returned certificate was retained by the same
+    /// checked `Proof` that established `fact`.
+    pub(in crate::lang::click::proof) certificate_already_checked: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     mut expansion_capture: Option<&mut ExpansionCapture>,
@@ -485,99 +493,86 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     surface_propositions: &SurfacePropositionMap,
     prelowered_goal: Option<&Proposition>,
     theorem_environment: &TheoremEnvironment,
-) -> Result<(Proposition, ProofCertificate), ClickError> {
-    let applied_theorem_script;
-    let lowered_applied_theorem_script = matches!(proof, SourceProof::Script(tactics)
-    if tactics.iter().any(|tactic| matches!(
-        tactic,
-        ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. }
-    ))
-        && tactics.iter().all(|tactic| {
-            matches!(tactic.class(), TacticClass::Simple(_))
-                || matches!(tactic, ProofTactic::Simp | ProofTactic::ApplyTheorem(_))
-        }));
-    let proof = if let SourceProof::Script(tactics) = proof
-        && tactics.iter().any(|tactic| {
-            matches!(
-                tactic,
-                ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. }
-            )
-        })
-        && tactics.iter().all(|tactic| {
-            matches!(tactic.class(), TacticClass::Simple(_))
-                || matches!(tactic, ProofTactic::Simp | ProofTactic::ApplyTheorem(_))
-        }) {
-        // An applied theorem's conclusion becomes an available fact, so the
-        // trailing smart `simp` lowers to the deterministic `assumption` and
-        // a bare `apply` lowers to `apply using` with the theorem's own
-        // requires as the explicit premise pool.
-        applied_theorem_script = SourceProof::Script(
-            tactics
-                .iter()
-                .map(|tactic| match tactic {
-                    ProofTactic::Simp => ProofTactic::Assumption,
-                    ProofTactic::ApplyTheorem(application) => {
-                        let premises = theorem_environment
-                            .get(&application.name)
-                            .map(|theorem| {
-                                theorem
-                                    .requires()
-                                    .iter()
-                                    .filter_map(Requirement::proposition)
-                                    .cloned()
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        ProofTactic::ApplyTheoremUsing {
-                            application: application.clone(),
-                            premises,
-                        }
-                    }
-                    other => other.clone(),
-                })
-                .collect(),
-        );
-        &applied_theorem_script
+) -> Result<PlannedPointPureGoal, ClickError> {
+    let fact = if let Some(prelowered_goal) = prelowered_goal {
+        prelowered_goal.clone()
     } else {
-        proof
+        lower_point_proposition(
+            proposition,
+            available,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            None,
+            program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` proof {proof_index}: could not lower pure goal: {message}"
+            ))
+        })?
     };
+
+    // Structural point goals use the same checked smart-script seam as
+    // ordinary point `have` proofs. Search may select a theorem application,
+    // but only `Proof::apply_step` installs its conclusion and provenance.
+    // This replaces the former source rewrite that copied every theorem
+    // requirement into an unchecked `apply using` certificate.
+    if let SourceProof::Script(tactics) = proof {
+        let root = Proof::for_point_goal(
+            claim_label,
+            proof_index,
+            available,
+            fact.clone(),
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            program_point_states,
+            surface_propositions,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            &[],
+            &[],
+        );
+        if let Some(checked) = root.try_linear_smart_script(tactics)? {
+            if !checked.is_complete() {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof {proof_index}: checked point proof retained an open goal"
+                )));
+            }
+            let certificate = checked.certificate();
+            if let Some(source_index) =
+                selected_tactic_index_for_site(expansion_capture.as_deref(), proof_site)
+                && let Some(tactic) = certificate.to_proof_tactics().get(source_index)
+            {
+                record_proof_site_tactic_expansion(
+                    expansion_capture.as_deref_mut(),
+                    proof_site,
+                    source_index,
+                    std::slice::from_ref(tactic),
+                );
+            }
+            return Ok(PlannedPointPureGoal {
+                fact,
+                certificate,
+                certificate_already_checked: true,
+            });
+        }
+    }
+
     if let SourceProof::Script(tactics) = proof
         && let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
     {
-        if lowered_applied_theorem_script
-            && let Some(source_index) =
-                selected_tactic_index_for_site(expansion_capture.as_deref(), proof_site)
-            && let Some(tactic) = certificate.to_proof_tactics().get(source_index)
-        {
-            record_proof_site_tactic_expansion(
-                expansion_capture.as_deref_mut(),
-                proof_site,
-                source_index,
-                std::slice::from_ref(tactic),
-            );
-        }
-        let fact = if let Some(prelowered_goal) = prelowered_goal {
-            prelowered_goal.clone()
-        } else {
-            lower_point_proposition(
-                proposition,
-                available,
-                parameters,
-                arguments,
-                pre_state,
-                state,
-                None,
-                program_point_states,
-                predicate_environment,
-                click_function_environment,
-            )
-            .map_err(|message| {
-                ClickError::new(format!(
-                    "`{claim_label}` proof {proof_index}: could not lower pure goal: {message}"
-                ))
-            })?
-        };
-        return Ok((fact, certificate));
+        return Ok(PlannedPointPureGoal {
+            fact,
+            certificate,
+            certificate_already_checked: false,
+        });
     }
 
     let unfolded_predicates = smart_simp_unfold_prefix(proof).ok_or_else(|| {
@@ -720,7 +715,11 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             );
         }
     }
-    Ok((fact, certificate))
+    Ok(PlannedPointPureGoal {
+        fact,
+        certificate,
+        certificate_already_checked: false,
+    })
 }
 
 fn advance_execution_proof_statement(

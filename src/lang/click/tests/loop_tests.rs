@@ -43,6 +43,97 @@ fn frontier_local_loop_verifies_and_advances_to_exit() {
 }
 
 #[test]
+fn loop_initialization_theorem_search_retains_checked_point_proof() {
+    let c_source = r#"
+            int32 initialize_with_theorem(int32 x) {
+                while (x < 1) {
+                    x = 0;
+                }
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "initialize_with_theorem.c";
+
+            predicate acceptable(x: int32) {
+                x >= 0
+            }
+
+            theorem nonnegative_is_acceptable(x: int32) {
+                requires x >= 0;
+                ensures acceptable(x) by {
+                    unfold(acceptable);
+                    simp();
+                }
+            }
+
+            int32 initialize_with_theorem(int32 x) {
+                requires x >= 0;
+                ensures acceptable(result);
+            } by {
+                loop {
+                    invariant acceptable(x);
+                    initialize by {
+                        apply(nonnegative_is_acceptable(x));
+                        simp();
+                    }
+                    preserve by {
+                        step();
+                        apply(nonnegative_is_acceptable(x));
+                        simp();
+                    }
+                }
+                step();
+                unfold(acceptable);
+                simp();
+            }
+        "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("initialize_with_theorem.c", c_source)])
+    });
+    verified.expect("loop initialization theorem search should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim.contains("loop(0).initialize")
+                    && name == "surface certificate replay"
+        )),
+        "the checked initialization Proof must not be independently replayed: {events:#?}"
+    );
+
+    let offset = click_source
+        .find("apply(nonnegative_is_acceptable(x));")
+        .expect("initialization proof should contain its smart theorem application");
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("initialize_with_theorem.c", c_source)],
+        line,
+        column,
+    )
+    .expect("the retained initialization theorem step should expand");
+    assert!(
+        expanded.contains("apply(nonnegative_is_acceptable(x)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("x >= 0;"), "{expanded}");
+    verify_c0_sources(&expanded, &[("initialize_with_theorem.c", c_source)])
+        .expect("expanded initialization theorem application should independently verify");
+}
+
+#[test]
 fn frontier_local_loop_rejects_a_non_loop_frontier() {
     let c_source = r#"
             int32 count_to_three() {

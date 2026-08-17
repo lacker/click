@@ -844,29 +844,44 @@ fn pure_goal_proof_certificate_gateway<T>(
     planner: impl FnOnce() -> Result<ProofCertificate, ClickError>,
     replay: impl FnOnce(&ProofCertificate) -> Result<T, ClickError>,
 ) -> Result<(ProofCertificate, T), ClickError> {
+    pure_goal_proof_certificate_gateway_with_checked_result(
+        claim_label,
+        || planner().map(|certificate| (certificate, None)),
+        replay,
+    )
+}
+
+fn pure_goal_proof_certificate_gateway_with_checked_result<T>(
+    claim_label: &str,
+    planner: impl FnOnce() -> Result<(ProofCertificate, Option<T>), ClickError>,
+    replay: impl FnOnce(&ProofCertificate) -> Result<T, ClickError>,
+) -> Result<(ProofCertificate, T), ClickError> {
     let function = claim_label
         .split_once('.')
         .map_or(claim_label, |(function, _)| function);
-    let certificate = crate::instrumentation::measure_operation(
+    let (certificate, checked_result) = crate::instrumentation::measure_operation(
         function,
         claim_label,
         "surface certificate construction",
         planner,
     )?;
-    let replayed = crate::instrumentation::measure_operation(
-        function,
-        claim_label,
-        "surface certificate replay",
-        || replay(&certificate),
-    )
-    .map_err(|error| {
-        ClickError::new(format!(
-            "pure goal `{claim_label}` certificate failed ordinary replay:\n{}\n{}",
-            format_proof_certificate(&certificate),
-            error.message()
-        ))
-    })?;
-    Ok((certificate, replayed))
+    let checked_result = match checked_result {
+        Some(checked_result) => checked_result,
+        None => crate::instrumentation::measure_operation(
+            function,
+            claim_label,
+            "surface certificate replay",
+            || replay(&certificate),
+        )
+        .map_err(|error| {
+            ClickError::new(format!(
+                "pure goal `{claim_label}` certificate failed ordinary replay:\n{}\n{}",
+                format_proof_certificate(&certificate),
+                error.message()
+            ))
+        })?,
+    };
+    Ok((certificate, checked_result))
 }
 
 #[cfg(test)]

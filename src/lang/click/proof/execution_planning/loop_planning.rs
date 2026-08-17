@@ -103,14 +103,15 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
             .then(|| ProofCertificate::from_proof_tactics(tactics).ok())
             .flatten()
     });
-    let (certificate, available) = pure_goal_proof_certificate_gateway(
+    let (certificate, available) = pure_goal_proof_certificate_gateway_with_checked_result(
         &claim_label,
         || {
             if let Some(certificate) = source_certificate {
-                return Ok(certificate);
+                return Ok((certificate, None));
             }
             let mut planning_available = context.pure_facts.clone();
             let mut tactics = Vec::new();
+            let mut all_invariants_checked = true;
             for (invariant_index, item) in invariant_items.iter().enumerate() {
                 let proposition = item
                     .proposition()
@@ -183,7 +184,12 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                 } else {
                     plan(expansion_capture.as_deref_mut())
                 }?;
-                let (planned_fact, planned_certificate) = direct_plan;
+                let PlannedPointPureGoal {
+                    fact: planned_fact,
+                    certificate: planned_certificate,
+                    certificate_already_checked,
+                } = direct_plan;
+                all_invariants_checked &= certificate_already_checked;
                 initialization_surface_propositions
                     .borrow_mut()
                     .record_lowering(proposition, &planned_fact)?;
@@ -195,11 +201,15 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                     planning_available.push(planned_fact);
                 }
             }
-            ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            let certificate = ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
                 ClickError::new(format!(
                     "`{claim_label}` produced an invalid initialization certificate: {error:?}"
                 ))
-            })
+            })?;
+            Ok((
+                certificate,
+                all_invariants_checked.then_some(planning_available),
+            ))
         },
         |certificate| {
             if certificate.to_proof_tactics().len() < invariant_items.len() {
