@@ -184,5 +184,28 @@ and retains the accepted descendant, so ordinary verification emits no
 `surface certificate replay`; expansion independently reparses and verifies a
 three-edge path, including a source equality written in reverse. The existing
 equality-index regression confirms many graph queries still share one ambient
-fact-index build. Point/outcome certificate lowering remains to consume this
-typed path directly.
+fact-index build.
+
+### Progress (2026-08-16: point and outcome consumers)
+
+Point and post-execution outcome `simp` now consume exact signed-order and
+ground-int32 equality paths through the immutable `Proof` rather than asking
+the legacy certificate planner to rediscover a derivation. The existing exact
+Surface proposition index supplies only the recorded edge spellings. Signed
+paths submit the selected named theorem applications, nested `have` scopes,
+and their joins to `Proof`; equality paths submit the selected oriented
+rewrites and `normalize`. The accepted descendant is the certificate.
+
+The point theorem transition closes an exact matching goal immediately,
+unlike the pure transition which adds a conclusion for a subsequent
+`assumption`; the recorded-order planner now represents that distinction
+explicitly and never emits a redundant point closer. Result-dependent outcome
+regressions expand and independently verify both path kinds, and deterministic
+16-through-4096 unrelated-fact curves cover the point theorem and equality
+paths. The legacy atomic lowering path also recognizes a fully spelled typed
+equality path before deletion minimization and ambient equality harvesting.
+
+This does not close the issue. Interval/overflow decisions,
+quantified/derived order edges, memory-canonicalized and pointer-offset-derived
+equality edges, memory-DAG joins, and execution-frontier consumers still need
+typed evidence and direct Proof operations.

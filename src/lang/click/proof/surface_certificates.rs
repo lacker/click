@@ -257,14 +257,26 @@ pub(super) fn lower_surface_atomic_derivation(
         .then_some(())
     };
     let typed_order_pairs = recorded_signed_order_pairs(derivation, &premise_pairs);
-    let typed_order_path_spelled = typed_order_pairs
+    let typed_order_plan = typed_order_pairs
         .as_ref()
-        .is_some_and(|pairs| replay_kind(pairs).is_some());
-    if let Some(typed_order_pairs) = typed_order_pairs.filter(|_| typed_order_path_spelled) {
-        premise_pairs = typed_order_pairs;
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| plan_recorded_signed_order_path(&lowered_conclusion, pairs));
+    let typed_equality_pairs = recorded_bitvector_equality_pairs(derivation, &premise_pairs);
+    let typed_equality_plan = typed_equality_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_bitvector_equality_path(&lowered_conclusion, derivation, pairs)
+        });
+    let typed_path_spelled = typed_order_plan.is_some() || typed_equality_plan.is_some();
+    if typed_order_plan.is_some() {
+        premise_pairs = typed_order_pairs.expect("a typed order plan retains its path premises");
+    } else if typed_equality_plan.is_some() {
+        premise_pairs =
+            typed_equality_pairs.expect("a typed equality plan retains its path premises");
     }
     if !surface_normalizes_context_free
-        && !typed_order_path_spelled
+        && !typed_path_spelled
         && (premise_pairs.is_empty() || replay_kind(&premise_pairs).is_none())
     {
         // Internal derivations are minimized before their kernel facts are
@@ -336,7 +348,7 @@ pub(super) fn lower_surface_atomic_derivation(
             )));
         }
     }
-    if !typed_order_path_spelled {
+    if !typed_path_spelled {
         let mut index = 0;
         while index < premise_pairs.len() {
             let mut reduced = premise_pairs.clone();
@@ -371,6 +383,22 @@ pub(super) fn lower_surface_atomic_derivation(
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "negation derivation produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_equality_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded bitvector-equality path produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_order_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded signed-order path produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -469,16 +497,6 @@ pub(super) fn lower_surface_atomic_derivation(
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "atomic derivation produced a non-simple expansion: {error:?}"
-            ))
-        })?;
-        return Ok((conclusion, SourceProof::Script(tactics)));
-    }
-    if typed_order_path_spelled
-        && let Some(tactics) = plan_recorded_signed_order_path(&lowered_conclusion, &premise_pairs)
-    {
-        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
-            ClickError::new(format!(
-                "recorded signed-order path produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -2829,8 +2847,24 @@ pub(super) fn plan_recorded_signed_order_path(
     goal: &Proposition,
     path: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
+    plan_recorded_signed_order_path_for_context(goal, path, false)
+}
+
+/// Point theorem applications complete an exact matching proposition goal,
+/// while pure theorem applications add their conclusion and leave the goal
+/// for `assumption`. Keep that semantic distinction in the path planner so
+/// the checked point successor never contains a redundant, invalid closer.
+pub(super) fn plan_recorded_signed_order_path_for_context(
+    goal: &Proposition,
+    path: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
     if path.len() < 2 {
-        return plan_explicit_named_signed_rule(goal, path);
+        let mut tactics = plan_explicit_named_signed_rule(goal, path)?;
+        if point_application_closes_goal {
+            remove_trailing_theorem_assumption(&mut tactics)?;
+        }
+        return Some(tactics);
     }
     let mut tactics = Vec::new();
     let mut current = path[0].clone();
@@ -2892,28 +2926,42 @@ pub(super) fn plan_recorded_signed_order_path(
             },
             true,
         );
-        let proof = SourceProof::Script(vec![
-            ProofTactic::ApplyTheoremUsing {
-                application: TheoremApplication {
-                    name: theorem.to_string(),
-                    arguments: vec![surface_lower, surface_middle, surface_upper],
-                },
-                premises: vec![current.1.clone(), next.1.clone()],
+        let mut proof = vec![ProofTactic::ApplyTheoremUsing {
+            application: TheoremApplication {
+                name: theorem.to_string(),
+                arguments: vec![surface_lower, surface_middle, surface_upper],
             },
-            ProofTactic::Assumption,
-        ]);
+            premises: vec![current.1.clone(), next.1.clone()],
+        }];
+        if !point_application_closes_goal {
+            proof.push(ProofTactic::Assumption);
+        }
         tactics.push(ProofTactic::Have(ProofHave {
             proposition: surface_target.clone(),
-            proof,
+            proof: SourceProof::Script(proof),
         }));
         current = (kernel_target, surface_target);
     }
     let final_edge = path.last()?.clone();
-    tactics.extend(plan_explicit_named_signed_rule(
-        goal,
-        &[current, final_edge],
-    )?);
+    let mut suffix = plan_explicit_named_signed_rule(goal, &[current, final_edge])?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut suffix)?;
+    }
+    tactics.extend(suffix);
     Some(tactics)
+}
+
+fn remove_trailing_theorem_assumption(tactics: &mut Vec<ProofTactic>) -> Option<()> {
+    if !matches!(tactics.last(), Some(ProofTactic::Assumption))
+        || !matches!(
+            tactics.get(tactics.len().checked_sub(2)?),
+            Some(ProofTactic::ApplyTheoremUsing { .. })
+        )
+    {
+        return None;
+    }
+    tactics.pop();
+    Some(())
 }
 
 fn orient_surface_bitvector_equality(
@@ -2955,6 +3003,22 @@ fn orient_surface_bitvector_equality(
         }
     }
     oriented(surface, reverse)
+}
+
+fn recorded_bitvector_equality_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    derivation.bitvector_equality_path().and_then(|path| {
+        path.iter()
+            .map(|step| {
+                premise_pairs
+                    .iter()
+                    .find(|(kernel, _)| kernel == step.premise())
+                    .cloned()
+            })
+            .collect()
+    })
 }
 
 /// Transcribe the exact equality path retained by the kernel. Each edge is

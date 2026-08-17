@@ -3323,6 +3323,10 @@ pub(super) fn finish_ordered_proof_replay(
                                                 scope.try_direct_logical_closure()
                                             {
                                                 Some(scope)
+                                            } else if existence_candidate.is_none()
+                                                && let Some(scope) = scope.try_simp_closure()
+                                            {
+                                                Some(scope)
                                             } else if existence_candidate.is_none() {
                                                 let Some(goal) = scope.goal().cloned() else {
                                                     selected = false;

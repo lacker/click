@@ -2805,6 +2805,114 @@ fn smart_simp_transcribes_a_three_edge_bitvector_equality_path() {
 }
 
 #[test]
+fn outcome_simp_consumes_its_recorded_bitvector_equality_path() {
+    let c_source = r#"
+        int32 choose_first(int32 first, int32 second, int32 third, int32 last) {
+            return first;
+        }
+    "#;
+    let click_source = r#"
+        verifying "choose_first.c";
+
+        int32 choose_first(int32 first, int32 second, int32 third, int32 last) {
+            requires second == first;
+            requires second == third;
+            requires third == last;
+            ensures result == last;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("choose_first.c", c_source)])
+    });
+    verified.expect("the outcome equality path should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "choose_first.contract"
+                    && name == "derivation lowering: ambient rewrite harvest"
+        )),
+        "the typed outcome path must not scan ambient equalities: {events:#?}"
+    );
+
+    let offset = click_source.rfind("simp();").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("choose_first.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the retained outcome equality path should expand");
+    assert!(expanded.contains("rewrite(first == second);"), "{expanded}");
+    assert!(expanded.contains("rewrite(second == third);"), "{expanded}");
+    assert!(expanded.contains("rewrite(third == last);"), "{expanded}");
+    assert!(expanded.contains("normalize();"), "{expanded}");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("choose_first.c", c_source)])
+        .expect("the transcribed outcome equality path should replay");
+}
+
+#[test]
+fn outcome_simp_applies_theorems_through_its_recorded_order_path() {
+    let c_source = r#"
+        int32 validate_chain(int32 first, int32 second, int32 third, int32 last) {
+            return first;
+        }
+    "#;
+    let click_source = r#"
+        verifying "validate_chain.c";
+
+        int32 validate_chain(int32 first, int32 second, int32 third, int32 last) {
+            requires first <= second;
+            requires second < third;
+            requires third <= last;
+            ensures first < last;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("validate_chain.c", c_source)])
+    });
+    verified.expect("the outcome order path should verify through the point Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "validate_chain.contract"
+                    && name == "surface certificate replay"
+        )),
+        "the outcome theorem path must retain its checked Proof successor: {events:#?}"
+    );
+
+    let offset = click_source.rfind("simp();").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("validate_chain.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the retained outcome theorem path should expand");
+    assert!(
+        expanded.contains("apply(int32_le_lt_transitive(first, second, third)) using"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("apply(int32_lt_le_transitive(first, third, last)) using"),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("validate_chain.c", c_source)])
+        .expect("the transcribed outcome theorem path should replay");
+}
+
+#[test]
 fn restricted_simp_expands_constant_order_weakening_to_theorem_application() {
     let click_source = r#"
         theorem three_at_least_implies_nonnegative(value: int32) {

@@ -1736,17 +1736,20 @@ impl<'a> Proof<'a> {
 
     /// Searches the currently migrated `simp` vocabulary against this proof.
     ///
-    /// Direct logical closers remain the cheap first choice. For a pure
-    /// signed-order derivation, the kernel-selected edge path is translated
-    /// into a candidate made only of checked theorem applications and nested
-    /// `have` scopes. The candidate advances this same `Proof`; no semantic
-    /// result is produced before those simple steps have been accepted.
+    /// Direct logical closers remain the cheap first choice. For a pure or
+    /// point signed-order/equality derivation, the kernel-selected edge path
+    /// is translated into a candidate made only of checked theorem
+    /// applications, rewrites, and nested `have` scopes. The candidate
+    /// advances this same `Proof`; no semantic result is produced before
+    /// those simple steps have been accepted.
     pub(super) fn try_simp_closure(&self) -> Option<Self> {
         if let Some(proof) = self.try_direct_logical_closure() {
             return Some(proof);
         }
-        let ProofContext::Pure(context) = self.context.as_ref() else {
-            return None;
+        let (surface_facts, point_application_closes_goal) = match self.context.as_ref() {
+            ProofContext::Pure(context) => (&context.theorem_context.surface_requirements, false),
+            ProofContext::Point(context) => (context.surface_propositions, true),
+            ProofContext::Execution(_) => return None,
         };
         let goal = self.goal()?;
         let plan = plan_simp_certificate(goal, self.state.facts.assumptions())?;
@@ -1757,9 +1760,7 @@ impl<'a> Proof<'a> {
             .context_premises()
             .iter()
             .map(|premise| {
-                context
-                    .theorem_context
-                    .surface_requirements
+                surface_facts
                     .surfaces(premise)
                     .next()
                     .cloned()
@@ -1767,7 +1768,13 @@ impl<'a> Proof<'a> {
             })
             .collect::<Option<Vec<_>>>()?;
         let tactics = recorded_signed_order_pairs(derivation, &premise_pairs)
-            .and_then(|ordered| plan_recorded_signed_order_path(goal, &ordered))
+            .and_then(|ordered| {
+                plan_recorded_signed_order_path_for_context(
+                    goal,
+                    &ordered,
+                    point_application_closes_goal,
+                )
+            })
             .or_else(|| plan_recorded_bitvector_equality_path(goal, derivation, &premise_pairs))?;
         let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
         let proof = self.check_certificate(&candidate).ok()?;
@@ -6794,6 +6801,213 @@ mod tests {
                     SimpleProofStep::ApplyTheoremUsing { .. },
                     SimpleProofStep::Assumption
                 ]
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn point_equality_simp_builds_its_recorded_path_with_logarithmic_local_updates() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test C function should parse");
+        let state = CState::new();
+        let arguments = Vec::new();
+        let program_point_states = ProgramPointStates::new();
+        let terms = [
+            Bitvector32Term::Variable(Variable(8_175_000)),
+            Bitvector32Term::Variable(Variable(8_175_001)),
+            Bitvector32Term::Variable(Variable(8_175_002)),
+            Bitvector32Term::Variable(Variable(8_175_003)),
+        ];
+        let expression = |term: &Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term.clone())))
+        };
+        let equal = |left: usize, right: usize| ClickProposition::Comparison {
+            left: expression(&terms[left]),
+            operator: ComparisonOperator::Equal,
+            right: expression(&terms[right]),
+        };
+        let surfaces = vec![equal(1, 0), equal(1, 2), equal(2, 3)];
+        let surface_goal = equal(0, 3);
+        let lower = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the fixed equality should lower")
+        };
+        let premises = surfaces.iter().map(lower).collect::<Vec<_>>();
+        let goal = lower(&surface_goal);
+        let mut surface_propositions = SurfacePropositionMap::default();
+        for (kernel, surface) in premises.iter().zip(&surfaces) {
+            surface_propositions
+                .record_lowering(surface, kernel)
+                .expect("the exact point spelling should be indexed");
+        }
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.extend(premises.iter().cloned());
+            let root = Proof::for_point_goal(
+                "persistent point equality simp",
+                0,
+                &facts,
+                goal.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("the typed equality path should build one checked Proof descendant");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 128 * logarithmic_height + 512;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} point equality simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [
+                    SimpleProofStep::Rewrite(_),
+                    SimpleProofStep::Rewrite(_),
+                    SimpleProofStep::Rewrite(_),
+                    SimpleProofStep::Normalize,
+                ]
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn point_order_simp_builds_its_theorem_path_with_logarithmic_local_updates() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions =
+            combined_theorem_definitions(&click_file).expect("standard order theorems should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test C function should parse");
+        let state = CState::new();
+        let arguments = Vec::new();
+        let program_point_states = ProgramPointStates::new();
+        let terms = [
+            Bitvector32Term::Variable(Variable(8_176_000)),
+            Bitvector32Term::Variable(Variable(8_176_001)),
+            Bitvector32Term::Variable(Variable(8_176_002)),
+            Bitvector32Term::Variable(Variable(8_176_003)),
+        ];
+        let expression = |term: &Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term.clone())))
+        };
+        let comparison = |left: usize, operator, right: usize| ClickProposition::Comparison {
+            left: expression(&terms[left]),
+            operator,
+            right: expression(&terms[right]),
+        };
+        let surfaces = vec![
+            comparison(0, ComparisonOperator::LessEqual, 1),
+            comparison(1, ComparisonOperator::LessThan, 2),
+            comparison(2, ComparisonOperator::LessEqual, 3),
+        ];
+        let surface_goal = comparison(0, ComparisonOperator::LessThan, 3);
+        let lower = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the fixed signed comparison should lower")
+        };
+        let premises = surfaces.iter().map(lower).collect::<Vec<_>>();
+        let goal = lower(&surface_goal);
+        let mut surface_propositions = SurfacePropositionMap::default();
+        for (kernel, surface) in premises.iter().zip(&surfaces) {
+            surface_propositions
+                .record_lowering(surface, kernel)
+                .expect("the exact point spelling should be indexed");
+        }
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.extend(premises.iter().cloned());
+            let root = Proof::for_point_goal(
+                "persistent point order simp",
+                0,
+                &facts,
+                goal.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("the typed order path should build one checked point Proof descendant");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 128 * logarithmic_height + 512;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} point order simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [
+                    SimpleProofStep::Have { proof, .. },
+                    SimpleProofStep::ApplyTheoremUsing { .. },
+                ] if matches!(
+                    proof.steps(),
+                    [SimpleProofStep::ApplyTheoremUsing { .. }]
+                )
             ));
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());

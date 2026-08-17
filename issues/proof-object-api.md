@@ -1045,8 +1045,22 @@ checks the candidate against the current immutable `Proof`; it never first
 mutates a semantic goal or independently reconstructs the chain. A three-edge
 regression includes a reverse-oriented source equality, observes no ordinary
 surface-certificate replay, expands the retained path, and independently
-verifies it. Memory-derived equality edges and point/outcome consumption stay
-with the child atomic-derivation work.
+verifies it. Memory-derived equality edges stay with the child
+atomic-derivation work.
+
+Point and post-execution outcome `simp` now use that typed atomic-path query
+on their own immutable `Proof` as well. Premise spellings come from the
+existing exact kernel-to-Surface index; signed paths apply their retained
+transitivity theorems through `Proof::apply_step`, and equality paths apply
+their retained rewrites through the same boundary. Point theorem application
+already completes an exact matching goal, so the path planner explicitly
+omits the pure proof's trailing `assumption` instead of submitting a redundant
+step. Result-dependent outcome regressions observe no ordinary construction
+replay or ambient equality harvest, expand the retained paths, and
+independently verify them. Separate 16-through-4096 unrelated-fact curves pin
+logarithmic persistent updates for both the point theorem and rewrite paths.
+Execution-frontier atomic search and the remaining non-order/equality theory
+decisions still require their corresponding typed Proof queries.
 
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
