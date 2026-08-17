@@ -5008,6 +5008,90 @@ fn smart_execute_crosses_terminal_c_branch_before_checked_frame() {
 }
 
 #[test]
+fn smart_execute_retains_nested_terminal_c_branches_before_checked_frame() {
+    let c_source = r#"
+        int32 write_nested(int32 p[2], int32 first, int32 second) {
+            if (first) {
+                if (second) {
+                    p[0] = 1;
+                } else {
+                    p[1] = 1;
+                }
+            } else {
+                p[0] = 2;
+            }
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "write_nested.c";
+
+        int32 write_nested(int32 p[2], int32 first, int32 second) {
+            owns marker(first);
+            consumes p[0..2];
+            mutable p[0..2];
+            ensures result == 0;
+        } by {
+            open(marker(first)) {
+                execute();
+                frame();
+            }
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("write_nested.c", c_source)])
+    });
+    let verified = verified.expect("smart execute should retain nested checked C branches");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "write_nested.contract" && name == "surface certificate replay"
+        )),
+        "nested execute and its common frame must not use ordinary surface replay: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the nested execution branch should retain its checked certificate");
+    let Some(ProofTactic::Open(open)) = tactics.first() else {
+        panic!("{tactics:#?}");
+    };
+    let [
+        ProofTactic::If(outer),
+        ProofTactic::FrameUsing {
+            region: None,
+            premises,
+        },
+    ] = open.tactics.as_slice()
+    else {
+        panic!("the common frame should follow one retained outer branch: {tactics:#?}");
+    };
+    assert!(premises.is_empty(), "{tactics:#?}");
+    assert!(
+        outer
+            .then_tactics
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::If(_))),
+        "the outer then arm should retain its nested checked branch: {tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("write_nested.c", c_source)],
+        "write_nested",
+        CProofClaim::Grouped,
+    )
+    .expect("nested branched execute with common frame should expand");
+    verify_c0_sources(&expanded, &[("write_nested.c", c_source)])
+        .expect("the retained nested execution branches should independently replay");
+}
+
+#[test]
 fn linear_execute_until_inside_open_stops_on_checked_frontier() {
     let c_source = r#"
         int32 three_steps(int32 x) {

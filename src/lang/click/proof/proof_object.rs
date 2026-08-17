@@ -4541,6 +4541,25 @@ impl<'a> ExecutionProofBranches<'a> {
         }
     }
 
+    fn retain_nested_branch_metadata(
+        arm: &mut ExecutionProofArm<'a>,
+        nested: &ExecutionProofBranches<'a>,
+    ) {
+        for nested_arm in nested.arms.iter().flatten() {
+            for fact in &nested_arm.introduced_function_entry_prerequisites {
+                arm.introduced_function_entry_prerequisites
+                    .insert(fact.clone());
+            }
+            for theorem in &nested_arm.introduced_function_entry_derivations {
+                arm.introduced_function_entry_derivations
+                    .insert(theorem.clone());
+            }
+            for name in &nested_arm.introduced_unfolded_predicates {
+                arm.introduced_unfolded_predicates.insert(name.clone());
+            }
+        }
+    }
+
     pub(super) fn has_both_feasible_arms(&self) -> bool {
         self.arms.iter().all(Option::is_some)
     }
@@ -4613,9 +4632,10 @@ impl<'a> ExecutionProofBranches<'a> {
 
     /// Runs the narrow statement selector independently in one C arm until
     /// that arm reaches function exit. Every accepted transition is already
-    /// a retained `StepUsing` successor; encountering another structural
+    /// a retained `StepUsing` successor. Nested C `if` frontiers recurse
+    /// through another checked branch container; any other structural
     /// frontier is a search miss and leaves the caller free to use the legacy
-    /// recursive executor.
+    /// executor.
     pub(super) fn try_execute_arm_to_exit(
         mut self,
         take_then: bool,
@@ -4637,9 +4657,28 @@ impl<'a> ExecutionProofBranches<'a> {
                 return Ok(Some(self));
             }
             let prior_effect_count = execution.replay.effect_facts.len();
-            let Some(successor) = arm.proof.try_indexed_execute_step()? else {
-                self.arms[arm_index] = Some(arm);
-                return Ok(None);
+            let successor = if let Some(successor) = arm.proof.try_indexed_execute_step()? {
+                successor
+            } else {
+                if !arm.proof.is_at_execution_branch()? {
+                    self.arms[arm_index] = Some(arm);
+                    return Ok(None);
+                }
+                let nested = arm.proof.begin_execution_branch()?;
+                if !nested.has_both_feasible_arms() {
+                    self.arms[arm_index] = Some(arm);
+                    return Ok(None);
+                }
+                let Some(nested) = nested.try_execute_arm_to_exit(true)? else {
+                    self.arms[arm_index] = Some(arm);
+                    return Ok(None);
+                };
+                let Some(nested) = nested.try_execute_arm_to_exit(false)? else {
+                    self.arms[arm_index] = Some(arm);
+                    return Ok(None);
+                };
+                Self::retain_nested_branch_metadata(&mut arm, &nested);
+                nested.join_terminal()?
             };
             Self::retain_arm_successor(&mut arm, successor, prior_effect_count);
             self.arms[arm_index] = Some(arm);

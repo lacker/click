@@ -1457,8 +1457,16 @@ selecting only the statement's definedness premises. Standalone smart `step`
 retains its stricter explicit-certificate policy. A source regression performs
 different array writes in both C arms, crosses the shared return, applies one
 common exact frame, pins the `If; FrameUsing` scope certificate, and
-independently verifies expansion. Nested C branches and genuinely
-path-specific frame premises remain to migrate.
+independently verifies expansion.
+
+The same scoped `execute` path now recursively opens nested terminal C `if`
+frontiers. An inner terminal join becomes the already-checked successor of
+its enclosing execution arm, so the outer certificate retains the nested
+`If` directly rather than reconstructing it from final outcomes. The outer
+arm imports only the inner branch's recorded metadata delta. A second source
+regression nests a real array-writing `if` in one outer arm, retains the
+nested `If` before one common exact frame, and independently verifies the
+expanded proof. Genuinely path-specific frame premises remain to migrate.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
