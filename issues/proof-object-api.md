@@ -1338,6 +1338,23 @@ For smart `step()`, retain the owned-vector isolation: the exact generated
 perform that successful semantic transition once. A separate explicit
 expansion check must still reject a corrupted printed certificate.
 
+### Progress (2026-08-16: composed arithmetic theorem proofs)
+
+The pure and point `simp` consumers now retain the first composed typed
+arithmetic derivation: from `not (value < 2)` they build a scoped proof of
+`value >= 2`, a normalized constant bound `2 >= 1`, and the final
+`int32_ge_transitive` application. Every operation advances the same
+immutable `Proof`; ordinary verification performs no construction replay,
+while expansion independently checks the emitted nested `have` certificate.
+
+Pure theorem application now resolves explicitly named requirements through
+the persistent Surface-to-kernel requirement index before lowering them
+afresh. This preserves exact-premise checking when Surface Click spells a
+canonical false condition as `not (...)`; it does not broaden theorem search
+or accept merely derivable ambient premises. A deterministic 16-through-4096
+unrelated-fact regression covers both the point and restricted-pure composed
+paths.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

@@ -344,3 +344,20 @@ that fixed polarity family by bounded exact-index probes rather than an
 ambient scan. Expansion independently verifies the named step, omitted
 premises are transactional, and the 16-through-4096 unrelated-fact curve
 pins logarithmic Proof updates.
+
+### Progress (2026-08-16: negated successor bounds)
+
+The atomic decision from exact `not (value < upper)` to
+`value >= upper - 1` now retains its selected signed-order edge as typed
+evidence. Its Surface translation is deliberately composed from existing
+simple rules: `int32_not_lt_implies_ge`, a normalized adjacent constant
+bound, and `int32_ge_transitive`, with the intermediate facts scoped by
+`have`. Pure, point, and outcome smart `simp` submit those steps directly to
+the immutable `Proof`; ordinary verification emits no construction replay,
+and expansion independently reverifies the complete certificate.
+
+The kernel condition index canonicalizes `not (value < upper)` as a false
+condition. The typed consumer therefore matches that fixed polarity pair in
+bounded work while retaining the original Click spelling for the exact
+`apply using` premise. The shared 16-through-4096 single-premise curve now
+covers this multi-step derivation as well as the one-step arithmetic rules.

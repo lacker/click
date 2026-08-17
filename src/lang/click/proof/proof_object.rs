@@ -1437,18 +1437,27 @@ impl<'a> Proof<'a> {
         description: &str,
     ) -> Result<Proposition, ClickError> {
         match self.context.as_ref() {
-            ProofContext::Pure(context) => lower_pure_theorem_proposition(
-                context.claim_label,
-                surface,
-                &context.theorem_context.values,
-                &context.theorem_context.array_refs,
-                &context.theorem_context.memory,
-                context.predicate_environment,
-                context.click_function_environment,
-            )
-            .map_err(|message| {
-                self.step_error(format!("could not lower {description}: {message}"))
-            }),
+            ProofContext::Pure(context) => {
+                if let Some(recorded) = context
+                    .theorem_context
+                    .surface_requirements
+                    .available_kernel_matching(surface, |kernel| self.state.facts.contains(kernel))
+                {
+                    return Ok(recorded.clone());
+                }
+                lower_pure_theorem_proposition(
+                    context.claim_label,
+                    surface,
+                    &context.theorem_context.values,
+                    &context.theorem_context.array_refs,
+                    &context.theorem_context.memory,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+                .map_err(|message| {
+                    self.step_error(format!("could not lower {description}: {message}"))
+                })
+            }
             ProofContext::Point(context) => {
                 let surface = self.substitute_point_locals_in_proposition(surface)?;
                 if let Some(recorded) = context
@@ -1985,6 +1994,17 @@ impl<'a> Proof<'a> {
                     &premise_pairs,
                 )?;
                 plan_recorded_int32_strictly_positive_is_nonnegative_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_negated_strict_successor_bound_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_negated_strict_successor_bound_for_context(
                     goal,
                     &recorded,
                     point_application_closes_goal,
@@ -2707,20 +2727,7 @@ impl<'a> Proof<'a> {
     ) -> Result<ProofState, ClickError> {
         let explicit_premises = surface_premises
             .iter()
-            .map(|premise| {
-                lower_pure_theorem_proposition(
-                    context.claim_label,
-                    premise,
-                    &context.theorem_context.values,
-                    &context.theorem_context.array_refs,
-                    &context.theorem_context.memory,
-                    context.predicate_environment,
-                    context.click_function_environment,
-                )
-                .map_err(|message| {
-                    self.step_error(format!("could not lower `apply using` premise: {message}"))
-                })
-            })
+            .map(|premise| self.lower_surface_proposition(premise, "`apply using` premise"))
             .collect::<Result<Vec<_>, _>>()?;
 
         for premise in &explicit_premises {
@@ -7950,6 +7957,12 @@ mod tests {
             operator: ComparisonOperator::LessThan,
             right: expression(value.clone()),
         };
+        let negated_successor_premise =
+            ClickProposition::Not(Box::new(ClickProposition::Comparison {
+                left: expression(value.clone()),
+                operator: ComparisonOperator::LessThan,
+                right: expression(Bitvector32Term::Constant(2)),
+            }));
         let surface_bound_goal = ClickProposition::Comparison {
             left: ContractExpression::Add(
                 Box::new(expression(value.clone())),
@@ -7982,6 +7995,11 @@ mod tests {
             operator: ComparisonOperator::GreaterEqual,
             right: expression(Bitvector32Term::Constant(0)),
         };
+        let surface_successor_lower_goal = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::GreaterEqual,
+            right: expression(Bitvector32Term::Constant(1)),
+        };
         let lower = |surface: &ClickProposition| {
             lower_point_proposition_with_assumptions(
                 surface,
@@ -8001,6 +8019,7 @@ mod tests {
         let kernel_definedness_premise = lower(&definedness_premise);
         let kernel_positive_premise = lower(&positive_premise);
         let kernel_strictly_positive_premise = lower(&strictly_positive_premise);
+        let kernel_negated_successor_premise = lower(&negated_successor_premise);
         let goals = [
             (
                 lower(&surface_bound_goal),
@@ -8008,6 +8027,7 @@ mod tests {
                 "increment bound",
                 &premise,
                 &kernel_premise,
+                false,
             ),
             (
                 lower(&surface_strict_goal),
@@ -8015,6 +8035,7 @@ mod tests {
                 "strict increment",
                 &premise,
                 &kernel_premise,
+                false,
             ),
             (
                 lower(&surface_defined_goal),
@@ -8022,6 +8043,7 @@ mod tests {
                 "increment definedness",
                 &definedness_premise,
                 &kernel_definedness_premise,
+                false,
             ),
             (
                 lower(&surface_nonnegative_goal),
@@ -8029,6 +8051,7 @@ mod tests {
                 "positive to nonnegative",
                 &positive_premise,
                 &kernel_positive_premise,
+                false,
             ),
             (
                 lower(&surface_nonnegative_ge_goal),
@@ -8036,6 +8059,15 @@ mod tests {
                 "strictly positive to nonnegative",
                 &strictly_positive_premise,
                 &kernel_strictly_positive_premise,
+                false,
+            ),
+            (
+                lower(&surface_successor_lower_goal),
+                "int32_ge_transitive",
+                "negated strict successor bound",
+                &negated_successor_premise,
+                &kernel_negated_successor_premise,
+                true,
             ),
         ];
         let mut surface_propositions = SurfacePropositionMap::default();
@@ -8054,8 +8086,14 @@ mod tests {
                 &kernel_strictly_positive_premise,
             )
             .expect("the exact strictly-positive premise should be indexed");
+        surface_propositions
+            .record_lowering(
+                &negated_successor_premise,
+                &kernel_negated_successor_premise,
+            )
+            .expect("the exact negated successor premise should be indexed");
 
-        for (goal, theorem_name, label, surface_premise, kernel_premise) in goals {
+        for (goal, theorem_name, label, surface_premise, kernel_premise, composed) in goals {
             for size in [16_u32, 64, 256, 1024, 4096] {
                 let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
                 facts.push(kernel_premise.clone());
@@ -8083,22 +8121,43 @@ mod tests {
                     .expect("the typed increment rule should build one checked Proof descendant");
                 let allocations = fact_node_allocations() - before;
                 let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
-                let allocation_bound = 64 * logarithmic_height + 256;
+                let allocation_bound = if composed {
+                    96 * logarithmic_height + 384
+                } else {
+                    64 * logarithmic_height + 256
+                };
                 assert!(
                     allocations <= allocation_bound,
                     "size {size} point {label} simp allocated {allocations} persistent nodes (bound {allocation_bound})"
                 );
                 assert!(closed.is_complete());
-                assert!(
-                    matches!(
+                if composed {
+                    assert!(matches!(
                         closed.certificate().steps(),
-                        [SimpleProofStep::ApplyTheoremUsing { application, premises }]
-                            if application.name == theorem_name
-                                && premises == std::slice::from_ref(surface_premise)
-                    ),
-                    "{label} retained unexpected point steps: {:#?}",
-                    closed.certificate().steps()
-                );
+                        [
+                            SimpleProofStep::Have { proof: first, .. },
+                            SimpleProofStep::Have { proof: second, .. },
+                            SimpleProofStep::ApplyTheoremUsing { application, .. },
+                        ] if matches!(
+                            first.steps(),
+                            [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                                if application.name == "int32_not_lt_implies_ge"
+                                    && premises == std::slice::from_ref(surface_premise)
+                        ) && matches!(second.steps(), [SimpleProofStep::Normalize])
+                            && application.name == theorem_name
+                    ));
+                } else {
+                    assert!(
+                        matches!(
+                            closed.certificate().steps(),
+                            [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                                if application.name == theorem_name
+                                    && premises == std::slice::from_ref(surface_premise)
+                        ),
+                        "{label} retained unexpected point steps: {:#?}",
+                        closed.certificate().steps()
+                    );
+                }
                 assert!(Arc::ptr_eq(&root.state, &retained_root.state));
                 assert!(root.certificate().steps().is_empty());
 
@@ -8127,21 +8186,43 @@ mod tests {
                 let before_restricted = fact_node_allocations();
                 let pure_closed = pure_root
                     .try_restricted_simp_closure(std::slice::from_ref(surface_premise))
-                    .expect("restricted simp should retain the checked typed increment rule");
+                    .unwrap_or_else(|| {
+                        panic!("restricted simp should retain the checked typed {label} rule")
+                    });
                 let restricted_allocations = fact_node_allocations() - before_restricted;
                 assert!(
                     restricted_allocations <= allocation_bound,
                     "size {size} restricted {label} simp allocated {restricted_allocations} persistent nodes (bound {allocation_bound})"
                 );
                 assert!(pure_closed.is_complete());
-                assert!(matches!(
-                    pure_closed.certificate().steps(),
-                    [
-                        SimpleProofStep::ApplyTheoremUsing { application, premises },
-                        SimpleProofStep::Assumption,
-                    ] if application.name == theorem_name
-                        && premises == std::slice::from_ref(surface_premise)
-                ));
+                if composed {
+                    assert!(matches!(
+                        pure_closed.certificate().steps(),
+                        [
+                            SimpleProofStep::Have { proof: first, .. },
+                            SimpleProofStep::Have { proof: second, .. },
+                            SimpleProofStep::ApplyTheoremUsing { application, .. },
+                            SimpleProofStep::Assumption,
+                        ] if matches!(
+                            first.steps(),
+                            [
+                                SimpleProofStep::ApplyTheoremUsing { application, premises },
+                                SimpleProofStep::Assumption,
+                            ] if application.name == "int32_not_lt_implies_ge"
+                                && premises == std::slice::from_ref(surface_premise)
+                        ) && matches!(second.steps(), [SimpleProofStep::Normalize])
+                            && application.name == theorem_name
+                    ));
+                } else {
+                    assert!(matches!(
+                        pure_closed.certificate().steps(),
+                        [
+                            SimpleProofStep::ApplyTheoremUsing { application, premises },
+                            SimpleProofStep::Assumption,
+                        ] if application.name == theorem_name
+                            && premises == std::slice::from_ref(surface_premise)
+                    ));
+                }
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
                 assert!(pure_root.certificate().steps().is_empty());
             }

@@ -2316,6 +2316,19 @@ fn post_execution_simp_composes_negated_successor_bound() {
             simp();
         }
     "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity_at_least_one.c", c_source)])
+    });
+    verified.expect("the typed successor-bound Proof should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity_at_least_one.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained successor-bound proof must not use construction replay: {events:#?}"
+    );
     let offset = click_source.rfind("simp()").unwrap();
     let line = click_source[..offset]
         .bytes()
@@ -2348,6 +2361,59 @@ fn post_execution_simp_composes_negated_successor_bound() {
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity_at_least_one.c", c_source)])
         .expect("expanded successor lower-bound proof should replay");
+}
+
+#[test]
+fn restricted_simp_composes_negated_successor_bound() {
+    let click_source = r#"
+        theorem not_below_two_is_at_least_one(value: int32) {
+            requires not (value < 2);
+            ensures value >= 1 by {
+                simp() using {
+                    not (value < 2);
+                }
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the restricted successor-bound Proof should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "not_below_two_is_at_least_one.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained restricted successor-bound proof must not use construction replay: {events:#?}"
+    );
+    let offset = click_source.find("simp() using").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("restricted successor lower bound should expand");
+    assert!(
+        expanded.contains("apply(int32_not_lt_implies_ge("),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("apply(int32_ge_transitive("),
+        "{expanded}"
+    );
+    assert!(expanded.contains("normalize();"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded restricted successor proof should replay");
 }
 
 #[test]

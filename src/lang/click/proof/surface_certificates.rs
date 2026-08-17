@@ -441,6 +441,18 @@ pub(super) fn lower_surface_atomic_derivation(
                 false,
             )
         });
+    let typed_negated_successor_bound_pairs =
+        recorded_int32_negated_strict_successor_bound_pairs(derivation, &premise_pairs);
+    let typed_negated_successor_bound_plan = typed_negated_successor_bound_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_negated_strict_successor_bound_for_context(
+                &lowered_conclusion,
+                pairs,
+                false,
+            )
+        });
     let typed_le_neq_strict_pairs =
         recorded_int32_le_and_neq_implies_strict_pairs(derivation, &premise_pairs);
     let typed_le_neq_strict_plan = typed_le_neq_strict_pairs
@@ -470,6 +482,7 @@ pub(super) fn lower_surface_atomic_derivation(
         || typed_ge_not_gt_equality_plan.is_some()
         || typed_positive_nonnegative_plan.is_some()
         || typed_strictly_positive_nonnegative_plan.is_some()
+        || typed_negated_successor_bound_plan.is_some()
         || typed_le_neq_strict_plan.is_some();
     if typed_order_plan.is_some() {
         premise_pairs = typed_order_pairs.expect("a typed order plan retains its path premises");
@@ -521,6 +534,9 @@ pub(super) fn lower_surface_atomic_derivation(
     } else if typed_strictly_positive_nonnegative_plan.is_some() {
         premise_pairs = typed_strictly_positive_nonnegative_pairs
             .expect("a typed strictly-positive-to-nonnegative plan retains its exact premise");
+    } else if typed_negated_successor_bound_plan.is_some() {
+        premise_pairs = typed_negated_successor_bound_pairs
+            .expect("a typed negated successor-bound plan retains its exact premise");
     } else if typed_le_neq_strict_plan.is_some() {
         premise_pairs = typed_le_neq_strict_pairs
             .expect("a typed <=/!= strict-order plan retains both exact premises");
@@ -769,6 +785,14 @@ pub(super) fn lower_surface_atomic_derivation(
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "recorded strictly-positive-to-nonnegative rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_negated_successor_bound_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded negated successor-bound rule produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -3463,6 +3487,20 @@ pub(super) fn recorded_int32_strictly_positive_is_nonnegative_pairs(
         .map(|pair| vec![pair])
 }
 
+pub(super) fn recorded_int32_negated_strict_successor_bound_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    let premise = derivation
+        .int32_negated_strict_successor_bound_step()?
+        .premise();
+    premise_pairs
+        .iter()
+        .find(|(kernel, _)| kernel == premise || condition_polarity_equivalent(kernel, premise))
+        .cloned()
+        .map(|pair| vec![pair])
+}
+
 pub(super) fn recorded_int32_le_and_neq_implies_strict_pairs(
     derivation: &PropositionDerivation,
     premise_pairs: &[(Proposition, ClickProposition)],
@@ -3664,6 +3702,25 @@ pub(super) fn plan_recorded_int32_strictly_positive_is_nonnegative_for_context(
     let mut tactics = plan_explicit_strictly_positive_is_nonnegative(goal, premise_pairs)?;
     if point_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
+    }
+    Some(tactics)
+}
+
+pub(super) fn plan_recorded_int32_negated_strict_successor_bound_for_context(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
+    let mut tactics = plan_explicit_negated_strict_successor_bound(goal, premise_pairs)?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut tactics)?;
+        let ProofTactic::Have(have) = tactics.first_mut()? else {
+            return None;
+        };
+        let SourceProof::Script(body) = &mut have.proof else {
+            return None;
+        };
+        remove_trailing_theorem_assumption(body)?;
     }
     Some(tactics)
 }
