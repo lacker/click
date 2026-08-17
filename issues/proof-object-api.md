@@ -1514,10 +1514,9 @@ The first explicit `branch ensuring` join now belongs to the same structural
 API. `ExecutionProofBranches::join_with_interface` checks and abstracts every
 continuing arm independently against the declared pure/resource interface,
 requires the abstract successor states and exported fact sequence to agree
-exactly, and installs the resulting `SimpleProofStep::Branch` atomically. Pure
-and non-owning `views` interfaces cross this seam; ownership-exporting
-interfaces still require resource normalization described below. The
-checker consumes the persistent `ProofFacts` assumption index directly, so it
+exactly, and installs the resulting `SimpleProofStep::Branch` atomically. Pure,
+non-owning `views`, and exact ownership interfaces cross this seam. The checker
+consumes the persistent `ProofFacts` assumption index directly, so it
 does not clone or rebuild the ambient fact context. When both arms retain the
 same persistent resource snapshot, the join preserves that complete common
 context in O(1) and validates only the interface's output-sized additions.
@@ -1542,12 +1541,27 @@ The capability check lowers only the explicit interface, probes the exact
 resource index, and retains that snapshot unchanged; an entailed but
 differently represented quantity remains rejected. Ordinary verification and
 independent expansion cover the source path, while a 16-through-4096
-unrelated-resource curve bounds the exact lookup and join. Proper
-common-resource deltas from differently edited arm snapshots, and ownership
-interfaces that must consume or normalize another representation,
-intentionally remain on the legacy structural path until resource snapshots
-expose an output-sensitive changed-key join and incremental normalization
-operation.
+unrelated-resource curve bounds the exact lookup and join.
+
+Differently edited resource snapshots now expose that output-sensitive join.
+Every `ResourceContext` retains a persistent origin and exact changed-fact
+history; insertion, removal, and real normalization append only touched
+representations, while a normalization that changes nothing preserves the
+snapshot identity. Given two descendants and their branch root, the common
+resource operation visits the union of those local changed keys and removes
+from one descendant any exact multiplicity not present in the other. It never
+materializes or intersects the unrelated ambient context. Execution branch
+arms admit the already-checked resource unfold/fold/observe steps, so the
+existing `ready_bundle` regression can consume different path tokens, fold
+the same composite in both arms, and retain its `Branch` directly. Ordinary
+verification observes no surface-certificate replay and expansion
+independently re-verifies the retained arm steps. Kernel and complete Proof
+curves from 16 through 4096 unrelated resources bound persistent-node
+allocations for the common-descendant work logarithmically. Ownership
+interfaces that are only entailed through a
+different representation or quantity still intentionally remain on the
+legacy structural path until an incremental normalization operation can
+consume that representation explicitly.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

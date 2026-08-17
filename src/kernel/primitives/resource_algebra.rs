@@ -197,6 +197,79 @@ impl ResourceContext {
         self.storage.index.exact.contains_key(fact)
     }
 
+    fn history_tail_is(
+        current: Option<&std::sync::Arc<ResourceContextChange>>,
+        expected: Option<&std::sync::Arc<ResourceContextChange>>,
+    ) -> bool {
+        match (current, expected) {
+            (Some(current), Some(expected)) => std::sync::Arc::ptr_eq(current, expected),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    fn changed_facts_since(&self, ancestor: &Self) -> Option<BTreeSet<CResourceFact>> {
+        if !std::sync::Arc::ptr_eq(&self.storage.origin, &ancestor.storage.origin) {
+            return None;
+        }
+        let expected = ancestor.storage.history.as_ref();
+        let mut current = self.storage.history.as_ref();
+        let mut changed = BTreeSet::new();
+        while !Self::history_tail_is(current, expected) {
+            let change = current?;
+            changed.insert(change.fact.clone());
+            current = change.parent.as_ref();
+        }
+        Some(changed)
+    }
+
+    /// Whether this snapshot was obtained by persistent resource mutations
+    /// from `ancestor`.
+    pub(crate) fn descends_from(&self, ancestor: &Self) -> bool {
+        self.changed_facts_since(ancestor).is_some()
+    }
+
+    /// Exact common resource representation of two descendants.
+    ///
+    /// Only keys changed after `ancestor` are inspected. Starting from the
+    /// left descendant preserves the legacy intersection's insertion order;
+    /// changed exact facts are trimmed to the multiplicity present in both
+    /// descendants.
+    pub(crate) fn common_exact_descendant(
+        left: &Self,
+        right: &Self,
+        ancestor: &Self,
+    ) -> Option<Self> {
+        let mut changed = left.changed_facts_since(ancestor)?;
+        changed.extend(right.changed_facts_since(ancestor)?);
+        let mut common = left.clone();
+        for fact in changed {
+            let right_count = right
+                .storage
+                .index
+                .exact
+                .get(&fact)
+                .map_or(0, PersistentSet::len);
+            while common
+                .storage
+                .index
+                .exact
+                .get(&fact)
+                .is_some_and(|entries| entries.len() > right_count)
+            {
+                let entry = common
+                    .storage
+                    .index
+                    .exact
+                    .get(&fact)
+                    .and_then(|entries| entries.iter().next().copied())
+                    .expect("an excessive exact resource multiplicity has an entry");
+                common.remove_entry(entry);
+            }
+        }
+        Some(common)
+    }
+
     fn iter(&self) -> impl DoubleEndedIterator<Item = &CResourceFact> + ExactSizeIterator {
         self.storage.facts.iter().map(|(_, fact)| fact)
     }
@@ -219,6 +292,11 @@ impl ResourceContext {
             facts: self.storage.facts.with_inserted(entry, fact.clone()),
             next_entry_id,
             index: self.storage.index.with_inserted(entry, &fact),
+            origin: self.storage.origin.clone(),
+            history: Some(std::sync::Arc::new(ResourceContextChange {
+                fact,
+                parent: self.storage.history.clone(),
+            })),
             materialized: std::sync::OnceLock::new(),
         });
     }
@@ -229,14 +307,45 @@ impl ResourceContext {
             facts: self.storage.facts.without_key(&entry),
             next_entry_id: self.storage.next_entry_id,
             index: self.storage.index.without_entry(entry, &fact),
+            origin: self.storage.origin.clone(),
+            history: Some(std::sync::Arc::new(ResourceContextChange {
+                fact: fact.clone(),
+                parent: self.storage.history.clone(),
+            })),
             materialized: std::sync::OnceLock::new(),
         });
         fact
     }
 
-    fn replace_facts(&mut self, facts: impl IntoIterator<Item = CResourceFact>) {
-        *self = facts.into_iter().fold(Self::new(), |context, fact| {
-            context.unchecked_with_fact(fact)
+    fn replace_facts(
+        &mut self,
+        facts: impl IntoIterator<Item = CResourceFact>,
+        changed_facts: impl IntoIterator<Item = CResourceFact>,
+    ) {
+        let mut replacement_facts = PersistentMap::default();
+        let mut replacement_index = ResourceContextIndex::default();
+        let mut next_entry_id = 0_u64;
+        for fact in facts {
+            replacement_facts = replacement_facts.with_inserted(next_entry_id, fact.clone());
+            replacement_index = replacement_index.with_inserted(next_entry_id, &fact);
+            next_entry_id = next_entry_id
+                .checked_add(1)
+                .expect("resource entry id space exhausted");
+        }
+        let mut history = self.storage.history.clone();
+        for fact in changed_facts {
+            history = Some(std::sync::Arc::new(ResourceContextChange {
+                fact,
+                parent: history,
+            }));
+        }
+        self.storage = std::sync::Arc::new(ResourceContextStorage {
+            facts: replacement_facts,
+            next_entry_id,
+            index: replacement_index,
+            origin: self.storage.origin.clone(),
+            history,
+            materialized: std::sync::OnceLock::new(),
         });
     }
 
@@ -1061,14 +1170,20 @@ impl ResourceContext {
     }
 
     pub(in crate::kernel) fn normalized(mut self, assumptions: &PureFactContext) -> Self {
+        let mut changed_facts = BTreeSet::new();
         let retained = self
             .iter()
-            .filter(|fact| {
-                !fact
+            .filter_map(|fact| {
+                if fact
                     .owned_quantity_term()
                     .is_some_and(|quantity| quantity.as_const() == Some(0))
+                {
+                    changed_facts.insert(fact.clone());
+                    None
+                } else {
+                    Some(fact.clone())
+                }
             })
-            .cloned()
             .collect::<Vec<_>>();
         let mut slots = retained.iter().cloned().map(Some).collect::<Vec<_>>();
         let mut index = ResourceNormalizationIndex::default();
@@ -1088,6 +1203,9 @@ impl ResourceContext {
                     continue;
                 };
                 if let Some(merged) = normalize_resource_fact_pair(&fact, right, assumptions) {
+                    changed_facts.insert(fact.clone());
+                    changed_facts.insert(right.clone());
+                    changed_facts.insert(merged.clone());
                     index.remove(i, &fact);
                     index.remove(j, right);
                     slots[j] = None;
@@ -1101,7 +1219,10 @@ impl ResourceContext {
                 i += 1;
             }
         }
-        self.replace_facts(slots.into_iter().flatten());
+        if changed_facts.is_empty() {
+            return self;
+        }
+        self.replace_facts(slots.into_iter().flatten(), changed_facts);
         self
     }
 }

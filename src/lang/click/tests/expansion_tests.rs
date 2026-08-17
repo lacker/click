@@ -5525,6 +5525,81 @@ fn branch_interface_retains_exact_unchanged_ownership() {
 }
 
 #[test]
+fn transformed_resource_branch_interface_retains_its_common_descendant() {
+    let markdown = include_str!("../../../../mdtests/proof_branch_composite_resource_transform.md");
+    let mdtest = crate::cli::parse_mdtest(
+        std::path::Path::new("proof_branch_composite_resource_transform.md"),
+        markdown,
+    )
+    .expect("the transformed-resource regression should parse");
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("the regression should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources));
+    let verified = verified.expect("the transformed resource branch should stay on Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "select_ready.contract"
+                    && name == "surface certificate replay"
+        )),
+        "the common changed-resource descendant must not be reconstructed by replay: {events:#?}"
+    );
+    let tactics = verified
+        .last()
+        .expect("select_ready should be the final verified function")
+        .expanded_proof_tactics()
+        .expect("the transformed interface should retain an expansion");
+    assert!(
+        matches!(
+            tactics.as_slice(),
+            [
+                ProofTactic::StepUsing(_),
+                ProofTactic::Branch(branch),
+                ProofTactic::ObserveResource(_),
+                ..
+            ] if matches!(
+                branch.ensuring.as_deref(),
+                Some([
+                    ProofAssertion::Fact(_),
+                    ProofAssertion::Resource(ResourceClause::Declared {
+                        access: ResourceAccessMode::Own,
+                        name,
+                        ..
+                    }),
+                ]) if name == "ready_bundle"
+            ) && matches!(
+                branch.then_tactics.as_slice(),
+                [ProofTactic::StepUsing(_), ProofTactic::Have(_), ProofTactic::FoldResource(_)]
+            ) && matches!(
+                branch.else_tactics.as_slice(),
+                [ProofTactic::StepUsing(_), ProofTactic::Have(_), ProofTactic::FoldResource(_)]
+            )
+        ),
+        "{tactics:#?}"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &c_sources,
+        "select_ready",
+        CProofClaim::Ensure(0),
+    )
+    .expect("the transformed resource branch should expand");
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("the retained changed-resource interface should independently re-derive");
+}
+
+#[test]
 fn decided_branch_interface_retains_the_surviving_checked_state() {
     let c_source = r#"
         int32 selected_nonnegative(int32 x) {

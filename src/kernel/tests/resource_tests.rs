@@ -56,6 +56,130 @@ fn resource_context_fork_updates_are_persistent_and_logarithmic() {
 }
 
 #[test]
+fn resource_common_descendant_visits_only_branch_local_changes() {
+    let left_path = CResourceFact::own_token("left_path".to_string(), Vec::new());
+    let right_path = CResourceFact::own_token("right_path".to_string(), Vec::new());
+    let permit = CResourceFact::own_token("permit".to_string(), Vec::new());
+    let ready = CResourceFact::own_composite("ready".to_string(), Vec::new());
+    let mut samples = Vec::new();
+
+    for size in [16_usize, 64, 256, 1024, 4096] {
+        let root = unrelated_token_context(size)
+            .unchecked_with_fact(left_path.clone())
+            .unchecked_with_fact(right_path.clone())
+            .unchecked_with_fact(permit.clone());
+        let assumptions = PureFactContext::new();
+        let normalized_root = root.clone().normalized(&assumptions);
+        assert!(
+            normalized_root.shares_storage_with(&root),
+            "no-op normalization must preserve a size-{size} snapshot by identity"
+        );
+        let left = root
+            .clone()
+            .without_fact(&left_path, &assumptions)
+            .expect("left path should be consumable")
+            .without_fact(&permit, &assumptions)
+            .expect("left permit should be consumable")
+            .unchecked_with_fact(ready.clone());
+        let right = root
+            .clone()
+            .without_fact(&right_path, &assumptions)
+            .expect("right path should be consumable")
+            .without_fact(&permit, &assumptions)
+            .expect("right permit should be consumable")
+            .unchecked_with_fact(ready.clone());
+        assert!(left.descends_from(&root));
+        assert!(right.descends_from(&root));
+        assert!(left.storage.materialized.get().is_none());
+        assert!(right.storage.materialized.get().is_none());
+
+        let before = crate::persistent::persistent_node_allocations();
+        let common = ResourceContext::common_exact_descendant(&left, &right, &root)
+            .expect("both branch contexts should retain their shared root");
+        samples.push((
+            size,
+            usize::BITS as usize - size.leading_zeros() as usize,
+            crate::persistent::persistent_node_allocations() - before,
+        ));
+        assert!(common.contains_exact_representation(&ready));
+        assert!(!common.contains_exact_representation(&left_path));
+        assert!(!common.contains_exact_representation(&right_path));
+        assert!(!common.contains_exact_representation(&permit));
+        for index in [0, size / 2, size - 1] {
+            assert!(
+                common.contains_exact_representation(&CResourceFact::own_token(
+                    format!("token_{index}"),
+                    vec![int32(index as u32)],
+                ))
+            );
+        }
+    }
+
+    let (_, base_height, base_allocations) = samples[0];
+    for (size, height, allocations) in samples {
+        let bound = base_allocations + 64 * (height - base_height);
+        assert!(
+            allocations <= bound,
+            "size {size} common resource descendant allocated {allocations} persistent nodes (bound {bound})"
+        );
+    }
+
+    let unrelated = ResourceContext::new().unchecked_with_fact(ready);
+    let root = ResourceContext::new();
+    assert!(ResourceContext::common_exact_descendant(&unrelated, &unrelated, &root).is_none());
+
+    let unit = CResourceFact::own_token("mergeable".to_string(), Vec::new());
+    let merged = CResourceFact::own_quantity(
+        CResource::Token {
+            name: "mergeable".to_string(),
+            arguments: Vec::new(),
+        },
+        Bitvector32Term::Constant(2),
+    );
+    let left = root
+        .clone()
+        .unchecked_with_fact(unit.clone())
+        .unchecked_with_fact(unit.clone())
+        .normalized(&PureFactContext::new());
+    let right = root
+        .clone()
+        .unchecked_with_fact(unit.clone())
+        .unchecked_with_fact(unit)
+        .normalized(&PureFactContext::new());
+    assert!(left.descends_from(&root));
+    assert!(right.descends_from(&root));
+    let common = ResourceContext::common_exact_descendant(&left, &right, &root)
+        .expect("normalization should preserve changed-fact ancestry");
+    assert!(common.contains_exact_representation(&merged));
+
+    let duplicate = CResourceFact::own_token("duplicate".to_string(), Vec::new());
+    let duplicate_root = ResourceContext::new()
+        .unchecked_with_fact(duplicate.clone())
+        .unchecked_with_fact(duplicate.clone());
+    let duplicate_left = duplicate_root.clone();
+    let duplicate_right = duplicate_root
+        .clone()
+        .without_exact_representation(&duplicate)
+        .expect("one duplicate should be removable");
+    let duplicate_common = ResourceContext::common_exact_descendant(
+        &duplicate_left,
+        &duplicate_right,
+        &duplicate_root,
+    )
+    .expect("a one-sided removal should retain common ancestry");
+    assert_eq!(
+        duplicate_common
+            .storage
+            .index
+            .exact
+            .get(&duplicate)
+            .map_or(0, |entries| entries.len()),
+        1,
+        "the exact common descendant must retain the minimum multiplicity"
+    );
+}
+
+#[test]
 fn resource_memory_block_and_interval_indexes_update_logarithmically() {
     for size in [16_usize, 64, 256, 1024, 4096] {
         let context = ResourceContext::new().unchecked_with_facts((0..size).map(|index| {

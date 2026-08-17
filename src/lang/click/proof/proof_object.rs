@@ -5142,6 +5142,43 @@ impl<'a> ExecutionProofBranches<'a> {
         Ok(true)
     }
 
+    fn resource_contexts_descend_from_root(&self) -> bool {
+        let Some(root_execution) = self.root.state.execution.as_ref() else {
+            return false;
+        };
+        let [Some(then_arm), Some(else_arm)] = &self.arms else {
+            return false;
+        };
+        let Some(then_execution) = then_arm.proof.state.execution.as_ref() else {
+            return false;
+        };
+        let Some(else_execution) = else_arm.proof.state.execution.as_ref() else {
+            return false;
+        };
+        then_execution
+            .state
+            .resources()
+            .descends_from(root_execution.state.resources())
+            && else_execution
+                .state
+                .resources()
+                .descends_from(root_execution.state.resources())
+    }
+
+    fn common_resource_context(&self) -> Option<ResourceContext> {
+        let root_execution = self.root.state.execution.as_ref()?;
+        let [Some(then_arm), Some(else_arm)] = &self.arms else {
+            return None;
+        };
+        let then_execution = then_arm.proof.state.execution.as_ref()?;
+        let else_execution = else_arm.proof.state.execution.as_ref()?;
+        ResourceContext::common_exact_descendant(
+            then_execution.state.resources(),
+            else_execution.state.resources(),
+            root_execution.state.resources(),
+        )
+    }
+
     /// Re-derives one logical arm from its retained Surface certificate.
     /// Terminal and decided branches record one synthetic branch-entry
     /// `step using` (two for an empty C arm); those structural entry steps are
@@ -5287,9 +5324,9 @@ impl<'a> ExecutionProofBranches<'a> {
     /// retain the complete exact common resource context without enumerating
     /// it.
     ///
-    /// Resource snapshots do not yet expose a persistent changed-key merge,
-    /// so differently edited contexts remain on the legacy structural path.
-    /// Identical snapshots share one storage root and are retained in O(1).
+    /// Resource snapshots retain exact changed-fact ancestry, so independently
+    /// edited descendants can derive their common representation from only
+    /// the arm-local delta. Identical snapshots remain the O(1) case.
     /// End-of-arm joins derive their continuation by popping the root's
     /// persistent enclosing-continuation stack exactly as C execution does.
     pub(super) fn supports_interface_join(&self, assertions: &[ProofAssertion]) -> bool {
@@ -5305,19 +5342,7 @@ impl<'a> ExecutionProofBranches<'a> {
         {
             return false;
         }
-        let [Some(then_arm), Some(else_arm)] = &self.arms else {
-            return false;
-        };
-        let Some(then_execution) = then_arm.proof.state.execution.as_ref() else {
-            return false;
-        };
-        let Some(else_execution) = else_arm.proof.state.execution.as_ref() else {
-            return false;
-        };
-        then_execution
-            .state
-            .resources()
-            .shares_storage_with(else_execution.state.resources())
+        self.resource_contexts_descend_from_root()
     }
 
     #[cfg(test)]
@@ -5339,10 +5364,13 @@ impl<'a> ExecutionProofBranches<'a> {
             SimpleProofStep::StepUsing(_)
                 | SimpleProofStep::TransportUsing { .. }
                 | SimpleProofStep::UnfoldPredicate(_)
+                | SimpleProofStep::UnfoldResource(_)
+                | SimpleProofStep::FoldResource(_)
+                | SimpleProofStep::ObserveResource(_)
                 | SimpleProofStep::ApplyTheoremUsing { .. }
         ) {
             return Err(self.root.step_error(
-                "execution branch arms currently accept only `step using`, `transport using`, `unfold`, and `apply using`",
+                "execution branch arms currently accept only statement, transport, unfold/fold/observe resource, predicate unfold, and theorem-application steps",
             ));
         }
         let arm_index = usize::from(!take_then);
@@ -5980,6 +6008,11 @@ impl<'a> ExecutionProofBranches<'a> {
                 "checked `branch ensuring` cannot yet normalize an exported owned resource representation",
             ));
         }
+        let common_resources = self.common_resource_context().ok_or_else(|| {
+            self.root.step_error(
+                "checked `branch ensuring` resource snapshots do not descend from the branch root",
+            )
+        })?;
         let join_continuation = self.derived_join_continuation().ok_or_else(|| {
             self.root
                 .step_error("execution `branch` has no shared continuation statement")
@@ -6158,10 +6191,10 @@ impl<'a> ExecutionProofBranches<'a> {
             ));
         }
 
-        // Neither arm edited this exact persistent resource value. Retain it
-        // without enumeration, then validate only the output-sized interface
-        // additions against that already-valid context.
-        let mut resources = then_execution.state.resources().clone();
+        // The common exact resource representation was derived from only the
+        // facts changed since the branch root. Validate the output-sized
+        // interface additions against that already-valid subset.
+        let mut resources = common_resources;
         let additions = then_abstract
             .state
             .resources()
@@ -13758,6 +13791,11 @@ mod tests {
         let click_file = crate::lang::click::parse(
             r#"
                 abstract resource marker();
+                abstract resource permit();
+
+                resource ready() {
+                    contains permit();
+                }
 
                 int32 nonnegative(int32 x) {
                     ensures nonnegative_result: result >= 0 by { assumption(); }
@@ -13944,6 +13982,90 @@ mod tests {
             assert!(
                 allocations <= bound,
                 "size {size} exact owned interface allocated {allocations} persistent nodes (bound {bound})"
+            );
+        }
+
+        let ready_clause = ResourceClause::Declared {
+            access: ResourceAccessMode::Own,
+            kind: ResourceKind::Composite,
+            name: "ready".to_string(),
+            arguments: Vec::new(),
+            parameter_types: Vec::new(),
+        };
+        let permit_fact = CResourceFact::own_token("permit".to_string(), Vec::new());
+        let mut changed_snapshot_samples = Vec::new();
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let resources = ResourceContext::new()
+                .unchecked_with_facts((0..size).map(|index| {
+                    CResourceFact::own_token(format!("unrelated_{index}"), vec![int32(index)])
+                }))
+                .unchecked_with_fact(permit_fact.clone());
+            let branches = make_root(16, CState::new().with_resource_context(resources))
+                .begin_execution_branch()
+                .expect("the transformed-interface condition should expose both arms")
+                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+                .expect("transformed-interface then assignment should check")
+                .apply_step(true, SimpleProofStep::FoldResource(ready_clause.clone()))
+                .expect("then arm should fold its ready resource")
+                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .expect("transformed-interface else assignment should check")
+                .apply_step(false, SimpleProofStep::FoldResource(ready_clause.clone()))
+                .expect("else arm should independently fold its ready resource");
+            let then_resources = branches
+                .arm(true)
+                .expect("then arm should remain feasible")
+                .state
+                .execution
+                .as_ref()
+                .expect("then arm should retain execution")
+                .state
+                .resources();
+            let else_resources = branches
+                .arm(false)
+                .expect("else arm should remain feasible")
+                .state
+                .execution
+                .as_ref()
+                .expect("else arm should retain execution")
+                .state
+                .resources();
+            assert!(!then_resources.shares_storage_with(else_resources));
+
+            let assertions = vec![ProofAssertion::Resource(ready_clause.clone())];
+            assert!(branches.supports_interface_join(&assertions));
+            let before = fact_node_allocations();
+            let joined = branches
+                .join_with_interface(assertions)
+                .expect("independently folded resource snapshots should rejoin");
+            changed_snapshot_samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before,
+            ));
+            assert!(matches!(
+                joined.certificate().steps(),
+                [SimpleProofStep::Branch {
+                    then_proof,
+                    else_proof,
+                    ..
+                }] if matches!(
+                    then_proof.steps(),
+                    [SimpleProofStep::StepUsing(_), SimpleProofStep::FoldResource(_)]
+                ) && matches!(
+                    else_proof.steps(),
+                    [SimpleProofStep::StepUsing(_), SimpleProofStep::FoldResource(_)]
+                )
+            ));
+            joined
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("the transformed owned interface should retain its return frontier");
+        }
+        let (_, base_height, base_allocations) = changed_snapshot_samples[0];
+        for (size, height, allocations) in changed_snapshot_samples {
+            let bound = base_allocations + 96 * (height - base_height);
+            assert!(
+                allocations <= bound,
+                "size {size} changed-resource Proof join allocated {allocations} persistent nodes (bound {bound})"
             );
         }
 

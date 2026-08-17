@@ -1269,9 +1269,20 @@ pub(super) struct ResourceContextStorage {
     pub(super) facts: PersistentMap<ResourceEntryId, CResourceFact>,
     pub(super) next_entry_id: ResourceEntryId,
     pub(super) index: ResourceContextIndex,
+    /// Persistent mutation ancestry used by checked Proof joins. The origin
+    /// distinguishes unrelated snapshots; the history names only exact facts
+    /// whose multiplicity or representation changed.
+    pub(super) origin: std::sync::Arc<()>,
+    pub(super) history: Option<std::sync::Arc<ResourceContextChange>>,
     /// Legacy callers that explicitly enumerate every fact pay the
     /// output-sized materialization once per immutable snapshot.
     pub(super) materialized: std::sync::OnceLock<Vec<CResourceFact>>,
+}
+
+#[derive(Clone)]
+pub(super) struct ResourceContextChange {
+    pub(super) fact: CResourceFact,
+    pub(super) parent: Option<std::sync::Arc<ResourceContextChange>>,
 }
 
 #[derive(Clone, Debug, Default)]
