@@ -579,15 +579,15 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     Ok(Some((goal, certificate)))
 }
 
-/// Tries the one smart statement candidate whose selection requires no
-/// mutable planning aftermath: a fact-free terminal return using no premises.
+/// Tries the terminal smart statement candidate whose complete exact
+/// definedness premise set is available through the immutable Proof.
 ///
 /// Keep this operation and its result outlined from the recursive proof
 /// executor. The deep pure-case regression is intentionally sensitive to
 /// growth in that caller's stack frame.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
-fn try_fact_free_return_step_on_proof<'a>(
+fn try_exact_definedness_return_step_on_proof<'a>(
     state: &mut CState,
     pure_facts: &mut Vec<Proposition>,
     replay: &mut TacticReplayState,
@@ -603,22 +603,6 @@ fn try_fact_free_return_step_on_proof<'a>(
     claim_label: &'a str,
     tactic_index: usize,
 ) -> Result<bool, ClickError> {
-    let (_, _, frontier_statement, _) = next_top_level_statement_from_execution_point(
-        replay,
-        state,
-        function,
-        arguments,
-        claim_label,
-        tactic_index,
-        "step",
-    )?;
-    let has_no_transportable_context = pure_facts.is_empty()
-        && replay.effect_facts.is_empty()
-        && replay.surface_propositions.kernel_facts().next().is_none();
-    if !matches!(frontier_statement, CStatement::Return(_)) || !has_no_transportable_context {
-        return Ok(false);
-    }
-
     let context = ProofReplayContext {
         state: std::mem::replace(state, CState::new()),
         pure_facts: std::mem::take(pure_facts),
@@ -638,8 +622,8 @@ fn try_fact_free_return_step_on_proof<'a>(
         click_function_environment,
         theorem_environment,
     );
-    match root.apply_step(SimpleProofStep::StepUsing(Vec::new())) {
-        Ok(proof) => {
+    match root.try_exact_definedness_return_step()? {
+        Some(proof) => {
             let certificate = proof.certificate();
             let context = proof.into_execution_context()?;
             *state = context.state;
@@ -651,8 +635,7 @@ fn try_fact_free_return_step_on_proof<'a>(
             }
             Ok(true)
         }
-        Err(_) => {
-            check_verification_deadline()?;
+        None => {
             let context = root.into_execution_context()?;
             *state = context.state;
             *pure_facts = context.pure_facts;
@@ -1134,7 +1117,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::SmartStep => {
-                if try_fact_free_return_step_on_proof(
+                if try_exact_definedness_return_step_on_proof(
                     &mut state,
                     &mut requirement_pure_facts,
                     &mut replay,

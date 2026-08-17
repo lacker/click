@@ -1169,7 +1169,10 @@ fn proposition_tree_contains(root: &Proposition, target: &Proposition) -> bool {
         }
 }
 
-fn statement_expression_definedness(state: &CState, statement: &CStatement) -> Vec<Proposition> {
+pub(super) fn statement_expression_definedness(
+    state: &CState,
+    statement: &CStatement,
+) -> Vec<Proposition> {
     let mut expressions = Vec::new();
     match statement {
         CStatement::Assign { expression, .. } | CStatement::Return(expression) => {

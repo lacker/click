@@ -2118,6 +2118,91 @@ impl<'a> Proof<'a> {
         source_proof_contains_linear_search(proof) && source_proof_is_supported(proof)
     }
 
+    /// Tries the bounded terminal statement candidate whose complete premise
+    /// set is visible before executing the statement: its exact expression-
+    /// definedness requirements.
+    ///
+    /// This is deliberately narrower than general smart `step` planning. It
+    /// accepts only a return frontier whose proof facts consist exactly of
+    /// those requirements, with no effect or resource context that would need
+    /// preservation. Selection performs indexed fact/surface lookups only;
+    /// the C transition runs once, when the resulting `StepUsing` is submitted
+    /// to `apply_step` and retained by the returned descendant.
+    pub(super) fn try_exact_definedness_return_step(&self) -> Result<Option<Self>, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(None);
+        };
+        let Some(execution) = self.state.execution.as_ref() else {
+            return Err(self.step_error("execution-frontier proof lost its semantic state"));
+        };
+        if !execution.replay.effect_facts.is_empty()
+            || !execution.state.resources().facts().is_empty()
+            || self.state.facts.prioritized.is_some()
+        {
+            return Ok(None);
+        }
+        let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
+            &execution.replay,
+            &execution.state,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "smart step selection",
+        )?;
+        if !matches!(statement, CStatement::Return(_)) {
+            return Ok(None);
+        }
+        let mut required = statement_expression_definedness(&current_state, &statement)
+            .into_iter()
+            .filter(|fact| !PureFactContext::new().proves(fact))
+            .collect::<Vec<_>>();
+        required.sort();
+        required.dedup();
+        if self.state.facts.ordered.len() != required.len() {
+            return Ok(None);
+        }
+        let mut selected = Vec::with_capacity(required.len());
+        for fact in required {
+            let Some(derivation) = self
+                .state
+                .facts
+                .assumptions()
+                .derive_atomic_proposition(&fact)
+            else {
+                return Ok(None);
+            };
+            for premise in derivation.context_premises() {
+                if !selected.contains(&premise) {
+                    selected.push(premise);
+                }
+            }
+        }
+        if selected.len() != self.state.facts.ordered.len() {
+            return Ok(None);
+        }
+        let mut premises = Vec::with_capacity(selected.len());
+        for fact in selected {
+            let Some(surface) = execution
+                .replay
+                .surface_propositions
+                .surfaces(&fact)
+                .next()
+                .cloned()
+            else {
+                return Ok(None);
+            };
+            premises.push(surface);
+        }
+        match self.apply_step(SimpleProofStep::StepUsing(premises)) {
+            Ok(proof) => Ok(Some(proof)),
+            Err(_) => {
+                check_verification_deadline()?;
+                Ok(None)
+            }
+        }
+    }
+
     /// Searches explicit premise spellings for one point fact transport.
     ///
     /// Every candidate is checked by applying the corresponding simple step
@@ -8820,6 +8905,20 @@ mod tests {
                 &theorem_environment,
             );
             let retained_root = root.clone();
+            let before_selection = fact_node_allocations();
+            assert!(
+                root.try_exact_definedness_return_step()
+                    .expect("bounded smart-step selection should remain available")
+                    .is_none(),
+                "unrelated ambient facts require the richer transport planner"
+            );
+            let selection_allocations = fact_node_allocations() - before_selection;
+            assert_eq!(
+                selection_allocations, 0,
+                "size {size} rejected terminal selection allocated persistent fact nodes"
+            );
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
             let marked = root
                 .apply_step(SimpleProofStep::Mark("candidate".to_string()))
                 .expect("a fresh proof mark should produce a checked descendant");

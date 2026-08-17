@@ -312,8 +312,8 @@ fn execute_step_records_a_point_checked_surface_expansion() {
     });
     let verified = verified.expect("the smart execution step should verify");
     assert_eq!(
-        planning_transitions, 1,
-        "a rejected no-premise candidate should fall through to exactly one richer planning transition"
+        planning_transitions, 0,
+        "the exact definedness premise should be selected without a mutable planning transition"
     );
     assert!(
         events.iter().all(|event| !matches!(

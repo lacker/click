@@ -359,23 +359,29 @@ successor back out, and append its retained step. They no longer use
 `complete_smart_tactic` or ordinary per-tactic replay. Multi-step and
 branching plans remain on the legacy path pending structured proof goals.
 
-No-premise smart `step()` at a fact-free terminal return now searches on
-`Proof` directly rather than first executing the statement on a mutable
-planning context. The direct path requires that no ambient pure facts, effect
-facts, or recorded kernel spellings exist to transport. Its first candidate is
-the literal `StepUsing([])` transition; success retains that checked successor
-as both semantic state and certificate, while failure leaves the root intact
-and falls through to the richer premise planner. Deadline failure is not
-swallowed as an ordinary rejected candidate. A focused counter regression
-requires zero planning transitions for the accepted no-premise return and
-exactly one fallback planning transition when an overflow prerequisite must be
-selected; expansion independently verifies both retained forms. Every
-nonterminal or fact-bearing statement deliberately retains automatic transport
-planning even when its bare C operation could execute, because the current or
-later postcondition may depend on facts that smart `step()` is expected to
-carry forward. This is the first execution search path where smart selection
-operates on proof objects, not merely where planner output is checked by one
-afterward.
+Terminal smart `step()` now searches on `Proof` directly when its complete
+premise set is knowable before execution: the return expression's exact
+definedness requirements. The query uses the persistent atomic-reasoning and
+surface-spelling indexes to select the requirements' explicit context
+premises, then submits one `StepUsing` to the same `Proof`; the C transition
+runs only in `apply_step`, and the successor retains that operation as both
+semantic state and certificate. The path admits the empty fact-free case and
+signed-overflow cases such as `return x + 1`, but only when those selected
+premises are the complete ambient proof-fact set and there are no effect or
+resource facts to preserve. A rejected candidate leaves the root intact and
+falls through to the richer transport planner; deadline failure is not
+swallowed as rejection.
+
+Focused counter regressions require zero mutable planning transitions for
+both the empty and overflow-premise returns, and expansion independently
+verifies both retained forms. The existing 16-through-4096 unrelated-fact
+curve additionally requires this bounded query to reject without allocating
+any persistent fact nodes, rather than scanning or cloning the ambient facts.
+Nonterminal statements and terminal statements with unrelated facts still
+retain automatic transport planning because a current or later postcondition
+may depend on facts that smart `step()` must carry forward. This is the first
+execution search path where smart selection operates on proof objects, not
+merely where planner output is checked by one afterward.
 
 Linear `execute()` and `execute_all_paths()` plans composed entirely of one or
 more `StepUsing` operations now use the same checked execution `Proof` path.
