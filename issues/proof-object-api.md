@@ -1182,6 +1182,16 @@ premise subsets leave their ancestor untouched, and deterministic
 regressions observe no ordinary construction replay and independently verify
 the expanded theorem steps.
 
+The one-premise positive-to-nonnegative decision now crosses the same seam.
+From the exact indexed `1 <= value` source edge, atomic search retains
+`int32_positive_is_nonnegative(value)` and submits that application to the
+immutable `Proof`; it does not return a bare fact and rediscover the theorem
+during certificate lowering. Point and restricted-pure paths retain the
+accepted application, rejected premise omission leaves the root unchanged,
+and the existing 16-through-4096 single-premise arithmetic curve bounds both
+paths logarithmically. Ordinary source verification performs no construction
+replay, while expansion independently verifies the serialized application.
+
 Mid-execution bare theorem application now crosses the same query/transition
 seam. The smart form asks its immutable execution-frontier `Proof` for one
 concrete `ApplyTheoremUsing`, and only `Proof::apply_step` may add the theorem

@@ -71,6 +71,32 @@ fn int32_ge_and_not_gt_equality_derivation_retains_both_exact_premises() {
 }
 
 #[test]
+fn int32_positive_is_nonnegative_derivation_retains_its_exact_premise() {
+    let value = Bitvector32Term::Variable(Variable(90_004));
+    let positive = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), value.clone()),
+        true,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), value),
+        true,
+    );
+    let assumptions = PureFactContext::new().assume_proposition(positive.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("1 <= value should derive 0 <= value");
+    assert_eq!(
+        derivation
+            .int32_positive_is_nonnegative_step()
+            .map(SignedOrderDerivationStep::premise),
+        Some(&positive)
+    );
+    assert!(derivation.replay(&assumptions));
+    assert!(!derivation.replay(&PureFactContext::new()));
+}
+
+#[test]
 fn conjunction_builder_has_logarithmic_depth() {
     fn conjunction_depth(proposition: &Proposition) -> usize {
         match proposition {

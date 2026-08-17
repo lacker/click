@@ -2454,6 +2454,18 @@ fn restricted_simp_expands_positive_to_nonnegative_theorem_application() {
             }
         }
     "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("positive-to-nonnegative simp should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "positive_is_nonnegative.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the named positive-to-nonnegative step must not use construction replay: {events:#?}"
+    );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
         .bytes()

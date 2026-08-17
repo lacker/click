@@ -1136,6 +1136,15 @@ impl PureFactContext {
                 }),
             _ => None,
         };
+        let positive_is_nonnegative_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(lower, value),
+                true,
+            ) if lower.as_ref() == &Bitvector32Term::Constant(0) => self
+                .exact_direct_order_step(&Bitvector32Term::Constant(1), value, false)
+                .map(AtomicPropositionDerivationEvidence::Int32PositiveIsNonnegative),
+            _ => None,
+        };
         let positive_predecessor_is_nonnegative_evidence = match proposition {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedLessEqual(lower, predecessor),
@@ -1227,6 +1236,7 @@ impl PureFactContext {
             .or(equality_path_evidence)
             .or(le_and_not_lt_equality_evidence)
             .or(ge_and_not_gt_equality_evidence)
+            .or(positive_is_nonnegative_evidence)
             .or(signed_order_evidence)
             .or(increment_upper_bound_evidence)
             .or(increment_strictly_increases_evidence)
@@ -1478,6 +1488,20 @@ impl PureFactContext {
                 return false;
             };
             return self.replays_increment_bounds(bounds, &lower, &value);
+        }
+        if let AtomicPropositionDerivationEvidence::Int32PositiveIsNonnegative(step) = evidence {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(lower, value),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            return lower.as_ref() == &Bitvector32Term::Constant(0)
+                && step.lower == Bitvector32Term::Constant(1)
+                && step.upper == **value
+                && !step.strict
+                && self.replays_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32PositivePredecessorIsNonnegative(step) =
             evidence

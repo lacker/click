@@ -1970,6 +1970,15 @@ impl<'a> Proof<'a> {
                     &recorded,
                     point_application_closes_goal,
                 )
+            })
+            .or_else(|| {
+                let recorded =
+                    recorded_int32_positive_is_nonnegative_pairs(derivation, &premise_pairs)?;
+                plan_recorded_int32_positive_is_nonnegative_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
             })?;
         let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
         let proof = self.check_certificate(&candidate).ok()?;
@@ -7884,7 +7893,7 @@ mod tests {
     }
 
     #[test]
-    fn point_increment_simps_retain_one_indexed_theorem_step() {
+    fn point_single_premise_arithmetic_simps_retain_one_indexed_theorem_step() {
         let click_file = crate::lang::click::parse("")
             .expect("an empty source should still admit the standard theorem prelude");
         let predicate_environment = PredicateEnvironment::new(&[]);
@@ -7912,6 +7921,11 @@ mod tests {
             operator: ComparisonOperator::LessThan,
             right: expression(Bitvector32Term::Constant(i32::MAX as u32)),
         };
+        let positive_premise = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(1)),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(value.clone()),
+        };
         let surface_bound_goal = ClickProposition::Comparison {
             left: ContractExpression::Add(
                 Box::new(expression(value.clone())),
@@ -7934,6 +7948,11 @@ mod tests {
                 Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
             ),
         };
+        let surface_nonnegative_goal = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(0)),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(value.clone()),
+        };
         let lower = |surface: &ClickProposition| {
             lower_point_proposition_with_assumptions(
                 surface,
@@ -7951,6 +7970,7 @@ mod tests {
         };
         let kernel_premise = lower(&premise);
         let kernel_definedness_premise = lower(&definedness_premise);
+        let kernel_positive_premise = lower(&positive_premise);
         let goals = [
             (
                 lower(&surface_bound_goal),
@@ -7973,6 +7993,13 @@ mod tests {
                 &definedness_premise,
                 &kernel_definedness_premise,
             ),
+            (
+                lower(&surface_nonnegative_goal),
+                "int32_positive_is_nonnegative",
+                "positive to nonnegative",
+                &positive_premise,
+                &kernel_positive_premise,
+            ),
         ];
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
@@ -7981,6 +8008,9 @@ mod tests {
         surface_propositions
             .record_lowering(&definedness_premise, &kernel_definedness_premise)
             .expect("the exact maximum premise should be indexed");
+        surface_propositions
+            .record_lowering(&positive_premise, &kernel_positive_premise)
+            .expect("the exact positive premise should be indexed");
 
         for (goal, theorem_name, label, surface_premise, kernel_premise) in goals {
             for size in [16_u32, 64, 256, 1024, 4096] {
