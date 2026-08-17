@@ -4532,6 +4532,69 @@ fn execution_resource_fold_is_recorded_once_and_replays() {
 }
 
 #[test]
+fn linear_execution_open_retains_one_checked_scope_and_replays() {
+    let c_source = r#"
+        int32 two_steps(int32 x) {
+            x = x;
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "two_steps.c";
+
+        int32 two_steps(int32 x) {
+            owns marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            open(marker(x)) {
+                step();
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("two_steps.c", c_source)])
+    });
+    let verified = verified.expect("the linear open scope should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "two_steps.contract" && name == "surface certificate replay"
+        )),
+        "ordinary linear open construction must retain its checked Proof scope: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked grouped proof should retain its simple expansion");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(open))
+                if matches!(open.tactics.as_slice(), [ProofTactic::StepUsing(_)])
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("two_steps.c", c_source)],
+        "two_steps",
+        CProofClaim::Grouped,
+    )
+    .expect("the grouped open proof should expand");
+    verify_c0_sources(&expanded, &[("two_steps.c", c_source)])
+        .expect("the retained open scope should independently replay");
+}
+
+#[test]
 fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
     let c_source = r#"
             int32 choose(int32 value) {

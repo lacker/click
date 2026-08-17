@@ -17,10 +17,16 @@ fn linear_execution_simple_steps(node: &InternalProofNode) -> Option<Vec<SimpleP
                 };
                 if !matches!(
                     step,
-                    SimpleProofStep::StepUsing(_)
+                    SimpleProofStep::Mark(_)
+                        | SimpleProofStep::Step
+                        | SimpleProofStep::StepUsing(_)
                         | SimpleProofStep::TransportUsing { .. }
                         | SimpleProofStep::UnfoldPredicate(_)
+                        | SimpleProofStep::UnfoldResource(_)
+                        | SimpleProofStep::FoldResource(_)
+                        | SimpleProofStep::ObserveResource(_)
                         | SimpleProofStep::ApplyTheoremUsing { .. }
+                        | SimpleProofStep::CloseInvariants
                 ) {
                     return None;
                 }
@@ -30,6 +36,160 @@ fn linear_execution_simple_steps(node: &InternalProofNode) -> Option<Vec<SimpleP
         }
         _ => None,
     }
+}
+
+/// Checks one linear all-simple `open` body on the same Proof that owns its
+/// entry and close transitions. Kept out of the recursive structural driver
+/// frame for the same stack-bound reason as the resource-step adapter.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn execute_linear_open_scope<'a>(
+    context: ProofReplayContext,
+    resource: ResourceClause,
+    source_index: usize,
+    steps: &[SimpleProofStep],
+    function_block: &'a FunctionBlock,
+    parsed_function: &'a syntax::C0Function,
+    claim_label: &'a str,
+    function_environment: &'a CExecutionEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    resource_environment: &'a ResourceEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    function: &'a CFunction,
+    arguments: &'a [CExpression],
+    tactic_index: usize,
+) -> Result<ProofReplayContext, ClickError> {
+    let root = Proof::for_execution_frontier(
+        claim_label,
+        tactic_index,
+        context,
+        function_block,
+        function,
+        parsed_function,
+        arguments,
+        function_environment,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    );
+    let mut scope = root.begin_open(resource, source_index)?;
+    for step in steps {
+        scope = scope.apply_step(step.clone())?;
+    }
+    let proof = scope.join()?;
+    let certificate = proof.certificate();
+    let mut context = proof.into_execution_context()?;
+    for step in certificate.steps() {
+        context
+            .replay
+            .proof_certificate_builder
+            .push_step(step.clone());
+    }
+    Ok(context)
+}
+
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn try_execute_linear_open_scope<'a>(
+    context: &ProofReplayContext,
+    body: &InternalProofNode,
+    resource: ResourceClause,
+    source_index: usize,
+    function_block: &'a FunctionBlock,
+    parsed_function: &'a syntax::C0Function,
+    claim_label: &'a str,
+    function_environment: &'a CExecutionEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    resource_environment: &'a ResourceEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    function: &'a CFunction,
+    arguments: &'a [CExpression],
+    tactic_index: usize,
+) -> Result<Option<ProofReplayContext>, ClickError> {
+    let Some(steps) = linear_execution_simple_steps(body) else {
+        return Ok(None);
+    };
+    execute_linear_open_scope(
+        context.clone(),
+        resource,
+        source_index,
+        &steps,
+        function_block,
+        parsed_function,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        function,
+        arguments,
+        tactic_index,
+    )
+    .map(Some)
+}
+
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn try_execute_linear_open_scope_and_continue<'a>(
+    context: &ProofReplayContext,
+    body: &InternalProofNode,
+    continuation: &InternalProofNode,
+    resource: ResourceClause,
+    source_index: usize,
+    function_block: &'a FunctionBlock,
+    parsed_function: &'a syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    claim_label: &'a str,
+    function_environment: &'a CExecutionEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    resource_environment: &'a ResourceEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    function: &'a CFunction,
+    arguments: &'a [CExpression],
+    tactic_index: usize,
+) -> Result<Option<Vec<ProofReplayContext>>, ClickError> {
+    let Some(context) = try_execute_linear_open_scope(
+        context,
+        body,
+        resource,
+        source_index,
+        function_block,
+        parsed_function,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        function,
+        arguments,
+        tactic_index,
+    )?
+    else {
+        return Ok(None);
+    };
+    execute_internal_proof(
+        continuation,
+        context,
+        None,
+        function_block,
+        parsed_function,
+        claims,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        function,
+        arguments,
+    )
+    .map(Some)
 }
 
 // Keep the alternative structural join temporaries out of the recursively
@@ -114,6 +274,30 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             body,
             continuation,
         } => {
+            if expansion_capture.is_none() {
+                let linear = try_execute_linear_open_scope_and_continue(
+                    &context,
+                    body,
+                    continuation,
+                    resource.clone(),
+                    *source_index,
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                    *index,
+                )?;
+                if let Some(contexts) = linear {
+                    return Ok(contexts);
+                }
+            }
             let mut opened = context;
             if opened.replay.is_at_function_exit() {
                 return Err(ClickError::new(format!(

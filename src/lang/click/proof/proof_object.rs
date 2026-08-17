@@ -72,8 +72,9 @@ struct ExecutionProofArm<'a> {
 #[derive(Clone)]
 pub(super) struct ProofScope<'a> {
     root: Proof<'a>,
-    structure: ProofScopeStructure,
+    structure: Box<ProofScopeStructure>,
     body: Proof<'a>,
+    introduced_facts: Vec<Proposition>,
 }
 
 #[derive(Clone)]
@@ -81,6 +82,11 @@ enum ProofScopeStructure {
     Have {
         proposition: ClickProposition,
         kernel: Proposition,
+    },
+    Open {
+        resource: ResourceClause,
+        source_index: usize,
+        preserve_exposed_body: bool,
     },
 }
 
@@ -1093,11 +1099,78 @@ impl<'a> Proof<'a> {
         };
         Ok(ProofScope {
             root: self.clone(),
-            structure: ProofScopeStructure::Have {
+            structure: Box::new(ProofScopeStructure::Have {
                 proposition,
                 kernel,
-            },
+            }),
             body,
+            introduced_facts: Vec::new(),
+        })
+    }
+
+    /// Opens one composite resource body as an execution scope. Entry is an
+    /// audited representation transition, not a separately serialized
+    /// `unfold`; the child Proof starts fresh provenance and the eventual join
+    /// records the child certificate inside one `Open` step.
+    pub(super) fn begin_open(
+        &self,
+        resource: ResourceClause,
+        source_index: usize,
+    ) -> Result<ProofScope<'a>, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("`open` requires an execution-frontier proof"));
+        };
+        let mut execution =
+            self.state.execution.clone().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+        if execution.replay.is_at_function_exit() {
+            return Err(self.step_error("`open` must begin before execution reaches function exit"));
+        }
+        let checked = open_composite_resource_for_proof(
+            context.resource_environment,
+            &resource,
+            context.parsed_function.parameters(),
+            context.arguments,
+            (*execution.state).clone(),
+            self.state.facts.clone(),
+            &mut execution.replay.surface_propositions,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.claim_label,
+            context.tactic_index,
+        )?;
+        execution.state = checked.state.into();
+        execution.replay.open_scopes += 1;
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        let introduced_facts = checked.added_facts.clone();
+        let body = Proof {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                facts: checked.facts,
+                locals: self.state.locals.clone(),
+                unfolded_predicates: self.state.unfolded_predicates.clone(),
+                goal: Goal::ExecutionFrontier,
+                complete: false,
+                added_facts: Arc::new(checked.added_facts.clone()),
+                checked_facts: Arc::new(checked.added_facts),
+                execution: Some(execution),
+            }),
+            node: Arc::new(ProofNode {
+                parent: None,
+                step: None,
+                depth: 0,
+            }),
+        };
+        Ok(ProofScope {
+            root: self.clone(),
+            structure: Box::new(ProofScopeStructure::Open {
+                resource,
+                source_index,
+                preserve_exposed_body: checked.body_was_already_exposed,
+            }),
+            body,
+            introduced_facts,
         })
     }
 
@@ -4630,7 +4703,15 @@ impl<'a> ProofScope<'a> {
     #[allow(dead_code)]
     pub(super) fn apply_step(&self, step: SimpleProofStep) -> Result<Self, ClickError> {
         let mut next = self.clone();
-        next.body = self.body.apply_step(step)?;
+        let body = self.body.apply_step(step)?;
+        if matches!(self.structure.as_ref(), ProofScopeStructure::Open { .. }) {
+            for fact in body.added_facts() {
+                if !next.introduced_facts.contains(fact) {
+                    next.introduced_facts.push(fact.clone());
+                }
+            }
+        }
+        next.body = body;
         Ok(next)
     }
 
@@ -4689,39 +4770,106 @@ impl<'a> ProofScope<'a> {
     /// Closes a completed nested proof and makes its checked proposition
     /// available in the enclosing proof while retaining the exact body.
     pub(super) fn join(self) -> Result<Proof<'a>, ClickError> {
-        if !self.body.is_complete() {
-            return Err(self
-                .root
-                .step_error("cannot close `have`: nested proof is incomplete"));
+        match *self.structure {
+            ProofScopeStructure::Have {
+                proposition,
+                kernel,
+            } => {
+                if !self.body.is_complete() {
+                    return Err(self
+                        .root
+                        .step_error("cannot close `have`: nested proof is incomplete"));
+                }
+                let body = self.body.certificate();
+                let mut facts = self.root.state.facts.clone();
+                facts = facts.with_fact(kernel.clone());
+                Ok(Proof {
+                    context: self.root.context.clone(),
+                    state: Arc::new(ProofState {
+                        facts,
+                        locals: self.root.state.locals.clone(),
+                        unfolded_predicates: self.root.state.unfolded_predicates.clone(),
+                        goal: self.root.state.goal.clone(),
+                        complete: false,
+                        added_facts: Arc::new(vec![kernel.clone()]),
+                        checked_facts: Arc::new(vec![kernel]),
+                        execution: None,
+                    }),
+                    node: Arc::new(ProofNode {
+                        parent: Some(self.root.node.clone()),
+                        step: Some(Arc::new(SimpleProofStep::Have {
+                            proposition,
+                            proof: Box::new(body),
+                        })),
+                        depth: self.root.node.depth + 1,
+                    }),
+                })
+            }
+            ProofScopeStructure::Open {
+                resource,
+                source_index,
+                preserve_exposed_body,
+            } => {
+                let ProofContext::Execution(context) = self.root.context.as_ref() else {
+                    unreachable!("an open scope can only be created from an execution Proof")
+                };
+                let body = self.body.certificate();
+                let mut state = Arc::unwrap_or_clone(self.body.state);
+                let mut execution = state.execution.take().ok_or_else(|| {
+                    self.root
+                        .step_error("open scope body lost its execution frontier")
+                })?;
+                execution.replay.open_scopes = execution.replay.open_scopes.saturating_sub(1);
+                if execution.replay.is_at_function_exit() {
+                    execution.replay.defer_post_execution(
+                        context.tactic_index,
+                        source_index,
+                        PostExecutionTactic::CloseOpen {
+                            resource: resource.clone(),
+                            preserve_exposed_body,
+                        },
+                    );
+                } else {
+                    let pre_state = execution
+                        .replay
+                        .old_reference_state(&execution.state)
+                        .clone();
+                    let checked = close_open_resource_for_proof(
+                        context.resource_environment,
+                        &resource,
+                        context.claim_label,
+                        context.tactic_index,
+                        state.facts,
+                        context.parsed_function.parameters(),
+                        context.arguments,
+                        &pre_state,
+                        execution.state.into_value(),
+                        context.predicate_environment,
+                        context.click_function_environment,
+                        &execution.replay.unfolded_predicates,
+                        preserve_exposed_body,
+                    )?;
+                    state.facts = checked.facts;
+                    execution.state = checked.state.into();
+                }
+                execution.last_step_delta = ExecutionProofStepDelta::default();
+                state.execution = Some(execution);
+                state.added_facts = Arc::new(self.introduced_facts.clone());
+                state.checked_facts = Arc::new(self.introduced_facts);
+                Ok(Proof {
+                    context: self.root.context.clone(),
+                    state: Arc::new(state),
+                    node: Arc::new(ProofNode {
+                        parent: Some(self.root.node.clone()),
+                        step: Some(Arc::new(SimpleProofStep::Open {
+                            resource,
+                            proof: Box::new(body),
+                        })),
+                        depth: self.root.node.depth + 1,
+                    }),
+                })
+            }
         }
-        let body = self.body.certificate();
-        let ProofScopeStructure::Have {
-            proposition,
-            kernel,
-        } = self.structure;
-        let mut facts = self.root.state.facts.clone();
-        facts = facts.with_fact(kernel.clone());
-        Ok(Proof {
-            context: self.root.context.clone(),
-            state: Arc::new(ProofState {
-                facts,
-                locals: self.root.state.locals.clone(),
-                unfolded_predicates: self.root.state.unfolded_predicates.clone(),
-                goal: self.root.state.goal.clone(),
-                complete: false,
-                added_facts: Arc::new(vec![kernel.clone()]),
-                checked_facts: Arc::new(vec![kernel]),
-                execution: None,
-            }),
-            node: Arc::new(ProofNode {
-                parent: Some(self.root.node.clone()),
-                step: Some(Arc::new(SimpleProofStep::Have {
-                    proposition,
-                    proof: Box::new(body),
-                })),
-                depth: self.root.node.depth + 1,
-            }),
-        })
     }
 }
 
@@ -10225,6 +10373,150 @@ mod tests {
             assert_eq!(
                 unfolded.certificate().steps(),
                 &[SimpleProofStep::UnfoldResource(resource.clone())]
+            );
+        }
+    }
+
+    #[test]
+    fn execution_open_scope_owns_entry_body_and_close_transactionally() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                resource marker(x: int32) {
+                    fact x == x;
+                }
+                verifying "two_steps.c";
+                int32 two_steps(int32 x) {
+                    owns marker(x);
+                    immutable;
+                    ensures returns_x: result == x;
+                } by {
+                    open(marker(x)) { step(); }
+                    step();
+                    frame();
+                }
+            "#,
+        )
+        .expect("test resource scope should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let resource = function_block
+            .requires()
+            .iter()
+            .find_map(|requirement| match requirement.inner() {
+                Requirement::Resource(resource) => Some(resource.clone()),
+                _ => None,
+            })
+            .expect("the test function should own its marker resource");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+        let parsed_function =
+            syntax::parse_function("int32 two_steps(int32 x) { x = x; return x; }")
+                .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let function_environment = CExecutionEnvironment::new();
+        let arguments = vec![CExpression::Value(int32(7))];
+        let empty_state = CState::new();
+        let lowered = lower_resource_clause(
+            &resource,
+            parsed_function.parameters(),
+            &arguments,
+            empty_state.memory(),
+        )
+        .expect("the owned marker resource should lower");
+        let state =
+            empty_state.with_resource_context(ResourceContext::new().unchecked_with_fact(lowered));
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let root = Proof::for_execution_frontier(
+                "persistent open scope",
+                0,
+                ProofReplayContext {
+                    state: state.clone(),
+                    pure_facts: (0..size).map(indexed_fact).collect(),
+                    replay: TacticReplayState {
+                        source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                        ..TacticReplayState::default()
+                    },
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let scope = root
+                .begin_open(resource.clone(), 0)
+                .expect("the held marker should open");
+            let scope = scope
+                .apply_step(SimpleProofStep::Step)
+                .expect("the open body should advance one statement");
+            let closed = scope.join().expect("the marker body should close");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 160 * logarithmic_height + 512;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} open scope allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert_eq!(
+                closed.certificate().steps(),
+                &[SimpleProofStep::Open {
+                    resource: resource.clone(),
+                    proof: Box::new(ProofCertificate::from_steps(vec![SimpleProofStep::Step])),
+                }]
+            );
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+            assert!(
+                closed
+                    .state
+                    .execution
+                    .as_ref()
+                    .is_some_and(|execution| !execution.replay.is_at_function_exit())
+            );
+
+            let mut missing = resource.clone();
+            let ResourceClause::Declared { name, .. } = &mut missing else {
+                panic!("the marker resource should be declared");
+            };
+            *name = "missing_marker".to_string();
+            assert!(root.begin_open(missing, 0).is_err());
+            assert!(root.certificate().steps().is_empty());
+
+            let terminal = root
+                .begin_open(resource.clone(), 0)
+                .expect("the retained root should open an alternate scope")
+                .apply_step(SimpleProofStep::Step)
+                .expect("the terminal scope should cross its assignment")
+                .apply_step(SimpleProofStep::Step)
+                .expect("the terminal scope should cross its return")
+                .join()
+                .expect("an exit-reaching open should defer its close");
+            let terminal_execution = terminal
+                .state
+                .execution
+                .as_ref()
+                .expect("the terminal open retains execution state");
+            assert!(terminal_execution.replay.is_at_function_exit());
+            assert_eq!(terminal_execution.replay.post_execution_tactics.len(), 1);
+            assert_eq!(
+                terminal.certificate().steps(),
+                &[SimpleProofStep::Open {
+                    resource: resource.clone(),
+                    proof: Box::new(ProofCertificate::from_steps(vec![
+                        SimpleProofStep::Step,
+                        SimpleProofStep::Step,
+                    ])),
+                }]
             );
         }
     }

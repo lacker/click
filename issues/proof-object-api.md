@@ -1348,6 +1348,24 @@ step. Post-execution fold remains a distinct outcome/finalization operation;
 this migration does not pretend that batch finalization is an ordinary
 frontier-local step.
 
+`open(resource) { ... }` now has an audited execution `ProofScope` for linear
+all-simple bodies. Scope entry uses the same persistent unfold law in `Open`
+mode without serializing a fictitious nested `unfold`; every body operation
+advances the child `Proof`; and join either closes the representation at the
+current frontier or records the existing deferred close when the child has
+returned. The enclosing successor retains exactly one `SimpleProofStep::Open`
+whose child certificate is the path that was checked. A 16-through-4096
+regression covers entry/body/close allocation, ancestor isolation, failed
+entry transactionality, exact nested certificate identity, and both immediate
+and return-deferred joins. Ordinary verification now selects this scope for a
+linear explicit open body without construction replay, while expansion
+independently verifies the serialized scope. Open bodies with structural
+branches still use the legacy multi-result driver until its join can retain
+the corresponding branch-aware child Proofs. The linear-scope probe and its
+large optional execution successor are outlined from the recursive structural
+driver; the unchanged deep pure-case canary caught the initial stack-frame
+growth and now pins that boundary.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

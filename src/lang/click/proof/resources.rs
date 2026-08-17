@@ -1708,6 +1708,7 @@ pub(super) struct CheckedResourceUnfold {
     pub(super) state: CState,
     pub(super) facts: ProofFacts,
     pub(super) added_facts: Vec<Proposition>,
+    pub(super) body_was_already_exposed: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1724,6 +1725,67 @@ pub(super) fn unfold_composite_resource_for_proof(
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<CheckedResourceUnfold, ClickError> {
+    unfold_composite_resource_for_proof_with_access(
+        resource_environment,
+        resource,
+        parameters,
+        arguments,
+        state,
+        facts,
+        surface_propositions,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+        tactic_index,
+        ResourceBodyAccess::Finalize,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn open_composite_resource_for_proof(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: CState,
+    facts: ProofFacts,
+    surface_propositions: &mut SurfacePropositionMap,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+) -> Result<CheckedResourceUnfold, ClickError> {
+    unfold_composite_resource_for_proof_with_access(
+        resource_environment,
+        resource,
+        parameters,
+        arguments,
+        state,
+        facts,
+        surface_propositions,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+        tactic_index,
+        ResourceBodyAccess::Open,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn unfold_composite_resource_for_proof_with_access(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: CState,
+    facts: ProofFacts,
+    surface_propositions: &mut SurfacePropositionMap,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+    access: ResourceBodyAccess,
+) -> Result<CheckedResourceUnfold, ClickError> {
     let mut facts = ProofResourcePureFacts::new(facts);
     let unfolded = unfold_composite_resource_with_facts(
         resource_environment,
@@ -1737,12 +1799,13 @@ pub(super) fn unfold_composite_resource_for_proof(
         click_function_environment,
         claim_label,
         tactic_index,
-        ResourceBodyAccess::Finalize,
+        access,
     )?;
     Ok(CheckedResourceUnfold {
         state: unfolded.state,
         facts: facts.facts,
         added_facts: facts.added,
+        body_was_already_exposed: unfolded.body_was_already_exposed,
     })
 }
 
@@ -2601,6 +2664,74 @@ pub(super) fn fold_composite_resource_for_proof(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<CheckedResourceFold, ClickError> {
+    fold_composite_resource_for_proof_with_closure(
+        resource_environment,
+        resource,
+        claim_label,
+        tactic_index,
+        facts,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        ResourceBodyClosure::Initialize,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn close_open_resource_for_proof(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    claim_label: &str,
+    tactic_index: usize,
+    facts: ProofFacts,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+    preserve_exposed_body: bool,
+) -> Result<CheckedResourceFold, ClickError> {
+    fold_composite_resource_for_proof_with_closure(
+        resource_environment,
+        resource,
+        claim_label,
+        tactic_index,
+        facts,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        ResourceBodyClosure::CloseOpen {
+            preserve_exposed_body,
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fold_composite_resource_for_proof_with_closure(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    claim_label: &str,
+    tactic_index: usize,
+    facts: ProofFacts,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+    closure: ResourceBodyClosure,
+) -> Result<CheckedResourceFold, ClickError> {
     let facts = ProofResourcePureFacts::new(facts);
     let outcome = CFunctionOutcome::Return {
         value: CValue::Int32(Bitvector32Term::Constant(0)),
@@ -2621,7 +2752,7 @@ pub(super) fn fold_composite_resource_for_proof(
         predicate_environment,
         click_function_environment,
         unfolded_predicates,
-        ResourceBodyClosure::Initialize,
+        closure,
     )?;
     let CFunctionOutcome::Return { state, .. } = outcome else {
         unreachable!("folding a synthetic return outcome preserves its outcome kind")
