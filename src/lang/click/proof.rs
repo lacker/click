@@ -8,6 +8,9 @@ mod execution_planning;
 mod fact_reasoning;
 mod point_proofs;
 mod proof_object;
+
+#[cfg(test)]
+pub(in crate::lang::click) use proof_object::count_checked_execution_interface_joins;
 mod pure_theorems;
 mod replay_engine;
 mod replay_state;

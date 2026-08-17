@@ -51,6 +51,7 @@ fn advance_execution_branch_arm<'a>(
 ) -> Result<Option<ExecutionProofBranches<'a>>, ClickError> {
     for indexed in tactics {
         if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
+            branches.ensure_source_arm_step(take_then, &step)?;
             branches = branches.apply_step(take_then, step)?;
         } else if matches!(indexed.tactic, ProofTactic::SmartStep) {
             let Some(next) = branches.try_smart_step(take_then)? else {
@@ -369,7 +370,7 @@ fn advance_checked_open_scope<'a>(
     let feasible_arm = branches.sole_feasible_arm();
     if ensuring
         .as_ref()
-        .is_some_and(|assertions| !branches.supports_interface_join(assertions))
+        .is_some_and(|_| !branches.supports_interface_branch())
     {
         return Ok(None);
     }
@@ -391,6 +392,12 @@ fn advance_checked_open_scope<'a>(
     let Some(branches) = branches else {
         return Ok(None);
     };
+    if ensuring
+        .as_ref()
+        .is_some_and(|assertions| !branches.supports_interface_join(assertions))
+    {
+        return Ok(None);
+    }
     let scope = scope.join_execution_branch(branches, empty, ensuring.clone())?;
     advance_checked_open_scope(scope, continuation, expansion_capture, proof_site)
 }
@@ -914,11 +921,11 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 let checkpoint = proof.checkpoint();
                 let branches = proof.begin_execution_branch()?;
                 let feasible_arm = branches.sole_feasible_arm();
-                let checked_interface_supported = ensuring
+                let checked_interface_preflight = ensuring
                     .as_ref()
-                    .is_none_or(|assertions| branches.supports_interface_join(assertions));
+                    .is_none_or(|_| branches.supports_interface_branch());
                 let empty = then_tactics.is_empty() && else_tactics.is_empty();
-                let checked = if checked_interface_supported {
+                let checked = if checked_interface_preflight {
                     (|| {
                         let branches = if feasible_arm.is_none_or(|take_then| take_then) {
                             advance_execution_branch_arm(branches, true, then_tactics)?
@@ -939,7 +946,9 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     None
                 };
                 if let Some(branches) = checked
-                    && checked_interface_supported
+                    && ensuring
+                        .as_ref()
+                        .is_none_or(|assertions| branches.supports_interface_join(assertions))
                 {
                     let proof = if let Some(assertions) = ensuring {
                         branches.join_with_interface(assertions.clone())?

@@ -1553,9 +1553,18 @@ from one descendant any exact multiplicity not present in the other. It never
 materializes or intersects the unrelated ambient context. Execution branch
 arms admit the already-checked resource unfold/fold/observe steps, so the
 existing `ready_bundle` regression can consume different path tokens, fold
-the same composite in both arms, and retain its `Branch` directly. Ordinary
-verification observes no surface-certificate replay and expansion
-independently re-verifies the retained arm steps. Kernel and complete Proof
+the same composite in both arms, and retain its `Branch` directly. Structural
+preflight is separate from the completed-arm ownership check, so an exported
+resource may be established inside the arms. Contextual arm `step()` selects
+its explicit `StepUsing` against the owned Proof even when unrelated resources
+remain present; the retained arms are exactly `StepUsing; FoldResource`, with
+no reconstructed intermediate `have`. A path-sensitive regression counts the
+checked source join itself, ordinary verification observes no
+surface-certificate replay, and expansion independently re-verifies the
+retained arm steps. The contextual selector still refuses a C-advancing step
+after an arm reaches the shared continuation, while permitting frontier-local
+resource proof steps there; the existing overshoot rejection remains green.
+Kernel and complete Proof
 curves from 16 through 4096 unrelated resources bound persistent-node
 allocations for the common-descendant work logarithmically. Ownership
 interfaces that are only entailed through a

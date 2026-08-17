@@ -7,6 +7,23 @@ use crate::persistent::persistent_node_allocations;
 
 use std::sync::Arc;
 
+#[cfg(test)]
+thread_local! {
+    static CHECKED_EXECUTION_INTERFACE_JOINS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_checked_execution_interface_joins<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    let before = CHECKED_EXECUTION_INTERFACE_JOINS.with(std::cell::Cell::get);
+    let result = operation();
+    let after = CHECKED_EXECUTION_INTERFACE_JOINS.with(std::cell::Cell::get);
+    (result, after - before)
+}
+
 /// Immutable checked proof state exposed to smart tactics.
 ///
 /// Cloning a `Proof` shares its semantic state and derivation prefix. Applying
@@ -5179,6 +5196,65 @@ impl<'a> ExecutionProofBranches<'a> {
         )
     }
 
+    fn arm_reached_shared_continuation(&self, arm: &ExecutionProofArm<'a>) -> bool {
+        let Some(join) = self.derived_join_continuation() else {
+            return false;
+        };
+        let Some(execution) = arm.proof.state.execution.as_ref() else {
+            return false;
+        };
+        execution
+            .replay
+            .completed_branch_regions
+            .contains(&self.statement_index)
+            && execution.replay.frontier.next_statement_index == join.next_statement_index
+            && execution
+                .replay
+                .frontier
+                .continuations
+                .shares_tail_with(&join.continuations)
+            && matches!(
+                &execution.replay.frontier.point,
+                ProofExecutionPoint::StatementEntry { remaining }
+                    if remaining.as_ref() == join.remaining.as_ref()
+            )
+    }
+
+    fn ensure_arm_can_advance(
+        &self,
+        take_then: bool,
+        arm: &ExecutionProofArm<'a>,
+    ) -> Result<(), ClickError> {
+        if self.arm_reached_shared_continuation(arm) {
+            return Err(self.root.step_error(format!(
+                "{} arm of `branch` must stop at the shared continuation statement({})",
+                if take_then { "then" } else { "else" },
+                self.continuation_index
+            )));
+        }
+        Ok(())
+    }
+
+    /// Enforces the source `branch` body's boundary without constraining the
+    /// separate terminal-execution operation, whose logical certificate may
+    /// deliberately continue both arms to function exit.
+    pub(super) fn ensure_source_arm_step(
+        &self,
+        take_then: bool,
+        step: &SimpleProofStep,
+    ) -> Result<(), ClickError> {
+        if !matches!(step, SimpleProofStep::StepUsing(_)) {
+            return Ok(());
+        }
+        let arm = self.arms[usize::from(!take_then)].as_ref().ok_or_else(|| {
+            self.root.step_error(format!(
+                "cannot advance the infeasible {} execution arm",
+                if take_then { "then" } else { "else" }
+            ))
+        })?;
+        self.ensure_arm_can_advance(take_then, arm)
+    }
+
     /// Re-derives one logical arm from its retained Surface certificate.
     /// Terminal and decided branches record one synthetic branch-entry
     /// `step using` (two for an empty C arm); those structural entry steps are
@@ -5320,9 +5396,21 @@ impl<'a> ExecutionProofBranches<'a> {
         })
     }
 
-    /// Whether an interface join owns a structural continuation and can
-    /// retain the complete exact common resource context without enumerating
-    /// it.
+    /// Whether this branch can attempt a checked interface join.
+    ///
+    /// This structural preflight deliberately does not inspect the exported
+    /// interface. Arm steps may establish or fold an owned resource that did
+    /// not exist at the branch root. The completed-arm check below decides
+    /// whether that resulting representation can actually be joined.
+    pub(super) fn supports_interface_branch(&self) -> bool {
+        self.sole_feasible_arm().is_some()
+            || (self.derived_join_continuation().is_some()
+                && self.resource_contexts_descend_from_root())
+    }
+
+    /// Whether completed interface arms own a structural continuation and
+    /// can retain the complete exact common resource context without
+    /// enumerating it.
     ///
     /// Resource snapshots retain exact changed-fact ancestry, so independently
     /// edited descendants can derive their common representation from only
@@ -5330,11 +5418,11 @@ impl<'a> ExecutionProofBranches<'a> {
     /// End-of-arm joins derive their continuation by popping the root's
     /// persistent enclosing-continuation stack exactly as C execution does.
     pub(super) fn supports_interface_join(&self, assertions: &[ProofAssertion]) -> bool {
+        if !self.supports_interface_branch() {
+            return false;
+        }
         if self.sole_feasible_arm().is_some() {
             return true;
-        }
-        if self.derived_join_continuation().is_none() {
-            return false;
         }
         if !self
             .ownership_exports_are_exact(assertions)
@@ -5342,7 +5430,7 @@ impl<'a> ExecutionProofBranches<'a> {
         {
             return false;
         }
-        self.resource_contexts_descend_from_root()
+        true
     }
 
     #[cfg(test)]
@@ -5398,9 +5486,12 @@ impl<'a> ExecutionProofBranches<'a> {
         Ok(self)
     }
 
-    /// Runs one smart statement selector against the selected arm's owned
-    /// Proof. A successful search is already the retained `StepUsing`
-    /// successor; a miss leaves this branch container unchanged.
+    /// Runs one contextual smart statement selector against the selected
+    /// arm's owned Proof. Branch arms necessarily carry the root's unrelated
+    /// resources and may carry facts introduced by an earlier arm step, so
+    /// they use the same indexed selection policy as checked `execute`. A
+    /// successful search is already the retained `StepUsing` successor; a
+    /// miss leaves this branch container unchanged.
     pub(super) fn try_smart_step(&self, take_then: bool) -> Result<Option<Self>, ClickError> {
         let arm_index = usize::from(!take_then);
         let arm = self.arms[arm_index].as_ref().ok_or_else(|| {
@@ -5409,6 +5500,7 @@ impl<'a> ExecutionProofBranches<'a> {
                 if take_then { "then" } else { "else" }
             ))
         })?;
+        self.ensure_arm_can_advance(take_then, arm)?;
         let prior_effect_count = arm
             .proof
             .state
@@ -5421,17 +5513,7 @@ impl<'a> ExecutionProofBranches<'a> {
             .replay
             .effect_facts
             .len();
-        let is_scoped = arm
-            .proof
-            .state
-            .execution
-            .as_ref()
-            .is_some_and(|execution| execution.replay.open_scopes > 0);
-        let successor = if is_scoped {
-            arm.proof.try_indexed_execute_step()?
-        } else {
-            arm.proof.try_indexed_statement_step()?
-        };
+        let successor = arm.proof.try_indexed_execute_step()?;
         let Some(successor) = successor else {
             return Ok(None);
         };
@@ -6341,6 +6423,9 @@ impl<'a> ExecutionProofBranches<'a> {
                 retain_fact(fact)?;
             }
         }
+
+        #[cfg(test)]
+        CHECKED_EXECUTION_INTERFACE_JOINS.with(|count| count.set(count.get() + 1));
 
         Ok(Proof {
             context: self.root.context.clone(),
@@ -13745,6 +13830,16 @@ mod tests {
                 .expect("then assignment should check")
                 .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
                 .expect("else assignment should check");
+            let overshoot_step = SimpleProofStep::StepUsing(Vec::new());
+            let Err(overshoot) = branches.ensure_source_arm_step(true, &overshoot_step) else {
+                panic!("an arm must not consume the shared return continuation");
+            };
+            assert!(
+                overshoot
+                    .message()
+                    .contains("arm of `branch` must stop at the shared continuation"),
+                "{overshoot:?}"
+            );
             let before = fact_node_allocations();
             let joined = branches
                 .join()
@@ -14002,7 +14097,17 @@ mod tests {
                 .unchecked_with_fact(permit_fact.clone());
             let branches = make_root(16, CState::new().with_resource_context(resources))
                 .begin_execution_branch()
-                .expect("the transformed-interface condition should expose both arms")
+                .expect("the transformed-interface condition should expose both arms");
+            assert!(
+                branches.supports_interface_branch(),
+                "a structural preflight must not require a resource folded later in the arms"
+            );
+            assert!(
+                !branches
+                    .supports_interface_join(&[ProofAssertion::Resource(ready_clause.clone())]),
+                "the incomplete arms do not establish their exported resource yet"
+            );
+            let branches = branches
                 .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
                 .expect("transformed-interface then assignment should check")
                 .apply_step(true, SimpleProofStep::FoldResource(ready_clause.clone()))

@@ -5542,14 +5542,20 @@ fn transformed_resource_branch_interface_retains_its_common_descendant() {
         .map(|(name, source)| (name.as_str(), source.as_str()))
         .collect::<Vec<_>>();
 
-    let (verified, events) =
-        crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources));
+    let ((verified, events), checked_interface_joins) =
+        crate::lang::click::proof::count_checked_execution_interface_joins(|| {
+            crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources))
+        });
     let verified = verified.expect("the transformed resource branch should stay on Proof");
+    assert!(
+        checked_interface_joins > 0,
+        "the source branch must reach the checked two-arm Proof join"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "select_ready.contract"
+                if claim == "select_ready.ensures_0"
                     && name == "surface certificate replay"
         )),
         "the common changed-resource descendant must not be reconstructed by replay: {events:#?}"
@@ -5579,10 +5585,10 @@ fn transformed_resource_branch_interface_retains_its_common_descendant() {
                 ]) if name == "ready_bundle"
             ) && matches!(
                 branch.then_tactics.as_slice(),
-                [ProofTactic::StepUsing(_), ProofTactic::Have(_), ProofTactic::FoldResource(_)]
+                [ProofTactic::StepUsing(_), ProofTactic::FoldResource(_)]
             ) && matches!(
                 branch.else_tactics.as_slice(),
-                [ProofTactic::StepUsing(_), ProofTactic::Have(_), ProofTactic::FoldResource(_)]
+                [ProofTactic::StepUsing(_), ProofTactic::FoldResource(_)]
             )
         ),
         "{tactics:#?}"
