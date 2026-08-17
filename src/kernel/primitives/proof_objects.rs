@@ -106,6 +106,20 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact non-strict lower edge and strict upper edge selected
+    /// when the atomic prover established a lower bound on `value + 1`.
+    pub fn int32_increment_lower_bound_steps(
+        &self,
+    ) -> Option<(&SignedOrderDerivationStep, &SignedOrderDerivationStep)> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::Int32IncrementLowerBound(bounds),
+                ..
+            } => Some((&bounds.lower_bound, &bounds.upper_bound)),
+            _ => None,
+        }
+    }
+
     pub fn context_premises(&self) -> Vec<Proposition> {
         let mut premises = BTreeSet::new();
         self.collect_context_premises(&mut premises);

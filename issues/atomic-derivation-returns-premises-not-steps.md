@@ -212,13 +212,15 @@ typed evidence and direct Proof operations.
 
 ### Progress (2026-08-16: first typed arithmetic rules)
 
-The atomic int32 increment-upper-bound, increment-strictly-increases, and
-increment-below-max-definedness decisions now record their exact strict
-source edge as typed evidence when a rule fires. This is not inferred later
-from a minimized premise bag: replay checks the retained edge orientation,
-strictness, exact source proposition, increment shape, and rule-specific goal
-operands directly. Reversed `upper > value` and `INT32_MAX > value` source
-regressions pin that the original premise survives.
+The atomic int32 increment-upper-bound, increment-strictly-increases,
+increment-below-max-definedness, and increment-lower-bound decisions now
+record typed evidence when a rule fires. The first three retain one exact
+strict source edge. Increment-lower-bound retains both its exact non-strict
+lower edge and strict upper edge. None is inferred later from a minimized
+premise bag: replay checks every retained edge orientation, strictness, exact
+source proposition, increment shape, and rule-specific goal operand
+directly. Reversed `upper > value`, `INT32_MAX > value`, and
+`value >= lower` source regressions pin that the original premises survive.
 
 Standalone pure `simp() using` now has a restricted Proof query shared by all
 currently typed atomic paths: it lowers only the explicitly listed premises,
@@ -230,9 +232,17 @@ independently replays these certificates, while expansion still emits and
 independently verifies `int32_increment_upper_bound`,
 `int32_increment_strictly_increases`,
 `int32_increment_below_max_is_defined`, and exact equality paths.
+The same path independently verifies the two-premise
+`int32_increment_lower_bound` application.
 Deterministic 16-through-4096 unrelated-fact curves cover both unrestricted
 point search and restricted pure search, including rejected-premise
 transactionality.
+
+Multi-premise evidence is stored behind an indirection. Inlining the two
+retained propositions in the evidence enum enlarged unrelated recursive proof
+frames enough to overflow the existing deeply branched `sort3` expansion.
+The focused branch regression and an evidence-size invariant now prevent new
+typed rule payloads from silently increasing every checker frame.
 
 A real post-execution `ensures defined(value + 1)` regression exposed that
 contract certification possessed the exact maximum bound but intentionally

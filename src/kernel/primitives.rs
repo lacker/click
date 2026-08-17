@@ -1666,6 +1666,12 @@ pub(super) enum PropositionDerivationRule {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Int32IncrementLowerBoundEvidence {
+    pub(super) lower_bound: SignedOrderDerivationStep,
+    pub(super) upper_bound: SignedOrderDerivationStep,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum AtomicPropositionDerivationEvidence {
     MemoryDag(AtomicMemoryLoadEqualityEvidence),
     PointerOffsetMemoryDag(PointerOffsetEqualityEvidence),
@@ -1674,6 +1680,7 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32IncrementUpperBound(SignedOrderDerivationStep),
     Int32IncrementStrictlyIncreases(SignedOrderDerivationStep),
     Int32IncrementBelowMaxIsDefined(SignedOrderDerivationStep),
+    Int32IncrementLowerBound(Box<Int32IncrementLowerBoundEvidence>),
     Legacy,
 }
 

@@ -1,6 +1,16 @@
 use super::*;
 
 #[test]
+fn atomic_derivation_evidence_does_not_inline_multi_premise_payloads() {
+    let one_step_envelope = std::mem::size_of::<SignedOrderDerivationStep>()
+        + std::mem::align_of::<SignedOrderDerivationStep>();
+    assert!(
+        std::mem::size_of::<AtomicPropositionDerivationEvidence>() <= one_step_envelope,
+        "multi-premise evidence must stay behind an indirection so unrelated recursive proof frames do not grow"
+    );
+}
+
+#[test]
 fn conjunction_builder_has_logarithmic_depth() {
     fn conjunction_depth(proposition: &Proposition) -> usize {
         match proposition {
@@ -1152,10 +1162,51 @@ fn increment_definedness_derivation_retains_its_exact_max_bound() {
 }
 
 #[test]
+fn increment_lower_bound_derivation_retains_both_exact_bounds() {
+    let lower = Bitvector32Term::Variable(Variable(212));
+    let value = Bitvector32Term::Variable(Variable(213));
+    let upper = Bitvector32Term::Variable(Variable(214));
+    let lower_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(value.clone(), lower.clone()),
+        true,
+    );
+    let upper_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_than(upper.clone(), value.clone()),
+        true,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            lower.clone(),
+            Bitvector32Term::add(value.clone(), Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(lower_premise.clone())
+        .assume_proposition(upper_premise.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("the two exact bounds should prove the increment lower bound");
+    let (lower_bound, upper_bound) = derivation
+        .int32_increment_lower_bound_steps()
+        .expect("the atomic decision should retain both named-rule premises");
+    assert_eq!(lower_bound.lower(), &lower);
+    assert_eq!(lower_bound.upper(), &value);
+    assert!(!lower_bound.is_strict());
+    assert_eq!(lower_bound.premise(), &lower_premise);
+    assert_eq!(upper_bound.lower(), &value);
+    assert_eq!(upper_bound.upper(), &upper);
+    assert!(upper_bound.is_strict());
+    assert_eq!(upper_bound.premise(), &upper_premise);
+    assert!(derivation.replay(&assumptions));
+}
+
+#[test]
 fn bitvector_equality_derivation_retains_its_exact_oriented_path() {
-    let left = Bitvector32Term::Variable(Variable(212));
-    let middle = Bitvector32Term::Variable(Variable(213));
-    let right = Bitvector32Term::Variable(Variable(214));
+    let left = Bitvector32Term::Variable(Variable(215));
+    let middle = Bitvector32Term::Variable(Variable(216));
+    let right = Bitvector32Term::Variable(Variable(217));
     let first = Proposition::ConditionIs(ConditionTerm::equal(middle.clone(), left.clone()), true);
     let second =
         Proposition::ConditionIs(ConditionTerm::equal(middle.clone(), right.clone()), true);
