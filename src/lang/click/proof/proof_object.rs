@@ -3543,6 +3543,22 @@ impl<'a> ExecutionProofBranches<'a> {
         self.arms.iter().all(Option::is_some)
     }
 
+    /// Whether both feasible descendants have completed the C function.
+    ///
+    /// Search uses this read-only query only to select the audited terminal
+    /// join below; it cannot manufacture or edit either outcome.
+    pub(super) fn both_arms_at_function_exit(&self) -> bool {
+        self.arms.iter().all(|arm| {
+            arm.as_ref().is_some_and(|arm| {
+                arm.proof
+                    .state
+                    .execution
+                    .as_ref()
+                    .is_some_and(|execution| execution.replay.is_at_function_exit())
+            })
+        })
+    }
+
     #[cfg(test)]
     fn arm(&self, take_then: bool) -> Option<&Proof<'a>> {
         self.arms[usize::from(!take_then)]
@@ -3620,6 +3636,323 @@ impl<'a> ExecutionProofBranches<'a> {
         }
         self.arms[arm_index] = Some(arm);
         Ok(self)
+    }
+
+    /// Joins two checked C branch descendants that both return.
+    ///
+    /// Unlike the equal-state execution `Branch` join, distinct return
+    /// outcomes remain as separate paths. The retained certificate is the
+    /// logical Surface Click `if` needed to replay those paths: each arm
+    /// begins with the explicit statement step(s) whose semantic branch entry
+    /// was performed structurally by `begin_execution_branch`.
+    pub(super) fn join_terminal(self) -> Result<Proof<'a>, ClickError> {
+        let [Some(then_arm), Some(else_arm)] = self.arms else {
+            return Err(self
+                .root
+                .step_error("a terminal execution `branch` requires both feasible arms"));
+        };
+        let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
+            self.root
+                .step_error("execution branch root lost its semantic state")
+        })?;
+        let ProofContext::Execution(context) = self.root.context.as_ref() else {
+            unreachable!("execution branch retained a non-execution context")
+        };
+        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+            &root_execution.replay,
+            &root_execution.state,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "terminal branch join",
+        )?;
+        let CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } = statement
+        else {
+            return Err(self
+                .root
+                .step_error("terminal execution branch root no longer points at a C `if`"));
+        };
+        let surface_condition = surface_with_source_site(
+            &surface_c_condition(&condition),
+            &ProgramPointRef {
+                region: CodeRegionRef::Statement(self.statement_index),
+                kind: ProgramPointKind::Entry,
+            },
+        )?;
+        let empty_source_arms = [
+            matches!(then_branch.as_ref(), CStatement::Skip),
+            matches!(else_branch.as_ref(), CStatement::Skip),
+        ];
+        let validate_arm = |name: &str,
+                            expected: bool,
+                            arm: &ExecutionProofArm<'a>|
+         -> Result<(), ClickError> {
+            let execution = arm.proof.state.execution.as_ref().ok_or_else(|| {
+                self.root
+                    .step_error(format!("{name} branch arm lost its execution state"))
+            })?;
+            if !execution.replay.is_at_function_exit()
+                || !execution
+                    .replay
+                    .completed_branch_regions
+                    .contains(&self.statement_index)
+                || execution.replay.frontier.continuations.len() > self.initial_continuation_depth
+            {
+                return Err(self.root.step_error(format!(
+                    "{name} branch arm has not completed at function exit"
+                )));
+            }
+            if !matches!(
+                implication_body(arm.condition_theorem.proposition()),
+                Proposition::CConditionEvaluates {
+                    outcome: CConditionOutcome::Value(actual),
+                    ..
+                } if *actual == expected
+            ) {
+                return Err(self
+                    .root
+                    .step_error(format!("{name} arm retained the wrong condition theorem")));
+            }
+            let replay = &execution.replay;
+            if replay.function_entry_execution_prerequisites.len()
+                != root_execution
+                    .replay
+                    .function_entry_execution_prerequisites
+                    .len()
+                    + arm.introduced_function_entry_prerequisites.len()
+                || replay.function_entry_derivations.len()
+                    != root_execution.replay.function_entry_derivations.len()
+                        + arm.introduced_function_entry_derivations.len()
+                || replay.frontier_loop_clauses.len()
+                    != root_execution.replay.frontier_loop_clauses.len()
+                || replay.frontier_loop_rules.len()
+                    != root_execution.replay.frontier_loop_rules.len()
+                || replay.unfolded_predicates.len()
+                    != root_execution.replay.unfolded_predicates.len()
+                        + arm.introduced_unfolded_predicates.len()
+                || replay.planned_statement_transitions.len()
+                    != root_execution.replay.planned_statement_transitions.len()
+            {
+                return Err(self.root.step_error(format!(
+                        "{name} execution arm changed replay metadata that the checked terminal join has not migrated"
+                    )));
+            }
+            Ok(())
+        };
+        validate_arm("then", true, &then_arm)?;
+        validate_arm("else", false, &else_arm)?;
+
+        let terminal_certificate = |arm: &ExecutionProofArm<'a>, empty_source_arm: bool| {
+            let body = arm.proof.certificate_since(&self.root_checkpoint)?;
+            let entry_steps = 1 + usize::from(empty_source_arm);
+            let mut steps = Vec::with_capacity(entry_steps + body.steps().len());
+            steps.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
+            steps.extend_from_slice(body.steps());
+            Ok::<_, ClickError>(ProofCertificate::from_steps(steps))
+        };
+        let then_proof = terminal_certificate(&then_arm, empty_source_arms[0])?;
+        let else_proof = terminal_certificate(&else_arm, empty_source_arms[1])?;
+        let then_execution = then_arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .expect("validated then execution state");
+        let else_execution = else_arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .expect("validated else execution state");
+        let common_program_points = then_execution
+            .replay
+            .program_point_states
+            .common_descendant(
+                &else_execution.replay.program_point_states,
+                &root_execution.replay.program_point_states,
+            )
+            .ok_or_else(|| {
+                self.root.step_error(
+                    "terminal execution arms do not descend from the branch root's program points",
+                )
+            })?;
+
+        // Root facts remain shared in `ProofState`. Only facts introduced in
+        // one arm need to be copied into that arm's returned execution paths;
+        // doing so avoids duplicating the complete ambient proof context per
+        // outcome.
+        let mut paths = Vec::new();
+        for arm in [&then_arm, &else_arm] {
+            let arm_execution = arm
+                .proof
+                .state
+                .execution
+                .as_ref()
+                .expect("validated terminal arm execution");
+            let completed = arm_execution
+                .replay
+                .execution()
+                .expect("validated terminal arm is at function exit");
+            for path in completed.paths() {
+                let mut facts = path.execution_facts();
+                for proposition in &arm.introduced_facts {
+                    let fact = ExecutionPureFact::new(proposition.clone());
+                    if !facts.contains(&fact) {
+                        facts.push(fact);
+                    }
+                }
+                let obligations = path.obligations().to_vec();
+                if !paths
+                    .iter()
+                    .any(|(existing_outcome, existing_facts, existing_obligations)| {
+                        existing_outcome == path.outcome()
+                            && existing_facts == &facts
+                            && existing_obligations == &obligations
+                    })
+                {
+                    paths.push((path.outcome().clone(), facts, obligations));
+                }
+            }
+        }
+
+        let outcomes = c_function_execution_candidates_from_outcomes(
+            self.execution_start_state.clone(),
+            context.function.clone(),
+            context.arguments.to_vec(),
+            paths,
+        );
+        let mut execution = root_execution.clone();
+        execution.state = self.execution_start_state.clone().into();
+        execution.replay.program_point_states = common_program_points;
+        execution
+            .replay
+            .completed_branch_regions
+            .insert(self.statement_index);
+        for continuation in &root_execution.replay.frontier.continuations {
+            if let ProofExecutionContinuationKind::Branch { statement_index } = continuation.kind {
+                execution
+                    .replay
+                    .completed_branch_regions
+                    .insert(statement_index);
+            }
+        }
+        execution.replay.frontier.continuations.clear();
+        execution.replay.frontier.execution_start_state = Some(self.execution_start_state.clone());
+        execution.replay.frontier.point = ProofExecutionPoint::FunctionExit {
+            execution: outcomes,
+        };
+        execution.replay.has_structured_branch_history = true;
+        execution.replay.next_opaque_call = then_execution
+            .replay
+            .next_opaque_call
+            .max(else_execution.replay.next_opaque_call);
+        execution.replay.next_verification_variable = then_execution
+            .replay
+            .next_verification_variable
+            .max(else_execution.replay.next_verification_variable);
+        for effect in then_arm
+            .introduced_effect_facts
+            .iter()
+            .chain(&else_arm.introduced_effect_facts)
+        {
+            append_execution_effect_facts(
+                &mut execution.replay.effect_facts,
+                std::slice::from_ref(effect),
+            );
+        }
+        for fact in then_arm
+            .introduced_function_entry_prerequisites
+            .iter()
+            .chain(&else_arm.introduced_function_entry_prerequisites)
+        {
+            execution
+                .replay
+                .function_entry_execution_prerequisites
+                .insert(fact.clone());
+        }
+        for theorem in then_arm
+            .introduced_function_entry_derivations
+            .iter()
+            .chain(&else_arm.introduced_function_entry_derivations)
+        {
+            execution
+                .replay
+                .function_entry_derivations
+                .insert(theorem.clone());
+        }
+        for name in then_arm
+            .introduced_unfolded_predicates
+            .iter()
+            .chain(&else_arm.introduced_unfolded_predicates)
+        {
+            if !execution.replay.unfolded_predicates.contains(name) {
+                execution.replay.unfolded_predicates.push(name.clone());
+            }
+        }
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        execution.branch_path = root_execution.branch_path.clone();
+        execution.replay.case_assumptions = root_execution.replay.case_assumptions.clone();
+
+        let mut facts = self.root.state.facts.clone();
+        let mut common_added_facts = Vec::new();
+        for fact in &then_arm.introduced_facts {
+            if else_arm.introduced_facts.contains(fact)
+                && then_arm.proof.state.facts.contains(fact)
+                && else_arm.proof.state.facts.contains(fact)
+                && !facts.contains(fact)
+            {
+                facts = facts.with_fact(fact.clone());
+                common_added_facts.push(fact.clone());
+                for surface in then_execution.replay.surface_propositions.surfaces(fact) {
+                    if else_execution
+                        .replay
+                        .surface_propositions
+                        .surfaces(fact)
+                        .any(|candidate| candidate == surface)
+                    {
+                        execution
+                            .replay
+                            .surface_propositions
+                            .record_lowering(surface, fact)?;
+                    }
+                }
+            }
+        }
+        let mut unfolded_predicates = self.root.state.unfolded_predicates.clone();
+        for name in then_arm
+            .introduced_unfolded_predicates
+            .iter()
+            .chain(&else_arm.introduced_unfolded_predicates)
+        {
+            unfolded_predicates.insert(name.clone());
+        }
+        Ok(Proof {
+            context: self.root.context.clone(),
+            state: Arc::new(ProofState {
+                facts,
+                locals: self.root.state.locals.clone(),
+                unfolded_predicates,
+                goal: Goal::ExecutionFrontier,
+                complete: false,
+                added_facts: Arc::new(common_added_facts.clone()),
+                checked_facts: Arc::new(common_added_facts),
+                execution: Some(execution),
+            }),
+            node: Arc::new(ProofNode {
+                parent: Some(self.root.node.clone()),
+                step: Some(Arc::new(SimpleProofStep::If {
+                    condition: surface_condition,
+                    then_proof: Box::new(then_proof),
+                    else_proof: Box::new(else_proof),
+                })),
+                depth: self.root.node.depth + 1,
+            }),
+        })
     }
 
     /// Preserves the original empty-arm entry point for callers that require
@@ -8921,6 +9254,126 @@ mod tests {
             assert!(
                 allocations <= allocation_bound,
                 "size {size} nonempty branch join allocated {allocations} persistent nodes (logarithmic bound {allocation_bound})"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 choose(int32 x) {
+                    ensures returns_one_or_two: result == 1 or result == 2 by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let parsed_function = syntax::parse_function(
+            "int32 choose(int32 x) { if (x < 0) { return 1; } else { return 2; } }",
+        )
+        .expect("test terminal C branch should parse");
+        let function = parsed_function.to_kernel_function();
+        let arguments = vec![CExpression::Value(CValue::Int32(
+            Bitvector32Term::Variable(Variable(80_000)),
+        ))];
+        let function_environment = CExecutionEnvironment::new();
+        let mut allocation_samples = Vec::new();
+        let mut expected_outcome_fact_sizes = None;
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut replay = TacticReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..TacticReplayState::default()
+            };
+            replay.frontier.next_statement_index = 0;
+            let root = Proof::for_execution_frontier(
+                "terminal branch proof",
+                0,
+                ProofReplayContext {
+                    state: CState::new(),
+                    pure_facts: (0..size).map(indexed_fact).collect(),
+                    replay,
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let branches = root
+                .begin_execution_branch()
+                .expect("symbolic condition should open two checked arms")
+                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+                .expect("then return should check")
+                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .expect("else return should check");
+            assert!(branches.both_arms_at_function_exit());
+            let before = fact_node_allocations();
+            let joined = branches
+                .join_terminal()
+                .expect("two checked returns should form a terminal logical case split");
+            allocation_samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before,
+            ));
+            assert!(matches!(
+                joined.certificate().steps(),
+                [SimpleProofStep::If {
+                    then_proof,
+                    else_proof,
+                    ..
+                }] if matches!(
+                    then_proof.steps(),
+                    [SimpleProofStep::StepUsing(entry), SimpleProofStep::StepUsing(body)]
+                        if entry.is_empty() && body.is_empty()
+                ) && matches!(
+                    else_proof.steps(),
+                    [SimpleProofStep::StepUsing(entry), SimpleProofStep::StepUsing(body)]
+                        if entry.is_empty() && body.is_empty()
+                )
+            ));
+            assert!(root.certificate().steps().is_empty());
+            let execution = joined
+                .state
+                .execution
+                .as_ref()
+                .expect("terminal join should retain execution state");
+            assert!(execution.replay.is_at_function_exit());
+            let outcome_paths = execution
+                .replay
+                .execution()
+                .expect("terminal join should retain outcomes")
+                .paths();
+            assert_eq!(outcome_paths.len(), 2);
+            let outcome_fact_sizes = outcome_paths
+                .iter()
+                .map(|path| path.execution_facts().len())
+                .collect::<Vec<_>>();
+            if let Some(expected) = &expected_outcome_fact_sizes {
+                assert_eq!(
+                    &outcome_fact_sizes, expected,
+                    "terminal outcome paths must not copy the growing ambient fact context"
+                );
+            } else {
+                expected_outcome_fact_sizes = Some(outcome_fact_sizes);
+            }
+            assert_eq!(execution.branch_path.len(), 0);
+        }
+        let (_, base_height, base_allocations) = allocation_samples[0];
+        for (size, height, allocations) in allocation_samples {
+            let allocation_bound = base_allocations + 32 * (height - base_height);
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} terminal branch join allocated {allocations} persistent fact nodes (logarithmic bound {allocation_bound})"
             );
         }
     }

@@ -758,7 +758,6 @@ struct ProgramPointStateNode {
 /// an audited join can therefore visit only the keys changed in either arm
 /// instead of intersecting every program point accumulated by the project.
 #[derive(Clone)]
-#[allow(dead_code)]
 struct ProgramPointStateChange {
     point: ProgramPointRef,
     parent: Option<std::sync::Arc<ProgramPointStateChange>>,
@@ -837,7 +836,6 @@ impl ProgramPointStates {
     /// This is the program-point merge required by a proof-level execution
     /// case split. Returning `None` for unrelated histories prevents a caller
     /// from treating structurally similar maps as branches of the same proof.
-    #[allow(dead_code)]
     fn common_descendant(&self, other: &Self, ancestor: &Self) -> Option<Self> {
         fn changed_keys_since(
             descendant: &ProgramPointStates,

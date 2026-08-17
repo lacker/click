@@ -1145,8 +1145,25 @@ regression preserves shared ambient points, drops arm-specific points, rejects
 unrelated lineages, and bounds persistent allocations logarithmically. The
 version metadata is boxed behind the map's single pointer-sized value: an
 existing deep pure case-split regression caught the stack-cost regression from
-an initial inline layout. The container that consumes this merge and retains
-the two terminal certificates is still pending.
+an initial inline layout.
+
+The existing execution branch container now consumes that merge for two
+checked terminal arms. Each returned execution path carries only the facts
+introduced in its own arm, while common inherited facts remain shared in the
+enclosing `Proof`; joining therefore does not copy the ambient proof context
+per outcome. The join retains a logical `SimpleProofStep::If`, including the
+explicit branch-entry steps that independently replay the structural C
+transition, and reconstructs the function-exit frontier from the exact shared
+root plus audited arm-local metadata. Automatic `execute()` selects this join
+for linear simple arms that both return, so ordinary construction no longer
+runs the surface-certificate replay gateway for that case. A deterministic
+16-through-4096 unrelated-fact regression bounds the terminal join's
+persistent fact work logarithmically, and a distinct-return source regression
+checks the no-replay path, simple expansion, and independent verification of
+the serialized logical `if`. The terminal-join dispatch is outlined from the
+recursive executor frame; the existing deep pure case-split canary caught and
+now prevents the debug-build stack regression caused by keeping that new
+control-flow temporary inline.
 
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently

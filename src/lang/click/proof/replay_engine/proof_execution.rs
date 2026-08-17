@@ -32,6 +32,23 @@ fn linear_execution_simple_steps(node: &InternalProofNode) -> Option<Vec<SimpleP
     }
 }
 
+// Keep the alternative structural join temporaries out of the recursively
+// evaluated `execute_internal_proof` frame. The deep pure-case regression is
+// deliberately sensitive to even small growth in that frame.
+#[inline(never)]
+fn join_linear_execution_branches<'a>(
+    branches: ExecutionProofBranches<'a>,
+    empty: bool,
+) -> Result<Proof<'a>, ClickError> {
+    if branches.both_arms_at_function_exit() {
+        branches.join_terminal()
+    } else if empty {
+        branches.join_empty()
+    } else {
+        branches.join()
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn execute_internal_proof(
     node: &InternalProofNode,
@@ -346,11 +363,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     for step in else_steps {
                         branches = branches.apply_step(false, step)?;
                     }
-                    let proof = if empty {
-                        branches.join_empty()?
-                    } else {
-                        branches.join()?
-                    };
+                    let proof = join_linear_execution_branches(branches, empty)?;
                     let certificate = proof.certificate_since(&checkpoint)?;
                     let mut joined_context = proof.into_execution_context()?;
                     for step in certificate.steps() {

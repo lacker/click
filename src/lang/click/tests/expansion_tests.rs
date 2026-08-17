@@ -3897,6 +3897,80 @@ fn execution_bare_apply_selects_and_retains_its_step_through_proof() {
 }
 
 #[test]
+fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
+    let c_source = r#"
+            int32 choose(int32 value) {
+                if (value < 0) {
+                    return 1;
+                } else {
+                    return 2;
+                }
+            }
+        "#;
+    let click_source = r#"
+            verifying "choose.c";
+
+            int32 choose(int32 value) {
+                ensures result == 1 or result == 2;
+            } by {
+                execute();
+                simp();
+            }
+        "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("choose.c", c_source)])
+    });
+    let verified = verified.expect("automatic terminal branch should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "choose.contract" && name == "surface certificate replay"
+        )),
+        "terminal branch construction must retain its checked Proof instead of ordinarily replaying it: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("terminal branch should retain an expansion");
+    let Some(ProofTactic::If(proof_if)) = expanded.first() else {
+        panic!("terminal branch should expand as a logical if: {expanded:#?}");
+    };
+    for (name, arm) in [
+        ("then", &proof_if.then_tactics),
+        ("else", &proof_if.else_tactics),
+    ] {
+        assert!(
+            matches!(arm.first(), Some(ProofTactic::StepUsing(premises)) if premises.is_empty()),
+            "{name} arm should retain the explicit C-branch entry step: {arm:#?}"
+        );
+        assert!(
+            matches!(arm.get(1), Some(ProofTactic::StepUsing(premises)) if premises.is_empty()),
+            "{name} arm should retain its checked return step: {arm:#?}"
+        );
+        assert!(
+            arm.iter().all(|tactic| !matches!(
+                tactic,
+                ProofTactic::SmartExecute
+                    | ProofTactic::SmartExecuteAllPaths
+                    | ProofTactic::ExecuteUntil(_)
+                    | ProofTactic::Simp
+            )),
+            "{name} arm expansion must contain only retained simple tactics: {arm:#?}"
+        );
+    }
+    let expanded_source = expand_c0_claim_source(
+        click_source,
+        &[("choose.c", c_source)],
+        "choose",
+        CProofClaim::Grouped,
+    )
+    .expect("terminal branch should expand into source");
+    verify_c0_sources(&expanded_source, &[("choose.c", c_source)])
+        .expect("the retained terminal branch should independently reverify");
+}
+
+#[test]
 fn point_smart_have_retains_a_checked_simple_closer() {
     let c_source = r#"
             int32 identity(int32 value) {
