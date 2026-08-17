@@ -1329,6 +1329,42 @@ fn increment_upper_bound_derivation_retains_its_exact_strict_premise() {
 }
 
 #[test]
+fn increment_constant_upper_bound_retains_its_exact_nonstrict_premise() {
+    let value = Bitvector32Term::Variable(Variable(208_100));
+    let direct = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(value.clone(), Bitvector32Term::Constant(3)),
+        true,
+    );
+    let reversed = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(Bitvector32Term::Constant(3), value.clone()),
+        true,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::add(value.clone(), Bitvector32Term::Constant(1)),
+            Bitvector32Term::Constant(5),
+        ),
+        true,
+    );
+
+    for premise in [direct, reversed] {
+        let assumptions = PureFactContext::new().assume_proposition(premise.clone());
+        let derivation = assumptions
+            .derive_simp_proposition(&goal)
+            .expect("value <= 3 should derive value + 1 <= 5");
+        let step = derivation
+            .int32_increment_constant_upper_bound_step()
+            .expect("the atomic decision should retain its non-strict constant bound");
+        assert_eq!(step.lower(), &value);
+        assert_eq!(step.upper(), &Bitvector32Term::Constant(3));
+        assert!(!step.is_strict());
+        assert_eq!(step.premise(), &premise);
+        assert!(derivation.replay(&assumptions));
+        assert!(!derivation.replay(&PureFactContext::new()));
+    }
+}
+
+#[test]
 fn increment_strictly_increases_derivation_retains_its_exact_strict_premise() {
     let value = Bitvector32Term::Variable(Variable(209));
     let upper = Bitvector32Term::Variable(Variable(210));

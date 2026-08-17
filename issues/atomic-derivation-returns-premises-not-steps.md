@@ -376,3 +376,18 @@ signed-order path cannot encode. The symmetric strict-upper-bound rule needs
 no new evidence variant: the generic signed-order path already retains its
 exact `value <= tighter` edge and validates the context-free constant tail.
 Both pure expansion regressions now pin the absence of construction replay.
+
+### Progress (2026-08-16: sequential theorem applications)
+
+The atomic increment-under-a-larger-constant decision now retains its exact
+non-strict source edge. The selected proof first applies
+`int32_le_lt_transitive` to derive the strict intermediate bound and then
+applies `int32_increment_upper_bound` to the original goal. Both applications
+advance the same immutable `Proof`, so the second step consumes a fact added
+by the first instead of relying on a later certificate reconstruction pass.
+
+Pure, point, and outcome consumers share this typed path. Ordinary
+verification emits no construction-replay event; expansion independently
+checks both serialized applications. The shared 16-through-4096
+unrelated-fact curve covers the two-step successor chain, including
+transactional rejection when the named source premise is omitted.

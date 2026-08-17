@@ -3609,6 +3609,49 @@ fn restricted_simp_expands_constant_strict_upper_bound_to_theorem_application() 
 }
 
 #[test]
+fn restricted_simp_retains_increment_under_a_larger_constant() {
+    let click_source = r#"
+        theorem increment_three_at_most_is_five_at_most(value: int32) {
+            requires value <= 3;
+            ensures value + 1 <= 5 by {
+                simp() using {
+                    value <= 3;
+                }
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the increment constant-bound rule should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "increment_three_at_most_is_five_at_most.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the increment constant-bound proof must retain both checked theorem steps: {events:#?}"
+    );
+    let offset = click_source.find("simp() using").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("increment constant-bound simp should expand");
+    assert!(
+        expanded.contains("apply(int32_le_lt_transitive(value, 3, 5)) using"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("apply(int32_increment_upper_bound(value, 5)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("value <= 3;"), "{expanded}");
+    assert!(expanded.contains("value < 5;"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    verify_click_theorems(&expanded)
+        .expect("expanded increment constant-bound proof should replay");
+}
+
+#[test]
 fn restricted_simp_composes_equality_rewrites_with_adjacent_order() {
     let click_source = r#"
         theorem aliased_positive_bound(

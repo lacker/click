@@ -1370,6 +1370,16 @@ the retained signed-order path's context-free constant tail. Source
 regressions now require both forms to avoid construction replay, and the
 lower-bound case joins the 16-through-4096 persistent-update curve.
 
+The theorem-application seam now also carries facts proved by one step into a
+later step on the same `Proof`. From the exact source `value <= 3`, smart
+`simp` checks `int32_le_lt_transitive(value, 3, 5)`, retains its conclusion
+`value < 5` in the successor proof state, and then checks
+`int32_increment_upper_bound(value, 5)` against that successor. The accepted
+certificate is exactly those two applications (plus the pure proof's terminal
+`assumption`); ordinary verification neither reconstructs nor independently
+replays them. Point and restricted-pure tests pin the structure and bound
+persistent allocations from 16 through 4096 unrelated facts.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

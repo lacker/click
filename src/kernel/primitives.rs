@@ -1702,6 +1702,7 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     BitvectorEqualityPath(Vec<BitvectorEqualityDerivationStep>),
     SignedOrderPath(Vec<SignedOrderDerivationStep>),
     Int32IncrementUpperBound(SignedOrderDerivationStep),
+    Int32IncrementConstantUpperBound(SignedOrderDerivationStep),
     Int32IncrementStrictlyIncreases(SignedOrderDerivationStep),
     Int32IncrementBelowMaxIsDefined(SignedOrderDerivationStep),
     Int32IncrementLowerBound(Box<Int32IncrementBoundsEvidence>),

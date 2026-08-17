@@ -82,6 +82,19 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact non-strict constant upper bound selected when the
+    /// atomic prover established a larger constant bound on an increment.
+    pub fn int32_increment_constant_upper_bound_step(&self) -> Option<&SignedOrderDerivationStep> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32IncrementConstantUpperBound(step),
+                ..
+            } => Some(step),
+            _ => None,
+        }
+    }
+
     /// Return the exact strict upper-bound premise selected when the atomic
     /// prover established that an int32 increment is strictly increasing.
     pub fn int32_increment_strictly_increases_step(&self) -> Option<&SignedOrderDerivationStep> {

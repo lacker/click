@@ -1093,6 +1093,32 @@ impl PureFactContext {
                 .map(AtomicPropositionDerivationEvidence::Int32IncrementUpperBound),
             _ => None,
         };
+        let increment_constant_upper_bound_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(incremented, goal_upper),
+                true,
+            ) => incremented
+                .add_const_base(1)
+                .and_then(|base| {
+                    let Bitvector32Term::Constant(goal_bits) = goal_upper.as_ref() else {
+                        return None;
+                    };
+                    self.signed_order_bounds
+                        .get(&base)
+                        .into_iter()
+                        .flat_map(|bounds| bounds.iter())
+                        .find_map(|((candidate, strict, forward), _)| {
+                            let Bitvector32Term::Constant(candidate_bits) = candidate else {
+                                return None;
+                            };
+                            (!*strict && *forward && (*candidate_bits as i32) < (*goal_bits as i32))
+                                .then(|| self.exact_direct_order_step(&base, candidate, false))
+                                .flatten()
+                        })
+                })
+                .map(AtomicPropositionDerivationEvidence::Int32IncrementConstantUpperBound),
+            _ => None,
+        };
         let increment_strictly_increases_evidence = match proposition {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedLessThan(base, incremented),
@@ -1349,6 +1375,7 @@ impl PureFactContext {
             .or(negated_strict_successor_bound_evidence)
             .or(signed_order_evidence)
             .or(increment_upper_bound_evidence)
+            .or(increment_constant_upper_bound_evidence)
             .or(increment_strictly_increases_evidence)
             .or(increment_below_max_is_defined_evidence)
             .or(increment_lower_bound_evidence)
@@ -1496,6 +1523,29 @@ impl PureFactContext {
                             && condition_as_order_fact(condition, *value)
                                 == Some((step.lower.clone(), step.upper.clone(), true))
                 );
+        }
+        if let AtomicPropositionDerivationEvidence::Int32IncrementConstantUpperBound(step) =
+            evidence
+        {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(incremented, goal_upper),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            let Some(base) = incremented.add_const_base(1) else {
+                return false;
+            };
+            let (Bitvector32Term::Constant(premise_bits), Bitvector32Term::Constant(goal_bits)) =
+                (&step.upper, goal_upper.as_ref())
+            else {
+                return false;
+            };
+            return step.lower == base
+                && (*premise_bits as i32) < (*goal_bits as i32)
+                && !step.strict
+                && self.replays_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32IncrementStrictlyIncreases(step) = evidence
         {

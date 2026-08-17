@@ -1848,6 +1848,17 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| {
+                let recorded = recorded_int32_increment_constant_upper_bound_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_increment_constant_upper_bound_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
                 let recorded =
                     recorded_int32_increment_strictly_increases_pairs(derivation, &premise_pairs)?;
                 plan_recorded_int32_increment_strictly_increases_for_context(
@@ -7939,7 +7950,14 @@ mod tests {
     }
 
     #[test]
-    fn point_single_premise_arithmetic_simps_retain_one_indexed_theorem_step() {
+    fn point_single_premise_arithmetic_simps_retain_indexed_theorem_steps() {
+        #[derive(Clone, Copy)]
+        enum ArithmeticProofShape {
+            Direct,
+            ComposedNegatedSuccessor,
+            ChainedIncrementUpper,
+        }
+
         let click_file = crate::lang::click::parse("")
             .expect("an empty source should still admit the standard theorem prelude");
         let predicate_environment = PredicateEnvironment::new(&[]);
@@ -7993,6 +8011,16 @@ mod tests {
                 operator: ComparisonOperator::LessThan,
                 right: expression(Bitvector32Term::Constant(2)),
             }));
+        let increment_constant_upper_premise = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(Bitvector32Term::Constant(3)),
+        };
+        let increment_constant_upper_intermediate = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::LessThan,
+            right: expression(Bitvector32Term::Constant(5)),
+        };
         let surface_bound_goal = ClickProposition::Comparison {
             left: ContractExpression::Add(
                 Box::new(expression(value.clone())),
@@ -8035,6 +8063,14 @@ mod tests {
             operator: ComparisonOperator::LessThan,
             right: expression(value.clone()),
         };
+        let surface_increment_constant_upper_goal = ClickProposition::Comparison {
+            left: ContractExpression::Add(
+                Box::new(expression(value.clone())),
+                Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
+            ),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(Bitvector32Term::Constant(5)),
+        };
         let lower = |surface: &ClickProposition| {
             lower_point_proposition_with_assumptions(
                 surface,
@@ -8057,6 +8093,7 @@ mod tests {
         let kernel_successor_lower_premise = lower(&successor_lower_premise);
         let kernel_strong_constant_lower_premise = lower(&strong_constant_lower_premise);
         let kernel_negated_successor_premise = lower(&negated_successor_premise);
+        let kernel_increment_constant_upper_premise = lower(&increment_constant_upper_premise);
         let goals = [
             (
                 lower(&surface_bound_goal),
@@ -8064,7 +8101,7 @@ mod tests {
                 "increment bound",
                 &premise,
                 &kernel_premise,
-                false,
+                ArithmeticProofShape::Direct,
             ),
             (
                 lower(&surface_strict_goal),
@@ -8072,7 +8109,7 @@ mod tests {
                 "strict increment",
                 &premise,
                 &kernel_premise,
-                false,
+                ArithmeticProofShape::Direct,
             ),
             (
                 lower(&surface_defined_goal),
@@ -8080,7 +8117,7 @@ mod tests {
                 "increment definedness",
                 &definedness_premise,
                 &kernel_definedness_premise,
-                false,
+                ArithmeticProofShape::Direct,
             ),
             (
                 lower(&surface_nonnegative_goal),
@@ -8088,7 +8125,7 @@ mod tests {
                 "positive to nonnegative",
                 &positive_premise,
                 &kernel_positive_premise,
-                false,
+                ArithmeticProofShape::Direct,
             ),
             (
                 lower(&surface_nonnegative_ge_goal),
@@ -8096,7 +8133,7 @@ mod tests {
                 "strictly positive to nonnegative",
                 &strictly_positive_premise,
                 &kernel_strictly_positive_premise,
-                false,
+                ArithmeticProofShape::Direct,
             ),
             (
                 lower(&surface_adjacent_strict_goal),
@@ -8104,7 +8141,7 @@ mod tests {
                 "adjacent strict lower bound",
                 &successor_lower_premise,
                 &kernel_successor_lower_premise,
-                false,
+                ArithmeticProofShape::Direct,
             ),
             (
                 lower(&surface_nonnegative_goal),
@@ -8112,7 +8149,7 @@ mod tests {
                 "constant lower-bound weakening",
                 &strong_constant_lower_premise,
                 &kernel_strong_constant_lower_premise,
-                false,
+                ArithmeticProofShape::Direct,
             ),
             (
                 lower(&surface_successor_lower_goal),
@@ -8120,7 +8157,15 @@ mod tests {
                 "negated strict successor bound",
                 &negated_successor_premise,
                 &kernel_negated_successor_premise,
-                true,
+                ArithmeticProofShape::ComposedNegatedSuccessor,
+            ),
+            (
+                lower(&surface_increment_constant_upper_goal),
+                "int32_increment_upper_bound",
+                "increment under a larger constant",
+                &increment_constant_upper_premise,
+                &kernel_increment_constant_upper_premise,
+                ArithmeticProofShape::ChainedIncrementUpper,
             ),
         ];
         let mut surface_propositions = SurfacePropositionMap::default();
@@ -8154,8 +8199,14 @@ mod tests {
                 &kernel_negated_successor_premise,
             )
             .expect("the exact negated successor premise should be indexed");
+        surface_propositions
+            .record_lowering(
+                &increment_constant_upper_premise,
+                &kernel_increment_constant_upper_premise,
+            )
+            .expect("the exact constant upper-bound premise should be indexed");
 
-        for (goal, theorem_name, label, surface_premise, kernel_premise, composed) in goals {
+        for (goal, theorem_name, label, surface_premise, kernel_premise, shape) in goals {
             for size in [16_u32, 64, 256, 1024, 4096] {
                 let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
                 facts.push(kernel_premise.clone());
@@ -8183,18 +8234,28 @@ mod tests {
                     .expect("the typed increment rule should build one checked Proof descendant");
                 let allocations = fact_node_allocations() - before;
                 let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
-                let allocation_bound = if composed {
-                    96 * logarithmic_height + 384
-                } else {
-                    64 * logarithmic_height + 256
+                let allocation_bound = match shape {
+                    ArithmeticProofShape::Direct => 64 * logarithmic_height + 256,
+                    ArithmeticProofShape::ComposedNegatedSuccessor
+                    | ArithmeticProofShape::ChainedIncrementUpper => 96 * logarithmic_height + 384,
                 };
                 assert!(
                     allocations <= allocation_bound,
                     "size {size} point {label} simp allocated {allocations} persistent nodes (bound {allocation_bound})"
                 );
                 assert!(closed.is_complete());
-                if composed {
-                    assert!(matches!(
+                match shape {
+                    ArithmeticProofShape::Direct => assert!(
+                        matches!(
+                            closed.certificate().steps(),
+                            [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                                if application.name == theorem_name
+                                    && premises == std::slice::from_ref(surface_premise)
+                        ),
+                        "{label} retained unexpected point steps: {:#?}",
+                        closed.certificate().steps()
+                    ),
+                    ArithmeticProofShape::ComposedNegatedSuccessor => assert!(matches!(
                         closed.certificate().steps(),
                         [
                             SimpleProofStep::Have { proof: first, .. },
@@ -8207,18 +8268,24 @@ mod tests {
                                     && premises == std::slice::from_ref(surface_premise)
                         ) && matches!(second.steps(), [SimpleProofStep::Normalize])
                             && application.name == theorem_name
-                    ));
-                } else {
-                    assert!(
-                        matches!(
-                            closed.certificate().steps(),
-                            [SimpleProofStep::ApplyTheoremUsing { application, premises }]
-                                if application.name == theorem_name
-                                    && premises == std::slice::from_ref(surface_premise)
-                        ),
-                        "{label} retained unexpected point steps: {:#?}",
-                        closed.certificate().steps()
-                    );
+                    )),
+                    ArithmeticProofShape::ChainedIncrementUpper => assert!(matches!(
+                        closed.certificate().steps(),
+                        [
+                            SimpleProofStep::ApplyTheoremUsing {
+                                application: first,
+                                premises: first_premises,
+                            },
+                            SimpleProofStep::ApplyTheoremUsing {
+                                application: second,
+                                premises: second_premises,
+                            },
+                        ] if first.name == "int32_le_lt_transitive"
+                            && first_premises == std::slice::from_ref(surface_premise)
+                            && second.name == theorem_name
+                            && second_premises
+                                == std::slice::from_ref(&increment_constant_upper_intermediate)
+                    )),
                 }
                 assert!(Arc::ptr_eq(&root.state, &retained_root.state));
                 assert!(root.certificate().steps().is_empty());
@@ -8257,8 +8324,16 @@ mod tests {
                     "size {size} restricted {label} simp allocated {restricted_allocations} persistent nodes (bound {allocation_bound})"
                 );
                 assert!(pure_closed.is_complete());
-                if composed {
-                    assert!(matches!(
+                match shape {
+                    ArithmeticProofShape::Direct => assert!(matches!(
+                        pure_closed.certificate().steps(),
+                        [
+                            SimpleProofStep::ApplyTheoremUsing { application, premises },
+                            SimpleProofStep::Assumption,
+                        ] if application.name == theorem_name
+                            && premises == std::slice::from_ref(surface_premise)
+                    )),
+                    ArithmeticProofShape::ComposedNegatedSuccessor => assert!(matches!(
                         pure_closed.certificate().steps(),
                         [
                             SimpleProofStep::Have { proof: first, .. },
@@ -8274,16 +8349,25 @@ mod tests {
                                 && premises == std::slice::from_ref(surface_premise)
                         ) && matches!(second.steps(), [SimpleProofStep::Normalize])
                             && application.name == theorem_name
-                    ));
-                } else {
-                    assert!(matches!(
+                    )),
+                    ArithmeticProofShape::ChainedIncrementUpper => assert!(matches!(
                         pure_closed.certificate().steps(),
                         [
-                            SimpleProofStep::ApplyTheoremUsing { application, premises },
+                            SimpleProofStep::ApplyTheoremUsing {
+                                application: first,
+                                premises: first_premises,
+                            },
+                            SimpleProofStep::ApplyTheoremUsing {
+                                application: second,
+                                premises: second_premises,
+                            },
                             SimpleProofStep::Assumption,
-                        ] if application.name == theorem_name
-                            && premises == std::slice::from_ref(surface_premise)
-                    ));
+                        ] if first.name == "int32_le_lt_transitive"
+                            && first_premises == std::slice::from_ref(surface_premise)
+                            && second.name == theorem_name
+                            && second_premises
+                                == std::slice::from_ref(&increment_constant_upper_intermediate)
+                    )),
                 }
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
                 assert!(pure_root.certificate().steps().is_empty());
