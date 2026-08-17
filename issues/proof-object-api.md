@@ -1124,6 +1124,30 @@ leave the ancestor unchanged, and the common 16-through-4096 unrelated-fact
 curve covers the nested structure. Derived predecessor variants that require
 equality rewriting, rather than the direct `1 <= value` edge, remain pending.
 
+Mid-execution bare theorem application now crosses the same query/transition
+seam. The smart form asks its immutable execution-frontier `Proof` for one
+concrete `ApplyTheoremUsing`, and only `Proof::apply_step` may add the theorem
+conclusion or its provenance. Selection shares the persistent fact indexes
+used by point proofs instead of materializing the ambient fact vector through
+the legacy premise selector. A 16-through-4096 unrelated-fact curve pins zero
+persistent-index reconstruction during selection and logarithmic checked
+updates; a source regression observes no ordinary construction replay,
+retains the explicit premise, expands it, and independently verifies it.
+
+Automatic execution branches expose a separate structural requirement. A C
+branch that reaches distinct function-exit outcomes expands as a logical
+`If`, not as the existing equal-state execution `Branch`, so it needs a
+Proof-owned multiple-outcome container rather than another flat replay
+adapter. `ProgramPointStates` now retains a persistent mutation lineage and
+can intersect two descendants relative to their exact common ancestor by
+visiting only fork-local changed keys. Its deterministic 16-through-4096
+regression preserves shared ambient points, drops arm-specific points, rejects
+unrelated lineages, and bounds persistent allocations logarithmically. The
+version metadata is boxed behind the map's single pointer-sized value: an
+existing deep pure case-split regression caught the stack-cost regression from
+an initial inline layout. The container that consumes this merge and retains
+the two terminal certificates is still pending.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

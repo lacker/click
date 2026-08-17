@@ -2211,32 +2211,100 @@ impl<'a> Proof<'a> {
         let ProofContext::Point(context) = self.context.as_ref() else {
             return Err(self.step_error("point theorem-application search requires a point proof"));
         };
-        let values = parameter_values(context.parameters, context.arguments).map_err(|error| {
+        self.select_theorem_application_step_at_point(
+            application,
+            context.parameters,
+            context.arguments,
+            context.pre_state,
+            context.state,
+            context.result,
+            context.program_point_states,
+            context.surface_propositions,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.theorem_environment,
+        )
+    }
+
+    /// Untrusted smart-tactic query for one explicit theorem step at the
+    /// current execution frontier. The query can inspect the immutable proof
+    /// and return syntax, but only `apply_step` can add the conclusion or
+    /// advance provenance.
+    pub(super) fn select_execution_theorem_application_step(
+        &self,
+        application: &TheoremApplication,
+    ) -> Result<SimpleProofStep, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error(
+                "execution theorem-application search requires an execution-frontier proof",
+            ));
+        };
+        let execution =
+            self.state.execution.as_ref().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+        let pre_state = execution.replay.old_reference_state(&execution.state);
+        self.select_theorem_application_step_at_point(
+            application,
+            context.parsed_function.parameters(),
+            context.arguments,
+            pre_state,
+            &execution.state,
+            None,
+            &execution.replay.program_point_states,
+            &execution.replay.surface_propositions,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.theorem_environment,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn select_theorem_application_step_at_point(
+        &self,
+        application: &TheoremApplication,
+        parameters: &[syntax::C0Parameter],
+        arguments: &[CExpression],
+        pre_state: &CState,
+        state: &CState,
+        result: Option<&CValue>,
+        program_point_states: &ProgramPointStates,
+        surface_propositions: &SurfacePropositionMap,
+        predicate_environment: &PredicateEnvironment,
+        click_function_environment: &ClickFunctionEnvironment,
+        theorem_environment: &TheoremEnvironment,
+    ) -> Result<SimpleProofStep, ClickError> {
+        let values = parameter_values(parameters, arguments).map_err(|error| {
             self.step_error(format!(
                 "could not bind theorem arguments: {}",
                 error.message
             ))
         })?;
-        let array_refs =
-            array_refs_for_parameters(context.parameters, &values, context.state.memory());
-        let (values, array_refs) =
-            contract_environment_at_state(&values, &array_refs, context.state);
+        let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+        let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
         let application_context = TheoremApplicationContext {
             values: &values,
             array_refs: &array_refs,
-            pre_state: context.pre_state,
-            post_state: context.state,
-            result: context.result,
-            program_point_states: context.program_point_states,
+            pre_state,
+            post_state: state,
+            result,
+            program_point_states,
         };
         let unfolded_predicates = self.active_unfolded_predicates();
+        let mut lowering_assumptions = self.state.facts.assumptions().clone();
+        for fact in state
+            .resources()
+            .observable_facts_assuming_valid(self.state.facts.assumptions())
+        {
+            lowering_assumptions = lowering_assumptions.assume_proposition(fact);
+        }
         let requirements = lower_theorem_application_requirements_with_assumptions(
-            context.theorem_environment,
+            theorem_environment,
             application,
             &application_context,
-            self.state.facts.assumptions(),
-            context.predicate_environment,
-            context.click_function_environment,
+            &lowering_assumptions,
+            predicate_environment,
+            click_function_environment,
             &unfolded_predicates,
         )
         .map_err(|message| {
@@ -2248,49 +2316,115 @@ impl<'a> Proof<'a> {
             if matches!(normalize_proposition(&requirement), SimpProposition::True) {
                 continue;
             }
-            if !self
+            let matched = self
                 .state
                 .facts
-                .replay_available_across_effects(&requirement, &[])
-            {
-                return Err(self.step_error(format!(
-                    "theorem application `{}` requires an unavailable exact premise: {requirement:?}",
-                    application.name
-                )));
+                .matching_replay_fact_across_effects(&requirement, &[])
+                .ok_or_else(|| {
+                    self.step_error(format!(
+                        "theorem application `{}` requires an unavailable exact premise: {requirement:?}",
+                        application.name
+                    ))
+                })?;
+
+            // Reuse the established snapshot-surface search for execution
+            // proofs, with availability answered by persistent indexes. The
+            // canonical fact above comes from the requirement's shape bucket,
+            // so sibling snapshot spellings remain visible without rebuilding
+            // the complete ambient fact vector. The returned spelling still
+            // has to survive `apply_step` below.
+            let mut snapshot_surface_error = None;
+            if let ProofContext::Execution(_) = self.context.as_ref() {
+                let execution = self
+                    .state
+                    .execution
+                    .as_ref()
+                    .expect("execution proof owns semantic state");
+                match checked_surface_comparison_fact_at_point_with_indexed_facts(
+                    &execution.replay,
+                    &matched,
+                    SurfaceFactMatch::CanonicalExact,
+                    &self.state.facts,
+                    &lowering_assumptions,
+                    parameters,
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                ) {
+                    Ok(surface) => {
+                        if !premises.contains(&surface) {
+                            premises.push(surface);
+                        }
+                        continue;
+                    }
+                    Err(error) => snapshot_surface_error = Some(error),
+                }
             }
 
-            let mut candidates = context
-                .surface_propositions
-                .surfaces(&requirement)
+            let mut candidates = surface_propositions
+                .surfaces(&matched)
+                .chain(surface_propositions.surfaces(&requirement))
                 .cloned()
                 .collect::<Vec<_>>();
-            if let Some(candidate) = synthesize_surface_proposition(
-                &requirement,
-                context.parameters,
-                context.arguments,
-                context.state,
-            ) && !candidates.contains(&candidate)
+            if let Some(candidate) =
+                synthesize_surface_proposition(&matched, parameters, arguments, state)
+                && !candidates.contains(&candidate)
             {
                 candidates.push(candidate);
             }
+            if let Some(candidate) =
+                synthesize_surface_proposition(&requirement, parameters, arguments, state)
+                && !candidates.contains(&candidate)
+            {
+                candidates.push(candidate);
+            }
+            if candidates.is_empty() {
+                return Err(self.step_error(format!(
+                    "theorem application `{}` has no checked Click spelling for exact premise `{requirement:?}`",
+                    application.name
+                )));
+            }
             let surface = candidates
                 .into_iter()
+                // SurfacePropositionMap treats the most recently recorded
+                // spelling as canonical. Prefer it here too; earlier entries
+                // can be mechanically valid but over-anchor constants as
+                // `at(point, constant)` and produce needlessly unstable
+                // certificates.
+                .rev()
                 .find(|candidate| {
-                    self.lower_surface_proposition(candidate, "selected theorem premise")
-                        .is_ok_and(|lowered| {
-                            (normalize_direct_atomic_memory_loads(&lowered)
-                                == normalize_direct_atomic_memory_loads(&requirement)
-                                || condition_polarity_equivalent(&lowered, &requirement))
-                                && self
-                                    .state
-                                    .facts
-                                    .replay_available_across_effects(&lowered, &[])
-                        })
+                    let matches_requirement = |lowered: &Proposition| {
+                        (normalize_direct_atomic_memory_loads(lowered)
+                            == normalize_direct_atomic_memory_loads(&requirement)
+                            || condition_polarity_equivalent(lowered, &requirement))
+                            && self
+                                .state
+                                .facts
+                                .replay_available_across_effects(lowered, &[])
+                    };
+                    let direct = lower_point_proposition_with_assumptions(
+                        candidate,
+                        &lowering_assumptions,
+                        parameters,
+                        arguments,
+                        pre_state,
+                        state,
+                        result,
+                        program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                    );
+                    direct.as_ref().is_ok_and(matches_requirement)
                 })
                 .ok_or_else(|| {
                     self.step_error(format!(
-                        "theorem application `{}` has no checked Click spelling for exact premise `{requirement:?}`",
-                        application.name
+                        "theorem application `{}` has no checked Click spelling for exact premise `{requirement:?}`{}",
+                        application.name,
+                        snapshot_surface_error
+                            .as_ref()
+                            .map(|error| format!(": {}", error.message()))
+                            .unwrap_or_default(),
                     ))
                 })?;
             if !premises.contains(&surface) {
@@ -4088,6 +4222,87 @@ impl ProofFacts {
         self.exact.contains(&normalized)
             || self.normalized_exact.contains(&normalized)
             || self.quantified_replay_available(required)
+    }
+
+    /// Returns one actual available fact accepted by explicit replay. Smart
+    /// syntax selection needs the retained fact, not merely a yes/no answer:
+    /// its recorded Surface spelling may carry a statement snapshot that the
+    /// freshly lowered theorem requirement no longer exposes.
+    fn matching_replay_fact_across_effects(
+        &self,
+        required: &Proposition,
+        framing: &[ExecutionPureFact],
+    ) -> Option<Proposition> {
+        let normalized = normalize_direct_atomic_memory_loads(required);
+        let keys = [
+            snapshot_blind_proposition_key(required),
+            snapshot_blind_proposition_key(&normalized),
+        ];
+        let mut indexed_candidates = Vec::new();
+        for key in &keys {
+            if let Some(bucket) = self.by_snapshot_blind.get(key) {
+                for candidate in bucket.iter() {
+                    if !indexed_candidates.contains(candidate) {
+                        indexed_candidates.push(candidate.clone());
+                    }
+                }
+            }
+        }
+        // Preserve the legacy selector's canonical materialization choice,
+        // but search only the requirement's persistent shape bucket. The
+        // chosen sibling snapshot can have a stable recorded `at(...)`
+        // spelling even when the freshly lowered requirement is also present.
+        if let Some(candidate) =
+            materialization_equivalent_available_fact(required, &indexed_candidates)
+        {
+            return Some(candidate.clone());
+        }
+        if self.exact.contains(required) {
+            return Some(required.clone());
+        }
+        if let Some(spelling) = condition_polarity_spellings(required)
+            .into_iter()
+            .find(|spelling| self.exact.contains(spelling))
+        {
+            return Some(spelling);
+        }
+
+        if self.exact.contains(&normalized) {
+            return Some(normalized);
+        }
+        if self.normalized_exact.contains(&normalized) {
+            return Some(normalized);
+        }
+        if let Some(quantified) = self.matching_quantified_replay_fact(required) {
+            return Some(quantified);
+        }
+
+        let mut candidates = Vec::new();
+        for key in keys {
+            let Some(bucket) = self.by_snapshot_blind.get(&key) else {
+                continue;
+            };
+            for candidate in bucket.iter() {
+                if !candidates.contains(candidate) {
+                    candidates.push(candidate.clone());
+                }
+                if proposition_candidate_equals_modulo_proven_snapshots(
+                    candidate,
+                    required,
+                    &self.assumptions,
+                    framing,
+                ) || snapshot_bridged_fact_is_available_under(
+                    required,
+                    std::slice::from_ref(candidate),
+                    &self.assumptions,
+                    framing,
+                ) {
+                    return Some(candidate.clone());
+                }
+            }
+        }
+        snapshot_bridged_fact_is_available_under(required, &candidates, &self.assumptions, framing)
+            .then(|| required.clone())
     }
 
     fn matching_quantified_replay_fact(&self, required: &Proposition) -> Option<Proposition> {
@@ -6276,13 +6491,18 @@ mod tests {
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
             pure_facts.push(kernel_premise.clone());
+            let mut replay = TacticReplayState::default();
+            replay
+                .surface_propositions
+                .record_lowering(&premise, &kernel_premise)
+                .expect("the selected premise spelling should be recorded");
             let root = Proof::for_execution_frontier(
                 "persistent theorem application",
                 0,
                 ProofReplayContext {
                     state: state.clone(),
                     pure_facts,
-                    replay: TacticReplayState::default(),
+                    replay,
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -6295,6 +6515,22 @@ mod tests {
                 &theorem_environment,
             );
             let retained_root = root.clone();
+            let before_query = fact_node_allocations();
+            let selected = root
+                .select_execution_theorem_application_step(&application)
+                .expect("smart search should select one explicit indexed premise");
+            assert_eq!(
+                fact_node_allocations() - before_query,
+                0,
+                "size {size} execution theorem selection must not rebuild persistent fact indexes"
+            );
+            assert_eq!(
+                selected,
+                SimpleProofStep::ApplyTheoremUsing {
+                    application: application.clone(),
+                    premises: vec![premise.clone()],
+                }
+            );
             let omitted = root
                 .apply_step(SimpleProofStep::ApplyTheoremUsing {
                     application: application.clone(),
@@ -6309,10 +6545,7 @@ mod tests {
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());
 
-            let step = SimpleProofStep::ApplyTheoremUsing {
-                application: application.clone(),
-                premises: vec![premise.clone()],
-            };
+            let step = selected;
             let before = fact_node_allocations();
             let applied = root
                 .apply_step(step.clone())

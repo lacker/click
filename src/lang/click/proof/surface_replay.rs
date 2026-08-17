@@ -11,10 +11,34 @@ pub(super) fn checked_surface_fact_at_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
+    let assumptions = assumptions_from_propositions(available);
+    checked_surface_fact_at_point_with_assumptions(
+        replay,
+        kernel,
+        &assumptions,
+        parameters,
+        arguments,
+        state,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn checked_surface_fact_at_point_with_assumptions(
+    replay: &TacticReplayState,
+    kernel: &Proposition,
+    assumptions: &PureFactContext,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<ClickProposition, ClickError> {
     let check = |surface: &ClickProposition| {
-        lower_point_proposition(
+        lower_point_proposition_with_assumptions(
             surface,
-            available,
+            assumptions,
             parameters,
             arguments,
             replay.old_reference_state(state),
@@ -236,6 +260,64 @@ pub(super) fn checked_surface_comparison_fact_at_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
+    let assumptions = assumptions_from_propositions(available);
+    checked_surface_comparison_fact_at_point_with_availability(
+        replay,
+        kernel,
+        match_kind,
+        available,
+        &assumptions,
+        None,
+        parameters,
+        arguments,
+        state,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn checked_surface_comparison_fact_at_point_with_indexed_facts(
+    replay: &TacticReplayState,
+    kernel: &Proposition,
+    match_kind: SurfaceFactMatch,
+    available: &ProofFacts,
+    assumptions: &PureFactContext,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<ClickProposition, ClickError> {
+    checked_surface_comparison_fact_at_point_with_availability(
+        replay,
+        kernel,
+        match_kind,
+        &[],
+        assumptions,
+        Some(available),
+        parameters,
+        arguments,
+        state,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn checked_surface_comparison_fact_at_point_with_availability(
+    replay: &TacticReplayState,
+    kernel: &Proposition,
+    match_kind: SurfaceFactMatch,
+    available: &[Proposition],
+    assumptions: &PureFactContext,
+    indexed_available: Option<&ProofFacts>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<ClickProposition, ClickError> {
     let matches_kernel = |lowered: &Proposition| {
         if matches!(match_kind, SurfaceFactMatch::CanonicalExact) {
             return normalize_direct_atomic_memory_loads(lowered)
@@ -249,6 +331,15 @@ pub(super) fn checked_surface_comparison_fact_at_point(
                 .is_some()
             || quantified_binder_equivalent(&lowered, &kernel)
     };
+    let fact_is_available = |fact: &Proposition| {
+        indexed_available.map_or_else(
+            || {
+                exact_fact_is_available(fact, available)
+                    || materialization_equivalent_available_fact(fact, available).is_some()
+            },
+            |indexed| indexed.replay_available_across_effects(fact, &[]),
+        )
+    };
     // Candidates below are matched through the permissive candidate lowering
     // (symbolic contract loads allowed), but the emitted certificate is
     // replayed by the ordinary executor, whose strict lowering carries
@@ -256,9 +347,9 @@ pub(super) fn checked_surface_comparison_fact_at_point(
     // for example a snapshot fact whose `at(...)` anchor was dropped so its
     // current-state loads are not provably loadable — must not be emitted.
     let strictly_replayable = |surface: &ClickProposition| {
-        lower_point_proposition(
+        lower_point_proposition_with_assumptions(
             surface,
-            available,
+            assumptions,
             parameters,
             arguments,
             replay.old_reference_state(state),
@@ -268,10 +359,8 @@ pub(super) fn checked_surface_comparison_fact_at_point(
             predicate_environment,
             click_function_environment,
         )
-        .is_ok_and(|premise| {
-            exact_fact_is_available(&premise, available)
-                || materialization_equivalent_available_fact(&premise, available).is_some()
-        })
+        .as_ref()
+        .is_ok_and(&fact_is_available)
     };
     // A snapshot-indexed spelling paired with this exact available kernel fact
     // is replayable through the replay engine's program-point record. Requiring
@@ -296,7 +385,7 @@ pub(super) fn checked_surface_comparison_fact_at_point(
                 )
         ) && replay
             .surface_propositions
-            .available_kernel(surface, available)
+            .available_kernel_matching(surface, &fact_is_available)
             == Some(kernel)
         {
             return Ok((*surface).clone());
@@ -307,17 +396,17 @@ pub(super) fn checked_surface_comparison_fact_at_point(
             || proposition_contains_old_expression(surface))
             && replay
                 .surface_propositions
-                .available_kernel(surface, available)
+                .available_kernel_matching(surface, &fact_is_available)
                 .is_some_and(&matches_kernel)
             // A recorded pair can name a program point outside the current
             // replay scope (for example a function-prefix statement inside a
             // loop-region proof). The candidate lowering resolves recorded
             // snapshots without demanding current loadability, so it is the
             // right scope check here.
-            && lower_surface_candidate_at_point(
+            && lower_surface_candidate_at_point_with_assumptions(
                 replay,
                 surface,
-                available,
+                assumptions,
                 parameters,
                 arguments,
                 state,
@@ -329,10 +418,10 @@ pub(super) fn checked_surface_comparison_fact_at_point(
             return Ok(surface.clone());
         }
     }
-    if let Ok(surface) = checked_surface_fact_at_point(
+    if let Ok(surface) = checked_surface_fact_at_point_with_assumptions(
         replay,
         kernel,
-        available,
+        assumptions,
         parameters,
         arguments,
         state,
@@ -365,10 +454,10 @@ pub(super) fn checked_surface_comparison_fact_at_point(
         }
     }
     for base in &bases {
-        if let Ok(lowered) = lower_surface_candidate_at_point(
+        if let Ok(lowered) = lower_surface_candidate_at_point_with_assumptions(
             replay,
             base,
-            available,
+            assumptions,
             parameters,
             arguments,
             state,
@@ -389,10 +478,10 @@ pub(super) fn checked_surface_comparison_fact_at_point(
     for (point, _) in exact_points.iter().chain(&compatible_points) {
         for base in &bases {
             if let Ok(candidate) = surface_with_source_site(base, point)
-                && lower_surface_candidate_at_point(
+                && lower_surface_candidate_at_point_with_assumptions(
                     replay,
                     &candidate,
-                    available,
+                    assumptions,
                     parameters,
                     arguments,
                     state,
@@ -434,10 +523,10 @@ pub(super) fn checked_surface_comparison_fact_at_point(
                 },
             ];
             for candidate in candidates {
-                let lowered = lower_surface_candidate_at_point(
+                let lowered = lower_surface_candidate_at_point_with_assumptions(
                     replay,
                     &candidate,
-                    available,
+                    assumptions,
                     parameters,
                     arguments,
                     state,
@@ -463,10 +552,10 @@ pub(super) fn checked_surface_comparison_fact_at_point(
             };
             for candidate in variants {
                 check_verification_deadline()?;
-                if lower_surface_candidate_at_point(
+                if lower_surface_candidate_at_point_with_assumptions(
                     replay,
                     &candidate,
-                    available,
+                    assumptions,
                     parameters,
                     arguments,
                     state,

@@ -3842,6 +3842,61 @@ fn point_have_mixed_linear_smart_script_continues_on_checked_successors() {
 }
 
 #[test]
+fn execution_bare_apply_selects_and_retains_its_step_through_proof() {
+    let c_source = r#"
+            int32 keep(int32 value, int32 upper) {
+                return value;
+            }
+        "#;
+    let click_source = r#"
+            verifying "keep.c";
+
+            int32 keep(int32 value, int32 upper) {
+                requires value < upper;
+                ensures result <= upper;
+            } by {
+                apply(int32_lt_implies_le(value, upper));
+                step();
+                assumption();
+            }
+        "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("keep.c", c_source)])
+    });
+    let verified = verified.expect("checked execution apply should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "keep.contract" && name == "surface certificate replay"
+        )),
+        "the migrated execution apply must not pass through ordinary certificate replay: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked execution apply should retain an expansion");
+    assert!(matches!(
+        expanded.first(),
+        Some(ProofTactic::ApplyTheoremUsing { application, premises })
+            if application.name == "int32_lt_implies_le" && premises.len() == 1
+    ));
+    let retained_source = verified[0]
+        .expanded_proof_source()
+        .expect("the checked execution apply should have canonical source");
+    assert!(retained_source.contains("apply(int32_lt_implies_le(value, upper)) using {"));
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("keep.c", c_source)],
+        "keep",
+        CProofClaim::Grouped,
+    )
+    .expect("the checked execution apply should expand into source");
+    verify_c0_sources(&expanded, &[("keep.c", c_source)])
+        .expect("the retained execution theorem step should independently reverify");
+}
+
+#[test]
 fn point_smart_have_retains_a_checked_simple_closer() {
     let c_source = r#"
             int32 identity(int32 value) {

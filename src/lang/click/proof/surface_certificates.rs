@@ -6803,11 +6803,35 @@ pub(super) fn lower_surface_candidate_at_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, ClickError> {
+    let assumptions = assumptions_from_propositions(available);
+    lower_surface_candidate_at_point_with_assumptions(
+        replay,
+        candidate,
+        &assumptions,
+        parameters,
+        arguments,
+        state,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_surface_candidate_at_point_with_assumptions(
+    replay: &TacticReplayState,
+    candidate: &ClickProposition,
+    assumptions: &PureFactContext,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, ClickError> {
     check_verification_deadline()?;
     let values = parameter_values(parameters, arguments)?;
     let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
     let (mut values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
-    let assumptions = assumptions_from_propositions(available).allow_symbolic_contract_loads();
+    let assumptions = assumptions.clone().allow_symbolic_contract_loads();
     let mut next_variable = 2_000_000;
     let mut active_functions = BTreeSet::new();
     lower_outcome_proposition_with_environment(

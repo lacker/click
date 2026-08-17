@@ -813,19 +813,6 @@ fn replay_linear_tactics_without_frontier_loops(
                     application.name
                 )));
             }
-            let premises = select_explicit_theorem_application_premises(
-                theorem_environment,
-                application,
-                claim_label,
-                tactic_index,
-                &requirement_pure_facts,
-                parsed_function.parameters(),
-                arguments,
-                &replay,
-                &state,
-                predicate_environment,
-                click_function_environment,
-            )?;
             let proof = Proof::for_execution_frontier(
                 claim_label,
                 tactic_index,
@@ -844,10 +831,8 @@ fn replay_linear_tactics_without_frontier_loops(
                 click_function_environment,
                 theorem_environment,
             );
-            let proof = proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
-                application: application.clone(),
-                premises,
-            })?;
+            let step = proof.select_execution_theorem_application_step(application)?;
+            let proof = proof.apply_step(step)?;
             let certificate = proof.certificate();
             let result = proof.into_execution_context()?;
             state = result.state;
