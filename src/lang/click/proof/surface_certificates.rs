@@ -324,6 +324,18 @@ pub(super) fn lower_surface_atomic_derivation(
                 false,
             )
         });
+    let typed_nonnegative_subtract_pairs =
+        recorded_int32_nonnegative_subtract_within_value_pairs(derivation, &premise_pairs);
+    let typed_nonnegative_subtract_plan = typed_nonnegative_subtract_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_nonnegative_subtract_within_value_for_context(
+                &lowered_conclusion,
+                pairs,
+                false,
+            )
+        });
     let typed_increment_lower_bound_pairs =
         recorded_int32_increment_lower_bound_pairs(derivation, &premise_pairs);
     let typed_increment_lower_bound_plan = typed_increment_lower_bound_pairs
@@ -520,6 +532,7 @@ pub(super) fn lower_surface_atomic_derivation(
         || typed_strict_increment_plan.is_some()
         || typed_increment_definedness_plan.is_some()
         || typed_nonnegative_add_plan.is_some()
+        || typed_nonnegative_subtract_plan.is_some()
         || typed_increment_lower_bound_plan.is_some()
         || typed_increment_greater_equal_plan.is_some()
         || typed_increment_strict_greater_plan.is_some()
@@ -556,6 +569,9 @@ pub(super) fn lower_surface_atomic_derivation(
     } else if typed_nonnegative_add_plan.is_some() {
         premise_pairs = typed_nonnegative_add_pairs
             .expect("a typed symbolic-add-definedness plan retains both exact premises");
+    } else if typed_nonnegative_subtract_plan.is_some() {
+        premise_pairs = typed_nonnegative_subtract_pairs
+            .expect("a typed symbolic-subtract-definedness plan retains both exact premises");
     } else if typed_increment_lower_bound_plan.is_some() {
         premise_pairs = typed_increment_lower_bound_pairs
             .expect("a typed increment-lower-bound plan retains both exact premises");
@@ -769,6 +785,14 @@ pub(super) fn lower_surface_atomic_derivation(
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "recorded symbolic-add-definedness rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_nonnegative_subtract_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded symbolic-subtract-definedness rule produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -3141,6 +3165,7 @@ pub(super) fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_increment_constant_upper_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_below_max_is_defined(goal, premise_pairs))
         .or_else(|| plan_explicit_nonnegative_add_within_max_is_defined(goal, premise_pairs))
+        .or_else(|| plan_explicit_nonnegative_subtract_within_value_is_defined(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_predecessor_is_nonnegative(goal, premise_pairs))
         .or_else(|| plan_explicit_predecessor_upper_bound(goal, premise_pairs, false))
         .or_else(|| plan_explicit_one_le_predecessor(goal, premise_pairs))
@@ -3403,6 +3428,23 @@ pub(super) fn recorded_int32_nonnegative_add_within_max_pairs(
     let (amount_nonnegative, within_headroom) =
         derivation.int32_nonnegative_add_within_max_steps()?;
     [amount_nonnegative.premise(), within_headroom.premise()]
+        .into_iter()
+        .map(|premise| {
+            premise_pairs
+                .iter()
+                .find(|(kernel, _)| kernel == premise)
+                .cloned()
+        })
+        .collect()
+}
+
+pub(super) fn recorded_int32_nonnegative_subtract_within_value_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    let (amount_nonnegative, within_value) =
+        derivation.int32_nonnegative_subtract_within_value_steps()?;
+    [amount_nonnegative.premise(), within_value.premise()]
         .into_iter()
         .map(|premise| {
             premise_pairs
@@ -3727,6 +3769,19 @@ pub(super) fn plan_recorded_int32_nonnegative_add_within_max_for_context(
     point_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_nonnegative_add_within_max_is_defined(goal, premise_pairs)?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut tactics)?;
+    }
+    Some(tactics)
+}
+
+pub(super) fn plan_recorded_int32_nonnegative_subtract_within_value_for_context(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
+    let mut tactics =
+        plan_explicit_nonnegative_subtract_within_value_is_defined(goal, premise_pairs)?;
     if point_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
@@ -5198,6 +5253,38 @@ fn plan_explicit_nonnegative_add_within_max_is_defined(
                 arguments: vec![surface_value, surface_amount],
             },
             premises: vec![nonnegative_surface.clone(), headroom_surface.clone()],
+        },
+        ProofTactic::Assumption,
+    ])
+}
+
+fn plan_explicit_nonnegative_subtract_within_value_is_defined(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedSubtractOverflows(value, amount),
+        false,
+    ) = goal
+    else {
+        return None;
+    };
+    let zero = Bitvector32Term::Constant(0);
+    let (_, nonnegative_surface) = premise_pairs
+        .iter()
+        .find(|(kernel, _)| signed_nonstrict_parts(kernel) == Some((&zero, amount.as_ref())))?;
+    let (_, within_value_surface) = premise_pairs.iter().find(|(kernel, _)| {
+        signed_nonstrict_parts(kernel) == Some((amount.as_ref(), value.as_ref()))
+    })?;
+    let (_, surface_amount) = surface_nonstrict_parts(nonnegative_surface)?;
+    let (_, surface_value) = surface_nonstrict_parts(within_value_surface)?;
+    Some(vec![
+        ProofTactic::ApplyTheoremUsing {
+            application: TheoremApplication {
+                name: "int32_nonnegative_subtract_within_value_is_defined".to_string(),
+                arguments: vec![surface_value, surface_amount],
+            },
+            premises: vec![nonnegative_surface.clone(), within_value_surface.clone()],
         },
         ProofTactic::Assumption,
     ])

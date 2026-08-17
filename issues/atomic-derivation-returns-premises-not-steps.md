@@ -392,7 +392,7 @@ checks both serialized applications. The shared 16-through-4096
 unrelated-fact curve covers the two-step successor chain, including
 transactional rejection when the named source premise is omitted.
 
-### Progress (2026-08-16: symbolic addition definedness)
+### Progress (2026-08-16: symbolic addition and subtraction definedness)
 
 The exact two-premise symbolic-addition rule now retains its nonnegative
 amount edge and remaining-headroom edge as typed evidence. Smart `simp` can
@@ -408,3 +408,11 @@ regression preserves reversed comparison spellings, observes no ordinary
 construction replay, and independently verifies expansion. Omitted-premise
 and 16-through-4096 unrelated-fact regressions pin transactionality and
 logarithmic persistent updates.
+
+The dual subtraction rule is typed as well. Exact `0 <= amount` and
+`amount <= value` edges now select
+`int32_nonnegative_subtract_within_value_is_defined(value, amount)` instead
+of leaving the interval solver's successful result without an explicit
+certificate. Replay validates the subtraction operands and both exact
+non-strict edges. The same source-orientation, omitted-premise, expansion,
+and multi-size Proof regressions cover this application.

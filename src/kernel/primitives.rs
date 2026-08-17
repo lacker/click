@@ -1684,6 +1684,12 @@ pub(super) struct Int32NonnegativeAddWithinMaxEvidence {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Int32NonnegativeSubtractWithinValueEvidence {
+    pub(super) amount_nonnegative: SignedOrderDerivationStep,
+    pub(super) within_value: SignedOrderDerivationStep,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Int32LeAndNotLtEqualityEvidence {
     pub(super) less_equal: Proposition,
     pub(super) not_less_than: Proposition,
@@ -1712,6 +1718,7 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32IncrementStrictlyIncreases(SignedOrderDerivationStep),
     Int32IncrementBelowMaxIsDefined(SignedOrderDerivationStep),
     Int32NonnegativeAddWithinMaxIsDefined(Box<Int32NonnegativeAddWithinMaxEvidence>),
+    Int32NonnegativeSubtractWithinValueIsDefined(Box<Int32NonnegativeSubtractWithinValueEvidence>),
     Int32IncrementLowerBound(Box<Int32IncrementBoundsEvidence>),
     Int32IncrementGreaterEqualLowerBound(Box<Int32IncrementBoundsEvidence>),
     Int32IncrementStrictGreaterLowerBound(Box<Int32IncrementBoundsEvidence>),

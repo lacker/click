@@ -1391,6 +1391,15 @@ spellings; ordinary verification does no construction replay, expansion
 independently verifies the application, and a 16-through-4096 unrelated-fact
 curve bounds both point and restricted-pure transitions logarithmically.
 
+Symbolic subtraction definedness now follows the identical path. The exact
+`0 <= amount` and `amount <= value` edges select
+`int32_nonnegative_subtract_within_value_is_defined(value, amount)` and the
+application advances the immutable `Proof`. Before this migration the smart
+reasoner proved the semantic result but reported that no explicit simple
+certificate existed. Reversed source comparisons, no ordinary replay,
+independent expansion, omitted-premise transactionality, and the shared
+16-through-4096 point/restricted-pure allocation curve are all pinned.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

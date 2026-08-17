@@ -3697,6 +3697,49 @@ fn restricted_simp_retains_symbolic_add_definedness_theorem() {
 }
 
 #[test]
+fn restricted_simp_retains_symbolic_subtract_definedness_theorem() {
+    let click_source = r#"
+        theorem symbolic_subtract_is_defined(value: int32, amount: int32) {
+            requires amount >= 0;
+            requires value >= amount;
+            ensures defined(value - amount) by {
+                simp() using {
+                    amount >= 0;
+                    value >= amount;
+                }
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the symbolic-subtract definedness rule should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "symbolic_subtract_is_defined.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the symbolic-subtract proof must retain its checked theorem application: {events:#?}"
+    );
+    let offset = click_source.find("simp() using").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("symbolic-subtract definedness simp should expand");
+    assert!(
+        expanded.contains(
+            "apply(int32_nonnegative_subtract_within_value_is_defined(value, amount)) using"
+        ),
+        "{expanded}"
+    );
+    assert!(expanded.contains("amount >= 0;"), "{expanded}");
+    assert!(expanded.contains("value >= amount;"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    verify_click_theorems(&expanded)
+        .expect("expanded symbolic-subtract definedness proof should replay");
+}
+
+#[test]
 fn restricted_simp_composes_equality_rewrites_with_adjacent_order() {
     let click_source = r#"
         theorem aliased_positive_bound(

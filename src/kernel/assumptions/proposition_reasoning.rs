@@ -1168,6 +1168,25 @@ impl PureFactContext {
             }
             _ => None,
         };
+        let nonnegative_subtract_within_value_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedSubtractOverflows(value, amount),
+                false,
+            ) => {
+                let zero = Bitvector32Term::Constant(0);
+                self.exact_direct_order_step(&zero, amount, false)
+                    .zip(self.exact_direct_order_step(amount, value, false))
+                    .map(|(amount_nonnegative, within_value)| {
+                        AtomicPropositionDerivationEvidence::Int32NonnegativeSubtractWithinValueIsDefined(
+                            Box::new(Int32NonnegativeSubtractWithinValueEvidence {
+                                amount_nonnegative,
+                                within_value,
+                            }),
+                        )
+                    })
+            }
+            _ => None,
+        };
         let increment_lower_bound_evidence = match proposition {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedLessEqual(lower, incremented),
@@ -1402,6 +1421,7 @@ impl PureFactContext {
             .or(increment_strictly_increases_evidence)
             .or(increment_below_max_is_defined_evidence)
             .or(nonnegative_add_within_max_evidence)
+            .or(nonnegative_subtract_within_value_evidence)
             .or(increment_lower_bound_evidence)
             .or(increment_greater_equal_lower_bound_evidence)
             .or(increment_strict_greater_lower_bound_evidence)
@@ -1635,6 +1655,26 @@ impl PureFactContext {
                 && !bounds.within_headroom.strict
                 && self.replays_exact_order_step(&bounds.amount_nonnegative)
                 && self.replays_exact_order_step(&bounds.within_headroom);
+        }
+        if let AtomicPropositionDerivationEvidence::Int32NonnegativeSubtractWithinValueIsDefined(
+            bounds,
+        ) = evidence
+        {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedSubtractOverflows(value, amount),
+                false,
+            ) = proposition
+            else {
+                return false;
+            };
+            return bounds.amount_nonnegative.lower == Bitvector32Term::Constant(0)
+                && bounds.amount_nonnegative.upper == **amount
+                && !bounds.amount_nonnegative.strict
+                && bounds.within_value.lower == **amount
+                && bounds.within_value.upper == **value
+                && !bounds.within_value.strict
+                && self.replays_exact_order_step(&bounds.amount_nonnegative)
+                && self.replays_exact_order_step(&bounds.within_value);
         }
         if let AtomicPropositionDerivationEvidence::Int32IncrementLowerBound(bounds) = evidence {
             let Proposition::ConditionIs(

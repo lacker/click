@@ -1888,6 +1888,17 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| {
+                let recorded = recorded_int32_nonnegative_subtract_within_value_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_nonnegative_subtract_within_value_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
                 let recorded =
                     recorded_int32_increment_lower_bound_pairs(derivation, &premise_pairs)?;
                 plan_recorded_int32_increment_lower_bound_for_context(
@@ -8995,7 +9006,7 @@ mod tests {
     }
 
     #[test]
-    fn symbolic_add_definedness_retains_two_indexed_theorem_premises() {
+    fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
         let click_file = crate::lang::click::parse("")
             .expect("an empty source should still admit the standard theorem prelude");
         let predicate_environment = PredicateEnvironment::new(&[]);
@@ -9027,8 +9038,19 @@ mod tests {
             operator: ComparisonOperator::GreaterEqual,
             right: expression(value.clone()),
         };
-        let surface_goal = ClickProposition::Defined {
+        let within_value = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::GreaterEqual,
+            right: expression(amount.clone()),
+        };
+        let surface_add_goal = ClickProposition::Defined {
             expression: ContractExpression::Add(
+                Box::new(expression(value.clone())),
+                Box::new(expression(amount.clone())),
+            ),
+        };
+        let surface_subtract_goal = ClickProposition::Defined {
+            expression: ContractExpression::Subtract(
                 Box::new(expression(value.clone())),
                 Box::new(expression(amount.clone())),
             ),
@@ -9046,12 +9068,27 @@ mod tests {
                 &predicate_environment,
                 &click_function_environment,
             )
-            .expect("the symbolic-add proposition should lower")
+            .expect("the symbolic arithmetic proposition should lower")
         };
         let kernel_nonnegative = lower(&amount_nonnegative);
         let kernel_headroom = lower(&within_headroom);
-        let kernel_goal = lower(&surface_goal);
-        let selected = [amount_nonnegative.clone(), within_headroom.clone()];
+        let kernel_within_value = lower(&within_value);
+        let cases = [
+            (
+                lower(&surface_add_goal),
+                "int32_nonnegative_add_within_max_is_defined",
+                [amount_nonnegative.clone(), within_headroom.clone()],
+                [kernel_nonnegative.clone(), kernel_headroom.clone()],
+                "symbolic-add",
+            ),
+            (
+                lower(&surface_subtract_goal),
+                "int32_nonnegative_subtract_within_value_is_defined",
+                [amount_nonnegative.clone(), within_value.clone()],
+                [kernel_nonnegative.clone(), kernel_within_value.clone()],
+                "symbolic-subtract",
+            ),
+        ];
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(&amount_nonnegative, &kernel_nonnegative)
@@ -9059,92 +9096,97 @@ mod tests {
         surface_propositions
             .record_lowering(&within_headroom, &kernel_headroom)
             .expect("the exact headroom premise should be indexed");
+        surface_propositions
+            .record_lowering(&within_value, &kernel_within_value)
+            .expect("the exact within-value premise should be indexed");
 
         for size in [16_u32, 64, 256, 1024, 4096] {
-            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
-            facts.extend([kernel_nonnegative.clone(), kernel_headroom.clone()]);
-            let root = Proof::for_point_goal(
-                "persistent point symbolic-add simp",
-                0,
-                &facts,
-                kernel_goal.clone(),
-                parsed_function.parameters(),
-                &arguments,
-                &state,
-                &state,
-                &program_point_states,
-                &surface_propositions,
-                &predicate_environment,
-                &click_function_environment,
-                &theorem_environment,
-                &[],
-                &[],
-            );
-            let retained_root = root.clone();
-            let before = fact_node_allocations();
-            let closed = root
-                .try_simp_closure()
-                .expect("the typed symbolic-add rule should build one checked Proof descendant");
-            let allocations = fact_node_allocations() - before;
-            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
-            let allocation_bound = 96 * logarithmic_height + 384;
-            assert!(
-                allocations <= allocation_bound,
-                "size {size} point symbolic-add simp allocated {allocations} persistent nodes (bound {allocation_bound})"
-            );
-            assert!(closed.is_complete());
-            assert!(matches!(
-                closed.certificate().steps(),
-                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
-                    if application.name == "int32_nonnegative_add_within_max_is_defined"
-                        && premises.as_slice() == selected
-            ));
-            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
-            assert!(root.certificate().steps().is_empty());
+            for (kernel_goal, theorem_name, selected, kernel_premises, label) in &cases {
+                let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+                facts.extend(kernel_premises.iter().cloned());
+                let root = Proof::for_point_goal(
+                    "persistent point symbolic arithmetic simp",
+                    0,
+                    &facts,
+                    kernel_goal.clone(),
+                    parsed_function.parameters(),
+                    &arguments,
+                    &state,
+                    &state,
+                    &program_point_states,
+                    &surface_propositions,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &theorem_environment,
+                    &[],
+                    &[],
+                );
+                let retained_root = root.clone();
+                let before = fact_node_allocations();
+                let closed = root.try_simp_closure().expect(
+                    "the typed symbolic arithmetic rule should build one checked Proof descendant",
+                );
+                let allocations = fact_node_allocations() - before;
+                let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+                let allocation_bound = 96 * logarithmic_height + 384;
+                assert!(
+                    allocations <= allocation_bound,
+                    "size {size} point {label} simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+                );
+                assert!(closed.is_complete());
+                assert!(matches!(
+                    closed.certificate().steps(),
+                    [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                            if application.name == *theorem_name
+                                && premises.as_slice() == selected
+                ));
+                assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+                assert!(root.certificate().steps().is_empty());
 
-            let theorem_context = PureTheoremContext {
-                memory: state.memory().clone(),
-                values: BTreeMap::new(),
-                array_refs: BTreeMap::new(),
-                requires: facts.clone(),
-                surface_requirements: surface_propositions.clone(),
-            };
-            let pure_root = Proof::for_pure_goal(
-                "persistent restricted symbolic-add simp",
-                &facts,
-                kernel_goal.clone(),
-                &theorem_context,
-                &predicate_environment,
-                &click_function_environment,
-                &theorem_environment,
-            );
-            let retained_pure_root = pure_root.clone();
-            for omitted in [
-                std::slice::from_ref(&amount_nonnegative),
-                std::slice::from_ref(&within_headroom),
-            ] {
-                assert!(pure_root.try_restricted_simp_closure(omitted).is_none());
+                let theorem_context = PureTheoremContext {
+                    memory: state.memory().clone(),
+                    values: BTreeMap::new(),
+                    array_refs: BTreeMap::new(),
+                    requires: facts.clone(),
+                    surface_requirements: surface_propositions.clone(),
+                };
+                let pure_root = Proof::for_pure_goal(
+                    "persistent restricted symbolic arithmetic simp",
+                    &facts,
+                    kernel_goal.clone(),
+                    &theorem_context,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &theorem_environment,
+                );
+                let retained_pure_root = pure_root.clone();
+                for omitted in [
+                    std::slice::from_ref(&selected[0]),
+                    std::slice::from_ref(&selected[1]),
+                ] {
+                    assert!(pure_root.try_restricted_simp_closure(omitted).is_none());
+                    assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+                }
+                let before_restricted = fact_node_allocations();
+                let pure_closed = pure_root
+                    .try_restricted_simp_closure(selected)
+                    .expect("restricted simp should retain the symbolic arithmetic theorem");
+                let restricted_allocations = fact_node_allocations() - before_restricted;
+                assert!(
+                    restricted_allocations <= allocation_bound,
+                    "size {size} restricted {label} simp allocated {restricted_allocations} persistent nodes (bound {allocation_bound})"
+                );
+                assert!(matches!(
+                    pure_closed.certificate().steps(),
+                    [
+                        SimpleProofStep::ApplyTheoremUsing { application, premises },
+                        SimpleProofStep::Assumption,
+                        ] if application.name == *theorem_name
+                            && premises.as_slice() == selected
+                ));
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+                assert!(pure_root.certificate().steps().is_empty());
             }
-            let before_restricted = fact_node_allocations();
-            let pure_closed = pure_root
-                .try_restricted_simp_closure(&selected)
-                .expect("restricted simp should retain the symbolic-add theorem");
-            let restricted_allocations = fact_node_allocations() - before_restricted;
-            assert!(
-                restricted_allocations <= allocation_bound,
-                "size {size} restricted symbolic-add simp allocated {restricted_allocations} persistent nodes (bound {allocation_bound})"
-            );
-            assert!(matches!(
-                pure_closed.certificate().steps(),
-                [
-                    SimpleProofStep::ApplyTheoremUsing { application, premises },
-                    SimpleProofStep::Assumption,
-                ] if application.name == "int32_nonnegative_add_within_max_is_defined"
-                    && premises.as_slice() == selected
-            ));
-            assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
-            assert!(pure_root.certificate().steps().is_empty());
         }
     }
 

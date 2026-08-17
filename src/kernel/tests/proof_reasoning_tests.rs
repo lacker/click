@@ -1470,6 +1470,47 @@ fn symbolic_add_definedness_retains_both_exact_named_theorem_bounds() {
 }
 
 #[test]
+fn symbolic_subtract_definedness_retains_both_exact_named_theorem_bounds() {
+    let value = Bitvector32Term::Variable(Variable(211_110));
+    let amount = Bitvector32Term::Variable(Variable(211_111));
+    let amount_nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(amount.clone(), Bitvector32Term::Constant(0)),
+        true,
+    );
+    let within_value = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(value.clone(), amount.clone()),
+        true,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedSubtractOverflows(
+            Box::new(value.clone()),
+            Box::new(amount.clone()),
+        ),
+        false,
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(amount_nonnegative.clone())
+        .assume_proposition(within_value.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("the two named-theorem bounds should prove symbolic subtraction definedness");
+    let (nonnegative_step, within_value_step) = derivation
+        .int32_nonnegative_subtract_within_value_steps()
+        .expect("the atomic decision should retain both named-theorem premises");
+    assert_eq!(nonnegative_step.lower(), &Bitvector32Term::Constant(0));
+    assert_eq!(nonnegative_step.upper(), &amount);
+    assert!(!nonnegative_step.is_strict());
+    assert_eq!(nonnegative_step.premise(), &amount_nonnegative);
+    assert_eq!(within_value_step.lower(), &amount);
+    assert_eq!(within_value_step.upper(), &value);
+    assert!(!within_value_step.is_strict());
+    assert_eq!(within_value_step.premise(), &within_value);
+    assert!(derivation.replay(&assumptions));
+    assert!(!derivation.replay(&PureFactContext::new()));
+}
+
+#[test]
 fn increment_lower_bound_derivation_retains_both_exact_bounds() {
     let lower = Bitvector32Term::Variable(Variable(212));
     let value = Bitvector32Term::Variable(Variable(213));
