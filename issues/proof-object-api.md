@@ -1597,6 +1597,21 @@ updates, rejected-premise transactionality, and exact retained steps. Source
 regressions cover both a two-arm interface and a direct application inside
 `open`, observe no ordinary replay, and independently verify expansion.
 
+The source-local form of bare execution `transport` now composes through
+those containers as well. The arm or scope child tries the empty premise set
+and the source proposition's own Surface spelling by applying concrete
+`TransportUsing` steps; a success is therefore already the checked retained
+descendant. A first prototype enumerated and re-lowered every ambient fact and
+took more than 40 seconds at 4096 unrelated facts. That design was rejected,
+not hidden behind the fact that transport is a smart tactic. Richer auxiliary
+premise discovery stays on the legacy path until it has a relevance index;
+the new Proof query never scans unrelated facts. Its deterministic
+16-through-4096 curve completes in constant candidate attempts with
+logarithmic persistent updates and checks transactional rejection. Branch and
+`open` source regressions carry a preserved array fact across a disjoint
+store, observe no ordinary replay, retain the exact `TransportUsing`, and
+independently verify expansion.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

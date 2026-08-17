@@ -3515,6 +3515,59 @@ impl<'a> Proof<'a> {
         if !matches!(self.context.as_ref(), ProofContext::Point(_)) {
             return Err(self.step_error("fact-transport search requires a point proof"));
         }
+        self.search_fact_transport_from_candidates(
+            source,
+            target,
+            candidates,
+            "post-execution fact transport",
+        )
+    }
+
+    /// Tries the bounded source-local form of mid-execution fact transport on
+    /// this immutable execution Proof. The smart operation checks the empty
+    /// candidate and the source's own explicit spelling; it never scans the
+    /// ambient fact set. Richer premise discovery remains on the legacy path
+    /// until it has a relevance index rather than an environment-wide scan.
+    pub(super) fn try_execution_fact_transport(
+        &self,
+        source: &ClickProposition,
+        target: &ClickProposition,
+    ) -> Result<Option<Self>, ClickError> {
+        let ProofContext::Execution(_) = self.context.as_ref() else {
+            return Err(
+                self.step_error("execution fact-transport search requires an execution proof")
+            );
+        };
+        let execution = self.state.execution.as_ref().ok_or_else(|| {
+            self.step_error("execution fact-transport search lost its semantic frontier")
+        })?;
+        if execution.replay.is_at_function_entry() {
+            return Err(
+                self.step_error("`transport` requires at least one completed execution step")
+            );
+        }
+        if execution.replay.is_at_function_exit() {
+            return Ok(None);
+        }
+        match self.search_fact_transport_from_candidates(
+            source,
+            target,
+            std::iter::once(source.clone()),
+            "execution-frontier fact transport",
+        ) {
+            Ok(proof) => Ok(Some(proof)),
+            Err(error) if crate::instrumentation::deadline_exceeded() => Err(error),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn search_fact_transport_from_candidates(
+        &self,
+        source: &ClickProposition,
+        target: &ClickProposition,
+        candidates: impl IntoIterator<Item = ClickProposition>,
+        description: &str,
+    ) -> Result<Self, ClickError> {
         let apply = |premises: Vec<ClickProposition>| {
             self.apply_step(SimpleProofStep::TransportUsing {
                 source: source.clone(),
@@ -3553,7 +3606,7 @@ impl<'a> Proof<'a> {
         }
         let Some(mut selected_proof) = selected_proof else {
             return Err(self.step_error(format!(
-                "post-execution fact transport has no explicit surface-premise certificate: {}",
+                "{description} has no explicit surface-premise certificate: {}",
                 last_error
                     .as_ref()
                     .map(|error| error.message())
@@ -5511,6 +5564,48 @@ impl<'a> ExecutionProofBranches<'a> {
         Ok(Some(self.clone().apply_step(take_then, step)?))
     }
 
+    /// Runs bare fact-transport search against the selected arm's immutable
+    /// Proof. Each candidate is an explicit `TransportUsing` checked on that
+    /// arm; only the already-checked successful descendant is retained.
+    pub(super) fn try_fact_transport(
+        &self,
+        take_then: bool,
+        source: &ClickProposition,
+        target: &ClickProposition,
+    ) -> Result<Option<Self>, ClickError> {
+        let arm_index = usize::from(!take_then);
+        let arm = self.arms[arm_index].as_ref().ok_or_else(|| {
+            self.root.step_error(format!(
+                "cannot transport a fact in the infeasible {} execution arm",
+                if take_then { "then" } else { "else" }
+            ))
+        })?;
+        if arm.proof.is_at_function_exit() {
+            return Ok(None);
+        }
+        let prior_effect_count = arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .ok_or_else(|| {
+                self.root
+                    .step_error("execution branch arm lost its semantic state")
+            })?
+            .replay
+            .effect_facts
+            .len();
+        let Some(successor) = arm.proof.try_execution_fact_transport(source, target)? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        let next_arm = next.arms[arm_index]
+            .as_mut()
+            .expect("the cloned feasible arm is retained");
+        Self::retain_arm_successor(next_arm, successor, prior_effect_count);
+        Ok(Some(next))
+    }
+
     /// Runs the narrow statement selector independently in one C arm until
     /// that arm reaches function exit. Every accepted transition is already
     /// a retained `StepUsing` successor. Nested C `if` frontiers recurse
@@ -7206,6 +7301,30 @@ impl<'a> ProofScope<'a> {
             .body
             .select_execution_theorem_application_step(application)?;
         Ok(Some(self.apply_step(step)?))
+    }
+
+    /// Runs bare fact-transport search on the scope's current checked body.
+    /// Failed candidate descendants are discarded by `Proof`; the enclosing
+    /// scope receives only the successful retained `TransportUsing` node.
+    pub(super) fn try_fact_transport(
+        &self,
+        source: &ClickProposition,
+        target: &ClickProposition,
+    ) -> Result<Option<Self>, ClickError> {
+        if self.body.is_at_function_exit() {
+            return Ok(None);
+        }
+        let Some(body) = self.body.try_execution_fact_transport(source, target)? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        for fact in body.added_facts() {
+            if !next.introduced_facts.contains(fact) {
+                next.introduced_facts.push(fact.clone());
+            }
+        }
+        next.body = body;
+        Ok(Some(next))
     }
 
     /// Runs the narrow straight-line `execute_until` search on checked
@@ -13427,6 +13546,144 @@ mod tests {
                 root_execution.replay.surface_propositions,
                 successor_execution.replay.surface_propositions,
                 "an identity transport does not change the recorded surface lowerings"
+            );
+        }
+    }
+
+    #[test]
+    fn execution_transport_search_returns_checked_successors_and_scales() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 choose_second(int32 first, int32 second) {
+                    ensures returns_second: result == second by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let parsed_function = syntax::parse_function(
+            "int32 choose_second(int32 first, int32 second) { first = second; return first; }",
+        )
+        .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let function_environment = CExecutionEnvironment::new();
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+        let state = CState::new();
+        let arguments = vec![CExpression::Value(int32(3)), CExpression::Value(int32(5))];
+        let term = |variable| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(Variable(variable)),
+            )))
+        };
+        let source = ClickProposition::Comparison {
+            left: term(8_170_000),
+            operator: ComparisonOperator::LessThan,
+            right: term(8_170_001),
+        };
+        let missing = ClickProposition::Comparison {
+            left: term(8_170_002),
+            operator: ComparisonOperator::Equal,
+            right: term(8_170_003),
+        };
+        let kernel_source = lower_point_proposition_with_assumptions(
+            &source,
+            &PureFactContext::new(),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            None,
+            &ProgramPointStates::new(),
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("the exact transport source should lower");
+
+        let mut samples = Vec::new();
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            pure_facts.push(kernel_source.clone());
+            let mut replay = TacticReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..TacticReplayState::default()
+            };
+            replay
+                .surface_propositions
+                .record_lowering(&source, &kernel_source)
+                .expect("the selected source spelling should be recorded");
+            let root = Proof::for_execution_frontier(
+                "persistent transport search",
+                0,
+                ProofReplayContext {
+                    state: state.clone(),
+                    pure_facts,
+                    replay,
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let progressed = root
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("the meaningful assignment should advance the execution Proof");
+            if size == 16 {
+                let retained = progressed.clone();
+                let rejected = progressed
+                    .try_execution_fact_transport(&source, &missing)
+                    .expect("a bounded rejected transport search should remain prompt");
+                assert!(
+                    rejected.is_none(),
+                    "an unrelated target must not be manufactured by transport search"
+                );
+                assert!(Arc::ptr_eq(&progressed.state, &retained.state));
+                assert!(matches!(
+                    progressed.certificate().steps(),
+                    [SimpleProofStep::StepUsing(_)]
+                ));
+            }
+
+            let before = fact_node_allocations();
+            let transported = progressed
+                .try_execution_fact_transport(&source, &source)
+                .expect("the bounded source candidate search should run")
+                .expect("the source candidate should produce one checked transport descendant");
+            samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before,
+            ));
+            assert!(matches!(
+                transported.certificate().steps(),
+                [
+                    SimpleProofStep::StepUsing(_),
+                    SimpleProofStep::TransportUsing {
+                        source: retained_source,
+                        target,
+                        premises,
+                    },
+                ] if retained_source == &source
+                    && target == &source
+                    && premises == std::slice::from_ref(&source)
+            ));
+            assert!(root.certificate().steps().is_empty());
+        }
+        let (_, base_height, base_allocations) = samples[0];
+        for (size, height, allocations) in samples {
+            let bound = base_allocations + 32 * (height - base_height);
+            assert!(
+                allocations <= bound,
+                "size {size} execution transport search allocated {allocations} persistent nodes (bound {bound})"
             );
         }
     }

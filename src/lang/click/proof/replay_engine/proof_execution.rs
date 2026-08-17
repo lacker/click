@@ -41,7 +41,9 @@ fn linear_execution_branch_tactics(node: &InternalProofNode) -> Option<&[Indexed
             linear_execution_simple_step(&indexed.tactic).is_some()
                 || matches!(
                     indexed.tactic,
-                    ProofTactic::SmartStep | ProofTactic::ApplyTheorem(_)
+                    ProofTactic::SmartStep
+                        | ProofTactic::ApplyTheorem(_)
+                        | ProofTactic::Transport { .. }
                 )
         })
         .then_some(tactics)
@@ -63,6 +65,11 @@ fn advance_execution_branch_arm<'a>(
             branches = next;
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             let Some(next) = branches.try_theorem_application(take_then, application)? else {
+                return Ok(None);
+            };
+            branches = next;
+        } else if let ProofTactic::Transport { source, target } = &indexed.tactic {
+            let Some(next) = branches.try_fact_transport(take_then, source, target)? else {
                 return Ok(None);
             };
             branches = next;
@@ -106,6 +113,7 @@ fn checked_open_scope_can_service_capture(
                     indexed.tactic,
                     ProofTactic::SmartStep
                         | ProofTactic::ApplyTheorem(_)
+                        | ProofTactic::Transport { .. }
                         | ProofTactic::SmartExecute
                         | ProofTactic::SmartExecuteAllPaths
                         | ProofTactic::SmartFrame(_)
@@ -159,6 +167,23 @@ fn advance_linear_open_scope<'a>(
                 return Ok(None);
             };
             scope = applied;
+            if let Some(site) = proof_site {
+                let certificate = scope.certificate_since(&checkpoint)?;
+                record_proof_site_tactic_expansion(
+                    expansion_capture.as_deref_mut(),
+                    site,
+                    indexed.source_index,
+                    &certificate.to_proof_tactics(),
+                );
+            }
+            continue;
+        }
+        if let ProofTactic::Transport { source, target } = &indexed.tactic {
+            let checkpoint = scope.checkpoint();
+            let Some(transported) = scope.try_fact_transport(source, target)? else {
+                return Ok(None);
+            };
+            scope = transported;
             if let Some(site) = proof_site {
                 let certificate = scope.certificate_since(&checkpoint)?;
                 record_proof_site_tactic_expansion(

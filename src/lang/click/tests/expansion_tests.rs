@@ -5433,6 +5433,79 @@ fn linear_open_retains_a_direct_bare_theorem_application() {
 }
 
 #[test]
+fn linear_open_retains_a_direct_bare_fact_transport() {
+    let c_source = r#"
+        int32 set_second_return_first(int32 p[2]) {
+            p[1] = 9;
+            return p[0];
+        }
+    "#;
+    let click_source = r#"
+        resource first_is_seven(p: int32[]) {
+            owns p[0..2];
+            fact p[0] == 7;
+        }
+
+        verifying "set_second_return_first.c";
+
+        int32 set_second_return_first(int32 p[2]) {
+            owns first_is_seven(p);
+            mutable p[1..2];
+            ensures result == 7;
+        } by {
+            open(first_is_seven(p)) {
+                step();
+                transport(old(p[0]) == 7, p[0] == 7);
+                step();
+            }
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("set_second_return_first.c", c_source)])
+    });
+    let verified = verified.expect("the direct transport should advance the open Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "set_second_return_first.contract"
+                    && name == "surface certificate replay"
+        )),
+        "ordinary open-scope transport search must not replay its retained step: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked open transport should retain its expansion");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(open))
+                if matches!(
+                    open.tactics.as_slice(),
+                    [
+                        ProofTactic::StepUsing(_),
+                        ProofTactic::TransportUsing { premises, .. },
+                        ProofTactic::StepUsing(_),
+                    ] if !premises.is_empty()
+                )
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("set_second_return_first.c", c_source)],
+        "set_second_return_first",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained open-scope transport should expand");
+    verify_c0_sources(&expanded, &[("set_second_return_first.c", c_source)])
+        .expect("the explicit open-scope transport should independently re-derive");
+}
+
+#[test]
 fn branch_interface_retains_its_checked_abstract_join() {
     let c_source = r#"
         int32 nonnegative(int32 x) {
@@ -5761,6 +5834,96 @@ fn branch_arms_retain_bare_theorem_applications_on_proof() {
     .expect("the retained branch applications should expand");
     verify_c0_sources(&expanded, &[("retain_order.c", c_source)])
         .expect("the explicit branch applications should independently re-derive");
+}
+
+#[test]
+fn branch_arms_retain_bare_fact_transports_on_proof() {
+    let c_source = r#"
+        int32 set_choice_return_first(int32 p[2], int32 flag) {
+            if (flag != 0) {
+                p[1] = 1;
+            } else {
+                p[1] = 2;
+            }
+            return p[0];
+        }
+    "#;
+    let click_source = r#"
+        predicate first_is_seven(p: int32[]) {
+            p[0] == 7
+        }
+
+        verifying "set_choice_return_first.c";
+
+        int32 set_choice_return_first(int32 p[2], int32 flag) {
+            requires first_is_seven(p);
+            consumes p[0..2];
+            mutable p[1..2];
+            produces p[0..2];
+            ensures result == 7;
+        } by {
+            unfold(first_is_seven);
+            branch {
+                ensuring {
+                    fact p[0] == 7;
+                    owns p[0..2];
+                }
+                then {
+                    step();
+                    transport(old(p[0]) == 7, p[0] == 7);
+                }
+                else {
+                    step();
+                    transport(old(p[0]) == 7, p[0] == 7);
+                }
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("set_choice_return_first.c", c_source)])
+    });
+    let verified = verified.expect("bare arm transports should advance the branch Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "set_choice_return_first.contract"
+                    && name == "surface certificate replay"
+        )),
+        "ordinary branch transport search must not replay its retained steps: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked arm transports should retain an expansion");
+    assert!(
+        matches!(
+            tactics.get(1),
+            Some(ProofTactic::Branch(branch))
+                if matches!(
+                    branch.then_tactics.as_slice(),
+                    [ProofTactic::StepUsing(_), ProofTactic::TransportUsing { premises, .. }]
+                        if !premises.is_empty()
+                ) && matches!(
+                    branch.else_tactics.as_slice(),
+                    [ProofTactic::StepUsing(_), ProofTactic::TransportUsing { premises, .. }]
+                        if !premises.is_empty()
+                )
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("set_choice_return_first.c", c_source)],
+        "set_choice_return_first",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained branch transports should expand");
+    verify_c0_sources(&expanded, &[("set_choice_return_first.c", c_source)])
+        .expect("the explicit branch transports should independently re-derive");
 }
 
 #[test]
