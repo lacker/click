@@ -61,6 +61,13 @@ fn advance_linear_open_scope<'a>(
             scope = executed;
             continue;
         }
+        if let ProofTactic::ExecuteUntil(region) = &indexed.tactic {
+            let Some(executed) = scope.try_linear_execute_until(region)? else {
+                return Ok(None);
+            };
+            scope = executed;
+            continue;
+        }
         let ProofTactic::Have(have) = &indexed.tactic else {
             return Ok(None);
         };

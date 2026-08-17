@@ -4660,6 +4660,78 @@ fn linear_execute_inside_open_retains_checked_statement_steps() {
 }
 
 #[test]
+fn linear_execute_until_inside_open_stops_on_checked_frontier() {
+    let c_source = r#"
+        int32 three_steps(int32 x) {
+            int32 value = x;
+            value = value;
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "three_steps.c";
+
+        int32 three_steps(int32 x) {
+            owns marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            open(marker(x)) {
+                execute_until(statement(2));
+                step();
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("three_steps.c", c_source)])
+    });
+    let verified = verified.expect("execute_until should advance the checked open frontier");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "three_steps.contract" && name == "surface certificate replay"
+        )),
+        "scoped execute_until must retain its checked statement path: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked grouped proof should retain its stopped frontier path");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(open))
+                if matches!(
+                    open.tactics.as_slice(),
+                    [
+                        ProofTactic::StepUsing(_),
+                        ProofTactic::StepUsing(_),
+                        ProofTactic::StepUsing(_)
+                    ]
+                )
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("three_steps.c", c_source)],
+        "three_steps",
+        CProofClaim::Grouped,
+    )
+    .expect("the grouped scoped execute_until should expand");
+    verify_c0_sources(&expanded, &[("three_steps.c", c_source)])
+        .expect("the retained stopped-frontier steps should independently replay");
+}
+
+#[test]
 fn linear_open_have_retains_the_selected_theorem_application() {
     let c_source = r#"
         int32 two_steps(int32 x) {

@@ -2633,6 +2633,36 @@ impl<'a> Proof<'a> {
             .is_some_and(|execution| execution.replay.is_at_function_exit())
     }
 
+    /// Resolves a Surface Click statement region against this proof's source
+    /// layout without exposing the mutable frontier or replay metadata.
+    fn resolve_statement_target(&self, region: &CodeRegionRef) -> Result<usize, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("`execute_until` requires an execution proof"));
+        };
+        let CodeRegion::Statement(statement_index) = resolve_code_region_ref(
+            context.function_block,
+            region,
+            context.claim_label,
+            context.tactic_index,
+        )?
+        else {
+            return Err(self.step_error("`execute_until` expects a statement region"));
+        };
+        Ok(statement_index)
+    }
+
+    /// Returns the current source-statement frontier for a checked execution
+    /// proof, or `None` after function exit.
+    fn current_statement_index(&self) -> Result<Option<usize>, ClickError> {
+        let execution = self
+            .state
+            .execution
+            .as_ref()
+            .ok_or_else(|| self.step_error("execution proof lost its semantic frontier"))?;
+        Ok((!execution.replay.is_at_function_exit())
+            .then_some(execution.replay.frontier.next_statement_index))
+    }
+
     /// Searches explicit premise spellings for one point fact transport.
     ///
     /// Every candidate is checked by applying the corresponding simple step
@@ -4896,6 +4926,48 @@ impl<'a> ProofScope<'a> {
         }
         if !advanced {
             return Ok(None);
+        }
+        let mut next = self.clone();
+        next.introduced_facts = introduced_facts;
+        next.body = proof;
+        Ok(Some(next))
+    }
+
+    /// Runs the narrow straight-line `execute_until` search on checked
+    /// descendants and stops before the selected source statement.
+    pub(super) fn try_linear_execute_until(
+        &self,
+        region: &CodeRegionRef,
+    ) -> Result<Option<Self>, ClickError> {
+        let target = self.body.resolve_statement_target(region)?;
+        let Some(current) = self.body.current_statement_index()? else {
+            return Err(self
+                .root
+                .step_error("`execute_until` cannot run after function exit"));
+        };
+        if target < current {
+            return Err(self.root.step_error(format!(
+                "`execute_until(statement({target}))` cannot move backward from statement({current})"
+            )));
+        }
+
+        let mut proof = self.body.clone();
+        let mut introduced_facts = self.introduced_facts.clone();
+        loop {
+            match proof.current_statement_index()? {
+                Some(current) if current == target => break,
+                Some(current) if current < target => {}
+                Some(_) | None => return Ok(None),
+            }
+            let Some(next) = proof.try_indexed_statement_step()? else {
+                return Ok(None);
+            };
+            for fact in next.added_facts() {
+                if !introduced_facts.contains(fact) {
+                    introduced_facts.push(fact.clone());
+                }
+            }
+            proof = next;
         }
         let mut next = self.clone();
         next.introduced_facts = introduced_facts;

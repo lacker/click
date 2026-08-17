@@ -1401,8 +1401,14 @@ is selected only when at least one checked statement reaches function exit,
 so unsupported statements and branches still fall back without publishing a
 partial descendant. A source regression pins the retained pair of statement
 steps, observes no ordinary construction replay, and independently verifies
-the expanded scope. General execute search, branch traversal, and
-`execute_until` remain to migrate.
+the expanded scope. The same checked-descendant loop now supports straight-line
+`execute_until(statement(N))` inside the scope. The target is resolved as a
+read-only proof query, every traversed statement advances through
+`apply_step`, and search stops on the retained frontier before the target.
+Its source regression combines the smart prefix with a following explicit
+scope step, pins their one ordered child certificate, observes no ordinary
+replay, and independently verifies expansion. General execute search and
+branch traversal remain to migrate.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
