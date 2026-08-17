@@ -579,6 +579,90 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     Ok(Some((goal, certificate)))
 }
 
+/// Tries the one smart statement candidate whose selection requires no
+/// mutable planning aftermath: a fact-free terminal return using no premises.
+///
+/// Keep this operation and its result outlined from the recursive proof
+/// executor. The deep pure-case regression is intentionally sensitive to
+/// growth in that caller's stack frame.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn try_fact_free_return_step_on_proof<'a>(
+    state: &mut CState,
+    pure_facts: &mut Vec<Proposition>,
+    replay: &mut TacticReplayState,
+    branch_path: &mut PersistentSequence<String>,
+    function_block: &'a FunctionBlock,
+    function: &'a CFunction,
+    parsed_function: &'a syntax::C0Function,
+    arguments: &'a [CExpression],
+    function_environment: &'a CExecutionEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    claim_label: &'a str,
+    tactic_index: usize,
+) -> Result<bool, ClickError> {
+    let (_, _, frontier_statement, _) = next_top_level_statement_from_execution_point(
+        replay,
+        state,
+        function,
+        arguments,
+        claim_label,
+        tactic_index,
+        "step",
+    )?;
+    let has_no_transportable_context = pure_facts.is_empty()
+        && replay.effect_facts.is_empty()
+        && replay.surface_propositions.kernel_facts().next().is_none();
+    if !matches!(frontier_statement, CStatement::Return(_)) || !has_no_transportable_context {
+        return Ok(false);
+    }
+
+    let context = ProofReplayContext {
+        state: std::mem::replace(state, CState::new()),
+        pure_facts: std::mem::take(pure_facts),
+        replay: std::mem::take(replay),
+        branch_path: std::mem::take(branch_path),
+    };
+    let root = Proof::for_execution_frontier(
+        claim_label,
+        tactic_index,
+        context,
+        function_block,
+        function,
+        parsed_function,
+        arguments,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    );
+    match root.apply_step(SimpleProofStep::StepUsing(Vec::new())) {
+        Ok(proof) => {
+            let certificate = proof.certificate();
+            let context = proof.into_execution_context()?;
+            *state = context.state;
+            *pure_facts = context.pure_facts;
+            *replay = context.replay;
+            *branch_path = context.branch_path;
+            for step in certificate.steps() {
+                replay.proof_certificate_builder.push_step(step.clone());
+            }
+            Ok(true)
+        }
+        Err(_) => {
+            check_verification_deadline()?;
+            let context = root.into_execution_context()?;
+            *state = context.state;
+            *pure_facts = context.pure_facts;
+            *replay = context.replay;
+            *branch_path = context.branch_path;
+            Ok(false)
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn replay_linear_tactics_without_frontier_loops(
     context: ProofReplayContext,
@@ -1050,6 +1134,37 @@ fn replay_linear_tactics_without_frontier_loops(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::SmartStep => {
+                if try_fact_free_return_step_on_proof(
+                    &mut state,
+                    &mut requirement_pure_facts,
+                    &mut replay,
+                    &mut branch_path,
+                    function_block,
+                    function,
+                    parsed_function,
+                    arguments,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    theorem_environment,
+                    claim_label,
+                    tactic_index,
+                )? {
+                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                    let slice = end_tactic_surface_scope(
+                        &mut replay,
+                        scope.take().expect("tactic scope is open"),
+                    );
+                    if capture_this_tactic {
+                        finish_tactic_expansion_capture(
+                            expansion_capture.as_deref_mut(),
+                            &slice,
+                            false,
+                        );
+                    }
+                    continue;
+                }
+
                 let mut planning_replay = replay.clone();
                 planning_replay.planned_statement_transitions.clear();
                 planning_replay.proof_certificate_builder = ProofCertificateBuilder {

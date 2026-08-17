@@ -359,6 +359,24 @@ successor back out, and append its retained step. They no longer use
 `complete_smart_tactic` or ordinary per-tactic replay. Multi-step and
 branching plans remain on the legacy path pending structured proof goals.
 
+No-premise smart `step()` at a fact-free terminal return now searches on
+`Proof` directly rather than first executing the statement on a mutable
+planning context. The direct path requires that no ambient pure facts, effect
+facts, or recorded kernel spellings exist to transport. Its first candidate is
+the literal `StepUsing([])` transition; success retains that checked successor
+as both semantic state and certificate, while failure leaves the root intact
+and falls through to the richer premise planner. Deadline failure is not
+swallowed as an ordinary rejected candidate. A focused counter regression
+requires zero planning transitions for the accepted no-premise return and
+exactly one fallback planning transition when an overflow prerequisite must be
+selected; expansion independently verifies both retained forms. Every
+nonterminal or fact-bearing statement deliberately retains automatic transport
+planning even when its bare C operation could execute, because the current or
+later postcondition may depend on facts that smart `step()` is expected to
+carry forward. This is the first execution search path where smart selection
+operates on proof objects, not merely where planner output is checked by one
+afterward.
+
 Linear `execute()` and `execute_all_paths()` plans composed entirely of one or
 more `StepUsing` operations now use the same checked execution `Proof` path.
 The proof owns the whole accepted sequence and exports its retained

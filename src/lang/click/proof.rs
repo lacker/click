@@ -24,6 +24,13 @@ pub(super) use claim_proofs::{
     prove_claim_by_tactics, prove_claims_by_grouped_auto, prove_claims_by_grouped_script,
 };
 use cursor_execution::*;
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_planning_statement_transitions<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    cursor_execution::count_planning_statement_transitions(operation)
+}
 use execution_planning::*;
 pub(super) use execution_planning::{
     StatementFactTransportPolicy, StatementPrerequisitePolicy, certified_statement_transitions,

@@ -1195,6 +1195,21 @@ fn statement_expression_definedness(state: &CState, statement: &CStatement) -> V
         .collect()
 }
 
+#[cfg(test)]
+thread_local! {
+    static PLANNING_STATEMENT_TRANSITIONS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+#[cfg(test)]
+pub(super) fn count_planning_statement_transitions<R>(operation: impl FnOnce() -> R) -> (R, usize) {
+    let before = PLANNING_STATEMENT_TRANSITIONS.with(std::cell::Cell::get);
+    let result = operation();
+    let after = PLANNING_STATEMENT_TRANSITIONS.with(std::cell::Cell::get);
+    (result, after - before)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn execute_step_from_execution_point(
     replay: &mut TacticReplayState,
@@ -1214,6 +1229,10 @@ pub(super) fn execute_step_from_execution_point(
     loop_step_policy: LoopStepPolicy,
     construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<Vec<Proposition>, ClickError> {
+    #[cfg(test)]
+    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+        PLANNING_STATEMENT_TRANSITIONS.with(|count| count.set(count.get() + 1));
+    }
     replay.completed_branch_regions.clear();
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {

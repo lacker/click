@@ -305,10 +305,16 @@ fn execute_step_records_a_point_checked_surface_expansion() {
             }
         "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("increment.c", c_source)])
+    let ((verified, events), planning_transitions) = count_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| {
+            verify_c0_sources(click_source, &[("increment.c", c_source)])
+        })
     });
     let verified = verified.expect("the smart execution step should verify");
+    assert_eq!(
+        planning_transitions, 1,
+        "a rejected no-premise candidate should fall through to exactly one richer planning transition"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -356,6 +362,57 @@ fn execute_step_records_a_point_checked_surface_expansion() {
     assert!(rewritten.contains("x < 2147483647;"), "{rewritten}");
     verify_c0_sources(&rewritten, &[("increment.c", c_source)])
         .expect("the emitted numeric prerequisite should replay");
+}
+
+#[test]
+fn no_premise_smart_step_searches_directly_on_proof() {
+    let c_source = r#"
+            int32 zero() {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "zero.c";
+
+            int32 zero() {
+                ensures result == 0;
+            } by {
+                step();
+                normalize();
+            }
+        "#;
+
+    let ((verified, events), planning_transitions) = count_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &[("zero.c", c_source)]))
+    });
+    let verified = verified.expect("a no-premise smart step should verify on its Proof successor");
+    assert_eq!(
+        planning_transitions, 0,
+        "the accepted no-premise candidate must not first execute a mutable planning transition"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "zero.contract" && name == "surface certificate replay"
+        )),
+        "the direct Proof successor must not pass through ordinary construction replay: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked smart step should retain its expansion");
+    assert_eq!(expanded[0], ProofTactic::StepUsing(Vec::new()));
+    assert_eq!(expanded[1], ProofTactic::Normalize);
+
+    let expanded_source = expand_c0_claim_source(
+        click_source,
+        &[("zero.c", c_source)],
+        "zero",
+        CProofClaim::Grouped,
+    )
+    .expect("the direct smart step should expand into source");
+    verify_c0_sources(&expanded_source, &[("zero.c", c_source)])
+        .expect("the retained no-premise step should independently reverify");
 }
 
 #[test]
