@@ -192,6 +192,18 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact `lower + 1 <= value` premise selected when the atomic
+    /// prover established `lower < value`.
+    pub fn int32_successor_le_implies_lt_step(&self) -> Option<&SignedOrderDerivationStep> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::Int32SuccessorLeImpliesLt(step),
+                ..
+            } => Some(step),
+            _ => None,
+        }
+    }
+
     /// Return the exact `not (value < lower + 1)` premise selected when the
     /// atomic prover established `value >= lower`.
     pub fn int32_negated_strict_successor_bound_step(&self) -> Option<&SignedOrderDerivationStep> {

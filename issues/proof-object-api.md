@@ -1355,6 +1355,12 @@ or accept merely derivable ambient premises. A deterministic 16-through-4096
 unrelated-fact regression covers both the point and restricted-pure composed
 paths.
 
+The same theorem-application seam now covers the direct adjacent-bound rule
+`lower + 1 <= value` to `lower < value`. The kernel retains the exact
+non-strict source edge, and pure, point, and outcome `simp` submit
+`int32_successor_le_implies_lt` directly to `Proof`. This one-step case shares
+the same deterministic unrelated-fact curve and expansion check.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

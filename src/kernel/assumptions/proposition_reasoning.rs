@@ -1180,6 +1180,25 @@ impl PureFactContext {
                 .map(AtomicPropositionDerivationEvidence::Int32StrictlyPositiveIsNonnegative),
             _ => None,
         };
+        let successor_le_implies_lt_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(lower, value),
+                true,
+            ) => match lower.as_ref() {
+                Bitvector32Term::Constant(lower_bits) => (*lower_bits as i32)
+                    .checked_add(1)
+                    .and_then(|successor| {
+                        self.exact_direct_order_step(
+                            &Bitvector32Term::Constant(successor as u32),
+                            value,
+                            false,
+                        )
+                    })
+                    .map(AtomicPropositionDerivationEvidence::Int32SuccessorLeImpliesLt),
+                _ => None,
+            },
+            _ => None,
+        };
         let negated_strict_successor_bound_evidence = match proposition {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedGreaterEqual(value, lower),
@@ -1302,6 +1321,7 @@ impl PureFactContext {
             .or(le_and_neq_strict_evidence)
             .or(positive_is_nonnegative_evidence)
             .or(strictly_positive_is_nonnegative_evidence)
+            .or(successor_le_implies_lt_evidence)
             .or(negated_strict_successor_bound_evidence)
             .or(signed_order_evidence)
             .or(increment_upper_bound_evidence)
@@ -1583,6 +1603,25 @@ impl PureFactContext {
                 && step.lower == Bitvector32Term::Constant(0)
                 && step.upper == **value
                 && step.strict
+                && self.replays_exact_order_step(step);
+        }
+        if let AtomicPropositionDerivationEvidence::Int32SuccessorLeImpliesLt(step) = evidence {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(lower, value),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            let Bitvector32Term::Constant(lower_bits) = lower.as_ref() else {
+                return false;
+            };
+            let Some(successor_bits) = (*lower_bits as i32).checked_add(1) else {
+                return false;
+            };
+            return step.lower == Bitvector32Term::Constant(successor_bits as u32)
+                && step.upper == **value
+                && !step.strict
                 && self.replays_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32NegatedStrictSuccessorBound(step) =

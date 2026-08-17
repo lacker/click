@@ -1710,6 +1710,7 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32IncrementPreservesOrder(Box<Int32IncrementBoundsEvidence>),
     Int32PositiveIsNonnegative(SignedOrderDerivationStep),
     Int32StrictlyPositiveIsNonnegative(SignedOrderDerivationStep),
+    Int32SuccessorLeImpliesLt(SignedOrderDerivationStep),
     Int32NegatedStrictSuccessorBound(SignedOrderDerivationStep),
     Int32PositivePredecessorIsNonnegative(SignedOrderDerivationStep),
     Int32PositivePredecessorStrictlyDecreases(SignedOrderDerivationStep),

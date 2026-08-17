@@ -2000,6 +2000,15 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| {
+                let recorded =
+                    recorded_int32_successor_le_implies_lt_pairs(derivation, &premise_pairs)?;
+                plan_recorded_int32_successor_le_implies_lt_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
                 let recorded = recorded_int32_negated_strict_successor_bound_pairs(
                     derivation,
                     &premise_pairs,
@@ -7957,6 +7966,11 @@ mod tests {
             operator: ComparisonOperator::LessThan,
             right: expression(value.clone()),
         };
+        let successor_lower_premise = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(2)),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(value.clone()),
+        };
         let negated_successor_premise =
             ClickProposition::Not(Box::new(ClickProposition::Comparison {
                 left: expression(value.clone()),
@@ -8000,6 +8014,11 @@ mod tests {
             operator: ComparisonOperator::GreaterEqual,
             right: expression(Bitvector32Term::Constant(1)),
         };
+        let surface_adjacent_strict_goal = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(1)),
+            operator: ComparisonOperator::LessThan,
+            right: expression(value.clone()),
+        };
         let lower = |surface: &ClickProposition| {
             lower_point_proposition_with_assumptions(
                 surface,
@@ -8019,6 +8038,7 @@ mod tests {
         let kernel_definedness_premise = lower(&definedness_premise);
         let kernel_positive_premise = lower(&positive_premise);
         let kernel_strictly_positive_premise = lower(&strictly_positive_premise);
+        let kernel_successor_lower_premise = lower(&successor_lower_premise);
         let kernel_negated_successor_premise = lower(&negated_successor_premise);
         let goals = [
             (
@@ -8062,6 +8082,14 @@ mod tests {
                 false,
             ),
             (
+                lower(&surface_adjacent_strict_goal),
+                "int32_successor_le_implies_lt",
+                "adjacent strict lower bound",
+                &successor_lower_premise,
+                &kernel_successor_lower_premise,
+                false,
+            ),
+            (
                 lower(&surface_successor_lower_goal),
                 "int32_ge_transitive",
                 "negated strict successor bound",
@@ -8080,6 +8108,9 @@ mod tests {
         surface_propositions
             .record_lowering(&positive_premise, &kernel_positive_premise)
             .expect("the exact positive premise should be indexed");
+        surface_propositions
+            .record_lowering(&successor_lower_premise, &kernel_successor_lower_premise)
+            .expect("the exact successor lower-bound premise should be indexed");
         surface_propositions
             .record_lowering(
                 &strictly_positive_premise,

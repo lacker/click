@@ -361,3 +361,9 @@ condition. The typed consumer therefore matches that fixed polarity pair in
 bounded work while retaining the original Click spelling for the exact
 `apply using` premise. The shared 16-through-4096 single-premise curve now
 covers this multi-step derivation as well as the one-step arithmetic rules.
+
+The adjacent-bound decision `lower + 1 <= value` to `lower < value` is typed
+as well. It records the exact non-strict edge and transcribes it as the
+existing `int32_successor_le_implies_lt` simple theorem application. Pure and
+point Proof paths now retain that application without construction replay;
+the existing expansion regression independently verifies it.

@@ -150,6 +150,33 @@ fn int32_negated_strict_successor_bound_retains_its_exact_premise() {
 }
 
 #[test]
+fn int32_successor_le_implies_lt_retains_its_exact_premise() {
+    let value = Bitvector32Term::Variable(Variable(90_009));
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), value.clone()),
+        true,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(Bitvector32Term::Constant(1), value.clone()),
+        true,
+    );
+    let assumptions = PureFactContext::new().assume_proposition(premise.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("2 <= value should derive 1 < value");
+    let step = derivation
+        .int32_successor_le_implies_lt_step()
+        .expect("the atomic decision should retain its adjacent lower bound");
+    assert_eq!(step.lower(), &Bitvector32Term::Constant(2));
+    assert_eq!(step.upper(), &value);
+    assert!(!step.is_strict());
+    assert_eq!(step.premise(), &premise);
+    assert!(derivation.replay(&assumptions));
+    assert!(!derivation.replay(&PureFactContext::new()));
+}
+
+#[test]
 fn int32_le_and_neq_strict_derivation_retains_both_exact_premises() {
     let left = Bitvector32Term::Variable(Variable(90_006));
     let right = Bitvector32Term::Variable(Variable(90_007));

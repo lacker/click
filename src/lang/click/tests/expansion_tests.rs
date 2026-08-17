@@ -3191,6 +3191,18 @@ fn restricted_simp_expands_adjacent_order_to_theorem_application() {
             }
         }
     "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the typed adjacent-order rule should verify through the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "two_at_most_implies_one_below.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained adjacent-order proof must not use construction replay: {events:#?}"
+    );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
         .bytes()
