@@ -210,6 +210,37 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact `1 <= value` edge selected when the atomic prover
+    /// first derived positivity and then established a nonnegative
+    /// predecessor.
+    pub fn int32_one_le_predecessor_is_nonnegative_step(
+        &self,
+    ) -> Option<&SignedOrderDerivationStep> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32OneLePredecessorIsNonnegative(step),
+                ..
+            } => Some(step),
+            _ => None,
+        }
+    }
+
+    /// Return the exact `1 <= value` edge selected when the atomic prover
+    /// first derived positivity and then established predecessor decrease.
+    pub fn int32_one_le_predecessor_strictly_decreases_step(
+        &self,
+    ) -> Option<&SignedOrderDerivationStep> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32OneLePredecessorStrictlyDecreases(step),
+                ..
+            } => Some(step),
+            _ => None,
+        }
+    }
+
     pub fn context_premises(&self) -> Vec<Proposition> {
         let mut premises = BTreeSet::new();
         self.collect_context_premises(&mut premises);

@@ -1334,6 +1334,28 @@ fn predecessor_derivations_retain_their_exact_named_rule_premises() {
     assert!(!bounded_step.is_strict());
     assert_eq!(bounded_step.premise(), &bounded);
     assert!(bounded_derivation.replay(&bounded_assumptions));
+
+    let one_le = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(value.clone(), Bitvector32Term::Constant(1)),
+        true,
+    );
+    let one_le_assumptions = PureFactContext::new().assume_proposition(one_le.clone());
+    for (goal, nonnegative_result) in [(&nonnegative_goal, true), (&decrease_goal, false)] {
+        let derivation = one_le_assumptions
+            .derive_simp_proposition(goal)
+            .expect("one at most the value should prove the predecessor conclusion");
+        let step = if nonnegative_result {
+            derivation.int32_one_le_predecessor_is_nonnegative_step()
+        } else {
+            derivation.int32_one_le_predecessor_strictly_decreases_step()
+        }
+        .expect("the derived predecessor decision should retain its exact one-le source");
+        assert_eq!(step.lower(), &Bitvector32Term::Constant(1));
+        assert_eq!(step.upper(), &value);
+        assert!(!step.is_strict());
+        assert_eq!(step.premise(), &one_le);
+        assert!(derivation.replay(&one_le_assumptions));
+    }
 }
 
 #[test]

@@ -1927,6 +1927,23 @@ impl<'a> Proof<'a> {
                     &recorded,
                     point_application_closes_goal,
                 )
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_one_le_predecessor_is_nonnegative_pairs(
+                    derivation,
+                    &premise_pairs,
+                )
+                .or_else(|| {
+                    recorded_int32_one_le_predecessor_strictly_decreases_pairs(
+                        derivation,
+                        &premise_pairs,
+                    )
+                })?;
+                plan_recorded_int32_one_le_predecessor_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
             })?;
         let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
         let proof = self.check_certificate(&candidate).ok()?;
@@ -7596,6 +7613,11 @@ mod tests {
             operator: ComparisonOperator::LessEqual,
             right: expression(bound.clone()),
         };
+        let one_le = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(1)),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(value.clone()),
+        };
         let surface_goals = [
             (
                 ClickProposition::Comparison {
@@ -7605,6 +7627,7 @@ mod tests {
                 },
                 "int32_positive_predecessor_is_nonnegative",
                 vec![positive.clone()],
+                false,
             ),
             (
                 ClickProposition::Comparison {
@@ -7614,6 +7637,7 @@ mod tests {
                 },
                 "int32_positive_predecessor_strictly_decreases",
                 vec![positive.clone()],
+                false,
             ),
             (
                 ClickProposition::Comparison {
@@ -7623,6 +7647,27 @@ mod tests {
                 },
                 "int32_nonnegative_predecessor_upper_bound",
                 vec![nonnegative.clone(), bounded.clone()],
+                false,
+            ),
+            (
+                ClickProposition::Comparison {
+                    left: expression(Bitvector32Term::Constant(0)),
+                    operator: ComparisonOperator::LessEqual,
+                    right: predecessor(),
+                },
+                "int32_positive_predecessor_is_nonnegative",
+                vec![one_le.clone()],
+                true,
+            ),
+            (
+                ClickProposition::Comparison {
+                    left: predecessor(),
+                    operator: ComparisonOperator::LessThan,
+                    right: expression(value.clone()),
+                },
+                "int32_positive_predecessor_strictly_decreases",
+                vec![one_le.clone()],
+                true,
             ),
         ];
         let lower_surface = |surface: &ClickProposition| {
@@ -7643,10 +7688,11 @@ mod tests {
         let kernel_positive = lower_surface(&positive);
         let kernel_nonnegative = lower_surface(&nonnegative);
         let kernel_bounded = lower_surface(&bounded);
+        let kernel_one_le = lower_surface(&one_le);
         let goals = surface_goals
             .iter()
-            .map(|(surface, theorem, selected)| {
-                (lower_surface(surface), *theorem, selected.clone())
+            .map(|(surface, theorem, selected, nested)| {
+                (lower_surface(surface), *theorem, selected.clone(), *nested)
             })
             .collect::<Vec<_>>();
         let mut surface_propositions = SurfacePropositionMap::default();
@@ -7654,6 +7700,7 @@ mod tests {
             (&positive, &kernel_positive),
             (&nonnegative, &kernel_nonnegative),
             (&bounded, &kernel_bounded),
+            (&one_le, &kernel_one_le),
         ] {
             surface_propositions
                 .record_lowering(surface, kernel)
@@ -7661,13 +7708,10 @@ mod tests {
         }
 
         for size in [16_u32, 64, 256, 1024, 4096] {
-            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
-            facts.extend([
-                kernel_positive.clone(),
-                kernel_nonnegative.clone(),
-                kernel_bounded.clone(),
-            ]);
-            for (goal, theorem_name, selected) in &goals {
+            let unrelated_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            for (goal, theorem_name, selected, nested) in &goals {
+                let mut facts = unrelated_facts.clone();
+                facts.extend(selected.iter().map(&lower_surface));
                 let root = Proof::for_point_goal(
                     "persistent point predecessor simp",
                     0,
@@ -7691,7 +7735,7 @@ mod tests {
                     .try_simp_closure()
                     .unwrap_or_else(|| {
                         panic!(
-                            "the typed predecessor rule {theorem_name} should build a checked Proof descendant"
+                            "the typed predecessor rule {theorem_name} (nested={nested}) should build a checked Proof descendant"
                         )
                     });
                 let allocations = fact_node_allocations() - before;
@@ -7702,11 +7746,28 @@ mod tests {
                     "size {size} point {theorem_name} allocated {allocations} persistent nodes (bound {allocation_bound})"
                 );
                 assert!(closed.is_complete());
-                assert!(matches!(
-                    closed.certificate().steps(),
-                    [SimpleProofStep::ApplyTheoremUsing { application, premises }]
-                        if application.name == *theorem_name && premises == selected
-                ));
+                if *nested {
+                    assert!(matches!(
+                        closed.certificate().steps(),
+                        [
+                            SimpleProofStep::Have { proof, .. },
+                            SimpleProofStep::ApplyTheoremUsing { application, premises },
+                        ] if application.name == *theorem_name
+                            && premises.len() == 1
+                            && matches!(
+                                proof.steps(),
+                                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                                    if application.name == "int32_successor_le_implies_lt"
+                                    && premises == selected
+                            )
+                    ));
+                } else {
+                    assert!(matches!(
+                        closed.certificate().steps(),
+                        [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                            if application.name == *theorem_name && premises == selected
+                    ));
+                }
                 assert!(Arc::ptr_eq(&root.state, &retained_root.state));
                 assert!(root.certificate().steps().is_empty());
 
@@ -7750,13 +7811,33 @@ mod tests {
                     "size {size} restricted {theorem_name} allocated {restricted_allocations} persistent nodes (bound {allocation_bound})"
                 );
                 assert!(pure_closed.is_complete());
-                assert!(matches!(
-                    pure_closed.certificate().steps(),
-                    [
-                        SimpleProofStep::ApplyTheoremUsing { application, premises },
-                        SimpleProofStep::Assumption,
-                    ] if application.name == *theorem_name && premises == selected
-                ));
+                if *nested {
+                    assert!(matches!(
+                        pure_closed.certificate().steps(),
+                        [
+                            SimpleProofStep::Have { proof, .. },
+                            SimpleProofStep::ApplyTheoremUsing { application, premises },
+                            SimpleProofStep::Assumption,
+                        ] if application.name == *theorem_name
+                            && premises.len() == 1
+                            && matches!(
+                                proof.steps(),
+                                [
+                                    SimpleProofStep::ApplyTheoremUsing { application, premises },
+                                    SimpleProofStep::Assumption,
+                                ] if application.name == "int32_successor_le_implies_lt"
+                                    && premises == selected
+                            )
+                    ));
+                } else {
+                    assert!(matches!(
+                        pure_closed.certificate().steps(),
+                        [
+                            SimpleProofStep::ApplyTheoremUsing { application, premises },
+                            SimpleProofStep::Assumption,
+                        ] if application.name == *theorem_name && premises == selected
+                    ));
+                }
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
                 assert!(pure_root.certificate().steps().is_empty());
             }

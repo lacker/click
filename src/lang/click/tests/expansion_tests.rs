@@ -2610,6 +2610,91 @@ fn restricted_simp_expands_predecessor_upper_bound_to_theorem_application() {
 }
 
 #[test]
+fn restricted_simp_retains_nested_one_le_predecessor_nonnegative_proof() {
+    let click_source = r#"
+        theorem one_le_predecessor_is_nonnegative(value: int32) {
+            requires 1 <= value;
+            ensures 0 <= value - 1 by {
+                simp() using {
+                    1 <= value;
+                }
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the nested predecessor proof should verify through the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "one_le_predecessor_is_nonnegative.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained nested predecessor proof must not use construction replay: {events:#?}"
+    );
+    let offset = click_source.find("simp() using").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("one-le predecessor proof should expand");
+    assert!(expanded.contains("have 0 < value"), "{expanded}");
+    assert!(
+        expanded.contains("apply(int32_successor_le_implies_lt(0, value)) using"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("apply(int32_positive_predecessor_is_nonnegative(value)) using"),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded nested predecessor proof should replay");
+}
+
+#[test]
+fn restricted_simp_retains_nested_one_le_predecessor_decrease_proof() {
+    let click_source = r#"
+        theorem one_le_predecessor_decreases(value: int32) {
+            requires 1 <= value;
+            ensures value - 1 < value by {
+                simp() using {
+                    1 <= value;
+                }
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the nested predecessor-decrease proof should verify through the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "one_le_predecessor_decreases.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained nested predecessor-decrease proof must not use construction replay: {events:#?}"
+    );
+    let offset = click_source.find("simp() using").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("one-le predecessor-decrease proof should expand");
+    assert!(expanded.contains("have 0 < value"), "{expanded}");
+    assert!(
+        expanded.contains("apply(int32_successor_le_implies_lt(0, value)) using"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("apply(int32_positive_predecessor_strictly_decreases(value)) using"),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded)
+        .expect("expanded nested predecessor-decrease proof should replay");
+}
+
+#[test]
 fn restricted_simp_expands_strict_increment_to_theorem_application() {
     let click_source = r#"
             theorem increment_is_greater(value: int32, upper: int32) {

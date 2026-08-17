@@ -1107,6 +1107,23 @@ outcome path that synthesizes a missing nonnegative leg through equality
 rewrites remains separate migration work because its certificate must retain
 that nested derivation.
 
+The first such derived predecessor path now crosses the seam without
+flattening its intermediate theorem. From an exact `1 <= value` premise, the
+smart query constructs a scoped `Have` that applies
+`int32_successor_le_implies_lt(0, value)` to establish `0 < value`, then
+applies either `int32_positive_predecessor_is_nonnegative` or
+`int32_positive_predecessor_strictly_decreases` to the original goal. Every
+application and the scope are accepted by `Proof` as they are selected; the
+retained structured descendant is the certificate.
+
+Point applications close exact goals immediately at both nesting levels,
+whereas the pure form retains explicit `Assumption` closers. The planner now
+models that Proof transition directly rather than submitting redundant point
+steps. Expansion independently verifies both derived forms, omitted premises
+leave the ancestor unchanged, and the common 16-through-4096 unrelated-fact
+curve covers the nested structure. Derived predecessor variants that require
+equality rewriting, rather than the direct `1 <= value` edge, remain pending.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

@@ -268,6 +268,25 @@ equality rewriting deliberately remain legacy. Their retained object must
 include that nested equality derivation rather than falsely presenting the
 derived leg as a direct source premise.
 
+The first derived predecessor decisions now retain that nested structure.
+Given an exact `1 <= value` source, the kernel records the selected source
+edge for both `0 <= value - 1` and `value - 1 < value`. Certificate planning
+first derives `0 < value` with `int32_successor_le_implies_lt(0, value)` in a
+scoped `have`, then applies the corresponding direct predecessor theorem.
+Both theorem applications advance the immutable `Proof` when selected; there
+is no later premise minimization or rediscovery of the intermediate fact.
+Replay validates the literal predecessor shape, exact source orientation,
+endpoints, and non-strictness before accepting either evidence variant.
+
+This slice also pins a structural distinction that reconstruction previously
+obscured: an exact point theorem application closes its goal immediately,
+including a goal nested inside `have`, while the pure proof retains an
+explicit following `assumption`. Point and pure expansion regressions require
+the corresponding certificate shapes and independently reverify them.
+Rejected source omission is transactional, and the shared 16-through-4096
+unrelated-fact curve keeps the retained two-application derivation within the
+logarithmic persistent-update bound.
+
 Multi-premise evidence is stored behind an indirection. Inlining the two
 retained propositions in the evidence enum enlarged unrelated recursive proof
 frames enough to overflow the existing deeply branched `sort3` expansion.

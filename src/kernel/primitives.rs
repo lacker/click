@@ -1693,6 +1693,8 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32PositivePredecessorIsNonnegative(SignedOrderDerivationStep),
     Int32PositivePredecessorStrictlyDecreases(SignedOrderDerivationStep),
     Int32NonnegativePredecessorUpperBound(Box<Int32PredecessorUpperBoundEvidence>),
+    Int32OneLePredecessorIsNonnegative(SignedOrderDerivationStep),
+    Int32OneLePredecessorStrictlyDecreases(SignedOrderDerivationStep),
     Legacy,
 }
 

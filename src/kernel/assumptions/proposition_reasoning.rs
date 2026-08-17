@@ -1145,6 +1145,38 @@ impl PureFactContext {
             }),
             _ => None,
         };
+        let one_le_predecessor_is_nonnegative_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(lower, predecessor),
+                true,
+            ) if lower.as_ref() == &Bitvector32Term::Constant(0) => {
+                exact_predecessor_base(predecessor).and_then(|value| {
+                    self.exact_direct_order_step(&Bitvector32Term::Constant(1), &value, false)
+                        .map(
+                            AtomicPropositionDerivationEvidence::Int32OneLePredecessorIsNonnegative,
+                        )
+                })
+            }
+            _ => None,
+        };
+        let one_le_predecessor_strictly_decreases_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(predecessor, value),
+                true,
+            ) => exact_predecessor_base(predecessor)
+                .filter(|base| base == value.as_ref())
+                .and_then(|base| {
+                    self.exact_direct_order_step(
+                        &Bitvector32Term::Constant(1),
+                        &base,
+                        false,
+                    )
+                    .map(
+                        AtomicPropositionDerivationEvidence::Int32OneLePredecessorStrictlyDecreases,
+                    )
+                }),
+            _ => None,
+        };
         let result = memory_evidence
             .or(equality_path_evidence)
             .or(signed_order_evidence)
@@ -1158,6 +1190,8 @@ impl PureFactContext {
             .or(positive_predecessor_is_nonnegative_evidence)
             .or(positive_predecessor_strictly_decreases_evidence)
             .or(nonnegative_predecessor_upper_bound_evidence)
+            .or(one_le_predecessor_is_nonnegative_evidence)
+            .or(one_le_predecessor_strictly_decreases_evidence)
             .or_else(|| {
                 let proved = if for_simp {
                     match proposition {
@@ -1457,6 +1491,44 @@ impl PureFactContext {
                 && !bounds.upper_bound.strict
                 && self.replays_exact_order_step(&bounds.nonnegative)
                 && self.replays_exact_order_step(&bounds.upper_bound);
+        }
+        if let AtomicPropositionDerivationEvidence::Int32OneLePredecessorIsNonnegative(step) =
+            evidence
+        {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(lower, predecessor),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            let Some(value) = exact_predecessor_base(predecessor) else {
+                return false;
+            };
+            return lower.as_ref() == &Bitvector32Term::Constant(0)
+                && step.lower == Bitvector32Term::Constant(1)
+                && step.upper == value
+                && !step.strict
+                && self.replays_exact_order_step(step);
+        }
+        if let AtomicPropositionDerivationEvidence::Int32OneLePredecessorStrictlyDecreases(step) =
+            evidence
+        {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(predecessor, value),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            let Some(base) = exact_predecessor_base(predecessor) else {
+                return false;
+            };
+            return base == **value
+                && step.lower == Bitvector32Term::Constant(1)
+                && step.upper == base
+                && !step.strict
+                && self.replays_exact_order_step(step);
         }
         if !decide_memo_disabled()
             && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {
