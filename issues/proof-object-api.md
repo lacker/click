@@ -1437,10 +1437,14 @@ is “scan all ambient facts,” which is not an acceptable simple-step contract
 Premise-free smart `frame()` now inspects the typed goal, selects an empty
 `FrameUsing`, and submits that candidate directly to this operation. This
 covers immutable effects and mutable footprints that check exactly from their
-declared shape without any pure fact. Mutable smart frames that need facts
-still need to select genuinely explicit premises; their legacy empty-premise
-spelling currently conflates an explicit empty set with ambient-fact
-selection and must not be imported into the simple checker.
+declared shape without any pure fact. For a single unpartitioned execution
+context, mutable smart frames that need facts now reuse contextual footprint
+planning only to select a flat simple candidate, then apply its explicit
+`Have` and `FrameUsing` steps once through the owned Proof. Branch-shaped
+frame candidates remain on the legacy path until execution-outcome partitions
+have a checked Proof container. The legacy empty-premise source spelling also
+still conflates an explicit empty set with ambient-fact selection and must not
+be imported into the simple checker.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

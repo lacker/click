@@ -4873,6 +4873,75 @@ fn mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate() 
 }
 
 #[test]
+fn contextual_mutable_frame_inside_open_applies_explicit_candidate_on_proof() {
+    let c_source = r#"
+        int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+            p[i] = 9;
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "write_in_bounds.c";
+
+        int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+            requires n >= 0;
+            requires n <= 2147483647;
+            requires i >= 0;
+            requires i < n;
+            owns marker(n);
+            consumes p[0..n];
+            mutable p[0..n];
+            ensures result == 0;
+        } by {
+            open(marker(n)) {
+                execute();
+                frame();
+            }
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
+    });
+    let verified = verified.expect("contextual frame should submit its selected Proof candidate");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "write_in_bounds.contract" && name == "surface certificate replay"
+        )),
+        "the contextual candidate must not use ordinary surface replay: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the contextual frame should retain its selected simple steps");
+    let Some(ProofTactic::Open(open)) = tactics.first() else {
+        panic!("{tactics:#?}");
+    };
+    assert!(
+        matches!(
+            open.tactics.last(),
+            Some(ProofTactic::FrameUsing { region: None, premises }) if !premises.is_empty()
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("write_in_bounds.c", c_source)],
+        "write_in_bounds",
+        CProofClaim::Grouped,
+    )
+    .expect("the contextual Proof-owned frame should expand");
+    verify_c0_sources(&expanded, &[("write_in_bounds.c", c_source)])
+        .expect("the contextual frame candidate should independently replay");
+}
+
+#[test]
 fn linear_execute_until_inside_open_stops_on_checked_frontier() {
     let c_source = r#"
         int32 three_steps(int32 x) {

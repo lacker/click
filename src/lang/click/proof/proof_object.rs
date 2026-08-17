@@ -1094,6 +1094,102 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Uses the existing contextual footprint planner only to select Surface
+    /// simple steps. The returned certificate has performed no semantic
+    /// transition; its candidate steps still have to be applied to this
+    /// `Proof`. Branch-shaped candidates remain on the legacy path until
+    /// outcome partitions have a dedicated checked Proof container.
+    fn select_flat_contextual_frame_candidate(
+        &self,
+    ) -> Result<Option<ProofCertificate>, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(None);
+        };
+        let execution_state =
+            self.state.execution.as_ref().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+        if !execution_state.replay.is_at_function_exit()
+            || !execution_state.replay.case_assumptions.is_empty()
+        {
+            return Ok(None);
+        }
+        let effect_indices = self.selected_effect_indices(context)?;
+        let effect = context.function_block.effects()[effect_indices[0]].effect();
+        let execution = execution_state.replay.execution().ok_or_else(|| {
+            self.step_error("function-exit proof has no checked execution outcomes")
+        })?;
+        let available = self.state.facts.to_vec();
+        let pre_state = execution_state
+            .replay
+            .old_reference_state(&execution_state.state);
+        let mut path_derivations = Vec::with_capacity(execution.paths().len());
+        for (path_index, path) in execution.paths().iter().enumerate() {
+            if !path.obligations().is_empty() {
+                return Err(self.step_error(
+                    "`frame` cannot plan from an execution path with unresolved obligations",
+                ));
+            }
+            let mut path_facts = available.clone();
+            path_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+            path_derivations.push(plan_effect_clause_derivations(
+                context.claim_label,
+                path_index,
+                path.effect_facts(),
+                &path_facts,
+                effect,
+                context.parsed_function.parameters(),
+                context.arguments,
+                pre_state,
+                path.outcome(),
+            )?);
+        }
+
+        let mut construction_replay = execution_state.replay.clone();
+        construction_replay.proof_certificate_builder = ProofCertificateBuilder {
+            certificate_facts: ProofFactStore::from_ordered(available),
+            last_step_entry: execution_state
+                .replay
+                .proof_certificate_builder
+                .last_step_entry
+                .clone(),
+            ..ProofCertificateBuilder::default()
+        }
+        .into();
+        construct_simple_step_for_planned_operation(
+            &mut construction_replay,
+            &execution_state.state,
+            context.function_block,
+            context.parsed_function.parameters(),
+            context.arguments,
+            ConstructionEnvironments {
+                predicate_environment: context.predicate_environment,
+                click_function_environment: context.click_function_environment,
+            },
+            &ConstructionEvidence::CertifiedFrame(path_derivations),
+        );
+        let construction =
+            std::mem::take(&mut construction_replay.proof_certificate_builder).into_value();
+        if let Some(blocker) = construction.blocker {
+            return Err(self.step_error(format!(
+                "smart frame candidate construction failed: {blocker}"
+            )));
+        }
+        if construction.steps.is_empty()
+            || construction
+                .steps
+                .iter()
+                .any(|step| matches!(step, SimpleProofStep::If { .. }))
+            || !matches!(
+                construction.steps.last(),
+                Some(SimpleProofStep::FrameUsing { region: None, .. })
+            )
+        {
+            return Ok(None);
+        }
+        Ok(Some(ProofCertificate::from_steps(construction.steps)))
+    }
+
     #[inline(never)]
     fn apply_assumption(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
@@ -1632,6 +1728,14 @@ impl<'a> Proof<'a> {
         &self,
         certificate: &ProofCertificate,
     ) -> Result<Self, ClickError> {
+        self.check_certificate_with_origin(certificate, None)
+    }
+
+    fn check_certificate_with_origin(
+        &self,
+        certificate: &ProofCertificate,
+        origin: Option<ProofStepOrigin>,
+    ) -> Result<Self, ClickError> {
         enum CheckFrame<'certificate, 'proof> {
             Continue {
                 steps: &'certificate [SimpleProofStep],
@@ -1698,7 +1802,7 @@ impl<'a> Proof<'a> {
                         steps = body.steps();
                         next = 0;
                     }
-                    _ => proof = proof.apply_step(step.clone())?,
+                    _ => proof = proof.apply_step_with_origin(step.clone(), origin)?,
                 }
                 continue;
             }
@@ -5204,12 +5308,11 @@ impl<'a> ProofScope<'a> {
             .supports_checked_execution_frame_using(region, premises)
     }
 
-    /// Tries the exact premise-free frame candidate and immediately submits
-    /// it to the checked terminal operation. Immutable effects always fit;
-    /// direct mutable footprints can fit as well. Failure is an ordinary
-    /// search miss and leaves this scope untouched, allowing the contextual
-    /// premise planner to remain on the legacy path.
-    pub(super) fn try_smart_exact_empty_frame_at(
+    /// Searches for a frame certificate and submits the selected candidate to
+    /// the owned Proof exactly once. The cheap exact-empty candidate goes
+    /// first; a miss invokes contextual derivation search, which may add
+    /// explicit checked `have` steps before the terminal `FrameUsing`.
+    pub(super) fn try_smart_frame_at(
         &self,
         region: Option<&CodeRegionRef>,
         tactic_index: usize,
@@ -5223,10 +5326,43 @@ impl<'a> ProofScope<'a> {
             premises: Vec::new(),
         };
         match self.apply_step_at(step, tactic_index, source_index) {
-            Ok(framed) => Ok(Some(framed)),
-            Err(error) if crate::instrumentation::deadline_exceeded() => Err(error),
-            Err(_) => Ok(None),
+            Ok(framed) => return Ok(Some(framed)),
+            Err(error) if crate::instrumentation::deadline_exceeded() => return Err(error),
+            Err(_) => {}
         }
+        if region.is_some() {
+            return Ok(None);
+        }
+        let Some(candidate) = self.body.select_flat_contextual_frame_candidate()? else {
+            return Ok(None);
+        };
+        let origin = Some(ProofStepOrigin {
+            tactic_index,
+            source_index,
+        });
+        let body = self
+            .body
+            .check_certificate_with_origin(&candidate, origin)
+            .map_err(|error| {
+                self.root.step_error(format!(
+                    "smart frame selected a simple candidate that Proof rejected: {}",
+                    error.message()
+                ))
+            })?;
+        let mut next = self.clone();
+        for step in candidate.steps() {
+            if let SimpleProofStep::Have { proposition, .. } = step {
+                let fact = body.lower_surface_proposition(
+                    proposition,
+                    "smart frame intermediate proposition",
+                )?;
+                if !next.introduced_facts.contains(&fact) {
+                    next.introduced_facts.push(fact);
+                }
+            }
+        }
+        next.body = body;
+        Ok(Some(next))
     }
 
     /// Runs the narrow linear `execute` search inside this scope.
