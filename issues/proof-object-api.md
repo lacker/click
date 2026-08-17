@@ -991,8 +991,16 @@ accepted descendant. Grouped finalization observes only the joined successor;
 it does not first mutate a goal and then replay the proposed syntax. A focused
 rewrite/normalize regression observes no ordinary surface-certificate replay,
 expands the retained steps, and independently verifies their serialization.
-Loadability, existential, and resource candidates still use the legacy
+Loadability, richer existential, and resource candidates still use the legacy
 certifiers until their corresponding Proof operations migrate.
+
+Ungrouped exit proposition `simp` with legal top-level existence steps now
+uses the same retained obligation path. `choose`/`witness` are applied inside the nested scope
+before direct closure, so supported existential goals retain their checked
+refinement and closing steps instead of rebuilding and replaying a second
+`have`. A focused result-dependent witness regression covers no ordinary
+replay, expansion, and independent source verification. Richer existential
+plans still fall back after a failed immutable candidate.
 
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently

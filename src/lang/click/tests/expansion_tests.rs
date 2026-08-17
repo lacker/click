@@ -636,6 +636,55 @@ fn grouped_post_execution_simp_applies_planned_steps_once_through_proof() {
 }
 
 #[test]
+fn post_execution_existential_simp_retains_its_checked_scope() {
+    let c_source = r#"
+        int32 identity(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "identity.c";
+
+        int32 identity(int32 x) {
+            ensures exists (j: int32) { j == result } by {
+                execute();
+                witness(j = result);
+                simp();
+            }
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("exit witness should refine its checked obligation scope");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.ensures_0" && name == "surface certificate replay"
+        )),
+        "exit witness refinement must retain the accepted Proof path: {events:#?}"
+    );
+
+    let simp_offset = click_source
+        .find("simp();")
+        .expect("proof should contain the selected existential simp");
+    let position = expansion::position_at_offset(click_source, simp_offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("identity.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the checked existential obligation should expand");
+    assert!(expanded.contains("witness(j = result);"), "{expanded}");
+    assert!(expanded.contains("normalize();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("the retained witness/normalize scope should verify independently");
+}
+
+#[test]
 fn selected_post_execution_smart_apply_uses_exact_path_premises() {
     let c_source = r#"
             int32 identity(int32 x) {

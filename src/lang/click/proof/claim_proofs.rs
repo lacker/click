@@ -524,9 +524,10 @@ fn certify_grouped_claims_result(
 /// `ClosedClaim` restores the mid-execution shape. Its field is private to
 /// this module, so no site outside can build one, and the variant that carries
 /// a generated certificate has exactly one constructor:
-/// `discharge_exit_simp_claim`, which builds the certificate and replays it
-/// before it can hand back a closure. The other constructors each take the
-/// evidence that discharged the claim.
+/// `by_checked_certificate`, which accepts only a structured certificate
+/// already checked either by the Proof API or by the remaining legacy
+/// certifier. The other constructors each take the evidence that discharged
+/// the claim.
 mod exit_claim {
     use super::*;
 
@@ -607,22 +608,18 @@ mod exit_claim {
             }
         }
 
-        /// Close a claim with the certificate a smart exit `simp` generated
-        /// for it. Private to this module, and inside it reachable only from
-        /// `discharge_exit_simp_claim`: the `ProofCertificate` is the
-        /// evidence, and it exists only once the generator replayed the
-        /// tactics through the replay judgment and got the claim's kernel
-        /// goal back.
-        fn by_replayed_certificate(certificate: &ProofCertificate) -> Self {
+        /// Close a claim with a structured certificate already checked by a
+        /// Proof successor or by the remaining explicit legacy certifier.
+        pub(super) fn by_checked_certificate(certificate: &ProofCertificate) -> Self {
             Self::Closed(ClosedClaim {
                 certificate: ClaimCertificate::Claim(certificate.to_proof_tactics().to_vec()),
             })
         }
 
         /// Close a claim covered by the path's grouped transition
-        /// certificate. Taking the certificate is the point: the only way to
-        /// hold one is to have run `certify_grouped_outcome_simp_transition`,
-        /// which builds every claim's `have` and replays it.
+        /// certificate. Taking the certificate is the point: it is either the
+        /// terminal output of the checked point-obligation Proof operation or
+        /// the output of the remaining grouped legacy certifier.
         pub(super) fn by_grouped_transition(_certificate: &ProofCertificate) -> Self {
             Self::Closed(ClosedClaim {
                 certificate: ClaimCertificate::GroupedTransition,
@@ -769,7 +766,7 @@ mod exit_claim {
                     )
                 })?;
             return Ok(ExitSimpClosure::Closed(
-                ClaimClosure::by_replayed_certificate(&certificate),
+                ClaimClosure::by_checked_certificate(&certificate),
             ));
         }
         if !context.existence_tactics.is_empty() {
@@ -818,7 +815,7 @@ mod exit_claim {
                 ))
             })?;
             return Ok(ExitSimpClosure::Closed(
-                ClaimClosure::by_replayed_certificate(&certificate),
+                ClaimClosure::by_checked_certificate(&certificate),
             ));
         }
 
@@ -902,7 +899,7 @@ mod exit_claim {
         }
         .map_err(|message| context.certificate_failure(claim_label, &message))?;
         Ok(ExitSimpClosure::Closed(
-            ClaimClosure::by_replayed_certificate(&certificate),
+            ClaimClosure::by_checked_certificate(&certificate),
         ))
     }
 }
@@ -3219,21 +3216,23 @@ pub(super) fn finish_ordered_proof_replay(
                                     .deferred_tactic_capture
                                     .as_ref()
                                     .is_some_and(|capture| capture.tactic_index == *tactic_index);
-                                if replay.grouped_contract
-                                    && existence_tactics.is_empty()
+                                if ((replay.grouped_contract && existence_tactics.is_empty())
+                                    || (!replay.grouped_contract && !existence_tactics.is_empty()))
                                     && let CFunctionOutcome::Return {
                                         value: result,
                                         state: post_state,
                                     } = &outcome
                                 {
-                                    // Try the already-migrated direct logical
+                                    // Try the already-migrated proposition
                                     // vocabulary as one immutable Proof before
-                                    // entering the legacy grouped certificate
+                                    // entering the legacy exit certificate
                                     // planner. This is deliberately all-or-
                                     // nothing: an unsupported claim discards
                                     // the untouched search descendant and the
                                     // established path retains its existing
-                                    // behavior.
+                                    // behavior. Grouped proofs forbid top-level
+                                    // existence tactics; ungrouped proofs apply
+                                    // them inside the checked obligation scope.
                                     let mut direct_claims = Vec::new();
                                     let mut direct_supported = true;
                                     for (claim_index, claim) in claims.iter().enumerate() {
@@ -3265,6 +3264,19 @@ pub(super) fn finish_ordered_proof_replay(
                                             }
                                         }
                                     }
+                                    let existence_candidate = if existence_tactics.is_empty() {
+                                        None
+                                    } else {
+                                        match ProofCertificate::from_proof_tactics(
+                                            &existence_tactics,
+                                        ) {
+                                            Ok(candidate) => Some(candidate),
+                                            Err(_) => {
+                                                direct_supported = false;
+                                                None
+                                            }
+                                        }
+                                    };
                                     if direct_supported && !direct_claims.is_empty() {
                                         let transition_facts = path.execution_facts();
                                         let mut direct_proof = Proof::for_point_frontier(
@@ -3294,11 +3306,24 @@ pub(super) fn finish_ordered_proof_replay(
                                                 selected = false;
                                                 break;
                                             };
+                                            let scope =
+                                                if let Some(candidate) = &existence_candidate {
+                                                    let Ok(scope) = scope
+                                                        .apply_candidate_certificate(candidate)
+                                                    else {
+                                                        check_verification_deadline()?;
+                                                        selected = false;
+                                                        break;
+                                                    };
+                                                    scope
+                                                } else {
+                                                    scope
+                                                };
                                             let selected_scope = if let Some(scope) =
                                                 scope.try_direct_logical_closure()
                                             {
                                                 Some(scope)
-                                            } else {
+                                            } else if existence_candidate.is_none() {
                                                 let Some(goal) = scope.goal().cloned() else {
                                                     selected = false;
                                                     break;
@@ -3332,6 +3357,8 @@ pub(super) fn finish_ordered_proof_replay(
                                                     | Ok(SourceProof::Tactic(_))
                                                     | Err(_) => None,
                                                 }
+                                            } else {
+                                                None
                                             };
                                             let Some(scope) = selected_scope else {
                                                 check_verification_deadline()?;
@@ -3353,17 +3380,30 @@ pub(super) fn finish_ordered_proof_replay(
                                                 .collect::<Vec<_>>();
                                             let certificate = direct_proof
                                                 .complete_point_obligations(&surface_goals)?;
-                                            for (claim_index, _) in direct_claims {
-                                                closures[claim_index] =
-                                                    ClaimClosure::by_grouped_transition(
-                                                        &certificate,
-                                                    );
-                                            }
-                                            path_grouped_surface_closers
-                                                .extend(certificate.to_proof_tactics());
-                                            if capturing_this_tactic {
-                                                path_deferred_capture_tactics
+                                            if replay.grouped_contract {
+                                                for (claim_index, _) in direct_claims {
+                                                    closures[claim_index] =
+                                                        ClaimClosure::by_grouped_transition(
+                                                            &certificate,
+                                                        );
+                                                }
+                                                path_grouped_surface_closers
                                                     .extend(certificate.to_proof_tactics());
+                                                if capturing_this_tactic {
+                                                    path_deferred_capture_tactics
+                                                        .extend(certificate.to_proof_tactics());
+                                                }
+                                            } else {
+                                                for (claim_index, _) in direct_claims {
+                                                    closures[claim_index] =
+                                                        ClaimClosure::by_checked_certificate(
+                                                            &certificate,
+                                                        );
+                                                }
+                                                if capturing_this_tactic {
+                                                    path_deferred_capture_tactics
+                                                        .extend(certificate.to_proof_tactics());
+                                                }
                                             }
                                             continue;
                                         }
