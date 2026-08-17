@@ -276,9 +276,22 @@ pub(super) fn lower_surface_atomic_derivation(
         .and_then(|pairs| {
             plan_recorded_int32_increment_upper_bound_for_context(&lowered_conclusion, pairs, false)
         });
+    let typed_strict_increment_pairs =
+        recorded_int32_increment_strictly_increases_pairs(derivation, &premise_pairs);
+    let typed_strict_increment_plan = typed_strict_increment_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_increment_strictly_increases_for_context(
+                &lowered_conclusion,
+                pairs,
+                false,
+            )
+        });
     let typed_path_spelled = typed_order_plan.is_some()
         || typed_equality_plan.is_some()
-        || typed_increment_plan.is_some();
+        || typed_increment_plan.is_some()
+        || typed_strict_increment_plan.is_some();
     if typed_order_plan.is_some() {
         premise_pairs = typed_order_pairs.expect("a typed order plan retains its path premises");
     } else if typed_equality_plan.is_some() {
@@ -287,6 +300,9 @@ pub(super) fn lower_surface_atomic_derivation(
     } else if typed_increment_plan.is_some() {
         premise_pairs =
             typed_increment_pairs.expect("a typed increment-bound plan retains its exact premise");
+    } else if typed_strict_increment_plan.is_some() {
+        premise_pairs = typed_strict_increment_pairs
+            .expect("a typed strict-increment plan retains its exact premise");
     }
     if !surface_normalizes_context_free
         && !typed_path_spelled
@@ -420,6 +436,14 @@ pub(super) fn lower_surface_atomic_derivation(
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "recorded increment upper-bound rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_strict_increment_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded strict-increment rule produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -2876,12 +2900,38 @@ pub(super) fn recorded_int32_increment_upper_bound_pairs(
         .map(|pair| vec![pair])
 }
 
+pub(super) fn recorded_int32_increment_strictly_increases_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    let premise = derivation
+        .int32_increment_strictly_increases_step()?
+        .premise();
+    premise_pairs
+        .iter()
+        .find(|(kernel, _)| kernel == premise)
+        .cloned()
+        .map(|pair| vec![pair])
+}
+
 pub(super) fn plan_recorded_int32_increment_upper_bound_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
     point_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_increment_upper_bound(goal, premise_pairs)?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut tactics)?;
+    }
+    Some(tactics)
+}
+
+pub(super) fn plan_recorded_int32_increment_strictly_increases_for_context(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
+    let mut tactics = plan_explicit_increment_strictly_increases(goal, premise_pairs)?;
     if point_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }

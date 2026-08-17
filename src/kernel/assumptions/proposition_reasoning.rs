@@ -1014,10 +1014,35 @@ impl PureFactContext {
                 .map(AtomicPropositionDerivationEvidence::Int32IncrementUpperBound),
             _ => None,
         };
+        let increment_strictly_increases_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(base, incremented),
+                true,
+            ) if incremented.add_const_base(1).as_ref() == Some(base.as_ref()) => self
+                .signed_order_bounds
+                .get(base)
+                .into_iter()
+                .flat_map(|bounds| bounds.iter())
+                .filter(|((_, strict, forward), _)| *strict && *forward)
+                .find_map(|((upper, _, _), _)| {
+                    self.exact_signed_order_path_evidence(base, upper, true)
+                        .and_then(|path| match path.as_slice() {
+                            [step]
+                                if step.lower == **base && step.upper == *upper && step.strict =>
+                            {
+                                Some(step.clone())
+                            }
+                            _ => None,
+                        })
+                })
+                .map(AtomicPropositionDerivationEvidence::Int32IncrementStrictlyIncreases),
+            _ => None,
+        };
         let result = memory_evidence
             .or(equality_path_evidence)
             .or(signed_order_evidence)
             .or(increment_upper_bound_evidence)
+            .or(increment_strictly_increases_evidence)
             .or_else(|| {
                 let proved = if for_simp {
                     match proposition {
@@ -1146,6 +1171,26 @@ impl PureFactContext {
             };
             return step.lower == base
                 && step.upper == **upper
+                && step.strict
+                && matches!(
+                    &step.premise,
+                    Proposition::ConditionIs(condition, value)
+                        if self.exact_condition_value(condition) == Some(*value)
+                            && condition_as_order_fact(condition, *value)
+                                == Some((step.lower.clone(), step.upper.clone(), true))
+                );
+        }
+        if let AtomicPropositionDerivationEvidence::Int32IncrementStrictlyIncreases(step) = evidence
+        {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(base, incremented),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            return incremented.add_const_base(1).as_ref() == Some(base.as_ref())
+                && step.lower == **base
                 && step.strict
                 && matches!(
                     &step.premise,

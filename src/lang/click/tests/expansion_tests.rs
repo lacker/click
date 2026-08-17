@@ -1730,6 +1730,20 @@ fn post_execution_simp_expands_successor_strict_increase() {
             simp();
         }
     "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("increment.c", c_source)])
+    });
+    verified.expect("the typed strict-increment rule should verify through the point Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "increment.contract"
+                    && (name == "surface certificate replay"
+                        || name == "derivation lowering: ambient rewrite harvest")
+        )),
+        "the retained strict-increment rule must not enter legacy certificate search: {events:#?}"
+    );
     let offset = click_source.rfind("simp()").unwrap();
     let line = click_source[..offset]
         .bytes()
@@ -2448,6 +2462,18 @@ fn restricted_simp_expands_strict_increment_to_theorem_application() {
                 }
             }
         "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the typed strict-increment rule should verify through the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "increment_is_greater.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained pure strict-increment rule must not use construction replay: {events:#?}"
+    );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
         .bytes()
