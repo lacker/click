@@ -1203,6 +1203,64 @@ fn increment_lower_bound_derivation_retains_both_exact_bounds() {
 }
 
 #[test]
+fn remaining_increment_bound_derivations_retain_both_exact_bounds() {
+    let lower = Bitvector32Term::Variable(Variable(218));
+    let value = Bitvector32Term::Variable(Variable(219));
+    let upper = Bitvector32Term::Variable(Variable(220));
+    let incremented_value = Bitvector32Term::add(value.clone(), Bitvector32Term::Constant(1));
+    let lower_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(value.clone(), lower.clone()),
+        true,
+    );
+    let upper_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_than(upper.clone(), value.clone()),
+        true,
+    );
+    let goals = [
+        Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(incremented_value.clone(), lower.clone()),
+            true,
+        ),
+        Proposition::ConditionIs(
+            ConditionTerm::signed_greater_than(incremented_value, lower.clone()),
+            true,
+        ),
+        Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(
+                Bitvector32Term::add(lower.clone(), Bitvector32Term::Constant(1)),
+                Bitvector32Term::add(value.clone(), Bitvector32Term::Constant(1)),
+            ),
+            true,
+        ),
+    ];
+    let assumptions = PureFactContext::new()
+        .assume_proposition(lower_premise.clone())
+        .assume_proposition(upper_premise.clone());
+
+    for (index, goal) in goals.iter().enumerate() {
+        let derivation = assumptions
+            .derive_simp_proposition(goal)
+            .expect("the two exact bounds should prove each remaining increment rule");
+        let (lower_bound, upper_bound) = match index {
+            0 => derivation.int32_increment_greater_equal_lower_bound_steps(),
+            1 => derivation.int32_increment_strict_greater_lower_bound_steps(),
+            2 => derivation.int32_increment_preserves_order_steps(),
+            _ => unreachable!(),
+        }
+        .expect("the atomic decision should retain the exact named-rule premises");
+        assert_eq!(lower_bound.lower(), &lower);
+        assert_eq!(lower_bound.upper(), &value);
+        assert!(!lower_bound.is_strict());
+        assert_eq!(lower_bound.premise(), &lower_premise);
+        assert_eq!(upper_bound.lower(), &value);
+        assert_eq!(upper_bound.upper(), &upper);
+        assert!(upper_bound.is_strict());
+        assert_eq!(upper_bound.premise(), &upper_premise);
+        assert!(derivation.replay(&assumptions));
+    }
+}
+
+#[test]
 fn bitvector_equality_derivation_retains_its_exact_oriented_path() {
     let left = Bitvector32Term::Variable(Variable(215));
     let middle = Bitvector32Term::Variable(Variable(216));

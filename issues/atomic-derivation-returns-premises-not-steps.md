@@ -238,6 +238,18 @@ Deterministic 16-through-4096 unrelated-fact curves cover both unrestricted
 point search and restricted pure search, including rejected-premise
 transactionality.
 
+The remaining two-premise increment-bound family now uses the same seam.
+`int32_increment_greater_equal_lower_bound`,
+`int32_increment_strict_greater_lower_bound`, and
+`int32_increment_preserves_order` each retain a distinct typed rule variant
+containing the exact lower and strict-upper source edges. Their replay checks
+the rule-specific conclusion shape and both original facts by exact index
+lookup. Point/outcome and restricted pure `simp` submit the corresponding
+named theorem application to `Proof`; ordinary verification does not enter
+surface-certificate replay or ambient rewrite harvesting. The shared
+16-through-4096 family curve covers accepted applications, either-premise
+rejection, ancestor isolation, and logarithmic persistent allocation.
+
 Multi-premise evidence is stored behind an indirection. Inlining the two
 retained propositions in the evidence enum enlarged unrelated recursive proof
 frames enough to overflow the existing deeply branched `sort3` expansion.
@@ -251,6 +263,6 @@ narrow, fuel-free one-premise rule as the named theorem; this does not admit
 general interval reconstruction into the simple checker.
 
 These are the first members of the interval/overflow family, not completion
-of that family. The other named increment, predecessor,
-arithmetic-definedness, and interval decisions remain `Legacy` until each
-decision retains its exact rule and operands.
+of that family. Other arithmetic-definedness, predecessor, interval, and
+derived-order decisions remain `Legacy` until each decision retains its exact
+rule and operands.

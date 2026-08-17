@@ -1062,14 +1062,17 @@ logarithmic persistent updates for both the point theorem and rewrite paths.
 Execution-frontier atomic search and the remaining non-order/equality theory
 decisions still require their corresponding typed Proof queries.
 
-The first four named arithmetic decisions now cross the same boundary. The
+The first seven named arithmetic decisions now cross the same boundary. The
 kernel retains `Int32IncrementUpperBound` and
 `Int32IncrementStrictlyIncreases` evidence, plus
 `Int32IncrementBelowMaxIsDefined` evidence for `defined(value + 1)`, with
 their exact strict premise. `Int32IncrementLowerBound` is the first
 two-premise member: it retains the exact non-strict lower edge and strict
-upper edge selected by search. Unrestricted point/outcome `simp` turns each
-decision into one checked theorem application on the current `Proof`.
+upper edge selected by search. The greater-equal lower-bound,
+strict-greater lower-bound, and increment-preserves-order decisions now retain
+that same exact pair under distinct typed rule variants. Unrestricted
+point/outcome `simp` turns each decision into one checked theorem application
+on the current `Proof`.
 Standalone pure
 `simp() using` now has a restricted Proof query for every currently typed
 atomic path. It receives only its explicitly listed Surface premises and
@@ -1077,8 +1080,9 @@ cannot mutate the root while choosing an order, equality, or increment
 candidate. Ordinary verification observes no surface-certificate replay,
 expansion remains an independent check, and 16-through-4096 unrelated-fact
 regressions pin logarithmic persistent work and failed-candidate isolation.
-The two-premise curve additionally rejects either one-premise subset without
-mutating the root, then accepts exactly the retained pair.
+The two-premise family curve additionally rejects either one-premise subset
+without mutating the root, then accepts exactly the retained pair for all four
+named conclusions.
 The two-edge payload is boxed. An initial inline representation enlarged
 every atomic-derivation stack frame and deterministically overflowed the
 existing deeply branched `sort3` expansion even though that proof never used

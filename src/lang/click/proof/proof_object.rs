@@ -1863,6 +1863,37 @@ impl<'a> Proof<'a> {
                     &recorded,
                     point_application_closes_goal,
                 )
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_increment_greater_equal_lower_bound_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_increment_greater_equal_lower_bound_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_increment_strict_greater_lower_bound_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_increment_strict_greater_lower_bound_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
+                let recorded =
+                    recorded_int32_increment_preserves_order_pairs(derivation, &premise_pairs)?;
+                plan_recorded_int32_increment_preserves_order_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
             })?;
         let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
         let proof = self.check_certificate(&candidate).ok()?;
@@ -7295,7 +7326,7 @@ mod tests {
     }
 
     #[test]
-    fn increment_lower_bound_simp_retains_two_indexed_theorem_premises() {
+    fn increment_bound_family_retains_two_indexed_theorem_premises() {
         let click_file = crate::lang::click::parse("")
             .expect("an empty source should still admit the standard theorem prelude");
         let predicate_environment = PredicateEnvironment::new(&[]);
@@ -7322,16 +7353,52 @@ mod tests {
         let upper_premise = ClickProposition::Comparison {
             left: expression(value.clone()),
             operator: ComparisonOperator::LessThan,
-            right: expression(upper),
+            right: expression(upper.clone()),
         };
-        let surface_goal = ClickProposition::Comparison {
-            left: expression(lower),
-            operator: ComparisonOperator::LessEqual,
-            right: ContractExpression::Add(
-                Box::new(expression(value)),
+        let increment = |term: Bitvector32Term| {
+            ContractExpression::Add(
+                Box::new(expression(term)),
                 Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
-            ),
+            )
         };
+        let surface_goals = [
+            (
+                ClickProposition::Comparison {
+                    left: expression(lower.clone()),
+                    operator: ComparisonOperator::LessEqual,
+                    right: increment(value.clone()),
+                },
+                "int32_increment_lower_bound",
+                "less-equal lower bound",
+            ),
+            (
+                ClickProposition::Comparison {
+                    left: increment(value.clone()),
+                    operator: ComparisonOperator::GreaterEqual,
+                    right: expression(lower.clone()),
+                },
+                "int32_increment_greater_equal_lower_bound",
+                "greater-equal lower bound",
+            ),
+            (
+                ClickProposition::Comparison {
+                    left: increment(value.clone()),
+                    operator: ComparisonOperator::GreaterThan,
+                    right: expression(lower.clone()),
+                },
+                "int32_increment_strict_greater_lower_bound",
+                "strict-greater lower bound",
+            ),
+            (
+                ClickProposition::Comparison {
+                    left: increment(lower.clone()),
+                    operator: ComparisonOperator::LessEqual,
+                    right: increment(value.clone()),
+                },
+                "int32_increment_preserves_order",
+                "incremented order",
+            ),
+        ];
         let lower_surface = |surface: &ClickProposition| {
             lower_point_proposition_with_assumptions(
                 surface,
@@ -7349,7 +7416,10 @@ mod tests {
         };
         let kernel_lower = lower_surface(&lower_premise);
         let kernel_upper = lower_surface(&upper_premise);
-        let goal = lower_surface(&surface_goal);
+        let goals = surface_goals
+            .iter()
+            .map(|(surface, theorem, label)| (lower_surface(surface), *theorem, *label))
+            .collect::<Vec<_>>();
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(&lower_premise, &kernel_lower)
@@ -7362,92 +7432,94 @@ mod tests {
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
             facts.extend([kernel_lower.clone(), kernel_upper.clone()]);
-            let root = Proof::for_point_goal(
-                "persistent point increment-lower-bound simp",
-                0,
-                &facts,
-                goal.clone(),
-                parsed_function.parameters(),
-                &arguments,
-                &state,
-                &state,
-                &program_point_states,
-                &surface_propositions,
-                &predicate_environment,
-                &click_function_environment,
-                &theorem_environment,
-                &[],
-                &[],
-            );
-            let retained_root = root.clone();
-            let before = fact_node_allocations();
-            let closed = root
-                .try_simp_closure()
-                .expect("the typed two-premise rule should build one checked Proof descendant");
-            let allocations = fact_node_allocations() - before;
-            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
-            let allocation_bound = 96 * logarithmic_height + 384;
-            assert!(
-                allocations <= allocation_bound,
-                "size {size} point increment-lower-bound simp allocated {allocations} persistent nodes (bound {allocation_bound})"
-            );
-            assert!(closed.is_complete());
-            assert!(matches!(
-                closed.certificate().steps(),
-                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
-                    if application.name == "int32_increment_lower_bound"
-                        && premises.as_slice() == selected_premises
-            ));
-            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
-            assert!(root.certificate().steps().is_empty());
-
-            let theorem_context = PureTheoremContext {
-                memory: state.memory().clone(),
-                values: BTreeMap::new(),
-                array_refs: BTreeMap::new(),
-                requires: facts.clone(),
-                surface_requirements: surface_propositions.clone(),
-            };
-            let pure_root = Proof::for_pure_goal(
-                "persistent restricted increment-lower-bound simp",
-                &facts,
-                goal.clone(),
-                &theorem_context,
-                &predicate_environment,
-                &click_function_environment,
-                &theorem_environment,
-            );
-            let retained_pure_root = pure_root.clone();
-            for omitted in [
-                std::slice::from_ref(&lower_premise),
-                std::slice::from_ref(&upper_premise),
-            ] {
-                assert!(
-                    pure_root.try_restricted_simp_closure(omitted).is_none(),
-                    "omitting either theorem premise must reject the restricted candidate"
+            for (goal, theorem_name, label) in &goals {
+                let root = Proof::for_point_goal(
+                    "persistent point increment-bound-family simp",
+                    0,
+                    &facts,
+                    goal.clone(),
+                    parsed_function.parameters(),
+                    &arguments,
+                    &state,
+                    &state,
+                    &program_point_states,
+                    &surface_propositions,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &theorem_environment,
+                    &[],
+                    &[],
                 );
+                let retained_root = root.clone();
+                let before = fact_node_allocations();
+                let closed = root
+                    .try_simp_closure()
+                    .expect("the typed two-premise rule should build one checked Proof descendant");
+                let allocations = fact_node_allocations() - before;
+                let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+                let allocation_bound = 96 * logarithmic_height + 384;
+                assert!(
+                    allocations <= allocation_bound,
+                    "size {size} point {label} simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+                );
+                assert!(closed.is_complete());
+                assert!(matches!(
+                    closed.certificate().steps(),
+                    [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                        if application.name == *theorem_name
+                            && premises.as_slice() == selected_premises
+                ));
+                assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+                assert!(root.certificate().steps().is_empty());
+
+                let theorem_context = PureTheoremContext {
+                    memory: state.memory().clone(),
+                    values: BTreeMap::new(),
+                    array_refs: BTreeMap::new(),
+                    requires: facts.clone(),
+                    surface_requirements: surface_propositions.clone(),
+                };
+                let pure_root = Proof::for_pure_goal(
+                    "persistent restricted increment-bound-family simp",
+                    &facts,
+                    goal.clone(),
+                    &theorem_context,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &theorem_environment,
+                );
+                let retained_pure_root = pure_root.clone();
+                for omitted in [
+                    std::slice::from_ref(&lower_premise),
+                    std::slice::from_ref(&upper_premise),
+                ] {
+                    assert!(
+                        pure_root.try_restricted_simp_closure(omitted).is_none(),
+                        "omitting either theorem premise must reject the restricted candidate"
+                    );
+                    assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+                }
+                let before_restricted = fact_node_allocations();
+                let pure_closed = pure_root
+                    .try_restricted_simp_closure(&selected_premises)
+                    .expect("restricted simp should retain the checked two-premise rule");
+                let restricted_allocations = fact_node_allocations() - before_restricted;
+                assert!(
+                    restricted_allocations <= allocation_bound,
+                    "size {size} restricted {label} simp allocated {restricted_allocations} persistent nodes (bound {allocation_bound})"
+                );
+                assert!(pure_closed.is_complete());
+                assert!(matches!(
+                    pure_closed.certificate().steps(),
+                    [
+                        SimpleProofStep::ApplyTheoremUsing { application, premises },
+                        SimpleProofStep::Assumption,
+                    ] if application.name == *theorem_name
+                        && premises.as_slice() == selected_premises
+                ));
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+                assert!(pure_root.certificate().steps().is_empty());
             }
-            let before_restricted = fact_node_allocations();
-            let pure_closed = pure_root
-                .try_restricted_simp_closure(&selected_premises)
-                .expect("restricted simp should retain the checked two-premise rule");
-            let restricted_allocations = fact_node_allocations() - before_restricted;
-            assert!(
-                restricted_allocations <= allocation_bound,
-                "size {size} restricted increment-lower-bound simp allocated {restricted_allocations} persistent nodes (bound {allocation_bound})"
-            );
-            assert!(pure_closed.is_complete());
-            assert!(matches!(
-                pure_closed.certificate().steps(),
-                [
-                    SimpleProofStep::ApplyTheoremUsing { application, premises },
-                    SimpleProofStep::Assumption,
-                ] if application.name == "int32_increment_lower_bound"
-                    && premises.as_slice() == selected_premises
-            ));
-            assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
-            assert!(pure_root.certificate().steps().is_empty());
         }
     }
 

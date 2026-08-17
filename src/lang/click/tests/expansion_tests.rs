@@ -2131,6 +2131,20 @@ fn post_execution_simp_expands_greater_equal_increment_bound() {
             simp();
         }
     "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("increment_ge.c", c_source)])
+    });
+    verified.expect("the typed greater-equal increment rule should verify through the point Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "increment_ge.contract"
+                    && (name == "surface certificate replay"
+                        || name == "derivation lowering: ambient rewrite harvest")
+        )),
+        "the retained greater-equal increment rule must not enter legacy certificate search: {events:#?}"
+    );
     let offset = click_source.rfind("simp()").unwrap();
     let line = click_source[..offset]
         .bytes()
@@ -2175,6 +2189,21 @@ fn post_execution_simp_expands_strict_greater_increment_bound() {
             simp();
         }
     "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("increment_gt.c", c_source)])
+    });
+    verified
+        .expect("the typed strict-greater increment rule should verify through the point Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "increment_gt.contract"
+                    && (name == "surface certificate replay"
+                        || name == "derivation lowering: ambient rewrite harvest")
+        )),
+        "the retained strict-greater increment rule must not enter legacy certificate search: {events:#?}"
+    );
     let offset = click_source.rfind("simp()").unwrap();
     let line = click_source[..offset]
         .bytes()
@@ -2674,6 +2703,18 @@ fn restricted_simp_expands_increment_order_to_theorem_application() {
             }
         }
     "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the typed increment-order rule should verify through the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "increment_preserves_order.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained increment-order rule must not use construction replay: {events:#?}"
+    );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
         .bytes()

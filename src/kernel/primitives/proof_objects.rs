@@ -120,6 +120,51 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact non-strict lower edge and strict upper edge selected
+    /// when the atomic prover established a greater-equal lower bound on
+    /// `value + 1`.
+    pub fn int32_increment_greater_equal_lower_bound_steps(
+        &self,
+    ) -> Option<(&SignedOrderDerivationStep, &SignedOrderDerivationStep)> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32IncrementGreaterEqualLowerBound(bounds),
+                ..
+            } => Some((&bounds.lower_bound, &bounds.upper_bound)),
+            _ => None,
+        }
+    }
+
+    /// Return the exact non-strict lower edge and strict upper edge selected
+    /// when the atomic prover established a strict lower bound on `value + 1`.
+    pub fn int32_increment_strict_greater_lower_bound_steps(
+        &self,
+    ) -> Option<(&SignedOrderDerivationStep, &SignedOrderDerivationStep)> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32IncrementStrictGreaterLowerBound(bounds),
+                ..
+            } => Some((&bounds.lower_bound, &bounds.upper_bound)),
+            _ => None,
+        }
+    }
+
+    /// Return the exact non-strict order edge and strict upper edge selected
+    /// when the atomic prover established that increment preserves order.
+    pub fn int32_increment_preserves_order_steps(
+        &self,
+    ) -> Option<(&SignedOrderDerivationStep, &SignedOrderDerivationStep)> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::Int32IncrementPreservesOrder(bounds),
+                ..
+            } => Some((&bounds.lower_bound, &bounds.upper_bound)),
+            _ => None,
+        }
+    }
+
     pub fn context_premises(&self) -> Vec<Proposition> {
         let mut premises = BTreeSet::new();
         self.collect_context_premises(&mut premises);
