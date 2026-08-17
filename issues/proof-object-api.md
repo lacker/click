@@ -982,6 +982,18 @@ point rather than borrowing a same-spelled fact's older snapshot lowering; a
 focused regression and the sorted-loop mdtest prevent Proof success from
 serializing an `assumption` that explicit verification would reject.
 
+The same grouped path now admits planner-selected proposition candidates,
+without restoring the split semantic/certificate architecture. The existing
+outcome `simp` planner may propose a supported simple or structured
+`ProofCertificate`, but `ProofScope::apply_candidate_certificate` checks that
+candidate exactly once through ordinary Proof transitions and retains the
+accepted descendant. Grouped finalization observes only the joined successor;
+it does not first mutate a goal and then replay the proposed syntax. A focused
+rewrite/normalize regression observes no ordinary surface-certificate replay,
+expands the retained steps, and independently verifies their serialization.
+Loadability, existential, and resource candidates still use the legacy
+certifiers until their corresponding Proof operations migrate.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

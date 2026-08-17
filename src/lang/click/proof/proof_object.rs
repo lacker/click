@@ -3541,6 +3541,11 @@ impl<'a> ProofScope<'a> {
         &self.body
     }
 
+    /// The exact current kernel goal owned by this nested scope.
+    pub(super) fn goal(&self) -> Option<&Proposition> {
+        self.body.goal()
+    }
+
     /// Applies one ordinary checked step inside the nested body. Failed
     /// candidates leave the enclosing scope value unchanged.
     #[allow(dead_code)]
@@ -3578,6 +3583,20 @@ impl<'a> ProofScope<'a> {
         let mut next = self.clone();
         next.body = self.body.check_certificate(certificate)?;
         Ok(next)
+    }
+
+    /// Applies one planner-selected candidate derivation inside this scope.
+    ///
+    /// The planner is untrusted and may synthesize any supported simple or
+    /// structured certificate. This operation checks that candidate exactly
+    /// once through the ordinary Proof transitions and retains the accepted
+    /// descendant; it does not compare against separately mutated semantic
+    /// aftermath or rerun an accepted candidate.
+    pub(super) fn apply_candidate_certificate(
+        &self,
+        certificate: &ProofCertificate,
+    ) -> Result<Self, ClickError> {
+        self.check_certificate(certificate)
     }
 
     /// Closes a completed nested proof and makes its checked proposition

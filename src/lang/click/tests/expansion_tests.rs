@@ -587,6 +587,55 @@ fn grouped_post_execution_simp_publishes_checked_obligations_through_proof() {
 }
 
 #[test]
+fn grouped_post_execution_simp_applies_planned_steps_once_through_proof() {
+    let c_source = r#"
+        int32 identity(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "identity.c";
+
+        int32 identity(int32 x) {
+            requires zero: x == 0;
+            ensures successor: x + 1 == 1;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("grouped simp should apply its planned rewrite through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.contract" && name == "surface certificate replay"
+        )),
+        "a planner-selected grouped candidate must be checked once and retained: {events:#?}"
+    );
+
+    let simp_offset = click_source
+        .find("simp();")
+        .expect("proof should contain the selected grouped simp");
+    let position = expansion::position_at_offset(click_source, simp_offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("identity.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the planner-selected grouped certificate should expand");
+    assert!(expanded.contains("rewrite(x == 0);"), "{expanded}");
+    assert!(expanded.contains("normalize();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("the retained planner-selected steps should verify independently");
+}
+
+#[test]
 fn selected_post_execution_smart_apply_uses_exact_path_premises() {
     let c_source = r#"
             int32 identity(int32 x) {

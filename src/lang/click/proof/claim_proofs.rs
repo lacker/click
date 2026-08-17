@@ -3284,6 +3284,7 @@ pub(super) fn finish_ordered_proof_replay(
                                             &unfolded_predicates,
                                             &transition_facts,
                                         );
+                                        let mut direct_available = path_requirements.clone();
                                         let mut selected = true;
                                         for (_, surface_goal) in &direct_claims {
                                             let Ok(scope) =
@@ -3293,13 +3294,57 @@ pub(super) fn finish_ordered_proof_replay(
                                                 selected = false;
                                                 break;
                                             };
-                                            let Some(scope) = scope.try_direct_logical_closure()
-                                            else {
+                                            let selected_scope = if let Some(scope) =
+                                                scope.try_direct_logical_closure()
+                                            {
+                                                Some(scope)
+                                            } else {
+                                                let Some(goal) = scope.goal().cloned() else {
+                                                    selected = false;
+                                                    break;
+                                                };
+                                                match lower_outcome_simp_proof(
+                                                    &replay,
+                                                    surface_goal,
+                                                    &goal,
+                                                    &direct_available,
+                                                    parsed_function.parameters(),
+                                                    arguments,
+                                                    pre_state,
+                                                    post_state,
+                                                    result,
+                                                    predicate_environment,
+                                                    click_function_environment,
+                                                ) {
+                                                    Ok(SourceProof::Script(tactics)) => {
+                                                        match ProofCertificate::from_proof_tactics(
+                                                            &tactics,
+                                                        ) {
+                                                            Ok(candidate) => scope
+                                                                .apply_candidate_certificate(
+                                                                    &candidate,
+                                                                )
+                                                                .ok(),
+                                                            Err(_) => None,
+                                                        }
+                                                    }
+                                                    Ok(SourceProof::Default)
+                                                    | Ok(SourceProof::Tactic(_))
+                                                    | Err(_) => None,
+                                                }
+                                            };
+                                            let Some(scope) = selected_scope else {
                                                 check_verification_deadline()?;
                                                 selected = false;
                                                 break;
                                             };
-                                            direct_proof = scope.join()?;
+                                            let joined = scope.join()?;
+                                            for fact in joined.added_facts() {
+                                                if !direct_available.contains(fact) {
+                                                    direct_available.push(fact.clone());
+                                                }
+                                            }
+                                            direct_proof = joined;
                                         }
                                         if selected {
                                             let surface_goals = direct_claims
