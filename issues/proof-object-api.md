@@ -964,6 +964,24 @@ mutation and transactional rejection, and a result-finalization regression
 checks the retained rewrite/normalize path without ordinary certificate
 replay.
 
+Point-frontier `have` scopes are now a checked structural publication
+operation for grouped obligations. A completed nested proof inserts exactly
+its proved fact into the immutable frontier and retains the nested certificate;
+later scopes share that successor and may use the published fact. The audited
+`complete_point_obligations` terminal operation then selects every external
+contract goal against the accumulated context, applies an ordinary
+`Assumption` step to each, and exports the combined retained certificate.
+Caller code cannot append unchecked closing syntax. Grouped outcome `simp`
+uses this path when its complete open claim set closes through the migrated
+direct logical vocabulary, abandoning failed descendants and falling back
+without mutation for richer searches. Regressions cover inter-obligation fact
+flow, independent expansion/reverification, no ordinary construction replay,
+ancestor isolation, and logarithmic work across 16 through 4096 unrelated
+facts. Newly stated point goals also lower strictly at the current semantic
+point rather than borrowing a same-spelled fact's older snapshot lowering; a
+focused regression and the sorted-loop mdtest prevent Proof success from
+serializing an `assumption` that explicit verification would reject.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

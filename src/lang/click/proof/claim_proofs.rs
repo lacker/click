@@ -3219,6 +3219,111 @@ pub(super) fn finish_ordered_proof_replay(
                                     .deferred_tactic_capture
                                     .as_ref()
                                     .is_some_and(|capture| capture.tactic_index == *tactic_index);
+                                if replay.grouped_contract
+                                    && existence_tactics.is_empty()
+                                    && let CFunctionOutcome::Return {
+                                        value: result,
+                                        state: post_state,
+                                    } = &outcome
+                                {
+                                    // Try the already-migrated direct logical
+                                    // vocabulary as one immutable Proof before
+                                    // entering the legacy grouped certificate
+                                    // planner. This is deliberately all-or-
+                                    // nothing: an unsupported claim discards
+                                    // the untouched search descendant and the
+                                    // established path retains its existing
+                                    // behavior.
+                                    let mut direct_claims = Vec::new();
+                                    let mut direct_supported = true;
+                                    for (claim_index, claim) in claims.iter().enumerate() {
+                                        if closures[claim_index].is_closed() {
+                                            continue;
+                                        }
+                                        match claim {
+                                            FunctionClaimRef::Ensure(_, ensure_clause)
+                                                if rewritten_claim_goals[claim_index].is_none()
+                                                    && frame_certified_claim_goals[claim_index]
+                                                        .is_none() =>
+                                            {
+                                                match ensure_clause.ensure() {
+                                                    Ensure::Proposition(surface_goal) => {
+                                                        direct_claims.push((
+                                                            claim_index,
+                                                            surface_goal.clone(),
+                                                        ));
+                                                    }
+                                                    Ensure::Resource(_) => {
+                                                        direct_supported = false;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            _ => {
+                                                direct_supported = false;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if direct_supported && !direct_claims.is_empty() {
+                                        let transition_facts = path.execution_facts();
+                                        let mut direct_proof = Proof::for_point_frontier(
+                                            &proof_label,
+                                            *tactic_index,
+                                            &path_requirements,
+                                            parsed_function.parameters(),
+                                            arguments,
+                                            pre_state,
+                                            post_state,
+                                            Some(result),
+                                            &replay.program_point_states,
+                                            &outcome_surface_propositions,
+                                            predicate_environment,
+                                            click_function_environment,
+                                            theorem_environment,
+                                            &unfolded_predicates,
+                                            &transition_facts,
+                                        );
+                                        let mut selected = true;
+                                        for (_, surface_goal) in &direct_claims {
+                                            let Ok(scope) =
+                                                direct_proof.begin_have(surface_goal.clone())
+                                            else {
+                                                check_verification_deadline()?;
+                                                selected = false;
+                                                break;
+                                            };
+                                            let Some(scope) = scope.try_direct_logical_closure()
+                                            else {
+                                                check_verification_deadline()?;
+                                                selected = false;
+                                                break;
+                                            };
+                                            direct_proof = scope.join()?;
+                                        }
+                                        if selected {
+                                            let surface_goals = direct_claims
+                                                .iter()
+                                                .map(|(_, goal)| goal.clone())
+                                                .collect::<Vec<_>>();
+                                            let certificate = direct_proof
+                                                .complete_point_obligations(&surface_goals)?;
+                                            for (claim_index, _) in direct_claims {
+                                                closures[claim_index] =
+                                                    ClaimClosure::by_grouped_transition(
+                                                        &certificate,
+                                                    );
+                                            }
+                                            path_grouped_surface_closers
+                                                .extend(certificate.to_proof_tactics());
+                                            if capturing_this_tactic {
+                                                path_deferred_capture_tactics
+                                                    .extend(certificate.to_proof_tactics());
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                }
                                 // Claims this `simp` discharges. A grouped contract
                                 // certifies all of them with one transition, so they
                                 // stay pending until it is built and replayed;

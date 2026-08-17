@@ -657,22 +657,22 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Starts one externally selected proposition judgment from an initial
+    /// Starts one externally selected proposition judgment from a
     /// point-frontier context without rebuilding its persistent facts.
     ///
     /// Grouped contract finalization owns several independent ensure goals;
     /// this audited root operation focuses one of them while sharing the
     /// checked outcome context. It is not a proof transition and therefore
-    /// starts fresh provenance. Only an untouched point-frontier root may be
-    /// focused, so accepted descendants cannot replace their current goal.
+    /// starts fresh provenance. A point-frontier descendant may have published
+    /// checked `have` facts before another external obligation is selected;
+    /// a proof that already owns a proposition goal cannot replace it.
     pub(super) fn focus_point_goal(&self, goal: Proposition) -> Result<Self, ClickError> {
         if !matches!(self.context.as_ref(), ProofContext::Point(_))
             || !matches!(&self.state.goal, Goal::ExecutionFrontier)
-            || self.node.depth != 0
         {
-            return Err(self.step_error(
-                "a proposition goal can be focused only from an initial point frontier",
-            ));
+            return Err(
+                self.step_error("a proposition goal can be focused only from a point frontier")
+            );
         }
         Ok(Self {
             context: self.context.clone(),
@@ -692,6 +692,44 @@ impl<'a> Proof<'a> {
                 depth: 0,
             }),
         })
+    }
+
+    /// Lowers and selects one externally owned Surface Click obligation from
+    /// a point frontier. The returned proof shares every accumulated checked
+    /// fact but owns fresh provenance for that obligation's closing steps.
+    fn focus_point_surface_goal(&self, goal: &ClickProposition) -> Result<Self, ClickError> {
+        let kernel = self.lower_surface_goal(goal, "point obligation")?;
+        self.focus_point_goal(kernel)
+    }
+
+    /// Completes externally owned point obligations against this frontier and
+    /// exports their one structured certificate.
+    ///
+    /// Earlier checked descendants (notably `have` scopes) remain in the
+    /// prefix. Each obligation is then independently selected and closed by
+    /// an ordinary `Assumption` step against the accumulated persistent fact
+    /// context. Certificate composition is therefore an audited terminal
+    /// operation of `Proof`, not caller-owned syntax assembly.
+    pub(super) fn complete_point_obligations(
+        &self,
+        goals: &[ClickProposition],
+    ) -> Result<ProofCertificate, ClickError> {
+        if goals.is_empty() {
+            return Err(self.step_error("point obligation completion requires at least one goal"));
+        }
+        if !matches!(self.context.as_ref(), ProofContext::Point(_))
+            || !matches!(self.state.goal, Goal::ExecutionFrontier)
+        {
+            return Err(self.step_error("point obligations require an open point frontier"));
+        }
+        let mut steps = self.certificate().steps().to_vec();
+        for goal in goals {
+            let closer = self
+                .focus_point_surface_goal(goal)?
+                .apply_step(SimpleProofStep::Assumption)?;
+            steps.extend_from_slice(closer.certificate().steps());
+        }
+        Ok(ProofCertificate::from_steps(steps))
     }
 
     pub(super) fn is_complete(&self) -> bool {
@@ -781,10 +819,7 @@ impl<'a> Proof<'a> {
     fn apply_assumption(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
         let available = match self.context.as_ref() {
-            ProofContext::Point(context) => self
-                .state
-                .facts
-                .replay_available_across_effects(goal, context.effect_facts),
+            ProofContext::Point(_) => self.state.facts.pure_replay_available(goal),
             ProofContext::Pure(_) | ProofContext::Execution(_) => self.state.facts.contains(goal),
         };
         if !available {
@@ -1000,6 +1035,12 @@ impl<'a> Proof<'a> {
     /// Opens a nested proof for one surface proposition. The body has a fresh
     /// provenance root but shares the persistent semantic fact index and
     /// immutable checking context with its enclosing proof.
+    ///
+    /// A point proof may open `have` either while refining a proposition or
+    /// from its initial result frontier. The latter is the audited way for
+    /// grouped contract finalization to prove one obligation, publish it as a
+    /// checked fact, and then prove a dependent obligation without rebuilding
+    /// or mutating an external fact context.
     pub(super) fn begin_have(
         &self,
         proposition: ClickProposition,
@@ -1007,8 +1048,13 @@ impl<'a> Proof<'a> {
         if self.state.complete {
             return Err(self.step_error("`have` follows a completed proof"));
         }
-        self.proposition_goal("`have` requires a proposition proof context")?;
-        let kernel = self.lower_surface_proposition(&proposition, "`have` proposition")?;
+        match (&self.state.goal, self.context.as_ref()) {
+            (Goal::Proposition(_), _) | (Goal::ExecutionFrontier, ProofContext::Point(_)) => {}
+            (Goal::ExecutionFrontier, ProofContext::Pure(_) | ProofContext::Execution(_)) => {
+                return Err(self.step_error("`have` requires a proposition or point context"));
+            }
+        }
+        let kernel = self.lower_surface_goal(&proposition, "`have` proposition")?;
         let body = Proof {
             context: self.context.clone(),
             state: Arc::new(ProofState {
@@ -1404,6 +1450,44 @@ impl<'a> Proof<'a> {
                 {
                     return Ok(recorded.clone());
                 }
+                lower_point_proposition_with_assumptions(
+                    &surface,
+                    self.state.facts.assumptions(),
+                    context.parameters,
+                    context.arguments,
+                    context.pre_state,
+                    context.state,
+                    context.result,
+                    context.program_point_states,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+                .map_err(|message| {
+                    self.step_error(format!("could not lower {description}: {message}"))
+                })
+            }
+            ProofContext::Execution(_) => Err(self.step_error(format!(
+                "{description} is not an execution-frontier proposition"
+            ))),
+        }
+    }
+
+    /// Lowers a newly stated proof goal at the current semantic point.
+    ///
+    /// Fact references may deliberately resolve through a recorded surface
+    /// spelling, but a new goal may not: the same spelling can name facts
+    /// retained from an older snapshot. Selecting such a fact here would let
+    /// `have P by assumption` check one kernel proposition and serialize a
+    /// surface `P` that independently lowers to another.
+    fn lower_surface_goal(
+        &self,
+        surface: &ClickProposition,
+        description: &str,
+    ) -> Result<Proposition, ClickError> {
+        match self.context.as_ref() {
+            ProofContext::Pure(_) => self.lower_surface_proposition(surface, description),
+            ProofContext::Point(context) => {
+                let surface = self.substitute_point_locals_in_proposition(surface)?;
                 lower_point_proposition_with_assumptions(
                     &surface,
                     self.state.facts.assumptions(),
@@ -3703,6 +3787,14 @@ impl ProofFacts {
         self.exact.contains(&normalized) || self.normalized_exact.contains(&normalized)
     }
 
+    /// Availability of a proposition to the explicit pure `assumption`
+    /// judgment used inside point proofs. This deliberately excludes
+    /// cross-effect snapshot transport: such a transport needs its own
+    /// retained simple step before a later assumption may consume it.
+    pub(super) fn pure_replay_available(&self, required: &Proposition) -> bool {
+        self.materialization_available(required) || self.quantified_replay_available(required)
+    }
+
     pub(super) fn implicit_transport_assumptions(&self) -> &PureFactContext {
         &self.implicit_transport_assumptions
     }
@@ -4913,6 +5005,138 @@ mod tests {
             );
             assert!(root.certificate().steps().is_empty());
         }
+    }
+
+    #[test]
+    fn point_frontier_have_publishes_checked_fact_for_later_scope() {
+        let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+            .expect("test function should parse");
+        let state = CState::new();
+        let result = int32(0);
+        let arguments = vec![CExpression::Value(result.clone())];
+        let program_point_states = ProgramPointStates::new();
+        let surface_propositions = SurfacePropositionMap::default();
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let proposition = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            let root = Proof::for_point_frontier(
+                "point frontier have",
+                0,
+                &facts,
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                Some(&result),
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let first = root
+                .begin_have(proposition.clone())
+                .expect("a point frontier should open a checked have scope")
+                .apply_step(SimpleProofStep::Normalize)
+                .expect("the first scope should prove the concrete equality")
+                .join()
+                .expect("a completed point-frontier scope should publish its fact");
+            let second = first
+                .begin_have(proposition.clone())
+                .expect("the checked successor should open a dependent scope")
+                .apply_step(SimpleProofStep::Assumption)
+                .expect("the later scope should see the first checked fact")
+                .join()
+                .expect("the dependent scope should publish its retained proof");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 40 * logarithmic_height + 160;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} two-scope point proof allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(matches!(
+                second.certificate().steps(),
+                [
+                    SimpleProofStep::Have { proof: first, .. },
+                    SimpleProofStep::Have { proof: second, .. }
+                ] if first.steps() == [SimpleProofStep::Normalize]
+                    && second.steps() == [SimpleProofStep::Assumption]
+            ));
+            let completed = second
+                .complete_point_obligations(std::slice::from_ref(&proposition))
+                .expect("the accumulated frontier should close its external obligation");
+            assert!(matches!(
+                completed.steps(),
+                [
+                    SimpleProofStep::Have { .. },
+                    SimpleProofStep::Have { .. },
+                    SimpleProofStep::Assumption
+                ]
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn point_frontier_have_goal_does_not_reuse_an_older_surface_lowering() {
+        let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+            .expect("test function should parse");
+        let state = CState::new();
+        let result = int32(1);
+        let arguments = vec![CExpression::Value(result.clone())];
+        let program_point_states = ProgramPointStates::new();
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let surface = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+        let older = indexed_fact(9_200_000);
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
+            .record_lowering(&surface, &older)
+            .expect("the older spelling should be recorded");
+        let root = Proof::for_point_frontier(
+            "point have current goal",
+            0,
+            std::slice::from_ref(&older),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            Some(&result),
+            &program_point_states,
+            &surface_propositions,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+            &[],
+            &[],
+        );
+        let scope = root
+            .begin_have(surface)
+            .expect("the current point goal should lower independently");
+        assert!(
+            scope.apply_step(SimpleProofStep::Assumption).is_err(),
+            "an older fact with the same surface spelling must not close the current goal"
+        );
+        assert!(root.certificate().steps().is_empty());
     }
 
     #[test]

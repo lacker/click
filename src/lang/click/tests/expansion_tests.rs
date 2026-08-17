@@ -537,6 +537,56 @@ fn post_execution_rewrite_retains_its_checked_proof_step() {
 }
 
 #[test]
+fn grouped_post_execution_simp_publishes_checked_obligations_through_proof() {
+    let c_source = r#"
+        int32 identity(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "identity.c";
+
+        int32 identity(int32 x) {
+            ensures first: result == result;
+            ensures second: result == result;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("grouped simp should retain its checked obligation scopes");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.contract" && name == "surface certificate replay"
+        )),
+        "grouped direct simp must not construct and replay a second certificate: {events:#?}"
+    );
+
+    let simp_offset = click_source
+        .find("simp();")
+        .expect("proof should contain the selected grouped simp");
+    let position = expansion::position_at_offset(click_source, simp_offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("identity.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the retained grouped simp certificate should expand");
+    assert_eq!(expanded.matches("have result == result by {").count(), 2);
+    assert!(expanded.contains("normalize();"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("the serialized grouped obligation scopes should verify independently");
+}
+
+#[test]
 fn selected_post_execution_smart_apply_uses_exact_path_premises() {
     let c_source = r#"
             int32 identity(int32 x) {

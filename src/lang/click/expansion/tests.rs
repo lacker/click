@@ -774,7 +774,11 @@ int32 identity(int32 x) {
     )
     .expect("grouped simp should expand");
 
-    assert_eq!(expanded.matches("assumption();").count(), 2);
+    assert_eq!(
+        expanded.matches("\n    assumption();").count(),
+        2,
+        "each grouped claim should retain one top-level closer:\n{expanded}"
+    );
     verify_c0_sources(&expanded, &sources)
         .expect("each grouped claim closer should survive expansion");
 }
