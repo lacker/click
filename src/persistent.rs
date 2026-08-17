@@ -30,7 +30,6 @@ impl<K, V> Default for PersistentMap<K, V> {
 }
 
 impl<K: Ord, V> PersistentMap<K, V> {
-    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.len
     }
@@ -55,6 +54,38 @@ impl<K: Ord, V> PersistentMap<K, V> {
         self.get(key).is_some()
     }
 
+    /// Returns the greatest entry whose key is strictly less than `key`.
+    pub(crate) fn get_less_than(&self, key: &K) -> Option<(&K, &V)> {
+        let mut node = self.root.as_deref();
+        let mut candidate = None;
+        while let Some(current) = node {
+            match key.cmp(current.key.as_ref()) {
+                Ordering::Less | Ordering::Equal => node = current.left.as_deref(),
+                Ordering::Greater => {
+                    candidate = Some((current.key.as_ref(), current.value.as_ref()));
+                    node = current.right.as_deref();
+                }
+            }
+        }
+        candidate
+    }
+
+    /// Returns the least entry whose key is strictly greater than `key`.
+    pub(crate) fn get_greater_than(&self, key: &K) -> Option<(&K, &V)> {
+        let mut node = self.root.as_deref();
+        let mut candidate = None;
+        while let Some(current) = node {
+            match key.cmp(current.key.as_ref()) {
+                Ordering::Less => {
+                    candidate = Some((current.key.as_ref(), current.value.as_ref()));
+                    node = current.left.as_deref();
+                }
+                Ordering::Equal | Ordering::Greater => node = current.right.as_deref(),
+            }
+        }
+        candidate
+    }
+
     pub(crate) fn with_inserted(&self, key: K, value: V) -> Self {
         let (root, inserted) = insert_node(self.root.as_ref(), Arc::new(key), Arc::new(value));
         Self {
@@ -75,7 +106,7 @@ impl<K: Ord, V> PersistentMap<K, V> {
         PersistentMapIter::new(self.root.as_deref(), self.len)
     }
 
-    pub(crate) fn keys(&self) -> impl Iterator<Item = &K> {
+    pub(crate) fn keys(&self) -> impl DoubleEndedIterator<Item = &K> + ExactSizeIterator {
         self.iter().map(|(key, _)| key)
     }
 
@@ -221,7 +252,21 @@ impl<T: Ord> PersistentSet<T> {
         self.map.contains_key(value)
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &T> {
+    pub(crate) fn without_value(&self, value: &T) -> Self {
+        Self {
+            map: self.map.without_key(value),
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = &T> + ExactSizeIterator {
         self.map.keys()
     }
 

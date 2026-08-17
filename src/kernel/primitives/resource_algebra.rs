@@ -32,76 +32,209 @@ impl Drop for ResourceCompositionQueryGuard {
     }
 }
 
+fn insert_resource_index_entry<K: Ord>(
+    index: &PersistentMap<K, ResourceEntryIds>,
+    key: K,
+    entry: ResourceEntryId,
+) -> PersistentMap<K, ResourceEntryIds> {
+    let entries = index
+        .get(&key)
+        .cloned()
+        .unwrap_or_default()
+        .with_value(entry);
+    index.with_inserted(key, entries)
+}
+
+fn remove_resource_index_entry<K: Ord + Clone>(
+    index: &PersistentMap<K, ResourceEntryIds>,
+    key: &K,
+    entry: ResourceEntryId,
+) -> PersistentMap<K, ResourceEntryIds> {
+    let Some(entries) = index.get(key) else {
+        return index.clone();
+    };
+    let entries = entries.without_value(&entry);
+    if entries.is_empty() {
+        index.without_key(key)
+    } else {
+        index.with_inserted(key.clone(), entries)
+    }
+}
+
+impl ResourceContextIndex {
+    fn with_inserted(&self, entry: ResourceEntryId, fact: &CResourceFact) -> Self {
+        let mut result = self.clone();
+        result.exact = insert_resource_index_entry(&result.exact, fact.clone(), entry);
+        result.by_resource =
+            insert_resource_index_entry(&result.by_resource, fact.resource().clone(), entry);
+        if let Some(range) = fact.memory_range() {
+            let block = range.base().block.clone();
+            let mode = fact.is_own();
+            result.memory_by_block =
+                insert_resource_index_entry(&result.memory_by_block, block.clone(), entry);
+            if mode {
+                result.owned_memory_by_block = insert_resource_index_entry(
+                    &result.owned_memory_by_block,
+                    block.clone(),
+                    entry,
+                );
+            }
+            result.memory_starts = insert_resource_index_entry(
+                &result.memory_starts,
+                (block.clone(), mode, range.start().clone()),
+                entry,
+            );
+            result.memory_ends = insert_resource_index_entry(
+                &result.memory_ends,
+                (block, mode, range.end().clone()),
+                entry,
+            );
+            if let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const()) {
+                let base = (range.base().clone(), mode);
+                result.concrete_memory = insert_resource_index_entry(
+                    &result.concrete_memory,
+                    (base.0.clone(), mode, start, end),
+                    entry,
+                );
+                let count = result
+                    .concrete_memory_by_base
+                    .get(&base)
+                    .copied()
+                    .unwrap_or(0)
+                    + 1;
+                result.concrete_memory_by_base =
+                    result.concrete_memory_by_base.with_inserted(base, count);
+            }
+        } else if let CResource::Composite { name, arguments }
+        | CResource::Token { name, arguments } = fact.resource()
+        {
+            result.exact_shapes = insert_resource_index_entry(
+                &result.exact_shapes,
+                (fact.family(), name.clone(), arguments.len()),
+                entry,
+            );
+        }
+        result
+    }
+
+    fn without_entry(&self, entry: ResourceEntryId, fact: &CResourceFact) -> Self {
+        let mut result = self.clone();
+        result.exact = remove_resource_index_entry(&result.exact, fact, entry);
+        result.by_resource =
+            remove_resource_index_entry(&result.by_resource, fact.resource(), entry);
+        if let Some(range) = fact.memory_range() {
+            let block = range.base().block.clone();
+            let mode = fact.is_own();
+            result.memory_by_block =
+                remove_resource_index_entry(&result.memory_by_block, &block, entry);
+            if mode {
+                result.owned_memory_by_block =
+                    remove_resource_index_entry(&result.owned_memory_by_block, &block, entry);
+            }
+            result.memory_starts = remove_resource_index_entry(
+                &result.memory_starts,
+                &(block.clone(), mode, range.start().clone()),
+                entry,
+            );
+            result.memory_ends = remove_resource_index_entry(
+                &result.memory_ends,
+                &(block, mode, range.end().clone()),
+                entry,
+            );
+            if let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const()) {
+                let base = (range.base().clone(), mode);
+                result.concrete_memory = remove_resource_index_entry(
+                    &result.concrete_memory,
+                    &(base.0.clone(), mode, start, end),
+                    entry,
+                );
+                let count = result
+                    .concrete_memory_by_base
+                    .get(&base)
+                    .copied()
+                    .expect("concrete resource index count exists");
+                result.concrete_memory_by_base = if count == 1 {
+                    result.concrete_memory_by_base.without_key(&base)
+                } else {
+                    result
+                        .concrete_memory_by_base
+                        .with_inserted(base, count - 1)
+                };
+            }
+        } else if let CResource::Composite { name, arguments }
+        | CResource::Token { name, arguments } = fact.resource()
+        {
+            result.exact_shapes = remove_resource_index_entry(
+                &result.exact_shapes,
+                &(fact.family(), name.clone(), arguments.len()),
+                entry,
+            );
+        }
+        result
+    }
+}
+
 impl ResourceContext {
     pub fn new() -> Self {
         Self::default()
     }
 
-    fn facts_mut(&mut self) -> &mut Vec<CResourceFact> {
-        self.index = std::sync::Arc::new(std::sync::OnceLock::new());
-        std::sync::Arc::make_mut(&mut self.facts)
+    #[cfg(test)]
+    pub(in crate::kernel) fn shares_storage_with(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.storage, &other.storage)
     }
 
-    fn index(&self) -> &ResourceContextIndex {
-        self.index.get_or_init(|| {
-            let mut index = ResourceContextIndex::default();
-            for (position, fact) in self.facts.iter().enumerate() {
-                crate::instrumentation::record_deterministic_work(1);
-                index.exact.entry(fact.clone()).or_default().push(position);
-                index
-                    .by_resource
-                    .entry(fact.resource().clone())
-                    .or_default()
-                    .push(position);
-                if let Some(range) = fact.memory_range() {
-                    let mode = fact.is_own();
-                    index
-                        .memory_by_block
-                        .entry(range.base().block.clone())
-                        .or_default()
-                        .push(position);
-                    index
-                        .memory_starts
-                        .entry((range.base().block.clone(), mode, range.start().clone()))
-                        .or_default()
-                        .push(position);
-                    index
-                        .memory_ends
-                        .entry((range.base().block.clone(), mode, range.end().clone()))
-                        .or_default()
-                        .push(position);
-                    if let (Some(start), Some(end)) =
-                        (range.start().as_const(), range.end().as_const())
-                    {
-                        index
-                            .concrete_memory_by_base
-                            .entry((range.base().clone(), mode))
-                            .or_default()
-                            .entry((start, end))
-                            .or_default()
-                            .push(position);
-                    }
-                } else if let CResource::Composite { name, arguments }
-                | CResource::Token { name, arguments } = fact.resource()
-                {
-                    index
-                        .exact_shapes
-                        .entry((fact.family(), name.clone(), arguments.len()))
-                        .or_default()
-                        .push(position);
-                }
-            }
-            index
-        })
+    fn iter(&self) -> impl DoubleEndedIterator<Item = &CResourceFact> + ExactSizeIterator {
+        self.storage.facts.iter().map(|(_, fact)| fact)
+    }
+
+    fn fact(&self, entry: ResourceEntryId) -> &CResourceFact {
+        self.storage
+            .facts
+            .get(&entry)
+            .expect("resource index refers to a live entry")
+    }
+
+    fn insert_fact(&mut self, fact: CResourceFact) {
+        let entry = self.storage.next_entry_id;
+        let next_entry_id = self
+            .storage
+            .next_entry_id
+            .checked_add(1)
+            .expect("resource entry id space exhausted");
+        self.storage = std::sync::Arc::new(ResourceContextStorage {
+            facts: self.storage.facts.with_inserted(entry, fact.clone()),
+            next_entry_id,
+            index: self.storage.index.with_inserted(entry, &fact),
+            materialized: std::sync::OnceLock::new(),
+        });
+    }
+
+    fn remove_entry(&mut self, entry: ResourceEntryId) -> CResourceFact {
+        let fact = self.fact(entry).clone();
+        self.storage = std::sync::Arc::new(ResourceContextStorage {
+            facts: self.storage.facts.without_key(&entry),
+            next_entry_id: self.storage.next_entry_id,
+            index: self.storage.index.without_entry(entry, &fact),
+            materialized: std::sync::OnceLock::new(),
+        });
+        fact
+    }
+
+    fn replace_facts(&mut self, facts: impl IntoIterator<Item = CResourceFact>) {
+        *self = facts.into_iter().fold(Self::new(), |context, fact| {
+            context.unchecked_with_fact(fact)
+        });
     }
 
     fn memory_block_facts(&self, block: &PointerBlock) -> impl Iterator<Item = &CResourceFact> {
-        self.index()
+        self.storage
+            .index
             .memory_by_block
             .get(block)
             .into_iter()
-            .flatten()
-            .map(|index| &self.facts[*index])
+            .flat_map(ResourceEntryIds::iter)
+            .map(|entry| self.fact(*entry))
     }
 
     /// Necessary-shape candidates for proof-aware direct resource matching.
@@ -114,8 +247,8 @@ impl ResourceContext {
     ) -> impl Iterator<Item = &CResourceFact> {
         self.direct_match_candidate_positions(fact)
             .into_iter()
-            .flatten()
-            .map(|index| &self.facts[*index])
+            .flat_map(ResourceEntryIds::iter)
+            .map(|entry| self.fact(*entry))
     }
 
     pub(crate) fn proves_owned_resources_separate(
@@ -135,17 +268,13 @@ impl ResourceContext {
         let Some(right_positions) = self.direct_match_candidate_positions(&right_view) else {
             return false;
         };
-        left_positions.iter().any(|left_position| {
-            self.facts[*left_position].is_own()
-                && resource_fact_entails(&self.facts[*left_position], &left_view, assumptions)
-                && right_positions.iter().any(|right_position| {
-                    left_position != right_position
-                        && self.facts[*right_position].is_own()
-                        && resource_fact_entails(
-                            &self.facts[*right_position],
-                            &right_view,
-                            assumptions,
-                        )
+        left_positions.iter().any(|left_entry| {
+            self.fact(*left_entry).is_own()
+                && resource_fact_entails(self.fact(*left_entry), &left_view, assumptions)
+                && right_positions.iter().any(|right_entry| {
+                    left_entry != right_entry
+                        && self.fact(*right_entry).is_own()
+                        && resource_fact_entails(self.fact(*right_entry), &right_view, assumptions)
                 })
         })
     }
@@ -161,11 +290,11 @@ impl ResourceContext {
         if left.base().block != right.base().block {
             return false;
         }
-        let Some(positions) = self.index().memory_by_block.get(&left.base().block) else {
+        let Some(positions) = self.storage.index.memory_by_block.get(&left.base().block) else {
             return false;
         };
-        let left_position = positions.iter().copied().find(|position| {
-            self.facts[*position]
+        let left_position = positions.iter().copied().find(|entry| {
+            self.fact(*entry)
                 .memory_own_range()
                 .is_some_and(|available| {
                     crate::kernel::assumptions::memory_range_shallowly_contained(left, available)
@@ -174,9 +303,10 @@ impl ResourceContext {
         let Some(left_position) = left_position else {
             return false;
         };
-        positions.iter().copied().any(|position| {
-            position != left_position
-                && self.facts[position]
+        positions.iter().copied().any(|entry| {
+            entry != left_position
+                && self
+                    .fact(entry)
                     .memory_own_range()
                     .is_some_and(|available| {
                         crate::kernel::assumptions::memory_range_shallowly_contained(
@@ -194,16 +324,14 @@ impl ResourceContext {
         if left.block != right.block {
             return false;
         }
-        let Some(positions) = self.index().memory_by_block.get(&left.block) else {
+        let Some(positions) = self.storage.index.memory_by_block.get(&left.block) else {
             return false;
         };
         let containing = |pointer: &Pointer| {
-            positions.iter().copied().find(|position| {
-                self.facts[*position]
-                    .memory_own_range()
-                    .is_some_and(|range| {
-                        crate::kernel::assumptions::pointer_in_memory_range_shallow(pointer, range)
-                    })
+            positions.iter().copied().find(|entry| {
+                self.fact(*entry).memory_own_range().is_some_and(|range| {
+                    crate::kernel::assumptions::pointer_in_memory_range_shallow(pointer, range)
+                })
             })
         };
         containing(left)
@@ -221,7 +349,7 @@ impl ResourceContext {
         &self,
     ) -> Vec<(Proposition, CMemoryRange, CMemoryRange)> {
         let mut by_block = BTreeMap::<PointerBlock, Vec<&CMemoryRange>>::new();
-        for fact in self.facts.iter() {
+        for fact in self.iter() {
             let Some(range) = fact.memory_own_range() else {
                 continue;
             };
@@ -291,12 +419,12 @@ impl ResourceContext {
         if left.base().block != right.base().block {
             return false;
         }
-        let Some(positions) = self.index().memory_by_block.get(&left.base().block) else {
+        let Some(positions) = self.storage.index.memory_by_block.get(&left.base().block) else {
             return false;
         };
         let containing = |child: &CMemoryRange| {
-            positions.iter().copied().find(|position| {
-                self.facts[*position]
+            positions.iter().copied().find(|entry| {
+                self.fact(*entry)
                     .memory_own_range()
                     .is_some_and(|available| contains(child, available))
             })
@@ -318,12 +446,12 @@ impl ResourceContext {
         if left.block != right.block {
             return false;
         }
-        let Some(positions) = self.index().memory_by_block.get(&left.block) else {
+        let Some(positions) = self.storage.index.memory_by_block.get(&left.block) else {
             return false;
         };
         let containing = |pointer: &Pointer| {
-            positions.iter().copied().find(|position| {
-                self.facts[*position]
+            positions.iter().copied().find(|entry| {
+                self.fact(*entry)
                     .memory_own_range()
                     .is_some_and(|range| contains(pointer, range))
             })
@@ -346,11 +474,11 @@ impl ResourceContext {
         if range.base().block != pointer.block {
             return false;
         }
-        let Some(positions) = self.index().memory_by_block.get(&pointer.block) else {
+        let Some(positions) = self.storage.index.memory_by_block.get(&pointer.block) else {
             return false;
         };
-        let range_position = positions.iter().copied().find(|position| {
-            self.facts[*position]
+        let range_position = positions.iter().copied().find(|entry| {
+            self.fact(*entry)
                 .memory_own_range()
                 .is_some_and(|available| {
                     crate::kernel::assumptions::memory_range_shallowly_contained(range, available)
@@ -359,9 +487,10 @@ impl ResourceContext {
         let Some(range_position) = range_position else {
             return false;
         };
-        positions.iter().copied().any(|position| {
-            position != range_position
-                && self.facts[position]
+        positions.iter().copied().any(|entry| {
+            entry != range_position
+                && self
+                    .fact(entry)
                     .memory_own_range()
                     .is_some_and(|available| contains_pointer(pointer, available))
         })
@@ -377,23 +506,22 @@ impl ResourceContext {
         right: &PointerOffsetTerm,
         contains: impl Fn(&Pointer, &CMemoryRange) -> bool,
     ) -> bool {
-        self.index()
+        self.storage
+            .index
             .memory_by_block
             .iter()
-            .any(|(block, positions)| {
+            .any(|(block, entries)| {
                 let containing = |offset: &PointerOffsetTerm| {
-                    positions.iter().copied().find(|position| {
-                        self.facts[*position]
-                            .memory_own_range()
-                            .is_some_and(|range| {
-                                contains(
-                                    &Pointer {
-                                        block: block.clone(),
-                                        offset: offset.clone(),
-                                    },
-                                    range,
-                                )
-                            })
+                    entries.iter().copied().find(|entry| {
+                        self.fact(*entry).memory_own_range().is_some_and(|range| {
+                            contains(
+                                &Pointer {
+                                    block: block.clone(),
+                                    offset: offset.clone(),
+                                },
+                                range,
+                            )
+                        })
                     })
                 };
                 containing(left)
@@ -402,11 +530,12 @@ impl ResourceContext {
             })
     }
 
-    fn direct_match_candidate_positions(&self, fact: &CResourceFact) -> Option<&Vec<usize>> {
+    fn direct_match_candidate_positions(&self, fact: &CResourceFact) -> Option<&ResourceEntryIds> {
         match fact.resource() {
-            CResource::Memory(range) => self.index().memory_by_block.get(&range.base().block),
+            CResource::Memory(range) => self.storage.index.memory_by_block.get(&range.base().block),
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => self
-                .index()
+                .storage
+                .index
                 .exact_shapes
                 .get(&(fact.family(), name.clone(), arguments.len())),
         }
@@ -418,7 +547,7 @@ impl ResourceContext {
     /// Prefer `try_compose_with_fact` when proposition assumptions are
     /// available.
     pub fn unchecked_with_fact(mut self, fact: CResourceFact) -> Self {
-        self.facts_mut().push(fact);
+        self.insert_fact(fact);
         self
     }
 
@@ -428,7 +557,9 @@ impl ResourceContext {
     /// Prefer `try_compose_with_facts` when proposition assumptions are
     /// available.
     pub fn unchecked_with_facts(mut self, facts: impl IntoIterator<Item = CResourceFact>) -> Self {
-        self.facts_mut().extend(facts);
+        for fact in facts {
+            self.insert_fact(fact);
+        }
         self
     }
 
@@ -468,10 +599,12 @@ impl ResourceContext {
         facts: impl IntoIterator<Item = CResourceFact>,
         assumptions: &PureFactContext,
     ) -> Result<Self, ResourceContextValidityError> {
-        let first_new = self.facts.len();
-        self.facts_mut().extend(facts);
-        for right_index in first_new..self.facts.len() {
-            let right = &self.facts[right_index];
+        let first_new = self.storage.next_entry_id;
+        for fact in facts {
+            self.insert_fact(fact);
+        }
+        for right_entry in first_new..self.storage.next_entry_id {
+            let right = self.fact(right_entry);
             let Some(right_range) = right.memory_own_range() else {
                 continue;
             };
@@ -480,47 +613,49 @@ impl ResourceContext {
                 .as_const()
                 .zip(right_range.end().as_const())
                 .and_then(|(start, end)| {
-                    let block_positions = self
-                        .index()
-                        .memory_by_block
-                        .get(&right_range.base().block)?;
-                    let ranges = self
-                        .index()
+                    let owned_in_block = self
+                        .storage
+                        .index
+                        .owned_memory_by_block
+                        .get(&right_range.base().block)?
+                        .len();
+                    let represented = *self
+                        .storage
+                        .index
                         .concrete_memory_by_base
                         .get(&(right_range.base().clone(), true))?;
-                    let represented = ranges.values().map(Vec::len).sum::<usize>();
-                    let owned_in_block = block_positions
-                        .iter()
-                        .filter(|position| self.facts[**position].memory_own_range().is_some())
-                        .count();
-                    (represented == owned_in_block).then_some((start, end, ranges))
+                    (represented == owned_in_block).then_some((start, end))
                 });
-            if let Some((start, end, ranges)) = same_base_concrete {
-                let key = (start, end);
+            if let Some((start, end)) = same_base_concrete {
+                let key = (right_range.base().clone(), true, start, end);
                 let mut candidates = BTreeSet::new();
-                if let Some(duplicates) = ranges.get(&key) {
+                if let Some(duplicates) = self.storage.index.concrete_memory.get(&key) {
                     candidates.extend(
                         duplicates
                             .iter()
                             .copied()
-                            .filter(|position| *position != right_index),
+                            .filter(|entry| *entry != right_entry),
                     );
                 }
-                if let Some((_, positions)) = ranges.range(..key).next_back()
-                    && let Some(position) = positions.last()
+                if let Some((candidate_key, entries)) =
+                    self.storage.index.concrete_memory.get_less_than(&key)
+                    && candidate_key.0 == key.0
+                    && candidate_key.1 == key.1
+                    && let Some(entry) = entries.iter().next_back()
                 {
-                    candidates.insert(*position);
+                    candidates.insert(*entry);
                 }
-                if let Some((_, positions)) = ranges
-                    .range((std::ops::Bound::Excluded(key), std::ops::Bound::Unbounded))
-                    .next()
-                    && let Some(position) = positions.first()
+                if let Some((candidate_key, entries)) =
+                    self.storage.index.concrete_memory.get_greater_than(&key)
+                    && candidate_key.0 == key.0
+                    && candidate_key.1 == key.1
+                    && let Some(entry) = entries.iter().next()
                 {
-                    candidates.insert(*position);
+                    candidates.insert(*entry);
                 }
-                for left_index in candidates {
+                for left_entry in candidates {
                     crate::instrumentation::record_deterministic_work(1);
-                    let left = &self.facts[left_index];
+                    let left = self.fact(left_entry);
                     if let Some(error) = resource_family_algebra(left.family()).pair_validity_error(
                         left,
                         right,
@@ -531,11 +666,18 @@ impl ResourceContext {
                 }
                 continue;
             }
-            for left in self
-                .memory_block_facts(&right_range.base().block)
-                .take_while(|left| !std::ptr::eq(*left, right))
+            for left_entry in self
+                .storage
+                .index
+                .memory_by_block
+                .get(&right_range.base().block)
+                .into_iter()
+                .flat_map(ResourceEntryIds::iter)
+                .copied()
+                .take_while(|entry| *entry != right_entry)
             {
                 crate::instrumentation::record_deterministic_work(1);
+                let left = self.fact(left_entry);
                 if let Some(error) = resource_family_algebra(left.family()).pair_validity_error(
                     left,
                     right,
@@ -549,18 +691,20 @@ impl ResourceContext {
     }
 
     pub fn facts(&self) -> &[CResourceFact] {
-        &self.facts
+        self.storage
+            .materialized
+            .get_or_init(|| self.iter().cloned().collect())
     }
 
     pub fn validity_error(
         &self,
         assumptions: &PureFactContext,
     ) -> Option<ResourceContextValidityError> {
-        for positions in self.index().memory_by_block.values() {
-            let owned = positions
+        for (_, entries) in self.storage.index.memory_by_block.iter() {
+            let owned = entries
                 .iter()
-                .filter_map(|index| {
-                    let fact = &self.facts[*index];
+                .filter_map(|entry| {
+                    let fact = self.fact(*entry);
                     fact.memory_own_range().map(|range| (fact, range))
                 })
                 .collect::<Vec<_>>();
@@ -597,14 +741,15 @@ impl ResourceContext {
                 }
                 continue;
             }
-            for (offset, left_index) in positions.iter().enumerate() {
-                let left = &self.facts[*left_index];
+            let entries = entries.iter().copied().collect::<Vec<_>>();
+            for (offset, left_entry) in entries.iter().enumerate() {
+                let left = self.fact(*left_entry);
                 if left.memory_own_range().is_none() {
                     continue;
                 }
-                for right_index in &positions[offset + 1..] {
+                for right_entry in &entries[offset + 1..] {
                     crate::instrumentation::record_deterministic_work(1);
-                    let right = &self.facts[*right_index];
+                    let right = self.fact(*right_entry);
                     if right.memory_own_range().is_none() {
                         continue;
                     }
@@ -643,12 +788,11 @@ impl ResourceContext {
     ) -> Vec<Proposition> {
         let mut propositions = Vec::new();
         let memory_facts = self
-            .facts
             .iter()
             .filter(|fact| fact.family() == ResourceFamily::Memory)
             .collect::<Vec<_>>();
         propositions.extend(MEMORY_RESOURCE_ALGEBRA.observable_facts(&memory_facts, assumptions));
-        if self.facts.iter().filter(|fact| fact.is_own()).count() >= 2 {
+        if self.iter().filter(|fact| fact.is_own()).count() >= 2 {
             propositions.push(Proposition::CResourceComposition(self.clone()));
         }
         propositions
@@ -661,7 +805,7 @@ impl ResourceContext {
         {
             return true;
         }
-        if self.index().exact.contains_key(fact) {
+        if self.storage.index.exact.contains_key(fact) {
             return true;
         }
         // Exact ownership of a resource definitionally includes its exact
@@ -670,13 +814,14 @@ impl ResourceContext {
         // entering proof-aware memory/snapshot entailment.
         if fact.is_view()
             && self
-                .index()
+                .storage
+                .index
                 .by_resource
                 .get(fact.resource())
-                .is_some_and(|positions| {
-                    positions.iter().any(|position| {
-                        resource_fact_entails(&self.facts[*position], fact, assumptions)
-                    })
+                .is_some_and(|entries| {
+                    entries
+                        .iter()
+                        .any(|entry| resource_fact_entails(self.fact(*entry), fact, assumptions))
                 })
         {
             return true;
@@ -718,14 +863,14 @@ impl ResourceContext {
             "resource satisfaction: normalization fallback",
             || self.clone().normalized(assumptions),
         );
-        normalized.facts.len() < self.facts.len()
+        normalized.storage.facts.len() < self.storage.facts.len()
             && normalized
                 .direct_match_candidates(fact)
                 .any(|available| resource_fact_entails(available, fact, assumptions))
     }
 
     pub fn is_empty(&self) -> bool {
-        self.facts.is_empty()
+        self.storage.facts.is_empty()
     }
 
     pub(in crate::kernel) fn permits_memory_read(
@@ -777,7 +922,7 @@ impl ResourceContext {
                 return Some(range);
             }
         }
-        self.facts.iter().find_map(|resource| {
+        self.iter().find_map(|resource| {
             memory_resource_fact_permits_write(resource, pointer, byte_width, assumptions)
                 .then(|| resource.memory_own_range())
                 .flatten()
@@ -799,8 +944,8 @@ impl ResourceContext {
     }
 
     pub(crate) fn without_exact_representation(mut self, fact: &CResourceFact) -> Option<Self> {
-        let index = *self.index().exact.get(fact)?.first()?;
-        self.facts_mut().remove(index);
+        let entry = *self.storage.index.exact.get(fact)?.iter().next()?;
+        self.remove_entry(entry);
         Some(self)
     }
 
@@ -838,11 +983,12 @@ impl ResourceContext {
         }
         let algebra = resource_family_algebra(fact.family());
         let mut candidates = self
-            .index()
+            .storage
+            .index
             .exact
             .get(fact)
             .into_iter()
-            .flatten()
+            .flat_map(ResourceEntryIds::iter)
             .copied()
             .collect::<Vec<_>>();
         let exact_candidates = candidates.iter().copied().collect::<BTreeSet<_>>();
@@ -850,19 +996,19 @@ impl ResourceContext {
             let remaining = shape
                 .iter()
                 .copied()
-                .filter(|index| !exact_candidates.contains(index));
+                .filter(|entry| !exact_candidates.contains(entry));
             if let CResource::Memory(required_range) = fact.resource() {
                 let remaining = remaining.collect::<Vec<_>>();
-                candidates.extend(remaining.iter().copied().filter(|index| {
-                    self.facts[*index].memory_range().is_some_and(|available| {
+                candidates.extend(remaining.iter().copied().filter(|entry| {
+                    self.fact(*entry).memory_range().is_some_and(|available| {
                         crate::kernel::assumptions::pointers_equal_ignoring_memories(
                             available.base(),
                             required_range.base(),
                         )
                     })
                 }));
-                candidates.extend(remaining.into_iter().filter(|index| {
-                    !self.facts[*index].memory_range().is_some_and(|available| {
+                candidates.extend(remaining.into_iter().filter(|entry| {
+                    !self.fact(*entry).memory_range().is_some_and(|available| {
                         crate::kernel::assumptions::pointers_equal_ignoring_memories(
                             available.base(),
                             required_range.base(),
@@ -873,26 +1019,28 @@ impl ResourceContext {
                 candidates.extend(remaining);
             }
         }
-        for index in candidates {
+        for entry in candidates {
             crate::instrumentation::record_deterministic_work(1);
             // Exact representation is the common path and needs no algebraic
             // decomposition. In particular, splitting an exactly matching
             // symbolic memory range can require arithmetic facts that are
             // irrelevant to consuming the range itself.
-            if self.facts[index] == *fact {
+            if self.fact(entry) == fact {
                 if fact.is_view() {
                     return true;
                 }
-                self.facts_mut().remove(index);
+                self.remove_entry(entry);
                 return true;
             }
-            let available = &self.facts[index];
+            let available = self.fact(entry);
             let Some(consumption) = algebra.consume(available, fact, assumptions) else {
                 continue;
             };
             if let ResourceFactConsumption::Replace(residual) = consumption {
-                self.facts_mut().remove(index);
-                self.facts_mut().extend(residual);
+                self.remove_entry(entry);
+                for residual in residual {
+                    self.insert_fact(residual);
+                }
             }
             return true;
         }
@@ -901,7 +1049,6 @@ impl ResourceContext {
 
     pub(in crate::kernel) fn normalized(mut self, assumptions: &PureFactContext) -> Self {
         let retained = self
-            .facts
             .iter()
             .filter(|fact| {
                 !fact
@@ -941,8 +1088,7 @@ impl ResourceContext {
                 i += 1;
             }
         }
-        self.facts = std::sync::Arc::new(slots.into_iter().flatten().collect());
-        self.index = std::sync::Arc::new(std::sync::OnceLock::new());
+        self.replace_facts(slots.into_iter().flatten());
         self
     }
 }

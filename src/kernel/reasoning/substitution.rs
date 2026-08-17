@@ -1178,16 +1178,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_context(
     from: Variable,
     to: &Bitvector32Term,
 ) -> ResourceContext {
-    ResourceContext {
-        facts: std::sync::Arc::new(
-            resources
-                .facts()
-                .iter()
-                .map(|resource| substitute_bitvector_variable_in_resource(resource, from, to))
-                .collect(),
-        ),
-        index: std::sync::Arc::new(std::sync::OnceLock::new()),
-    }
+    ResourceContext::new().unchecked_with_facts(
+        resources
+            .facts()
+            .iter()
+            .map(|resource| substitute_bitvector_variable_in_resource(resource, from, to)),
+    )
 }
 
 pub(in crate::kernel) fn substitute_bitvector_variable_in_resource(

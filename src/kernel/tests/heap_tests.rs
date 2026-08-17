@@ -582,8 +582,18 @@ fn free_of_external_allocation_preserves_unrelated_external_cells() {
 #[test]
 fn free_requires_allocation_authority_not_just_write_access() {
     let mut success = successful_heap_allocation_state();
-    std::sync::Arc::make_mut(&mut success.resources.facts)
-        .retain(|fact| fact.allocation().is_none());
+    let allocation = success
+        .resources
+        .facts()
+        .iter()
+        .find(|fact| fact.allocation().is_some())
+        .cloned()
+        .expect("successful allocation state includes allocation authority");
+    success.resources = success
+        .resources
+        .clone()
+        .without_exact_representation(&allocation)
+        .expect("allocation authority has an exact representation");
     let paths = execute_c_statement_paths(
         &success,
         &c_heap_free(c_variable("p")),

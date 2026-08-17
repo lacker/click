@@ -9,6 +9,96 @@ fn unrelated_token_context(size: usize) -> ResourceContext {
 }
 
 #[test]
+fn resource_context_fork_updates_are_persistent_and_logarithmic() {
+    for size in [16_usize, 64, 256, 1024, 4096] {
+        let context = unrelated_token_context(size);
+        let ancestor = context.clone();
+        assert!(context.shares_storage_with(&ancestor));
+        assert!(context.storage.materialized.get().is_none());
+
+        let added = CResourceFact::own_token("target".to_string(), vec![int32(size as u32)]);
+        let before_insert = crate::persistent::persistent_node_allocations();
+        let successor = context.unchecked_with_fact(added.clone());
+        let insert_allocations = crate::persistent::persistent_node_allocations() - before_insert;
+        let logarithmic_height = usize::BITS as usize - size.leading_zeros() as usize;
+        let update_bound = 64 * logarithmic_height + 64;
+        assert!(
+            insert_allocations <= update_bound,
+            "size {size} resource insertion allocated {insert_allocations} persistent nodes (bound {update_bound})"
+        );
+        assert_eq!(ancestor.storage.facts.len(), size);
+        assert!(!ancestor.satisfies_fact(&added, &PureFactContext::new()));
+
+        let before_lookup = crate::persistent::persistent_node_allocations();
+        assert!(successor.satisfies_fact(&added, &PureFactContext::new()));
+        assert_eq!(
+            crate::persistent::persistent_node_allocations() - before_lookup,
+            0,
+            "exact lookup must not rebuild a size-{size} resource index"
+        );
+        assert!(successor.storage.materialized.get().is_none());
+
+        let before_remove = crate::persistent::persistent_node_allocations();
+        let removed = successor
+            .without_exact_representation(&added)
+            .expect("the inserted resource should be removable");
+        let remove_allocations = crate::persistent::persistent_node_allocations() - before_remove;
+        assert!(
+            remove_allocations <= update_bound,
+            "size {size} resource removal allocated {remove_allocations} persistent nodes (bound {update_bound})"
+        );
+        assert_eq!(removed.facts(), ancestor.facts());
+        assert!(ancestor.satisfies_fact(
+            &CResourceFact::own_token("token_0".to_string(), vec![int32(0)]),
+            &PureFactContext::new(),
+        ));
+    }
+}
+
+#[test]
+fn resource_memory_block_and_interval_indexes_update_logarithmically() {
+    for size in [16_usize, 64, 256, 1024, 4096] {
+        let context = ResourceContext::new().unchecked_with_facts((0..size).map(|index| {
+            CResourceFact::own_memory(memory_range(
+                Pointer {
+                    block: format!("unrelated-{index}").into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                0,
+                1,
+            ))
+        }));
+        let target = CResourceFact::own_memory(memory_range(
+            Pointer {
+                block: "target-block".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            7,
+            11,
+        ));
+        let before = crate::persistent::persistent_node_allocations();
+        let successor = context.clone().unchecked_with_fact(target.clone());
+        let allocations = crate::persistent::persistent_node_allocations() - before;
+        let logarithmic_height = usize::BITS as usize - size.leading_zeros() as usize;
+        let update_bound = 128 * logarithmic_height + 128;
+        assert!(
+            allocations <= update_bound,
+            "size {size} memory resource insertion allocated {allocations} persistent nodes (bound {update_bound})"
+        );
+        assert_eq!(successor.direct_match_candidates(&target).count(), 1);
+        assert_eq!(context.direct_match_candidates(&target).count(), 0);
+
+        let before_remove = crate::persistent::persistent_node_allocations();
+        let removed = successor
+            .without_exact_representation(&target)
+            .expect("the inserted memory resource should be removable");
+        let remove_allocations = crate::persistent::persistent_node_allocations() - before_remove;
+        assert!(remove_allocations <= update_bound);
+        assert_eq!(removed, context);
+    }
+}
+
+#[test]
 fn exact_resource_lookup_is_indexed_after_context_construction() {
     let required = CResourceFact::own_token("target".to_string(), vec![int32(0)]);
     for size in [16, 32, 64, 128] {

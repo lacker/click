@@ -658,7 +658,7 @@ impl CState {
         std::sync::Arc::ptr_eq(&self.memory.blocks, &other.memory.blocks)
             && std::sync::Arc::ptr_eq(&self.memory.cells, &other.memory.cells)
             && std::sync::Arc::ptr_eq(&self.memory.heap, &other.memory.heap)
-            && std::sync::Arc::ptr_eq(&self.resources.facts, &other.resources.facts)
+            && self.resources.shares_storage_with(&other.resources)
             && std::sync::Arc::ptr_eq(&self.counted_populations, &other.counted_populations)
     }
 

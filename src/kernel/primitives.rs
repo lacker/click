@@ -7,6 +7,7 @@ use super::reasoning::{
     pointers_proven_distinct_for_memory_resolution, pointers_proven_equal_for_memory_resolution,
     resource_context_has_read, signed_bitvector_constant, signed_i64_bitvector_constant,
 };
+use crate::persistent::{PersistentMap, PersistentSet};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod contracts;
@@ -1248,26 +1249,57 @@ pub struct CCountedPopulation {
     pub(super) family_observation_marker: bool,
 }
 
-#[derive(Clone, Debug, Default)]
+type ResourceEntryId = u64;
+type ResourceEntryIds = PersistentSet<ResourceEntryId>;
+
+/// An immutable resource composition snapshot.
+///
+/// One pointer-sized storage root keeps recursive execution frames shallow.
+/// Forks share that root; a local insertion or removal replaces only the
+/// logarithmic paths in the fact store and affected indexes.
+#[derive(Clone, Default)]
 pub struct ResourceContext {
-    pub(super) facts: std::sync::Arc<Vec<CResourceFact>>,
-    pub(super) index: std::sync::Arc<std::sync::OnceLock<ResourceContextIndex>>,
+    pub(super) storage: std::sync::Arc<ResourceContextStorage>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Default)]
+pub(super) struct ResourceContextStorage {
+    /// Stable ordinals preserve insertion order without shifting surviving
+    /// entries after a removal.
+    pub(super) facts: PersistentMap<ResourceEntryId, CResourceFact>,
+    pub(super) next_entry_id: ResourceEntryId,
+    pub(super) index: ResourceContextIndex,
+    /// Legacy callers that explicitly enumerate every fact pay the
+    /// output-sized materialization once per immutable snapshot.
+    pub(super) materialized: std::sync::OnceLock<Vec<CResourceFact>>,
+}
+
+#[derive(Clone, Debug, Default)]
 pub(super) struct ResourceContextIndex {
-    pub(super) exact: BTreeMap<CResourceFact, Vec<usize>>,
-    pub(super) by_resource: BTreeMap<CResource, Vec<usize>>,
-    pub(super) exact_shapes: BTreeMap<(ResourceFamily, String, usize), Vec<usize>>,
-    pub(super) memory_by_block: BTreeMap<PointerBlock, Vec<usize>>,
-    pub(super) memory_starts: BTreeMap<(PointerBlock, bool, Bitvector32Term), Vec<usize>>,
-    pub(super) memory_ends: BTreeMap<(PointerBlock, bool, Bitvector32Term), Vec<usize>>,
-    pub(super) concrete_memory_by_base: BTreeMap<(Pointer, bool), BTreeMap<(u32, u32), Vec<usize>>>,
+    pub(super) exact: PersistentMap<CResourceFact, ResourceEntryIds>,
+    pub(super) by_resource: PersistentMap<CResource, ResourceEntryIds>,
+    pub(super) exact_shapes: PersistentMap<(ResourceFamily, String, usize), ResourceEntryIds>,
+    pub(super) memory_by_block: PersistentMap<PointerBlock, ResourceEntryIds>,
+    pub(super) owned_memory_by_block: PersistentMap<PointerBlock, ResourceEntryIds>,
+    pub(super) memory_starts:
+        PersistentMap<(PointerBlock, bool, Bitvector32Term), ResourceEntryIds>,
+    pub(super) memory_ends: PersistentMap<(PointerBlock, bool, Bitvector32Term), ResourceEntryIds>,
+    pub(super) concrete_memory: PersistentMap<(Pointer, bool, u32, u32), ResourceEntryIds>,
+    pub(super) concrete_memory_by_base: PersistentMap<(Pointer, bool), usize>,
+}
+
+impl std::fmt::Debug for ResourceContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ResourceContext")
+            .field("facts", &self.facts())
+            .finish()
+    }
 }
 
 impl PartialEq for ResourceContext {
     fn eq(&self, other: &Self) -> bool {
-        self.facts == other.facts
+        self.facts() == other.facts()
     }
 }
 
@@ -1275,13 +1307,13 @@ impl Eq for ResourceContext {}
 
 impl std::hash::Hash for ResourceContext {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.facts.hash(state);
+        self.facts().hash(state);
     }
 }
 
 impl Ord for ResourceContext {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.facts.cmp(&other.facts)
+        self.facts().cmp(other.facts())
     }
 }
 

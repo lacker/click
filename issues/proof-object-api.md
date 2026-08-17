@@ -1271,16 +1271,34 @@ recursive executor frame; the existing deep pure case-split canary caught and
 now prevents the debug-build stack regression caused by keeping that new
 control-flow temporary inline.
 
-Resource operations remain a distinct representation prerequisite rather
-than being wrapped around the legacy vector APIs. `ResourceContext` currently
-stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses
-copy-on-write on the complete vector and invalidates its lazy complete-context
-index, so the next lookup can clone and reindex every ambient resource. A
-resource `Proof` transition therefore needs persistent, incrementally updated
-exact/shape/block indexes and output-sensitive materialization at the legacy
-adapter boundary. Admitting `observe`, resource `unfold`, or `fold` before that
-store exists would violate the proof-object efficiency contract even if the
-semantic checker were otherwise reusable.
+Resource operations had a distinct representation prerequisite rather than
+being safely wrappable around the legacy vector APIs. `ResourceContext`
+stored an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal used
+copy-on-write on the complete vector and invalidated its lazy complete-context
+index, so the next lookup could clone and reindex every ambient resource. A
+resource `Proof` transition therefore required persistent, incrementally
+updated exact/shape/block indexes and output-sensitive materialization at the
+legacy adapter boundary. Admitting `observe`, resource `unfold`, or `fold`
+before that store existed would have violated the proof-object efficiency
+contract even if the semantic checker were otherwise reusable.
+
+The representation prerequisite is now complete. `ResourceContext` is one
+pointer-sized immutable snapshot whose stable-ID fact map and exact,
+resource, shape, memory-block, endpoint, and concrete-interval indexes are
+persistent. Insertion and removal replace only the affected AVL paths; they
+do not shift surviving facts or invalidate and rebuild an ambient index. The
+ordered `&[CResourceFact]` interface remains as an explicit legacy adapter and
+materializes its output once per immutable snapshot. A first inline layout
+made recursive execution frames large enough to trip the perpetual-loop stack
+canary, so the complete store is shared behind one `Arc`, like the other
+persistent proof-state roots.
+
+Deterministic 16-through-4096 regressions cover token exact/shape insertion,
+lookup and removal, plus memory exact/block/endpoint/interval insertion and
+removal. They require logarithmically bounded persistent-node allocation,
+zero allocation for an exact lookup, ancestor isolation, stable ordered
+materialization, and shared clone identity. Resource operations can now move
+onto `Proof` without inheriting the former context-wide clone/reindex cost.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
