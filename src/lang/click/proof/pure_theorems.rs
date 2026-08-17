@@ -937,6 +937,12 @@ fn check_pure_script_with_proof(
         theorem_environment,
     );
 
+    if let [ProofTactic::SimpUsing(simp)] = tactics
+        && let Some(proof) = root.try_restricted_simp_closure(&simp.premises)
+    {
+        return Ok(Some(proof.certificate()));
+    }
+
     if let Some(proof) = root.try_linear_smart_script(tactics)? {
         return Ok(Some(proof.certificate()));
     }

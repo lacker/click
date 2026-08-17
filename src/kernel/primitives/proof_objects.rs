@@ -70,6 +70,18 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact strict-order premise selected when the atomic prover
+    /// used the int32 increment-upper-bound rule.
+    pub fn int32_increment_upper_bound_step(&self) -> Option<&SignedOrderDerivationStep> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::Int32IncrementUpperBound(step),
+                ..
+            } => Some(step),
+            _ => None,
+        }
+    }
+
     pub fn context_premises(&self) -> Vec<Proposition> {
         let mut premises = BTreeSet::new();
         self.collect_context_premises(&mut premises);

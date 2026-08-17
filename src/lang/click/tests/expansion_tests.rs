@@ -1518,6 +1518,18 @@ fn restricted_simp_expands_to_explicit_equality_rewrites() {
                 }
             }
         "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("restricted equality simp should build its typed path through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "equality_transitive.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "restricted equality simp must retain its checked Proof descendant: {events:#?}"
+    );
     let offset = click_source
         .find("simp() using")
         .expect("proof should contain restricted simp");
@@ -1536,7 +1548,8 @@ fn restricted_simp_expands_to_explicit_equality_rewrites() {
     let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
         .expect("restricted simp should expand");
     assert!(expanded.contains("rewrite(x == y);"), "{expanded}");
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(expanded.contains("rewrite(y == z);"), "{expanded}");
+    assert!(expanded.contains("normalize();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[]).expect("explicit equality certificate should replay");
@@ -1890,6 +1903,20 @@ fn post_execution_simp_expands_increment_upper_bound() {
             simp();
         }
     "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("increment_below.c", c_source)])
+    });
+    verified.expect("the typed increment bound should verify through the point Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "increment_below.contract"
+                    && (name == "surface certificate replay"
+                        || name == "derivation lowering: ambient rewrite harvest")
+        )),
+        "the retained increment rule must not enter legacy certificate search: {events:#?}"
+    );
     let offset = click_source.rfind("simp()").unwrap();
     let line = click_source[..offset]
         .bytes()
@@ -2257,6 +2284,18 @@ fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
             }
         }
     "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the typed increment rule should verify through the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "increment_stays_bounded.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained pure increment rule must not use construction replay: {events:#?}"
+    );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
         .bytes()

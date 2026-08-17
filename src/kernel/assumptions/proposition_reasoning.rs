@@ -994,9 +994,30 @@ impl PureFactContext {
                 .map(AtomicPropositionDerivationEvidence::BitvectorEqualityPath),
             _ => None,
         };
+        let increment_upper_bound_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(incremented, upper),
+                true,
+            ) => incremented
+                .add_const_base(1)
+                .and_then(|base| {
+                    self.exact_signed_order_path_evidence(&base, upper, true)
+                        .and_then(|path| match path.as_slice() {
+                            [step]
+                                if step.strict && step.lower == base && step.upper == **upper =>
+                            {
+                                Some(step.clone())
+                            }
+                            _ => None,
+                        })
+                })
+                .map(AtomicPropositionDerivationEvidence::Int32IncrementUpperBound),
+            _ => None,
+        };
         let result = memory_evidence
             .or(equality_path_evidence)
             .or(signed_order_evidence)
+            .or(increment_upper_bound_evidence)
             .or_else(|| {
                 let proved = if for_simp {
                     match proposition {
@@ -1111,6 +1132,28 @@ impl PureFactContext {
                 .and_then(|(current, right)| (current <= right).then_some(current < right));
             return (current == &right || constant_connection.is_some())
                 && (!require_strict || strict || constant_connection == Some(true));
+        }
+        if let AtomicPropositionDerivationEvidence::Int32IncrementUpperBound(step) = evidence {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(incremented, upper),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            let Some(base) = incremented.add_const_base(1) else {
+                return false;
+            };
+            return step.lower == base
+                && step.upper == **upper
+                && step.strict
+                && matches!(
+                    &step.premise,
+                    Proposition::ConditionIs(condition, value)
+                        if self.exact_condition_value(condition) == Some(*value)
+                            && condition_as_order_fact(condition, *value)
+                                == Some((step.lower.clone(), step.upper.clone(), true))
+                );
         }
         if !decide_memo_disabled()
             && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {

@@ -1062,10 +1062,40 @@ fn signed_order_derivation_retains_the_exact_negative_polarity_premise() {
 }
 
 #[test]
+fn increment_upper_bound_derivation_retains_its_exact_strict_premise() {
+    let value = Bitvector32Term::Variable(Variable(207));
+    let upper = Bitvector32Term::Variable(Variable(208));
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_than(upper.clone(), value.clone()),
+        true,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::add(value.clone(), Bitvector32Term::Constant(1)),
+            upper.clone(),
+        ),
+        true,
+    );
+    let assumptions = PureFactContext::new().assume_proposition(premise.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("the strict bound should derive the increment upper bound");
+    let step = derivation
+        .int32_increment_upper_bound_step()
+        .expect("the atomic decision should retain its named-rule premise");
+    assert_eq!(step.lower(), &value);
+    assert_eq!(step.upper(), &upper);
+    assert!(step.is_strict());
+    assert_eq!(step.premise(), &premise);
+    assert!(derivation.replay(&assumptions));
+}
+
+#[test]
 fn bitvector_equality_derivation_retains_its_exact_oriented_path() {
-    let left = Bitvector32Term::Variable(Variable(207));
-    let middle = Bitvector32Term::Variable(Variable(208));
-    let right = Bitvector32Term::Variable(Variable(209));
+    let left = Bitvector32Term::Variable(Variable(209));
+    let middle = Bitvector32Term::Variable(Variable(210));
+    let right = Bitvector32Term::Variable(Variable(211));
     let first = Proposition::ConditionIs(ConditionTerm::equal(middle.clone(), left.clone()), true);
     let second =
         Proposition::ConditionIs(ConditionTerm::equal(middle.clone(), right.clone()), true);

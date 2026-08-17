@@ -1062,6 +1062,19 @@ logarithmic persistent updates for both the point theorem and rewrite paths.
 Execution-frontier atomic search and the remaining non-order/equality theory
 decisions still require their corresponding typed Proof queries.
 
+The first named arithmetic decision now crosses the same boundary. The
+kernel retains `Int32IncrementUpperBound` evidence with its exact strict
+premise; unrestricted point/outcome `simp` turns that evidence into one
+checked theorem application on the current `Proof`. Standalone pure
+`simp() using` now has a restricted Proof query for every currently typed
+atomic path. It receives only its explicitly listed Surface premises and
+cannot mutate the root while choosing an order, equality, or increment-bound
+candidate. Ordinary verification observes no surface-certificate replay,
+expansion remains an independent check, and 16-through-4096 unrelated-fact
+regressions pin logarithmic persistent work and failed-candidate isolation.
+The rest of the named arithmetic family remains a typed-provenance migration
+under the child issue.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses

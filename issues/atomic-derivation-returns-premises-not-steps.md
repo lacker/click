@@ -209,3 +209,29 @@ This does not close the issue. Interval/overflow decisions,
 quantified/derived order edges, memory-canonicalized and pointer-offset-derived
 equality edges, memory-DAG joins, and execution-frontier consumers still need
 typed evidence and direct Proof operations.
+
+### Progress (2026-08-16: first typed arithmetic rule)
+
+The atomic int32 increment-upper-bound decision now records its exact strict
+source edge as `Int32IncrementUpperBound` evidence when the rule fires. This
+is not inferred later from a minimized premise bag: replay checks the retained
+edge orientation, strictness, exact source proposition, increment shape, and
+goal upper bound directly. A reversed `upper > value` source regression pins
+that the original premise survives.
+
+Standalone pure `simp() using` now has a restricted Proof query shared by all
+currently typed atomic paths: it lowers only the explicitly listed premises,
+searches only that small fact context, and submits the resulting typed
+order/equality/arithmetic candidate to the original immutable `Proof`.
+Point/outcome `simp` consumes the new increment evidence through the same
+theorem-application seam. Ordinary verification no longer constructs and
+independently replays these certificates, while expansion still emits and
+independently verifies `int32_increment_upper_bound` and exact equality paths.
+Deterministic 16-through-4096 unrelated-fact curves cover both unrestricted
+point search and restricted pure search, including rejected-premise
+transactionality.
+
+This is the first member of the interval/overflow family, not completion of
+that family. The other named increment, predecessor, arithmetic-definedness,
+and interval decisions remain `Legacy` until each decision retains its exact
+rule and operands.

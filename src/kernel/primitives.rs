@@ -1671,6 +1671,7 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     PointerOffsetMemoryDag(PointerOffsetEqualityEvidence),
     BitvectorEqualityPath(Vec<BitvectorEqualityDerivationStep>),
     SignedOrderPath(Vec<SignedOrderDerivationStep>),
+    Int32IncrementUpperBound(SignedOrderDerivationStep),
     Legacy,
 }
 
