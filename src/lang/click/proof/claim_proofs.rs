@@ -3211,6 +3211,56 @@ pub(super) fn finish_ordered_proof_replay(
                                     },
                                 );
                             }
+                            PostExecutionTactic::CheckedFrameUsing {
+                                authority,
+                                region,
+                                premises,
+                            } => {
+                                if authority.is_empty() {
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: checked frame authority contains no effect goals"
+                                    )));
+                                }
+                                let mut matched = 0;
+                                for (claim_index, claim) in claims.iter().enumerate() {
+                                    let FunctionClaimRef::Effect(effect_index, _) = claim else {
+                                        continue;
+                                    };
+                                    if !authority.contains(*effect_index) {
+                                        continue;
+                                    }
+                                    closures[claim_index] = ClaimClosure::by_exact_check();
+                                    matched += 1;
+                                }
+                                if matched != authority.len() {
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: checked frame authority selected {} effect goals but ordered finalization owns {matched}",
+                                        authority.len()
+                                    )));
+                                }
+                                apply_checked_contract_resource_transition(
+                                    &mut outcome,
+                                    pre_state,
+                                    function,
+                                    arguments,
+                                    &path_requirements,
+                                    &path.execution_facts(),
+                                    &proof_label,
+                                    path_index,
+                                )?;
+                                record_post_execution_surface_tactic(
+                                    deferred.surface_recorded,
+                                    &mut path_surface_post_tactics,
+                                    &mut path_deferred_capture_tactics,
+                                    replay.deferred_tactic_capture.as_ref(),
+                                    post_execution_index,
+                                    *tactic_index,
+                                    ProofTactic::FrameUsing {
+                                        region: region.clone(),
+                                        premises: premises.clone(),
+                                    },
+                                );
+                            }
                             PostExecutionTactic::Simp => {
                                 let capturing_this_tactic = replay
                                     .deferred_tactic_capture

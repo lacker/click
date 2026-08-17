@@ -331,6 +331,42 @@ enum EffectGoalSelection {
     All,
 }
 
+/// Private authority that the ordered outcome finalizer may consume without
+/// proving the same function effect a second time.
+///
+/// Only `Proof::apply_execution_frame_using` constructs this value, after it
+/// checks every selected effect against every owned execution outcome.
+#[derive(Clone)]
+pub(super) struct CheckedFrameAuthority {
+    effect_indices: Arc<Vec<usize>>,
+}
+
+impl CheckedFrameAuthority {
+    fn new(effect_indices: Vec<usize>) -> Self {
+        Self {
+            effect_indices: Arc::new(effect_indices),
+        }
+    }
+
+    pub(super) fn contains(&self, effect_index: usize) -> bool {
+        self.effect_indices.binary_search(&effect_index).is_ok()
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.effect_indices.is_empty()
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.effect_indices.len()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ProofStepOrigin {
+    tactic_index: usize,
+    source_index: usize,
+}
+
 /// Private persistent provenance node. Smart tactics can retain a `Proof`,
 /// but cannot manufacture one of these or detach semantic state from the step
 /// that produced it.
@@ -813,6 +849,18 @@ impl<'a> Proof<'a> {
     /// Failure allocates no reachable successor: `self` and all of its other
     /// descendants continue to share the unchanged ancestor state.
     pub(super) fn apply_step(&self, step: SimpleProofStep) -> Result<Self, ClickError> {
+        self.apply_step_with_origin(step, None)
+    }
+
+    /// Applies a step while retaining its source occurrence for any ordered
+    /// terminal work the checked transition has to schedule. The source site
+    /// affects diagnostics and finalization order only; the certificate node
+    /// remains exactly the supplied `SimpleProofStep`.
+    fn apply_step_with_origin(
+        &self,
+        step: SimpleProofStep,
+        origin: Option<ProofStepOrigin>,
+    ) -> Result<Self, ClickError> {
         if self.state.complete {
             return Err(self.step_error("a tactic follows a goal-closing step"));
         }
@@ -856,6 +904,9 @@ impl<'a> Proof<'a> {
             SimpleProofStep::Enumerate => self.apply_enumerate(),
             SimpleProofStep::Contradiction(surface) => self.apply_contradiction(surface),
             SimpleProofStep::CloseInvariants => self.apply_close_invariants(),
+            SimpleProofStep::FrameUsing { region, premises } => {
+                self.apply_execution_frame_using(region.as_ref(), premises, origin)
+            }
             _ => {
                 Err(self
                     .step_error("this simple step has not yet migrated to the checked `Proof` API"))
@@ -870,6 +921,188 @@ impl<'a> Proof<'a> {
                 step: Some(Arc::new(step)),
                 depth: self.node.depth + 1,
             }),
+        })
+    }
+
+    fn selected_effect_indices(
+        &self,
+        context: &ExecutionProofContext<'_>,
+    ) -> Result<Vec<usize>, ClickError> {
+        let Goal::Frontier(selection) = self.state.goal else {
+            return Err(self.step_error("`frame using` requires an execution effect goal"));
+        };
+        let effect_count = context.function_block.effects().len();
+        let indices = match selection {
+            EffectGoalSelection::None => Vec::new(),
+            EffectGoalSelection::One(index) if index < effect_count => vec![index],
+            EffectGoalSelection::One(index) => {
+                return Err(self.step_error(format!(
+                    "selected effect goal {index} does not exist; the function has {effect_count} effect clauses"
+                )));
+            }
+            EffectGoalSelection::All => (0..effect_count).collect(),
+        };
+        if indices.is_empty() {
+            return Err(self.step_error("`frame using` has no function effect goal to prove"));
+        }
+        Ok(indices)
+    }
+
+    /// Whether this frame step is inside the deliberately narrow checked
+    /// terminal-operation slice. Returning `false` preserves the legacy path
+    /// for region frames and for empty mutable frames whose current surface
+    /// meaning still includes ambient-fact selection.
+    fn supports_checked_execution_frame_using(
+        &self,
+        region: Option<&CodeRegionRef>,
+        premises: &[ClickProposition],
+    ) -> Result<bool, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(false);
+        };
+        if !matches!(region, None | Some(CodeRegionRef::Function)) {
+            return Ok(false);
+        }
+        if !premises.is_empty() {
+            return Ok(true);
+        }
+        let effect_indices = self.selected_effect_indices(context)?;
+        Ok(effect_indices.iter().all(|index| {
+            matches!(
+                context.function_block.effects()[*index].effect(),
+                Effect::Immutable
+            )
+        }))
+    }
+
+    /// Checks one explicit function-level frame step exactly once and records
+    /// private authority for the ordered outcome finalizer.
+    #[inline(never)]
+    fn apply_execution_frame_using(
+        &self,
+        region: Option<&CodeRegionRef>,
+        premises: &[ClickProposition],
+        origin: Option<ProofStepOrigin>,
+    ) -> Result<ProofState, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("`frame using` requires an execution proof"));
+        };
+        self.require_execution_frontier("`frame using`")?;
+        let mut execution =
+            self.state.execution.clone().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+        if !execution.replay.is_at_function_exit() {
+            return Err(self.step_error("`frame using` requires function exit"));
+        }
+        if let Some(region) = region {
+            let resolved = resolve_code_region_ref(
+                context.function_block,
+                region,
+                context.claim_label,
+                context.tactic_index,
+            )?;
+            if !matches!(resolved, CodeRegion::Function) {
+                return Err(self.step_error(
+                    "checked execution `frame using` currently supports only the function region",
+                ));
+            }
+        }
+
+        let effect_indices = self.selected_effect_indices(context)?;
+        if premises.is_empty()
+            && effect_indices.iter().any(|index| {
+                matches!(
+                    context.function_block.effects()[*index].effect(),
+                    Effect::Mutable(_)
+                )
+            })
+        {
+            return Err(self.step_error(
+                "an empty explicit frame context for a mutable effect still requires legacy ambient-fact selection",
+            ));
+        }
+
+        let mut frame_facts = Vec::with_capacity(premises.len());
+        for surface in premises {
+            let fact = execution
+                .replay
+                .surface_propositions
+                .available_kernel_matching(surface, |kernel| {
+                    self.state
+                        .facts
+                        .replay_available_across_effects(kernel, &execution.replay.effect_facts)
+                })
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    self.lower_surface_proposition(surface, "`frame using` premise")
+                })?;
+            if !self
+                .state
+                .facts
+                .replay_available_across_effects(&fact, &execution.replay.effect_facts)
+            {
+                return Err(self.step_error(format!(
+                    "`frame using` requires an exact available premise: {fact:?}"
+                )));
+            }
+            execution
+                .replay
+                .surface_propositions
+                .record_lowering(surface, &fact)?;
+            if !frame_facts.contains(&fact) {
+                frame_facts.push(fact);
+            }
+        }
+
+        let checked_execution = execution.replay.execution().ok_or_else(|| {
+            self.step_error("function-exit proof has no checked execution outcomes")
+        })?;
+        let pre_state = execution
+            .replay
+            .old_reference_state(&execution.state)
+            .clone();
+        for effect_index in &effect_indices {
+            let claim = FunctionClaimRef::Effect(
+                *effect_index,
+                &context.function_block.effects()[*effect_index],
+            );
+            validate_function_frame_tactic(
+                checked_execution,
+                &claim,
+                context.claim_label,
+                origin.map_or(context.tactic_index, |origin| origin.tactic_index),
+                context.parsed_function.parameters(),
+                context.arguments,
+                &pre_state,
+                &frame_facts,
+            )?;
+        }
+
+        let origin = origin.unwrap_or(ProofStepOrigin {
+            tactic_index: context.tactic_index,
+            source_index: context.tactic_index,
+        });
+        execution.replay.defer_checked_post_execution(
+            origin.tactic_index,
+            origin.source_index,
+            PostExecutionTactic::CheckedFrameUsing {
+                authority: CheckedFrameAuthority::new(effect_indices),
+                region: region.cloned(),
+                premises: premises.to_vec(),
+            },
+        );
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        Ok(ProofState {
+            facts: self.state.facts.clone(),
+            locals: self.state.locals.clone(),
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
+            goal: Goal::Frontier(EffectGoalSelection::None),
+            complete: false,
+            added_facts: Arc::new(Vec::new()),
+            checked_facts: Arc::new(Vec::new()),
+            execution: Some(execution),
         })
     }
 
@@ -4941,6 +5174,46 @@ impl<'a> ProofScope<'a> {
         }
         next.body = body;
         Ok(next)
+    }
+
+    /// Applies a source-owned simple step inside the scope. Terminal steps use
+    /// the site only to schedule already-checked ordered outcome work.
+    pub(super) fn apply_step_at(
+        &self,
+        step: SimpleProofStep,
+        tactic_index: usize,
+        source_index: usize,
+    ) -> Result<Self, ClickError> {
+        let mut next = self.clone();
+        let body = self.body.apply_step_with_origin(
+            step,
+            Some(ProofStepOrigin {
+                tactic_index,
+                source_index,
+            }),
+        )?;
+        if matches!(self.structure.as_ref(), ProofScopeStructure::Open { .. }) {
+            for fact in body.added_facts() {
+                if !next.introduced_facts.contains(fact) {
+                    next.introduced_facts.push(fact.clone());
+                }
+            }
+        }
+        next.body = body;
+        Ok(next)
+    }
+
+    /// Reports whether a terminal frame step can use the checked Proof-owned
+    /// operation. Unsupported forms must leave this scope untouched so the
+    /// caller can select the legacy verifier without observing a failed
+    /// partial transition.
+    pub(super) fn supports_checked_frame_using(
+        &self,
+        region: Option<&CodeRegionRef>,
+        premises: &[ClickProposition],
+    ) -> Result<bool, ClickError> {
+        self.body
+            .supports_checked_execution_frame_using(region, premises)
     }
 
     /// Runs the narrow linear `execute` search inside this scope.

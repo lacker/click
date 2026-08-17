@@ -1365,6 +1365,11 @@ pub(super) enum PostExecutionTactic {
         region: Option<CodeRegionRef>,
         premises: Vec<ClickProposition>,
     },
+    CheckedFrameUsing {
+        authority: CheckedFrameAuthority,
+        region: Option<CodeRegionRef>,
+        premises: Vec<ClickProposition>,
+    },
     Simp,
 }
 
@@ -1392,6 +1397,23 @@ impl TacticReplayState {
                 source_index,
                 tactic,
                 surface_recorded: false,
+            });
+    }
+
+    /// Schedules ordered outcome work whose semantic proof and Surface
+    /// certificate are already owned by a checked `Proof` descendant.
+    pub(super) fn defer_checked_post_execution(
+        &mut self,
+        tactic_index: usize,
+        source_index: usize,
+        tactic: PostExecutionTactic,
+    ) {
+        self.post_execution_tactics
+            .push(DeferredPostExecutionTactic {
+                tactic_index,
+                source_index,
+                tactic,
+                surface_recorded: true,
             });
     }
 }
@@ -1716,7 +1738,9 @@ pub(super) fn post_execution_tactic_timing(
         PostExecutionTactic::Rewrite(_) => ("rewrite", "simple"),
         PostExecutionTactic::FrameRegion(_) => ("frame", "simple"),
         PostExecutionTactic::Frame => ("frame", "simple"),
-        PostExecutionTactic::FrameUsing { .. } => ("frame", "simple"),
+        PostExecutionTactic::FrameUsing { .. } | PostExecutionTactic::CheckedFrameUsing { .. } => {
+            ("frame", "simple")
+        }
     }
 }
 

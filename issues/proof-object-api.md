@@ -1417,9 +1417,25 @@ claim list each time the legacy boundary creates a short-lived `Proof`. The
 selection is preserved by ordinary steps, resource scopes, and both audited
 execution joins. A focused regression covers grouped, individual-effect, and
 ensure-only proof sites and verifies that a checked successor retains the
-same goal. `FrameUsing` does not consume this goal yet: the remaining seam is
-an audited terminal effect operation that records its post-execution ordering
-without asking the legacy drain to recheck the effect.
+same goal. The selection is the target of the audited terminal effect
+operation below; it is not copied into the legacy claim list or replay
+context.
+
+That terminal seam now exists for explicit function-level `FrameUsing` with
+named premises, plus the empty-premise immutable case. `Proof` lowers and
+checks only the explicit premise set through persistent fact indexes, checks
+every selected effect goal against every owned execution outcome, closes the
+typed goal, and retains the exact frame step. Ordered finalization receives a
+private checked authority; it performs the resource transition at the
+original source position but neither proves the effect again nor emits a
+second surface step. A source regression composes `execute`, the checked
+frame, and deferred resource-scope close in that order, observes neither
+ordinary replay nor the legacy exact-effect-check phase, pins the nested
+certificate, and independently verifies expansion. Empty-premise mutable
+frames deliberately remain on the legacy path because their current meaning
+is “scan all ambient facts,” which is not an acceptable simple-step contract.
+Smart `frame()` search still needs to select explicit premises and submit this
+operation.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

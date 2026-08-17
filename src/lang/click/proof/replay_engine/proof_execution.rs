@@ -16,6 +16,7 @@ fn linear_execution_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep>
             | SimpleProofStep::FoldResource(_)
             | SimpleProofStep::ObserveResource(_)
             | SimpleProofStep::ApplyTheoremUsing { .. }
+            | SimpleProofStep::FrameUsing { .. }
             | SimpleProofStep::CloseInvariants
     )
     .then(|| step.clone())
@@ -48,7 +49,14 @@ fn advance_linear_open_scope<'a>(
 ) -> Result<Option<ProofScope<'a>>, ClickError> {
     for indexed in tactics {
         if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
-            scope = scope.apply_step(step)?;
+            scope = if let SimpleProofStep::FrameUsing { region, premises } = &step {
+                if !scope.supports_checked_frame_using(region.as_ref(), premises)? {
+                    return Ok(None);
+                }
+                scope.apply_step_at(step, indexed.index, indexed.source_index)?
+            } else {
+                scope.apply_step(step)?
+            };
             continue;
         }
         if matches!(

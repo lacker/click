@@ -4660,6 +4660,109 @@ fn linear_execute_inside_open_retains_checked_statement_steps() {
 }
 
 #[test]
+fn explicit_frame_inside_open_closes_its_owned_effect_goal_once() {
+    let c_source = r#"
+        int32 two_steps(int32 x) {
+            x = x;
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "two_steps.c";
+
+        int32 two_steps(int32 x) {
+            owns marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            open(marker(x)) {
+                execute();
+                frame() using {};
+            }
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("two_steps.c", c_source)])
+    });
+    let verified = verified.expect("the explicit frame should close the open Proof's effect goal");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "two_steps.contract"
+                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+        )),
+        "the retained frame must neither replay nor recheck its effect at finalization: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked grouped proof should retain its frame step");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(open))
+                if matches!(
+                    open.tactics.as_slice(),
+                    [
+                        ProofTactic::StepUsing(_),
+                        ProofTactic::StepUsing(_),
+                        ProofTactic::FrameUsing { region: None, premises }
+                    ] if premises.is_empty()
+                )
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("two_steps.c", c_source)],
+        "two_steps",
+        CProofClaim::Grouped,
+    )
+    .expect("the grouped checked frame should expand");
+    verify_c0_sources(&expanded, &[("two_steps.c", c_source)])
+        .expect("the retained explicit frame should independently replay");
+}
+
+#[test]
+fn empty_mutable_frame_inside_open_retains_legacy_ambient_fact_semantics() {
+    let c_source = r#"
+        int32 increment(int32 p[]) {
+            p[0] = p[0] + 1;
+            return p[0];
+        }
+    "#;
+    let click_source = r#"
+        resource counted(p: int32*) {
+            owns p[0..1];
+            fact p[0] == count(counted(p));
+        }
+
+        verifying "increment.c";
+
+        int32 increment(int32 p[]) {
+            owns counted(p);
+            produces counted(p);
+            mutable p[0..1];
+        } by {
+            open(counted(p)) {
+                execute();
+                frame() using {};
+            }
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("increment.c", c_source)])
+        .expect("an empty mutable frame must fall back to ambient-fact selection");
+}
+
+#[test]
 fn linear_execute_until_inside_open_stops_on_checked_frontier() {
     let c_source = r#"
         int32 three_steps(int32 x) {
