@@ -429,6 +429,18 @@ pub(super) fn lower_surface_atomic_derivation(
                 false,
             )
         });
+    let typed_strictly_positive_nonnegative_pairs =
+        recorded_int32_strictly_positive_is_nonnegative_pairs(derivation, &premise_pairs);
+    let typed_strictly_positive_nonnegative_plan = typed_strictly_positive_nonnegative_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_strictly_positive_is_nonnegative_for_context(
+                &lowered_conclusion,
+                pairs,
+                false,
+            )
+        });
     let typed_path_spelled = typed_order_plan.is_some()
         || typed_equality_plan.is_some()
         || typed_increment_plan.is_some()
@@ -444,7 +456,8 @@ pub(super) fn lower_surface_atomic_derivation(
         || typed_one_le_predecessor_plan.is_some()
         || typed_le_not_lt_equality_plan.is_some()
         || typed_ge_not_gt_equality_plan.is_some()
-        || typed_positive_nonnegative_plan.is_some();
+        || typed_positive_nonnegative_plan.is_some()
+        || typed_strictly_positive_nonnegative_plan.is_some();
     if typed_order_plan.is_some() {
         premise_pairs = typed_order_pairs.expect("a typed order plan retains its path premises");
     } else if typed_equality_plan.is_some() {
@@ -492,6 +505,9 @@ pub(super) fn lower_surface_atomic_derivation(
     } else if typed_positive_nonnegative_plan.is_some() {
         premise_pairs = typed_positive_nonnegative_pairs
             .expect("a typed positive-to-nonnegative plan retains its exact premise");
+    } else if typed_strictly_positive_nonnegative_plan.is_some() {
+        premise_pairs = typed_strictly_positive_nonnegative_pairs
+            .expect("a typed strictly-positive-to-nonnegative plan retains its exact premise");
     }
     if !surface_normalizes_context_free
         && !typed_path_spelled
@@ -729,6 +745,14 @@ pub(super) fn lower_surface_atomic_derivation(
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "recorded positive-to-nonnegative rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_strictly_positive_nonnegative_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded strictly-positive-to-nonnegative rule produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -3401,6 +3425,20 @@ pub(super) fn recorded_int32_positive_is_nonnegative_pairs(
         .map(|pair| vec![pair])
 }
 
+pub(super) fn recorded_int32_strictly_positive_is_nonnegative_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    let premise = derivation
+        .int32_strictly_positive_is_nonnegative_step()?
+        .premise();
+    premise_pairs
+        .iter()
+        .find(|(kernel, _)| kernel == premise)
+        .cloned()
+        .map(|pair| vec![pair])
+}
+
 pub(super) fn plan_recorded_int32_increment_upper_bound_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
@@ -3570,6 +3608,18 @@ pub(super) fn plan_recorded_int32_positive_is_nonnegative_for_context(
     point_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_positive_is_nonnegative(goal, premise_pairs)?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut tactics)?;
+    }
+    Some(tactics)
+}
+
+pub(super) fn plan_recorded_int32_strictly_positive_is_nonnegative_for_context(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
+    let mut tactics = plan_explicit_strictly_positive_is_nonnegative(goal, premise_pairs)?;
     if point_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }

@@ -1979,6 +1979,17 @@ impl<'a> Proof<'a> {
                     &recorded,
                     point_application_closes_goal,
                 )
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_strictly_positive_is_nonnegative_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_strictly_positive_is_nonnegative_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
             })?;
         let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
         let proof = self.check_certificate(&candidate).ok()?;
@@ -7926,6 +7937,11 @@ mod tests {
             operator: ComparisonOperator::LessEqual,
             right: expression(value.clone()),
         };
+        let strictly_positive_premise = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(0)),
+            operator: ComparisonOperator::LessThan,
+            right: expression(value.clone()),
+        };
         let surface_bound_goal = ClickProposition::Comparison {
             left: ContractExpression::Add(
                 Box::new(expression(value.clone())),
@@ -7953,6 +7969,11 @@ mod tests {
             operator: ComparisonOperator::LessEqual,
             right: expression(value.clone()),
         };
+        let surface_nonnegative_ge_goal = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::GreaterEqual,
+            right: expression(Bitvector32Term::Constant(0)),
+        };
         let lower = |surface: &ClickProposition| {
             lower_point_proposition_with_assumptions(
                 surface,
@@ -7971,6 +7992,7 @@ mod tests {
         let kernel_premise = lower(&premise);
         let kernel_definedness_premise = lower(&definedness_premise);
         let kernel_positive_premise = lower(&positive_premise);
+        let kernel_strictly_positive_premise = lower(&strictly_positive_premise);
         let goals = [
             (
                 lower(&surface_bound_goal),
@@ -8000,6 +8022,13 @@ mod tests {
                 &positive_premise,
                 &kernel_positive_premise,
             ),
+            (
+                lower(&surface_nonnegative_ge_goal),
+                "int32_strictly_positive_is_nonnegative",
+                "strictly positive to nonnegative",
+                &strictly_positive_premise,
+                &kernel_strictly_positive_premise,
+            ),
         ];
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
@@ -8011,6 +8040,12 @@ mod tests {
         surface_propositions
             .record_lowering(&positive_premise, &kernel_positive_premise)
             .expect("the exact positive premise should be indexed");
+        surface_propositions
+            .record_lowering(
+                &strictly_positive_premise,
+                &kernel_strictly_positive_premise,
+            )
+            .expect("the exact strictly-positive premise should be indexed");
 
         for (goal, theorem_name, label, surface_premise, kernel_premise) in goals {
             for size in [16_u32, 64, 256, 1024, 4096] {

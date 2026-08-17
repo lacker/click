@@ -2493,6 +2493,55 @@ fn restricted_simp_expands_positive_to_nonnegative_theorem_application() {
 }
 
 #[test]
+fn restricted_simp_expands_strictly_positive_to_nonnegative_theorem_application() {
+    let click_source = r#"
+        theorem strictly_positive_is_nonnegative(value: int32) {
+            requires 0 < value;
+            ensures value >= 0 by {
+                simp() using {
+                    0 < value;
+                }
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("strictly-positive-to-nonnegative simp should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "strictly_positive_is_nonnegative.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the named strictly-positive-to-nonnegative step must not use construction replay: {events:#?}"
+    );
+    let offset = click_source.find("simp() using").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("strictly-positive-to-nonnegative simp should expand");
+    assert!(
+        expanded.contains("apply(int32_strictly_positive_is_nonnegative(value)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("0 < value;"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+}
+
+#[test]
 fn restricted_simp_expands_positive_predecessor_to_theorem_application() {
     let click_source = r#"
         theorem positive_predecessor_is_nonnegative(value: int32) {

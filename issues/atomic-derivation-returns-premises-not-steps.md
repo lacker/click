@@ -299,13 +299,14 @@ without an ambient scan. Deterministic 16-through-4096 coverage pins the
 persistent-update bound, and expansion independently verifies both named
 applications.
 
-The direct `1 <= value` to `0 <= value` decision now retains its exact
-non-strict edge as `int32_positive_is_nonnegative` evidence. Restricted pure
-and point/outcome smart `simp` consume that evidence through the existing
+The direct positive-to-nonnegative decisions now retain their exact edges:
+`1 <= value` as `int32_positive_is_nonnegative` evidence and `0 < value` as
+`int32_strictly_positive_is_nonnegative` evidence. Restricted pure and
+point/outcome smart `simp` consume that evidence through the existing
 theorem-application seam, with no ambient premise search or construction
 replay. The shared 16-through-4096 single-premise curve covers accepted and
-omitted-premise behavior, and expansion independently verifies the named
-application.
+omitted-premise behavior, and expansion independently verifies both named
+applications.
 
 Multi-premise evidence is stored behind an indirection. Inlining the two
 retained propositions in the evidence enum enlarged unrelated recursive proof
