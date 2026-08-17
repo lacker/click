@@ -5483,6 +5483,34 @@ impl<'a> ExecutionProofBranches<'a> {
         Ok(Some(next))
     }
 
+    /// Selects one bare theorem application against the chosen arm's owned
+    /// Proof, then submits the resulting explicit `ApplyTheoremUsing` step to
+    /// that same Proof. Search cannot add the conclusion directly, and a
+    /// failed selection leaves the branch container unchanged.
+    pub(super) fn try_theorem_application(
+        &self,
+        take_then: bool,
+        application: &TheoremApplication,
+    ) -> Result<Option<Self>, ClickError> {
+        let arm_index = usize::from(!take_then);
+        let arm = self.arms[arm_index].as_ref().ok_or_else(|| {
+            self.root.step_error(format!(
+                "cannot apply a theorem to the infeasible {} execution arm",
+                if take_then { "then" } else { "else" }
+            ))
+        })?;
+        if arm.proof.is_at_function_exit() {
+            // Exit applications need one point proof per concrete outcome so
+            // that `result` lowers correctly. Ordered finalization owns that
+            // distinct operation until outcome goals migrate into Proof.
+            return Ok(None);
+        }
+        let step = arm
+            .proof
+            .select_execution_theorem_application_step(application)?;
+        Ok(Some(self.clone().apply_step(take_then, step)?))
+    }
+
     /// Runs the narrow statement selector independently in one C arm until
     /// that arm reaches function exit. Every accepted transition is already
     /// a retained `StepUsing` successor. Nested C `if` frontiers recurse
@@ -7162,6 +7190,22 @@ impl<'a> ProofScope<'a> {
         }
         next.body = body;
         Ok(Some(next))
+    }
+
+    /// Runs bare theorem-application search on the scope's current checked
+    /// body and retains only the accepted explicit theorem step. Function-exit
+    /// applications remain outcome-local ordered-finalization operations.
+    pub(super) fn try_theorem_application(
+        &self,
+        application: &TheoremApplication,
+    ) -> Result<Option<Self>, ClickError> {
+        if self.body.is_at_function_exit() {
+            return Ok(None);
+        }
+        let step = self
+            .body
+            .select_execution_theorem_application_step(application)?;
+        Ok(Some(self.apply_step(step)?))
     }
 
     /// Runs the narrow straight-line `execute_until` search on checked
@@ -10038,6 +10082,159 @@ mod tests {
                 .into_execution_context()
                 .expect("the checked successor should export at the compatibility boundary");
             assert!(result.pure_facts.contains(&kernel_conclusion));
+        }
+    }
+
+    #[test]
+    fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 choose(int32 left, int32 right, int32 choose_left) {
+                    ensures reflexive_result: result == result by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function = syntax::parse_function(
+            "int32 choose(int32 left, int32 right, int32 choose_left) { if (choose_left != 0) { return left; } else { return right; } }",
+        )
+        .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let function_environment = CExecutionEnvironment::new();
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+        let state = CState::new();
+        let left = CValue::Int32(Bitvector32Term::Variable(Variable(8_050_000)));
+        let right = CValue::Int32(Bitvector32Term::Variable(Variable(8_050_001)));
+        let choose_left = CValue::Int32(Bitvector32Term::Variable(Variable(8_050_002)));
+        let arguments = vec![
+            CExpression::Value(left.clone()),
+            CExpression::Value(right.clone()),
+            CExpression::Value(choose_left),
+        ];
+        let premise = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(left.clone())),
+            operator: ComparisonOperator::LessThan,
+            right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+        };
+        let kernel_premise = lower_point_proposition_with_assumptions(
+            &premise,
+            &PureFactContext::new(),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            None,
+            &ProgramPointStates::new(),
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("the exact theorem premise should lower");
+        let application = TheoremApplication {
+            name: "int32_lt_implies_le".to_string(),
+            arguments: vec![
+                ContractExpression::CFragment(CExpression::Value(left)),
+                ContractExpression::CFragment(CExpression::Value(right)),
+            ],
+        };
+        let missing_application = TheoremApplication {
+            name: application.name.clone(),
+            arguments: application.arguments.iter().cloned().rev().collect(),
+        };
+
+        let mut samples = Vec::new();
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            pure_facts.push(kernel_premise.clone());
+            let mut replay = TacticReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..TacticReplayState::default()
+            };
+            replay
+                .surface_propositions
+                .record_lowering(&premise, &kernel_premise)
+                .expect("the selected premise spelling should be recorded");
+            let root = Proof::for_execution_frontier(
+                "branch theorem search",
+                0,
+                ProofReplayContext {
+                    state: state.clone(),
+                    pure_facts,
+                    replay,
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let branches = root
+                .begin_execution_branch()
+                .expect("the symbolic condition should expose two theorem-search arms");
+            let missing = branches
+                .try_theorem_application(true, &missing_application)
+                .err()
+                .expect("an unavailable exact theorem premise must reject the arm search");
+            assert!(
+                missing.message().contains("unavailable exact premise"),
+                "{missing:?}"
+            );
+            assert!(
+                branches
+                    .arm(true)
+                    .expect("then arm remains feasible")
+                    .certificate()
+                    .steps()
+                    .is_empty(),
+                "failed theorem search must not alter arm provenance"
+            );
+
+            let before = fact_node_allocations();
+            let branches = branches
+                .try_theorem_application(true, &application)
+                .expect("then arm theorem search should run")
+                .expect("then arm theorem search should retain its checked step")
+                .try_theorem_application(false, &application)
+                .expect("else arm theorem search should run")
+                .expect("else arm theorem search should retain its checked step");
+            samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before,
+            ));
+            for take_then in [true, false] {
+                assert!(matches!(
+                    branches
+                        .arm(take_then)
+                        .expect("both theorem-search arms remain feasible")
+                        .certificate()
+                        .steps(),
+                    [SimpleProofStep::ApplyTheoremUsing {
+                        application: retained,
+                        premises,
+                    }] if retained == &application && premises == std::slice::from_ref(&premise)
+                ));
+            }
+            assert!(root.certificate().steps().is_empty());
+        }
+        let (_, base_height, base_allocations) = samples[0];
+        for (size, height, allocations) in samples {
+            let bound = base_allocations + 96 * (height - base_height);
+            assert!(
+                allocations <= bound,
+                "size {size} two-arm theorem search allocated {allocations} persistent nodes (bound {bound})"
+            );
         }
     }
 

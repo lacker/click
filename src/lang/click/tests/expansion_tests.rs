@@ -5365,6 +5365,74 @@ fn linear_open_have_retains_the_selected_theorem_application() {
 }
 
 #[test]
+fn linear_open_retains_a_direct_bare_theorem_application() {
+    let c_source = r#"
+        int32 retain_lower(int32 lower, int32 upper) {
+            return lower;
+        }
+    "#;
+    let click_source = r#"
+        resource ordered(lower: int32, upper: int32) {
+            fact lower < upper;
+        }
+
+        verifying "retain_lower.c";
+
+        int32 retain_lower(int32 lower, int32 upper) {
+            owns ordered(lower, upper);
+            immutable;
+            ensures lower <= upper;
+        } by {
+            open(ordered(lower, upper)) {
+                apply(int32_lt_implies_le(lower, upper));
+                step();
+            }
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("retain_lower.c", c_source)])
+    });
+    let verified = verified.expect("the direct theorem application should advance the open Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "retain_lower.contract" && name == "surface certificate replay"
+        )),
+        "ordinary open-scope theorem search must not replay its retained step: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked open proof should retain its expansion");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(open))
+                if matches!(
+                    open.tactics.as_slice(),
+                    [
+                        ProofTactic::ApplyTheoremUsing { application, premises },
+                        ProofTactic::StepUsing(_),
+                    ] if application.name == "int32_lt_implies_le" && premises.len() == 1
+                )
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("retain_lower.c", c_source)],
+        "retain_lower",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained open-scope theorem application should expand");
+    verify_c0_sources(&expanded, &[("retain_lower.c", c_source)])
+        .expect("the explicit open-scope theorem step should independently re-derive");
+}
+
+#[test]
 fn branch_interface_retains_its_checked_abstract_join() {
     let c_source = r#"
         int32 nonnegative(int32 x) {
@@ -5610,6 +5678,89 @@ fn branch_interface_normalizes_an_entailed_owned_quantity_on_proof() {
     .expect("the retained quantity interface should expand");
     verify_c0_sources(&expanded, &[("preserve_two_markers.c", c_source)])
         .expect("the normalized quantity interface should independently re-derive");
+}
+
+#[test]
+fn branch_arms_retain_bare_theorem_applications_on_proof() {
+    let c_source = r#"
+        int32 retain_order(int32 lower, int32 upper, int32 flag) {
+            int32 choice;
+            if (flag != 0) {
+                choice = lower;
+            } else {
+                choice = upper;
+            }
+            return choice;
+        }
+    "#;
+    let click_source = r#"
+        verifying "retain_order.c";
+
+        int32 retain_order(int32 lower, int32 upper, int32 flag) {
+            requires lower < upper;
+            immutable;
+            ensures lower <= upper;
+        } by {
+            step();
+            branch {
+                ensuring {
+                    fact lower <= upper;
+                }
+                then {
+                    step();
+                    apply(int32_lt_implies_le(lower, upper));
+                }
+                else {
+                    step();
+                    apply(int32_lt_implies_le(lower, upper));
+                }
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("retain_order.c", c_source)])
+    });
+    let verified = verified.expect("bare arm applications should advance the branch Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "retain_order.contract" && name == "surface certificate replay"
+        )),
+        "ordinary branch theorem search must not replay its retained applications: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked theorem applications should retain an expansion");
+    assert!(
+        matches!(
+            tactics.get(1),
+            Some(ProofTactic::Branch(branch))
+                if matches!(
+                    branch.then_tactics.as_slice(),
+                    [ProofTactic::StepUsing(_), ProofTactic::ApplyTheoremUsing { application, premises }]
+                        if application.name == "int32_lt_implies_le" && premises.len() == 1
+                ) && matches!(
+                    branch.else_tactics.as_slice(),
+                    [ProofTactic::StepUsing(_), ProofTactic::ApplyTheoremUsing { application, premises }]
+                        if application.name == "int32_lt_implies_le" && premises.len() == 1
+                )
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("retain_order.c", c_source)],
+        "retain_order",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained branch applications should expand");
+    verify_c0_sources(&expanded, &[("retain_order.c", c_source)])
+        .expect("the explicit branch applications should independently re-derive");
 }
 
 #[test]

@@ -39,7 +39,10 @@ fn linear_execution_branch_tactics(node: &InternalProofNode) -> Option<&[Indexed
         .iter()
         .all(|indexed| {
             linear_execution_simple_step(&indexed.tactic).is_some()
-                || matches!(indexed.tactic, ProofTactic::SmartStep)
+                || matches!(
+                    indexed.tactic,
+                    ProofTactic::SmartStep | ProofTactic::ApplyTheorem(_)
+                )
         })
         .then_some(tactics)
 }
@@ -55,6 +58,11 @@ fn advance_execution_branch_arm<'a>(
             branches = branches.apply_step(take_then, step)?;
         } else if matches!(indexed.tactic, ProofTactic::SmartStep) {
             let Some(next) = branches.try_smart_step(take_then)? else {
+                return Ok(None);
+            };
+            branches = next;
+        } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
+            let Some(next) = branches.try_theorem_application(take_then, application)? else {
                 return Ok(None);
             };
             branches = next;
@@ -97,6 +105,7 @@ fn checked_open_scope_can_service_capture(
                 && matches!(
                     indexed.tactic,
                     ProofTactic::SmartStep
+                        | ProofTactic::ApplyTheorem(_)
                         | ProofTactic::SmartExecute
                         | ProofTactic::SmartExecuteAllPaths
                         | ProofTactic::SmartFrame(_)
@@ -133,6 +142,23 @@ fn advance_linear_open_scope<'a>(
                 return Ok(None);
             };
             scope = stepped;
+            if let Some(site) = proof_site {
+                let certificate = scope.certificate_since(&checkpoint)?;
+                record_proof_site_tactic_expansion(
+                    expansion_capture.as_deref_mut(),
+                    site,
+                    indexed.source_index,
+                    &certificate.to_proof_tactics(),
+                );
+            }
+            continue;
+        }
+        if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
+            let checkpoint = scope.checkpoint();
+            let Some(applied) = scope.try_theorem_application(application)? else {
+                return Ok(None);
+            };
+            scope = applied;
             if let Some(site) = proof_site {
                 let certificate = scope.certificate_since(&checkpoint)?;
                 record_proof_site_tactic_expansion(

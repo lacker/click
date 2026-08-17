@@ -1585,6 +1585,18 @@ pins the case where one surface ownership interface lowers to different
 concrete resources in the two arms and to one common resource after branch
 abstraction.
 
+Bare execution theorem application now composes through the same checked
+branch and resource-scope containers. Search inspects the selected arm or
+scope body's immutable `Proof`, returns one explicit `ApplyTheoremUsing`, and
+submits that step to the same descendant; it cannot publish a conclusion or
+mutate arm state directly. Function-exit applications deliberately remain
+outcome-local until typed outcome goals migrate into `Proof`, because their
+surface arguments may depend on `result`. A deterministic 16-through-4096
+unrelated-fact curve checks two arm-local searches, logarithmic persistent
+updates, rejected-premise transactionality, and exact retained steps. Source
+regressions cover both a two-arm interface and a direct application inside
+`open`, observe no ordinary replay, and independently verify expansion.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
