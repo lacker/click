@@ -1990,6 +1990,15 @@ impl<'a> Proof<'a> {
                     &recorded,
                     point_application_closes_goal,
                 )
+            })
+            .or_else(|| {
+                let recorded =
+                    recorded_int32_le_and_neq_implies_strict_pairs(derivation, &premise_pairs)?;
+                plan_recorded_int32_le_and_neq_implies_strict_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
             })?;
         let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
         let proof = self.check_certificate(&candidate).ok()?;
@@ -8638,6 +8647,111 @@ mod tests {
                 closed.certificate().steps(),
                 [SimpleProofStep::ApplyTheoremUsing { application, premises }]
                     if application.name == "int32_ge_and_not_gt_implies_eq"
+                        && premises.as_slice() == selected
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn le_and_neq_strict_simp_retains_one_indexed_theorem_application() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("the standard strict-order theorem should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test C function should parse");
+        let state = CState::new();
+        let arguments = Vec::new();
+        let program_point_states = ProgramPointStates::new();
+        let left = Bitvector32Term::Variable(Variable(8_178_104));
+        let right = Bitvector32Term::Variable(Variable(8_178_105));
+        let expression = |term: Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term)))
+        };
+        let less_equal = ClickProposition::Comparison {
+            left: expression(left.clone()),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(right.clone()),
+        };
+        let not_equal = ClickProposition::Not(Box::new(ClickProposition::Comparison {
+            left: expression(left.clone()),
+            operator: ComparisonOperator::Equal,
+            right: expression(right.clone()),
+        }));
+        let strict = ClickProposition::Comparison {
+            left: expression(left),
+            operator: ComparisonOperator::LessThan,
+            right: expression(right),
+        };
+        let lower_surface = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the fixed strict-order proposition should lower")
+        };
+        let kernel_less_equal = lower_surface(&less_equal);
+        let kernel_not_equal = lower_surface(&not_equal);
+        let kernel_strict = lower_surface(&strict);
+        let selected = [less_equal.clone(), not_equal.clone()];
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
+            .record_lowering(&less_equal, &kernel_less_equal)
+            .expect("the <= premise should be indexed");
+        surface_propositions
+            .record_lowering(&not_equal, &kernel_not_equal)
+            .expect("the != premise should be indexed");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.extend([kernel_less_equal.clone(), kernel_not_equal.clone()]);
+            let root = Proof::for_point_goal(
+                "persistent point <=/!= strict-order simp",
+                0,
+                &facts,
+                kernel_strict.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("the typed <=/!= rule should build one checked Proof descendant");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 96 * logarithmic_height + 384;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} point <=/!= strict-order simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                    if application.name == "int32_le_and_neq_implies_lt"
                         && premises.as_slice() == selected
             ));
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));

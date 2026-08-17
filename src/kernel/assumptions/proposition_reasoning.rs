@@ -1047,6 +1047,32 @@ impl PureFactContext {
             }
             _ => None,
         };
+        let le_and_neq_strict_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(left, right),
+                true,
+            ) => {
+                let less_equal = Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(left.as_ref().clone(), right.as_ref().clone()),
+                    true,
+                );
+                let not_equal = Proposition::ConditionIs(
+                    ConditionTerm::equal(left.as_ref().clone(), right.as_ref().clone()),
+                    false,
+                );
+                (self.contains_assumed_exact(&less_equal)
+                    && self.contains_assumed_exact(&not_equal))
+                .then(|| {
+                    AtomicPropositionDerivationEvidence::Int32LeAndNeqImpliesStrict(Box::new(
+                        Int32LeAndNeqStrictEvidence {
+                            less_equal,
+                            not_equal,
+                        },
+                    ))
+                })
+            }
+            _ => None,
+        };
         let increment_upper_bound_evidence = match proposition {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedLessEqual(incremented, upper),
@@ -1245,6 +1271,7 @@ impl PureFactContext {
             .or(equality_path_evidence)
             .or(le_and_not_lt_equality_evidence)
             .or(ge_and_not_gt_equality_evidence)
+            .or(le_and_neq_strict_evidence)
             .or(positive_is_nonnegative_evidence)
             .or(strictly_positive_is_nonnegative_evidence)
             .or(signed_order_evidence)
@@ -1661,6 +1688,28 @@ impl PureFactContext {
                 && evidence.not_greater_than == Proposition::ConditionIs(greater_than, false)
                 && self.contains_assumed_exact(&evidence.greater_equal)
                 && self.contains_assumed_exact(&evidence.not_greater_than);
+        }
+        if let AtomicPropositionDerivationEvidence::Int32LeAndNeqImpliesStrict(evidence) = evidence
+        {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(left, right),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            let less_equal = Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(left.as_ref().clone(), right.as_ref().clone()),
+                true,
+            );
+            let not_equal = Proposition::ConditionIs(
+                ConditionTerm::equal(left.as_ref().clone(), right.as_ref().clone()),
+                false,
+            );
+            return evidence.less_equal == less_equal
+                && evidence.not_equal == not_equal
+                && self.contains_assumed_exact(&evidence.less_equal)
+                && self.contains_assumed_exact(&evidence.not_equal);
         }
         if !decide_memo_disabled()
             && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {

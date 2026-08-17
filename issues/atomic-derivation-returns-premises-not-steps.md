@@ -308,6 +308,14 @@ replay. The shared 16-through-4096 single-premise curve covers accepted and
 omitted-premise behavior, and expansion independently verifies both named
 applications.
 
+The exact `left <= right` plus `left != right` decision now retains both
+source facts as `int32_le_and_neq_implies_lt` evidence. Pure, point, and
+outcome smart `simp` can therefore submit the named application through
+`Proof` rather than rediscovering the rule from a premise bag. A
+16-through-4096 unrelated-fact curve bounds the checked point transition,
+while the pure expansion regression pins the absence of construction replay
+and independently verifies the serialized application.
+
 Multi-premise evidence is stored behind an indirection. Inlining the two
 retained propositions in the evidence enum enlarged unrelated recursive proof
 frames enough to overflow the existing deeply branched `sort3` expansion.

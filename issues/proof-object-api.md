@@ -1194,6 +1194,16 @@ bounds both paths logarithmically. Ordinary source verification performs no
 construction replay, while expansion independently verifies both serialized
 applications.
 
+The exact nonstrict-plus-unequal decision now crosses the theorem seam too.
+Atomic search retains the source-supported `left <= right` and
+`left != right` facts and submits one `int32_le_and_neq_implies_lt`
+application to the immutable `Proof`. Fixed-size polarity probes recover a
+Surface spelling for the negated equality without scanning ambient facts.
+The point descendant contains exactly that accepted application, the
+16-through-4096 unrelated-fact curve bounds its persistent updates
+logarithmically, and the pure source regression observes no construction
+replay before independently verifying the expansion.
+
 Mid-execution bare theorem application now crosses the same query/transition
 seam. The smart form asks its immutable execution-frontier `Proof` for one
 concrete `ApplyTheoremUsing`, and only `Proof::apply_step` may add the theorem

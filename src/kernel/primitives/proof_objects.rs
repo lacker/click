@@ -268,6 +268,18 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact `left <= right` and `left != right` premises selected
+    /// when the atomic prover established `left < right`.
+    pub fn int32_le_and_neq_implies_strict_premises(&self) -> Option<(&Proposition, &Proposition)> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::Int32LeAndNeqImpliesStrict(evidence),
+                ..
+            } => Some((&evidence.less_equal, &evidence.not_equal)),
+            _ => None,
+        }
+    }
+
     /// Return the exact `left <= right` and `not (left < right)` premises
     /// selected when the atomic prover established int32 equality.
     pub fn int32_le_and_not_lt_implies_equality_premises(

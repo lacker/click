@@ -1940,6 +1940,18 @@ fn restricted_simp_expands_nonstrict_unequal_order() {
             }
         }
     "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("nonstrict unequal order should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "nonstrict_unequal_is_strict.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the named <=/!= strict-order step must not use construction replay: {events:#?}"
+    );
     let offset = click_source.rfind("simp()").unwrap();
     let line = click_source[..offset]
         .bytes()

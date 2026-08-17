@@ -123,6 +123,34 @@ fn int32_strictly_positive_is_nonnegative_derivation_retains_its_exact_premise()
 }
 
 #[test]
+fn int32_le_and_neq_strict_derivation_retains_both_exact_premises() {
+    let left = Bitvector32Term::Variable(Variable(90_006));
+    let right = Bitvector32Term::Variable(Variable(90_007));
+    let less_equal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+        true,
+    );
+    let not_equal =
+        Proposition::ConditionIs(ConditionTerm::equal(left.clone(), right.clone()), false);
+    let goal = Proposition::ConditionIs(ConditionTerm::signed_less_than(left, right), true);
+    let assumptions = PureFactContext::new()
+        .assume_proposition(less_equal.clone())
+        .assume_proposition(not_equal.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("<= plus != should derive strict int32 order");
+    assert_eq!(
+        derivation.int32_le_and_neq_implies_strict_premises(),
+        Some((&less_equal, &not_equal))
+    );
+    assert!(derivation.replay(&assumptions));
+
+    let missing = PureFactContext::new().assume_proposition(less_equal);
+    assert!(!derivation.replay(&missing));
+}
+
+#[test]
 fn conjunction_builder_has_logarithmic_depth() {
     fn conjunction_depth(proposition: &Proposition) -> usize {
         match proposition {
