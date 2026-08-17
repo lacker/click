@@ -5442,6 +5442,86 @@ fn open_scope_retains_its_checked_execution_branch() {
 }
 
 #[test]
+fn open_scope_retains_a_decided_execution_branch_and_its_continuation() {
+    let c_source = r#"
+        int32 selected_branch(int32 x) {
+            if (x < 0) {
+                x = 1;
+            } else {
+                x = 2;
+            }
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "selected_branch.c";
+
+        int32 selected_branch(int32 x) {
+            requires x < 0;
+            owns marker(x);
+            immutable;
+            ensures result == 1;
+        } by {
+            open(marker(x)) {
+                branch {
+                    then { step(); }
+                    else { step(); }
+                }
+                step();
+            }
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("selected_branch.c", c_source)])
+    });
+    let verified = verified.expect("the decided execution path should stay inside the open Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "selected_branch.contract" && name == "surface certificate replay"
+        )),
+        "the scoped decided branch must retain its searched simple steps directly: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the scoped decided branch should retain its expansion");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(open))
+                if matches!(
+                    open.tactics.as_slice(),
+                    [ProofTactic::If(proof_if), ProofTactic::StepUsing(_)]
+                        if proof_if.then_tactics.len() == 2
+                            && proof_if.else_tactics.is_empty()
+                            && matches!(
+                                proof_if.then_tactics.first(),
+                                Some(ProofTactic::StepUsing(premises)) if !premises.is_empty()
+                            )
+                )
+        ),
+        "the open child should retain the closed decided node followed by its continuation: {tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("selected_branch.c", c_source)],
+        "selected_branch",
+        CProofClaim::Grouped,
+    )
+    .expect("the scoped decided branch should expand");
+    verify_c0_sources(&expanded, &[("selected_branch.c", c_source)])
+        .expect("the scoped decided certificate should independently re-derive the proof");
+}
+
+#[test]
 fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
     let c_source = r#"
             int32 choose(int32 value) {

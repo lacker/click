@@ -33,11 +33,35 @@ fn linear_execution_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]
     }
 }
 
-fn linear_execution_simple_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofStep>> {
-    linear_execution_tactics(node)?
+fn linear_execution_branch_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]> {
+    let tactics = linear_execution_tactics(node)?;
+    tactics
         .iter()
-        .map(|indexed| linear_execution_simple_step(&indexed.tactic))
-        .collect()
+        .all(|indexed| {
+            linear_execution_simple_step(&indexed.tactic).is_some()
+                || matches!(indexed.tactic, ProofTactic::SmartStep)
+        })
+        .then_some(tactics)
+}
+
+fn advance_execution_branch_arm<'a>(
+    mut branches: ExecutionProofBranches<'a>,
+    take_then: bool,
+    tactics: &[IndexedTactic],
+) -> Result<Option<ExecutionProofBranches<'a>>, ClickError> {
+    for indexed in tactics {
+        if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
+            branches = branches.apply_step(take_then, step)?;
+        } else if matches!(indexed.tactic, ProofTactic::SmartStep) {
+            let Some(next) = branches.try_smart_step(take_then)? else {
+                return Ok(None);
+            };
+            branches = next;
+        } else {
+            return Ok(None);
+        }
+    }
+    Ok(Some(branches))
 }
 
 fn linear_execution_certificate(node: &InternalProofNode) -> Option<ProofCertificate> {
@@ -239,22 +263,50 @@ fn advance_checked_open_scope<'a>(
     } = body
         && let Some(then_proof) = linear_execution_certificate(then_branch)
         && let Some(else_proof) = linear_execution_certificate(else_branch)
-        && matches!(
+        && ((matches!(
             then_proof.steps().last(),
             Some(SimpleProofStep::StepUsing(_))
-        )
-        && matches!(
+        ) && matches!(
             else_proof.steps().last(),
             Some(SimpleProofStep::StepUsing(_))
-        )
+        )) || (then_proof.steps().is_empty()
+            && matches!(
+                else_proof.steps().last(),
+                Some(SimpleProofStep::StepUsing(_))
+            ))
+            || (else_proof.steps().is_empty()
+                && matches!(
+                    then_proof.steps().last(),
+                    Some(SimpleProofStep::StepUsing(_))
+                )))
     {
         let checkpoint = scope.checkpoint();
-        let branches = scope.begin_execution_branch()?;
-        if !branches.has_both_feasible_arms() {
-            return Ok(None);
+        let mut branches = scope.begin_execution_branch()?;
+        if let Some(take_then) = branches.sole_feasible_arm() {
+            let (selected, impossible) = if take_then {
+                (&then_proof, &else_proof)
+            } else {
+                (&else_proof, &then_proof)
+            };
+            if !impossible.steps().is_empty()
+                || !matches!(selected.steps().last(), Some(SimpleProofStep::StepUsing(_)))
+            {
+                return Ok(None);
+            }
+            branches = branches.check_logical_arm_certificate(take_then, selected)?;
+        } else {
+            if !matches!(
+                then_proof.steps().last(),
+                Some(SimpleProofStep::StepUsing(_))
+            ) || !matches!(
+                else_proof.steps().last(),
+                Some(SimpleProofStep::StepUsing(_))
+            ) {
+                return Ok(None);
+            }
+            branches = branches.check_logical_arm_certificate(true, &then_proof)?;
+            branches = branches.check_logical_arm_certificate(false, &else_proof)?;
         }
-        let branches = branches.check_terminal_arm_certificate(true, &then_proof)?;
-        let branches = branches.check_terminal_arm_certificate(false, &else_proof)?;
         let scope = scope.join_execution_branch(branches, false)?;
         let actual = scope.certificate_since(&checkpoint)?;
         let expected = ProofCertificate::from_steps(vec![SimpleProofStep::If {
@@ -307,24 +359,32 @@ fn advance_checked_open_scope<'a>(
     else {
         return Ok(None);
     };
-    let Some(then_steps) = linear_execution_simple_steps(then_branch) else {
+    let Some(then_tactics) = linear_execution_branch_tactics(then_branch) else {
         return Ok(None);
     };
-    let Some(else_steps) = linear_execution_simple_steps(else_branch) else {
+    let Some(else_tactics) = linear_execution_branch_tactics(else_branch) else {
         return Ok(None);
     };
     let branches = scope.begin_execution_branch()?;
-    if !branches.has_both_feasible_arms() {
+    let feasible_arm = branches.sole_feasible_arm();
+    let empty = then_tactics.is_empty() && else_tactics.is_empty();
+    let mut branches = Some(branches);
+    if feasible_arm.is_none_or(|take_then| take_then) {
+        branches = advance_execution_branch_arm(
+            branches.expect("checked then arm starts with its branch container"),
+            true,
+            then_tactics,
+        )?;
+    }
+    if feasible_arm.is_none_or(|take_then| !take_then) {
+        let Some(branches_value) = branches else {
+            return Ok(None);
+        };
+        branches = advance_execution_branch_arm(branches_value, false, else_tactics)?;
+    }
+    let Some(branches) = branches else {
         return Ok(None);
-    }
-    let empty = then_steps.is_empty() && else_steps.is_empty();
-    let mut branches = branches;
-    for step in then_steps {
-        branches = branches.apply_step(true, step)?;
-    }
-    for step in else_steps {
-        branches = branches.apply_step(false, step)?;
-    }
+    };
     let scope = scope.join_execution_branch(branches, empty)?;
     advance_checked_open_scope(scope, continuation, expansion_capture, proof_site)
 }
@@ -495,7 +555,9 @@ fn join_linear_execution_branches<'a>(
     branches: ExecutionProofBranches<'a>,
     empty: bool,
 ) -> Result<Proof<'a>, ClickError> {
-    if branches.both_arms_at_function_exit() {
+    if branches.sole_feasible_arm().is_some() {
+        branches.finish_decided()
+    } else if branches.both_arms_at_function_exit() {
         branches.join_terminal()
     } else if empty {
         branches.join_empty()
@@ -827,8 +889,8 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             });
             if checked_capture_supported
                 && ensuring.is_none()
-                && let Some(then_steps) = linear_execution_simple_steps(then_branch)
-                && let Some(else_steps) = linear_execution_simple_steps(else_branch)
+                && let Some(then_tactics) = linear_execution_branch_tactics(then_branch)
+                && let Some(else_tactics) = linear_execution_branch_tactics(else_branch)
             {
                 let proof = Proof::for_execution_frontier(
                     claim_label,
@@ -845,15 +907,26 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     theorem_environment,
                 );
                 let checkpoint = proof.checkpoint();
-                let mut branches = proof.begin_execution_branch()?;
-                if branches.has_both_feasible_arms() {
-                    let empty = then_steps.is_empty() && else_steps.is_empty();
-                    for step in then_steps {
-                        branches = branches.apply_step(true, step)?;
-                    }
-                    for step in else_steps {
-                        branches = branches.apply_step(false, step)?;
-                    }
+                let branches = proof.begin_execution_branch()?;
+                let feasible_arm = branches.sole_feasible_arm();
+                let empty = then_tactics.is_empty() && else_tactics.is_empty();
+                let checked = (|| {
+                    let branches = if feasible_arm.is_none_or(|take_then| take_then) {
+                        advance_execution_branch_arm(branches, true, then_tactics)?
+                    } else {
+                        Some(branches)
+                    };
+                    let branches = if feasible_arm.is_none_or(|take_then| !take_then) {
+                        let Some(branches) = branches else {
+                            return Ok(None);
+                        };
+                        advance_execution_branch_arm(branches, false, else_tactics)?
+                    } else {
+                        branches
+                    };
+                    Ok::<_, ClickError>(branches)
+                })()?;
+                if let Some(branches) = checked {
                     let proof = join_linear_execution_branches(branches, empty)?;
                     let certificate = proof.certificate_since(&checkpoint)?;
                     let mut joined_context = proof.into_execution_context()?;
@@ -866,10 +939,17 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                         );
                     }
                     for step in certificate.steps() {
-                        joined_context
-                            .replay
-                            .proof_certificate_builder
-                            .push_step(step.clone());
+                        if feasible_arm.is_some() {
+                            joined_context
+                                .replay
+                                .proof_certificate_builder
+                                .push_decided_step(step.clone());
+                        } else {
+                            joined_context
+                                .replay
+                                .proof_certificate_builder
+                                .push_step(step.clone());
+                        }
                     }
                     return execute_internal_proof(
                         continuation,

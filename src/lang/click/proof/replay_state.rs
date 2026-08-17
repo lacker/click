@@ -416,6 +416,7 @@ impl<'a, T: Clone + Ord> IntoIterator for &'a PersistentOrderedSet<T> {
 #[derive(Clone)]
 pub(super) enum SurfaceScopeOp {
     Push(SimpleProofStep),
+    PushDecided(SimpleProofStep),
     ReplaceTrailingBranch(Vec<SimpleProofStep>),
 }
 
@@ -429,6 +430,10 @@ pub(super) struct ProofCertificateBuilder {
     /// tactic-scoped builder can be replayed onto the builder it was scoped
     /// from. `None` outside a tactic scope.
     pub(super) scope_ops: Option<Vec<SurfaceScopeOp>>,
+    /// A checked Proof exported a one-feasible execution `If`. Its next
+    /// structural successor belongs after that closed decision, rather than
+    /// being copied into both logical leaves by legacy path stitching.
+    pub(super) next_step_follows_decided_branch: bool,
     /// The facts the constructed certificate's own replay will have at the
     /// current point. Planning executes with automatically transported facts,
     /// but certificate replay carries only path facts, statement-local
@@ -774,7 +779,38 @@ impl ProofCertificateBuilder {
             if let Some(ops) = &mut self.scope_ops {
                 ops.push(SurfaceScopeOp::Push(step.clone()));
             }
+            if self.next_step_follows_decided_branch {
+                self.steps.push(step);
+                self.next_step_follows_decided_branch = false;
+            } else {
+                append_surface_step_to_leaves(&mut self.steps, step);
+            }
+        }
+    }
+
+    /// Retains a checked one-feasible execution decision as a closed Proof
+    /// node. The legacy builder normally treats every trailing `If` as an
+    /// open path tree; this explicit bridge preserves the Proof's sequential
+    /// successor instead of reconstructing a different tree afterward.
+    pub(super) fn push_decided_step(&mut self, step: SimpleProofStep) {
+        let is_decided = matches!(
+            &step,
+            SimpleProofStep::If {
+                then_proof,
+                else_proof,
+                ..
+            } if then_proof.steps().is_empty() != else_proof.steps().is_empty()
+        );
+        if !is_decided {
+            self.block("checked decided branch did not retain exactly one proof arm");
+            return;
+        }
+        if self.blocker.is_none() {
+            if let Some(ops) = &mut self.scope_ops {
+                ops.push(SurfaceScopeOp::PushDecided(step.clone()));
+            }
             append_surface_step_to_leaves(&mut self.steps, step);
+            self.next_step_follows_decided_branch = true;
         }
     }
 
@@ -950,6 +986,7 @@ pub(super) fn end_tactic_surface_scope(
     for op in slice.scope_ops.take().into_iter().flatten() {
         match op {
             SurfaceScopeOp::Push(step) => enclosing.push_step(step),
+            SurfaceScopeOp::PushDecided(step) => enclosing.push_decided_step(step),
             SurfaceScopeOp::ReplaceTrailingBranch(steps) => {
                 if enclosing.path_choices.is_empty() {
                     enclosing.replace_trailing_branch(steps);

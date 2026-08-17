@@ -731,10 +731,11 @@ bundle check remains attached at the legacy replay export boundary rather
 than becoming proof authority. A 16-through-4096 regression holds the step
 fixed while growing unrelated facts and records no persistent fact updates.
 
-The execution branch container now accepts linear arm bodies made only of
-`StepUsing`, `TransportUsing`, and `UnfoldPredicate`. Each arm advances through the ordinary
-checked `Proof` operation and accumulates only its fact and execution-effect
-deltas. Predicate unfold also returns its exact persistent-fact,
+The execution branch container now accepts linear arm bodies made of
+`StepUsing`, `TransportUsing`, `UnfoldPredicate`, and `ApplyTheoremUsing`, and
+can run smart `step()` directly against an arm's owned `Proof`. Each arm
+advances through the ordinary checked operation and accumulates only its fact
+and execution-effect deltas. Predicate unfold also returns its exact persistent-fact,
 function-entry prerequisite/derivation, and unfolded-name deltas, so the join
 can merge that already-checked metadata without scanning inherited context.
 The join embeds each checkpoint suffix directly in the structured
@@ -743,11 +744,19 @@ deltas, unions arm-local certified effects, advances freshness counters, and
 reconstructs the common frontier from the shared root. Replay histories that
 do not yet have an audited merge rule are rejected by constant-size metadata
 checks instead of being selected from one arm. Ordinary verification uses
-this path for undecided, no-`ensuring`, linear simple branches; expansion
-capture, decided paths, structured/nonsimple arm bodies, and branch
-interfaces remain on the legacy driver. A deterministic 16-through-4096
-regression measures the join after fixed arm bodies and bounds persistent fact
-node growth logarithmically in unrelated context size.
+this path for no-`ensuring` linear branches, and selected-source expansion
+capture reads the retained structural delta. A one-feasible branch is now a
+distinct checked path operation rather than a fake join: it validates the
+surviving condition theorem and replay metadata, retains the exact descendant,
+and records a source-anchored logical `If` whose impossible arm is empty. Its
+structural entry step names the deciding surface fact, so independent checking
+can re-derive the decision without planner-only fact transport. The legacy
+surface builder has an explicit closed-decision bridge, so later steps remain
+sequential Proof successors instead of being copied into the impossible arm.
+Branch interfaces and structural arm bodies remain on the legacy driver. A
+deterministic 16-through-4096 regression measures both joined and decided
+paths and bounds persistent fact-node growth logarithmically in unrelated
+context size.
 
 Function-entry execution prerequisites and their kernel derivations now use a
 persistent insertion-ordered set. Exact admission and one local insertion are
@@ -1398,8 +1407,11 @@ driver, so a following supported continuation remains on `Proof`; scoped
 smart `step()` selects its concrete `StepUsing` on that child and retains the
 accepted descendant directly. The regression keeps the return step inside
 the scope and pins the resulting `Branch; StepUsing` child certificate.
-Branches with one feasible arm, assertions, or structural arm bodies still
-take the legacy path.
+Scoped branches now also retain a one-feasible `If; StepUsing` child: smart
+arm steps use the contextual indexed selector, the scope accepts the decided
+Proof as one direct successor, and ordinary verification plus independent
+expansion avoid construction replay. Assertions and structural arm bodies
+still take the legacy path.
 
 Straight-line smart `execute()` inside an open resource scope now searches on
 the scope's checked child `Proof` itself. The indexed statement query selects

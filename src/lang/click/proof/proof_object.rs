@@ -64,6 +64,7 @@ struct ExecutionOutcomeProofBranches<'a> {
 /// Entering the container performs the audited condition transition and C
 /// frontier movement once. Arm bodies then extend the retained `Proof`
 /// descendants; a join owns the corresponding structured certificate node.
+#[derive(Clone)]
 pub(super) struct ExecutionProofBranches<'a> {
     root: Proof<'a>,
     root_checkpoint: ProofCheckpoint<'a>,
@@ -75,6 +76,7 @@ pub(super) struct ExecutionProofBranches<'a> {
     arms: [Option<ExecutionProofArm<'a>>; 2],
 }
 
+#[derive(Clone)]
 struct ExecutionProofArm<'a> {
     proof: Proof<'a>,
     introduced_facts: PersistentOrderedSet<Proposition>,
@@ -5014,11 +5016,12 @@ impl<'a> ExecutionOutcomeProofBranches<'a> {
 }
 
 impl<'a> ExecutionProofBranches<'a> {
-    /// Re-derives one terminal arm from its retained Surface certificate.
-    /// `join_terminal` records one synthetic branch-entry `step using` (two
-    /// for an empty C arm); those structural entry steps are validated here
-    /// and skipped because `begin_execution_branch` already performed them.
-    pub(super) fn check_terminal_arm_certificate(
+    /// Re-derives one logical arm from its retained Surface certificate.
+    /// Terminal and decided branches record one synthetic branch-entry
+    /// `step using` (two for an empty C arm); those structural entry steps are
+    /// validated here and skipped because `begin_execution_branch` already
+    /// performed them.
+    pub(super) fn check_logical_arm_certificate(
         mut self,
         take_then: bool,
         certificate: &ProofCertificate,
@@ -5056,12 +5059,12 @@ impl<'a> ExecutionProofBranches<'a> {
         };
         let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
         if certificate.steps().len() < entry_steps
-            || !certificate.steps()[..entry_steps].iter().all(
-                |step| matches!(step, SimpleProofStep::StepUsing(premises) if premises.is_empty()),
-            )
+            || !certificate.steps()[..entry_steps]
+                .iter()
+                .all(|step| matches!(step, SimpleProofStep::StepUsing(_)))
         {
             return Err(self.root.step_error(format!(
-                "terminal execution {} certificate does not begin with its {entry_steps} checked branch-entry step(s)",
+                "logical execution {} certificate does not begin with its {entry_steps} checked branch-entry step(s)",
                 if take_then { "then" } else { "else" },
             )));
         }
@@ -5128,8 +5131,14 @@ impl<'a> ExecutionProofBranches<'a> {
         }
     }
 
-    pub(super) fn has_both_feasible_arms(&self) -> bool {
-        self.arms.iter().all(Option::is_some)
+    /// Returns the sole kernel-feasible C arm, or `None` when both arms are
+    /// feasible. The no-arm case is rejected when the container is created.
+    pub(super) fn sole_feasible_arm(&self) -> Option<bool> {
+        match (&self.arms[0], &self.arms[1]) {
+            (Some(_), None) => Some(true),
+            (None, Some(_)) => Some(false),
+            _ => None,
+        }
     }
 
     /// Whether both feasible descendants have completed the C function.
@@ -5198,6 +5207,51 @@ impl<'a> ExecutionProofBranches<'a> {
         Ok(self)
     }
 
+    /// Runs one smart statement selector against the selected arm's owned
+    /// Proof. A successful search is already the retained `StepUsing`
+    /// successor; a miss leaves this branch container unchanged.
+    pub(super) fn try_smart_step(&self, take_then: bool) -> Result<Option<Self>, ClickError> {
+        let arm_index = usize::from(!take_then);
+        let arm = self.arms[arm_index].as_ref().ok_or_else(|| {
+            self.root.step_error(format!(
+                "cannot apply a smart step to the infeasible {} execution arm",
+                if take_then { "then" } else { "else" }
+            ))
+        })?;
+        let prior_effect_count = arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .ok_or_else(|| {
+                self.root
+                    .step_error("execution branch arm lost its semantic state")
+            })?
+            .replay
+            .effect_facts
+            .len();
+        let is_scoped = arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .is_some_and(|execution| execution.replay.open_scopes > 0);
+        let successor = if is_scoped {
+            arm.proof.try_indexed_execute_step()?
+        } else {
+            arm.proof.try_indexed_statement_step()?
+        };
+        let Some(successor) = successor else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        let next_arm = next.arms[arm_index]
+            .as_mut()
+            .expect("the cloned feasible arm is retained");
+        Self::retain_arm_successor(next_arm, successor, prior_effect_count);
+        Ok(Some(next))
+    }
+
     /// Runs the narrow statement selector independently in one C arm until
     /// that arm reaches function exit. Every accepted transition is already
     /// a retained `StepUsing` successor. Nested C `if` frontiers recurse
@@ -5233,20 +5287,25 @@ impl<'a> ExecutionProofBranches<'a> {
                     return Ok(None);
                 }
                 let nested = arm.proof.begin_execution_branch()?;
-                if !nested.has_both_feasible_arms() {
-                    self.arms[arm_index] = Some(arm);
-                    return Ok(None);
+                if let Some(take_then) = nested.sole_feasible_arm() {
+                    let Some(nested) = nested.try_execute_arm_to_exit(take_then)? else {
+                        self.arms[arm_index] = Some(arm);
+                        return Ok(None);
+                    };
+                    Self::retain_nested_branch_metadata(&mut arm, &nested);
+                    nested.finish_decided()?
+                } else {
+                    let Some(nested) = nested.try_execute_arm_to_exit(true)? else {
+                        self.arms[arm_index] = Some(arm);
+                        return Ok(None);
+                    };
+                    let Some(nested) = nested.try_execute_arm_to_exit(false)? else {
+                        self.arms[arm_index] = Some(arm);
+                        return Ok(None);
+                    };
+                    Self::retain_nested_branch_metadata(&mut arm, &nested);
+                    nested.join_terminal()?
                 }
-                let Some(nested) = nested.try_execute_arm_to_exit(true)? else {
-                    self.arms[arm_index] = Some(arm);
-                    return Ok(None);
-                };
-                let Some(nested) = nested.try_execute_arm_to_exit(false)? else {
-                    self.arms[arm_index] = Some(arm);
-                    return Ok(None);
-                };
-                Self::retain_nested_branch_metadata(&mut arm, &nested);
-                nested.join_terminal()?
             };
             Self::retain_arm_successor(&mut arm, successor, prior_effect_count);
             self.arms[arm_index] = Some(arm);
@@ -5557,6 +5616,153 @@ impl<'a> ExecutionProofBranches<'a> {
                 checked_facts: Arc::new(common_added_facts),
                 execution: Some(execution),
             }),
+            node: Arc::new(ProofNode {
+                parent: Some(self.root.node.clone()),
+                step: Some(Arc::new(SimpleProofStep::If {
+                    condition: surface_condition,
+                    then_proof: Box::new(then_proof),
+                    else_proof: Box::new(else_proof),
+                })),
+                depth: self.root.node.depth + 1,
+            }),
+        })
+    }
+
+    /// Closes a C branch for which the kernel certified exactly one feasible
+    /// arm. This is path retention, not a two-state join: the surviving
+    /// descendant becomes the successor while a logical `If` records the
+    /// checked source condition and an empty contradictory arm.
+    pub(super) fn finish_decided(self) -> Result<Proof<'a>, ClickError> {
+        let take_then = self.sole_feasible_arm().ok_or_else(|| {
+            self.root
+                .step_error("a decided execution branch requires exactly one kernel-feasible arm")
+        })?;
+        let arm_index = usize::from(!take_then);
+        let arm = self.arms[arm_index]
+            .as_ref()
+            .expect("sole feasible arm was selected above");
+        let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
+            self.root
+                .step_error("execution branch root lost its semantic state")
+        })?;
+        let execution = arm.proof.state.execution.as_ref().ok_or_else(|| {
+            self.root
+                .step_error("decided execution branch arm lost its semantic state")
+        })?;
+        let reached_continuation = execution
+            .replay
+            .completed_branch_regions
+            .contains(&self.statement_index)
+            && execution.replay.frontier.continuations.len() <= self.initial_continuation_depth
+            && execution.replay.frontier.next_statement_index == self.continuation_index;
+        let reached_exit = execution.replay.is_at_function_exit()
+            && execution.replay.frontier.continuations.len() <= self.initial_continuation_depth;
+        if !reached_continuation && !reached_exit {
+            return Err(self.root.step_error(format!(
+                "the sole feasible {} execution arm has not reached its continuation or function exit",
+                if take_then { "then" } else { "else" }
+            )));
+        }
+        if !matches!(
+            implication_body(arm.condition_theorem.proposition()),
+            Proposition::CConditionEvaluates {
+                outcome: CConditionOutcome::Value(actual),
+                ..
+            } if *actual == take_then
+        ) {
+            return Err(self
+                .root
+                .step_error("the decided execution arm retained the wrong condition theorem"));
+        }
+        let replay = &execution.replay;
+        if replay.function_entry_execution_prerequisites.len()
+            != root_execution
+                .replay
+                .function_entry_execution_prerequisites
+                .len()
+                + arm.introduced_function_entry_prerequisites.len()
+            || replay.function_entry_derivations.len()
+                != root_execution.replay.function_entry_derivations.len()
+                    + arm.introduced_function_entry_derivations.len()
+            || replay.frontier_loop_clauses.len()
+                != root_execution.replay.frontier_loop_clauses.len()
+            || replay.frontier_loop_rules.len() != root_execution.replay.frontier_loop_rules.len()
+            || replay.unfolded_predicates.len()
+                != root_execution.replay.unfolded_predicates.len()
+                    + arm.introduced_unfolded_predicates.len()
+            || replay.planned_statement_transitions.len()
+                != root_execution.replay.planned_statement_transitions.len()
+        {
+            return Err(self.root.step_error(
+                "the decided execution arm changed replay metadata that the checked path operation has not migrated",
+            ));
+        }
+
+        let ProofContext::Execution(context) = self.root.context.as_ref() else {
+            unreachable!("execution branch retained a non-execution context")
+        };
+        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+            &root_execution.replay,
+            &root_execution.state,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "decided branch",
+        )?;
+        let CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } = statement
+        else {
+            return Err(self
+                .root
+                .step_error("decided execution branch root no longer points at a C `if`"));
+        };
+        let surface_condition = surface_with_source_site(
+            &surface_c_condition(&condition),
+            &ProgramPointRef {
+                region: CodeRegionRef::Statement(self.statement_index),
+                kind: ProgramPointKind::Entry,
+            },
+        )?;
+        let source_arm = if take_then {
+            then_branch.as_ref()
+        } else {
+            else_branch.as_ref()
+        };
+        let body = arm.proof.certificate_since(&self.root_checkpoint)?;
+        let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
+        let path_condition = if take_then {
+            surface_condition.clone()
+        } else {
+            negate_click_proposition(&surface_condition)
+        };
+        let mut selected_steps = Vec::with_capacity(entry_steps + body.steps().len());
+        selected_steps.push(SimpleProofStep::StepUsing(vec![path_condition]));
+        selected_steps.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
+        selected_steps.extend_from_slice(body.steps());
+        let selected = ProofCertificate::from_steps(selected_steps);
+        let empty = ProofCertificate::from_steps(Vec::new());
+        let (then_proof, else_proof) = if take_then {
+            (selected, empty)
+        } else {
+            (empty, selected)
+        };
+
+        let mut state = (*arm.proof.state).clone();
+        let introduced_facts = arm.introduced_facts.to_vec();
+        state.added_facts = Arc::new(introduced_facts.clone());
+        state.checked_facts = Arc::new(introduced_facts);
+        state
+            .execution
+            .as_mut()
+            .expect("validated decided execution state")
+            .branch_path = root_execution.branch_path.clone();
+        Ok(Proof {
+            context: self.root.context.clone(),
+            state: Arc::new(state),
             node: Arc::new(ProofNode {
                 parent: Some(self.root.node.clone()),
                 step: Some(Arc::new(SimpleProofStep::If {
@@ -5902,8 +6108,9 @@ impl<'a> ProofScope<'a> {
     }
 
     /// Opens the C branch at this scope body's current execution frontier.
-    /// The branch container remains rooted at the body until both arms are
-    /// checked and `join_execution_branch` accepts its direct successor.
+    /// The branch container remains rooted at the body until its feasible
+    /// arms are checked and `join_execution_branch` accepts the direct
+    /// joined or decided successor.
     pub(super) fn begin_execution_branch(&self) -> Result<ExecutionProofBranches<'a>, ClickError> {
         self.body.begin_execution_branch()
     }
@@ -5925,7 +6132,9 @@ impl<'a> ProofScope<'a> {
                 .root
                 .step_error("execution branches are not rooted at the current scope body"));
         }
-        let body = if branches.both_arms_at_function_exit() {
+        let body = if branches.sole_feasible_arm().is_some() {
+            branches.finish_decided()?
+        } else if branches.both_arms_at_function_exit() {
             branches.join_terminal()?
         } else if empty {
             branches.join_empty()?
@@ -6116,16 +6325,20 @@ impl<'a> ProofScope<'a> {
                     return Ok(None);
                 }
                 let branches = proof.begin_execution_branch()?;
-                if !branches.has_both_feasible_arms() {
-                    return Ok(None);
+                if let Some(take_then) = branches.sole_feasible_arm() {
+                    let Some(branches) = branches.try_execute_arm_to_exit(take_then)? else {
+                        return Ok(None);
+                    };
+                    branches.finish_decided()?
+                } else {
+                    let Some(branches) = branches.try_execute_arm_to_exit(true)? else {
+                        return Ok(None);
+                    };
+                    let Some(branches) = branches.try_execute_arm_to_exit(false)? else {
+                        return Ok(None);
+                    };
+                    branches.join_terminal()?
                 }
-                let Some(branches) = branches.try_execute_arm_to_exit(true)? else {
-                    return Ok(None);
-                };
-                let Some(branches) = branches.try_execute_arm_to_exit(false)? else {
-                    return Ok(None);
-                };
-                branches.join_terminal()?
             };
             for fact in next.added_facts() {
                 if !introduced_facts.contains(fact) {
@@ -12828,6 +13041,183 @@ mod tests {
                 "size {size} nonempty branch join allocated {allocations} persistent nodes (logarithmic bound {allocation_bound})"
             );
         }
+    }
+
+    #[test]
+    fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 selected(int32 x) {
+                    ensures returns_one: result == 1 by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let parsed_function = syntax::parse_function(
+            "int32 selected(int32 x) { if (x < 0) { x = 1; } else { x = 2; } return x; }",
+        )
+        .expect("test decided C branch should parse");
+        let function = parsed_function.to_kernel_function();
+        let arguments = vec![CExpression::Value(CValue::Int32(
+            Bitvector32Term::Variable(Variable(75_000)),
+        ))];
+        let function_environment = CExecutionEnvironment::new();
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+        let make_root = |facts: Vec<Proposition>| {
+            let mut replay = TacticReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..TacticReplayState::default()
+            };
+            replay.frontier.next_statement_index = 0;
+            Proof::for_execution_frontier(
+                "decided branch proof",
+                0,
+                ProofReplayContext {
+                    state: CState::new(),
+                    pure_facts: facts,
+                    replay,
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            )
+        };
+
+        let probe = make_root(Vec::new())
+            .begin_execution_branch()
+            .expect("the unconstrained condition should expose both arms");
+        let selecting_fact = probe.arms[0]
+            .as_ref()
+            .expect("the then arm should be feasible")
+            .introduced_facts
+            .iter()
+            .next()
+            .expect("the then arm should retain its condition fact")
+            .clone();
+        let rejecting_fact = probe.arms[1]
+            .as_ref()
+            .expect("the else arm should be feasible")
+            .introduced_facts
+            .iter()
+            .next()
+            .expect("the else arm should retain its condition fact")
+            .clone();
+        let mut samples = Vec::new();
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.push(selecting_fact.clone());
+            let root = make_root(facts);
+            let branches = root
+                .begin_execution_branch()
+                .expect("the selecting fact should make exactly one arm feasible");
+            assert_eq!(branches.sole_feasible_arm(), Some(true));
+            assert!(branches.arm(false).is_none());
+            let branches = branches
+                .try_smart_step(true)
+                .expect("smart selection should remain bounded")
+                .expect("the assignment should produce a checked simple successor");
+            let before = fact_node_allocations();
+            let decided = branches
+                .finish_decided()
+                .expect("the sole checked arm should form a decided path");
+            samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before,
+            ));
+            assert!(matches!(
+                decided.certificate().steps(),
+                [SimpleProofStep::If {
+                    then_proof,
+                    else_proof,
+                    ..
+                }] if matches!(
+                    then_proof.steps(),
+                    [SimpleProofStep::StepUsing(decision), SimpleProofStep::StepUsing(_)]
+                        if !decision.is_empty()
+                ) && else_proof.steps().is_empty()
+            ));
+            assert_eq!(
+                decided
+                    .state
+                    .execution
+                    .as_ref()
+                    .expect("decided path retains execution")
+                    .branch_path
+                    .len(),
+                0
+            );
+            assert!(
+                decided
+                    .added_facts()
+                    .iter()
+                    .all(|fact| !(0..size).any(|index| *fact == indexed_fact(index))),
+                "the decided node delta must not copy unrelated ambient facts"
+            );
+            let completed = decided
+                .try_indexed_execute_step()
+                .expect("contextual return selection should remain bounded")
+                .expect("the continuation return should check with retained branch facts");
+            assert!(
+                completed
+                    .state
+                    .execution
+                    .as_ref()
+                    .expect("completed decided proof retains execution")
+                    .replay
+                    .is_at_function_exit()
+            );
+        }
+        let (_, base_height, base_allocations) = samples[0];
+        for (size, height, allocations) in samples {
+            let bound = base_allocations + 32 * (height - base_height);
+            assert!(
+                allocations <= bound,
+                "size {size} decided branch allocated {allocations} persistent nodes (logarithmic bound {bound})"
+            );
+        }
+
+        let branches = make_root(vec![rejecting_fact])
+            .begin_execution_branch()
+            .expect("the rejecting fact should retain only the else arm");
+        assert_eq!(branches.sole_feasible_arm(), Some(false));
+        let branches = branches
+            .try_smart_step(false)
+            .expect("else-arm smart selection should remain bounded")
+            .expect("the else assignment should produce a checked successor");
+        let decided = branches
+            .finish_decided()
+            .expect("the sole else arm should form a decided path");
+        let certificate = decided.certificate();
+        assert!(
+            matches!(
+            certificate.steps(),
+            [SimpleProofStep::If {
+                condition,
+                then_proof,
+                else_proof,
+            }] if then_proof.steps().is_empty()
+                && matches!(
+                    else_proof.steps(),
+                    [SimpleProofStep::StepUsing(decision), SimpleProofStep::StepUsing(_)]
+                        if matches!(decision.as_slice(), [fact]
+                            if *fact == negate_click_proposition(condition))
+                )
+            ),
+            "{certificate:#?}"
+        );
     }
 
     #[test]

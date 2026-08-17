@@ -183,6 +183,95 @@ fn linear_frontier_branch_uses_the_checked_structural_join() {
 }
 
 #[test]
+fn decided_frontier_branch_retains_the_only_feasible_checked_arm() {
+    let c_source = r#"
+        int32 constant_negative(int32 x) {
+            if (x < 0) {
+                x = 1;
+            } else {
+                x = 2;
+            }
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "constant_negative.c";
+
+        int32 constant_negative(int32 x) {
+            requires x < 0;
+            ensures returns_one: result == 1 by {
+                branch {
+                    then { step(); }
+                    else { step(); }
+                }
+                step();
+                simp();
+            }
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("constant_negative.c", c_source)])
+    });
+    let verified = verified.expect("the decided C branch should retain its checked path");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "constant_negative.returns_one" && name == "surface certificate replay"
+        )),
+        "the decided branch must not reconstruct its certificate through replay: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the decided branch should retain an expansion");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::If(proof_if))
+                if proof_if.then_tactics.len() == 2 && proof_if.else_tactics.is_empty()
+        ),
+        "the feasible then path should be retained with its structural entry step: {tactics:#?}"
+    );
+
+    let (captured, capture_events) = crate::instrumentation::collect(|| {
+        super::super::proof::capture_c0_tactic_expansion(
+            click_source,
+            &[("constant_negative.c", c_source)],
+            super::super::expansion::ProofSite::FunctionClaim {
+                function_name: "constant_negative".to_string(),
+                claim: CProofClaim::Ensure(0),
+            },
+            0,
+        )
+    });
+    let captured = captured.expect("the decided source branch should expose its expansion");
+    assert!(
+        matches!(
+            captured.as_slice(),
+            [ProofTactic::If(proof_if)]
+                if proof_if.then_tactics.len() == 2 && proof_if.else_tactics.is_empty()
+        ),
+        "the selected source branch should expose the checked decided path: {captured:#?}"
+    );
+    assert!(capture_events.iter().all(|event| !matches!(
+        event,
+        crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+            if claim == "constant_negative.returns_one" && name == "surface certificate replay"
+    )));
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("constant_negative.c", c_source)],
+        "constant_negative",
+        CProofClaim::Ensure(0),
+    )
+    .expect("the decided branch should expand");
+    verify_c0_sources(&expanded, &[("constant_negative.c", c_source)])
+        .expect("the retained decided certificate should independently re-derive the proof");
+}
+
+#[test]
 fn rejects_removed_reach_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",
