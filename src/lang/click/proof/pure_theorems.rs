@@ -35,6 +35,7 @@ pub(super) struct PureTheoremContext {
     pub(super) values: BTreeMap<String, CValue>,
     pub(super) array_refs: ClickArrayRefs,
     pub(super) requires: Vec<Proposition>,
+    pub(super) surface_requirements: SurfacePropositionMap,
 }
 
 #[derive(Clone, Debug)]
@@ -243,11 +244,21 @@ pub(super) fn pure_theorem_context(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let mut surface_requirements = SurfacePropositionMap::default();
+    for (kernel, surface) in requires.iter().zip(
+        theorem
+            .requires()
+            .iter()
+            .filter_map(Requirement::proposition),
+    ) {
+        surface_requirements.record_lowering(surface, kernel)?;
+    }
     Ok(PureTheoremContext {
         memory,
         values,
         array_refs,
         requires,
+        surface_requirements,
     })
 }
 
@@ -655,7 +666,7 @@ fn check_direct_pure_goal_with_proof(
         click_function_environment,
         theorem_environment,
     );
-    let proof = root.try_direct_logical_closure()?;
+    let proof = root.try_simp_closure()?;
     debug_assert!(proof.is_complete());
     Some(proof.certificate())
 }

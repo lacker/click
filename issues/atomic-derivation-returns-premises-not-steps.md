@@ -153,3 +153,16 @@ issue. Equality chains, interval/overflow decisions, quantified/derived order
 edges, and memory-DAG joins still return legacy or incomplete evidence and
 must gain their corresponding typed steps before the ambient harvest and
 deletion machinery can be removed globally.
+
+The pure smart-tactic consumer now also uses this provenance at the Proof
+boundary. Its requirement spellings live in the existing persistent
+kernel/surface index; the selected path becomes a candidate made from named
+`ApplyTheoremUsing` steps and nested `Have` scopes, and those operations build
+the accepted immutable `Proof` directly. Ordinary verification of the
+three-edge chain therefore emits no `surface certificate replay`; expansion
+still independently verifies the serialized certificate. The point/outcome
+consumer still lowers typed paths through its certificate planner and remains
+migration work under the proof-object issue.
+A deterministic 16-through-4096 unrelated-fact regression pins logarithmic
+persistent updates for the same retained theorem path; the order search itself
+remains the separately measured near-linear smart-planning phase.

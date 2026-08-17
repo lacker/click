@@ -2713,6 +2713,18 @@ fn smart_simp_transcribes_a_three_edge_signed_order_path() {
             }
         }
     "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the checked order-path Proof should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "three_edge_order_chain.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "signed-order simp should construct its Proof through checked theorem applications: {events:#?}"
+    );
     let offset = click_source.find("simp();").unwrap();
     let line = click_source[..offset]
         .bytes()

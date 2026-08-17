@@ -1734,6 +1734,45 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Searches the currently migrated `simp` vocabulary against this proof.
+    ///
+    /// Direct logical closers remain the cheap first choice. For a pure
+    /// signed-order derivation, the kernel-selected edge path is translated
+    /// into a candidate made only of checked theorem applications and nested
+    /// `have` scopes. The candidate advances this same `Proof`; no semantic
+    /// result is produced before those simple steps have been accepted.
+    pub(super) fn try_simp_closure(&self) -> Option<Self> {
+        if let Some(proof) = self.try_direct_logical_closure() {
+            return Some(proof);
+        }
+        let ProofContext::Pure(context) = self.context.as_ref() else {
+            return None;
+        };
+        let goal = self.goal()?;
+        let plan = plan_simp_certificate(goal, self.state.facts.assumptions())?;
+        let SimpEvidence::Derivation(derivation) = &plan else {
+            return None;
+        };
+        let premise_pairs = derivation
+            .context_premises()
+            .iter()
+            .map(|premise| {
+                context
+                    .theorem_context
+                    .surface_requirements
+                    .surfaces(premise)
+                    .next()
+                    .cloned()
+                    .map(|surface| (premise.clone(), surface))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let ordered = recorded_signed_order_pairs(derivation, &premise_pairs)?;
+        let tactics = plan_recorded_signed_order_path(goal, &ordered)?;
+        let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
+        let proof = self.check_certificate(&candidate).ok()?;
+        proof.is_complete().then_some(proof)
+    }
+
     /// Runs the linear proposition-script subset already represented by
     /// checked `Proof` transitions.
     ///
@@ -1786,7 +1825,7 @@ impl<'a> Proof<'a> {
                     proof = proof.apply_step(step)?;
                 }
                 ProofTactic::Simp => {
-                    let Some(closed) = proof.try_direct_logical_closure() else {
+                    let Some(closed) = proof.try_simp_closure() else {
                         return Ok(None);
                     };
                     proof = closed;
@@ -1796,7 +1835,7 @@ impl<'a> Proof<'a> {
                     let selected = match &have.proof {
                         SourceProof::Default
                         | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
-                            scope.try_direct_logical_closure()
+                            scope.try_simp_closure()
                         }
                         SourceProof::Script(body) if script_contains_linear_search(body) => {
                             scope.try_linear_smart_script(body)?
@@ -3571,6 +3610,14 @@ impl<'a> ProofScope<'a> {
         Some(next)
     }
 
+    /// Runs the migrated `simp` search inside the nested proof and retains
+    /// the accepted descendant directly.
+    pub(super) fn try_simp_closure(&self) -> Option<Self> {
+        let mut next = self.clone();
+        next.body = self.body.try_simp_closure()?;
+        Some(next)
+    }
+
     /// Runs one supported smart script inside the owned nested body and
     /// retains its already-checked descendant.
     pub(super) fn try_linear_smart_script(
@@ -4184,6 +4231,7 @@ mod tests {
             values: BTreeMap::new(),
             array_refs: BTreeMap::new(),
             requires: vec![goal.clone()],
+            surface_requirements: SurfacePropositionMap::default(),
         };
         let predicate_environment = PredicateEnvironment::new(&[]);
         let click_function_environment = ClickFunctionEnvironment::new(&[]);
@@ -4229,6 +4277,7 @@ mod tests {
             values: BTreeMap::new(),
             array_refs: BTreeMap::new(),
             requires: Vec::new(),
+            surface_requirements: SurfacePropositionMap::default(),
         };
         let predicate_environment = PredicateEnvironment::new(&[]);
         let click_function_environment = ClickFunctionEnvironment::new(&[]);
@@ -4301,6 +4350,7 @@ mod tests {
             values: BTreeMap::new(),
             array_refs: BTreeMap::new(),
             requires: Vec::new(),
+            surface_requirements: SurfacePropositionMap::default(),
         };
         let kernel_disjunction = lower_pure_theorem_proposition(
             "cases",
@@ -4377,6 +4427,7 @@ mod tests {
             values: BTreeMap::new(),
             array_refs: BTreeMap::new(),
             requires: Vec::new(),
+            surface_requirements: SurfacePropositionMap::default(),
         };
         let kernel = lower_pure_theorem_proposition(
             "have",
@@ -4466,6 +4517,7 @@ mod tests {
                 values: BTreeMap::new(),
                 array_refs: BTreeMap::new(),
                 requires: requires.clone(),
+                surface_requirements: SurfacePropositionMap::default(),
             };
             let root = Proof::for_pure_goal(
                 "smart have scaling",
@@ -4533,6 +4585,7 @@ mod tests {
                 values: BTreeMap::new(),
                 array_refs: BTreeMap::new(),
                 requires,
+                surface_requirements: SurfacePropositionMap::default(),
             };
             let proof = Proof::for_pure_goal(
                 "scaling",
@@ -4718,6 +4771,7 @@ mod tests {
             values: BTreeMap::new(),
             array_refs: BTreeMap::new(),
             requires: Vec::new(),
+            surface_requirements: SurfacePropositionMap::default(),
         };
         let lower = |surface: &ClickProposition| {
             lower_pure_theorem_proposition(
@@ -5188,6 +5242,7 @@ mod tests {
                 values: BTreeMap::new(),
                 array_refs: BTreeMap::new(),
                 requires,
+                surface_requirements: SurfacePropositionMap::default(),
             };
             let goal = lower_pure_theorem_proposition(
                 "branch scaling",
@@ -5543,6 +5598,7 @@ mod tests {
             values,
             array_refs: BTreeMap::new(),
             requires: Vec::new(),
+            surface_requirements: SurfacePropositionMap::default(),
         };
         let kernel_equality = lower_pure_theorem_proposition(
             "persistent rewrite",
@@ -5728,6 +5784,7 @@ mod tests {
             )]),
             array_refs: BTreeMap::new(),
             requires: Vec::new(),
+            surface_requirements: SurfacePropositionMap::default(),
         };
         let target = lower_pure_theorem_proposition(
             "indexed implication extract",
@@ -6647,6 +6704,102 @@ mod tests {
     }
 
     #[test]
+    fn pure_signed_order_simp_builds_its_theorem_path_with_logarithmic_local_updates() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions =
+            combined_theorem_definitions(&click_file).expect("standard order theorems should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let memory = CMemory::new();
+        let terms = [
+            Bitvector32Term::Variable(Variable(8_150_000)),
+            Bitvector32Term::Variable(Variable(8_150_001)),
+            Bitvector32Term::Variable(Variable(8_150_002)),
+            Bitvector32Term::Variable(Variable(8_150_003)),
+        ];
+        let expression = |term: &Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term.clone())))
+        };
+        let comparison = |left: usize, operator, right: usize| ClickProposition::Comparison {
+            left: expression(&terms[left]),
+            operator,
+            right: expression(&terms[right]),
+        };
+        let surfaces = vec![
+            comparison(0, ComparisonOperator::LessEqual, 1),
+            comparison(1, ComparisonOperator::LessThan, 2),
+            comparison(2, ComparisonOperator::LessEqual, 3),
+        ];
+        let surface_goal = comparison(0, ComparisonOperator::LessThan, 3);
+        let lower = |surface: &ClickProposition| {
+            lower_pure_theorem_proposition(
+                "persistent signed-order simp",
+                surface,
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &memory,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the fixed signed comparison should lower")
+        };
+        let premises = surfaces.iter().map(lower).collect::<Vec<_>>();
+        let goal = lower(&surface_goal);
+        let mut surface_requirements = SurfacePropositionMap::default();
+        for (kernel, surface) in premises.iter().zip(&surfaces) {
+            surface_requirements
+                .record_lowering(surface, kernel)
+                .expect("the exact requirement spelling should be indexed");
+        }
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut requires = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            requires.extend(premises.iter().cloned());
+            let theorem_context = PureTheoremContext {
+                memory: memory.clone(),
+                values: BTreeMap::new(),
+                array_refs: BTreeMap::new(),
+                requires: requires.clone(),
+                surface_requirements: surface_requirements.clone(),
+            };
+            let root = Proof::for_pure_goal(
+                "persistent signed-order simp",
+                &requires,
+                goal.clone(),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("the typed path should build one checked Proof descendant");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 128 * logarithmic_height + 512;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} signed-order simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [
+                    SimpleProofStep::Have { .. },
+                    SimpleProofStep::ApplyTheoremUsing { .. },
+                    SimpleProofStep::Assumption
+                ]
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
     fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
         let click_file = crate::lang::click::parse("")
             .expect("an empty source should still admit the standard theorem prelude");
@@ -6708,6 +6861,7 @@ mod tests {
                 values: BTreeMap::new(),
                 array_refs: BTreeMap::new(),
                 requires: requires.clone(),
+                surface_requirements: SurfacePropositionMap::default(),
             };
             let goal = Proposition::And(
                 Box::new(kernel_conclusion.clone()),

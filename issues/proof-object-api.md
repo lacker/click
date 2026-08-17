@@ -1021,6 +1021,22 @@ expands two retained theorem applications and independently verifies the
 result. Other atomic decision kinds remain tracked by the child
 atomic-derivation issue.
 
+Pure signed-order `simp` now crosses the theorem-application seam during
+search as well. The pure theorem context records each lowered requirement in
+the existing persistent `SurfacePropositionMap`; the typed order path selects
+only those indexed spellings and proposes a structured certificate of
+`ApplyTheoremUsing` and nested `Have` operations. That candidate advances the
+same immutable `Proof` through ordinary checked transitions. Its successful
+descendant is the returned proof object, so ordinary verification no longer
+constructs the signed-order certificate and sends it through `surface
+certificate replay`. The three-edge regression now asserts that absence in
+addition to expansion and independent verification. Point and execution
+atomic derivation consumers, and non-order theory decisions, remain pending.
+A deterministic 16-through-4096 unrelated-fact regression also holds that
+three-edge proof fixed, checks ancestor isolation and the retained
+`Have`/application/closer structure, and bounds its persistent fact updates by
+the logarithmic tree height.
+
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
 stores an `Arc<Vec<CResourceFact>>`; a fork-local insertion or removal uses
