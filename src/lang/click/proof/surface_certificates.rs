@@ -393,6 +393,18 @@ pub(super) fn lower_surface_atomic_derivation(
         .and_then(|pairs| {
             plan_recorded_int32_one_le_predecessor_for_context(&lowered_conclusion, pairs, false)
         });
+    let typed_le_not_lt_equality_pairs =
+        recorded_int32_le_and_not_lt_implies_equality_pairs(derivation, &premise_pairs);
+    let typed_le_not_lt_equality_plan = typed_le_not_lt_equality_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_le_and_not_lt_implies_equality_for_context(
+                &lowered_conclusion,
+                pairs,
+                false,
+            )
+        });
     let typed_path_spelled = typed_order_plan.is_some()
         || typed_equality_plan.is_some()
         || typed_increment_plan.is_some()
@@ -405,7 +417,8 @@ pub(super) fn lower_surface_atomic_derivation(
         || typed_positive_predecessor_nonnegative_plan.is_some()
         || typed_positive_predecessor_decrease_plan.is_some()
         || typed_predecessor_upper_bound_plan.is_some()
-        || typed_one_le_predecessor_plan.is_some();
+        || typed_one_le_predecessor_plan.is_some()
+        || typed_le_not_lt_equality_plan.is_some();
     if typed_order_plan.is_some() {
         premise_pairs = typed_order_pairs.expect("a typed order plan retains its path premises");
     } else if typed_equality_plan.is_some() {
@@ -444,6 +457,9 @@ pub(super) fn lower_surface_atomic_derivation(
     } else if typed_one_le_predecessor_plan.is_some() {
         premise_pairs = typed_one_le_predecessor_pairs
             .expect("a typed one-le-predecessor plan retains its exact premise");
+    } else if typed_le_not_lt_equality_plan.is_some() {
+        premise_pairs = typed_le_not_lt_equality_pairs
+            .expect("a typed <=/not-< equality plan retains both exact premises");
     }
     if !surface_normalizes_context_free
         && !typed_path_spelled
@@ -657,6 +673,14 @@ pub(super) fn lower_surface_atomic_derivation(
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "recorded one-le-predecessor rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_le_not_lt_equality_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded <=/not-< equality rule produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -3280,6 +3304,24 @@ pub(super) fn recorded_int32_one_le_predecessor_strictly_decreases_pairs(
         .map(|pair| vec![pair])
 }
 
+pub(super) fn recorded_int32_le_and_not_lt_implies_equality_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    let (less_equal, not_less_than) = derivation.int32_le_and_not_lt_implies_equality_premises()?;
+    [less_equal, not_less_than]
+        .into_iter()
+        .map(|premise| {
+            premise_pairs
+                .iter()
+                .find(|(kernel, _)| {
+                    kernel == premise || condition_polarity_equivalent(kernel, premise)
+                })
+                .cloned()
+        })
+        .collect()
+}
+
 pub(super) fn plan_recorded_int32_increment_upper_bound_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
@@ -3415,6 +3457,18 @@ pub(super) fn plan_recorded_int32_one_le_predecessor_for_context(
             return None;
         };
         remove_trailing_theorem_assumption(body)?;
+    }
+    Some(tactics)
+}
+
+pub(super) fn plan_recorded_int32_le_and_not_lt_implies_equality_for_context(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
+    let mut tactics = plan_explicit_le_and_not_lt_implies_eq(goal, premise_pairs)?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
 }

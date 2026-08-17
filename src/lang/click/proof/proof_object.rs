@@ -1760,11 +1760,15 @@ impl<'a> Proof<'a> {
             .context_premises()
             .iter()
             .map(|premise| {
-                surface_facts
-                    .surfaces(premise)
-                    .next()
-                    .cloned()
-                    .map(|surface| (premise.clone(), surface))
+                if let Some(surface) = surface_facts.surfaces(premise).next().cloned() {
+                    return Some((premise.clone(), surface));
+                }
+                condition_polarity_spellings(premise)
+                    .into_iter()
+                    .find_map(|spelling| {
+                        let surface = surface_facts.surfaces(&spelling).next().cloned();
+                        surface.map(|surface| (spelling, surface))
+                    })
             })
             .collect::<Option<Vec<_>>>()?;
         self.check_typed_atomic_simp_candidate(
@@ -1940,6 +1944,17 @@ impl<'a> Proof<'a> {
                     )
                 })?;
                 plan_recorded_int32_one_le_predecessor_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_le_and_not_lt_implies_equality_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_le_and_not_lt_implies_equality_for_context(
                     goal,
                     &recorded,
                     point_application_closes_goal,
@@ -8244,6 +8259,205 @@ mod tests {
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
                 assert!(pure_root.certificate().steps().is_empty());
             }
+        }
+    }
+
+    #[test]
+    fn le_and_not_lt_equality_simp_retains_one_indexed_theorem_application() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("the standard equality theorem should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test C function should parse");
+        let state = CState::new();
+        let arguments = Vec::new();
+        let program_point_states = ProgramPointStates::new();
+        let left = Bitvector32Term::Variable(Variable(8_178_100));
+        let right = Bitvector32Term::Variable(Variable(8_178_101));
+        let expression = |term: Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term)))
+        };
+        let less_equal = ClickProposition::Comparison {
+            left: expression(left.clone()),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(right.clone()),
+        };
+        let not_less_than = ClickProposition::Not(Box::new(ClickProposition::Comparison {
+            left: expression(left.clone()),
+            operator: ComparisonOperator::LessThan,
+            right: expression(right.clone()),
+        }));
+        let equality = ClickProposition::Comparison {
+            left: expression(left),
+            operator: ComparisonOperator::Equal,
+            right: expression(right),
+        };
+        let lower_surface = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the fixed equality proposition should lower")
+        };
+        let kernel_less_equal = lower_surface(&less_equal);
+        let kernel_not_less_than = lower_surface(&not_less_than);
+        let kernel_equality = lower_surface(&equality);
+        let selected = [less_equal.clone(), not_less_than.clone()];
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
+            .record_lowering(&less_equal, &kernel_less_equal)
+            .expect("the <= premise should be indexed");
+        surface_propositions
+            .record_lowering(&not_less_than, &kernel_not_less_than)
+            .expect("the not-< premise should be indexed");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.extend([kernel_less_equal.clone(), kernel_not_less_than.clone()]);
+            let root = Proof::for_point_goal(
+                "persistent point <=/not-< equality simp",
+                0,
+                &facts,
+                kernel_equality.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("the typed equality rule should build one checked Proof descendant");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 96 * logarithmic_height + 384;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} point equality simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                    if application.name == "int32_le_and_not_lt_implies_eq"
+                        && premises.as_slice() == selected
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+
+            let restricted_kernels = selected
+                .iter()
+                .map(|surface| {
+                    lower_pure_theorem_proposition(
+                        "persistent restricted <=/not-< equality simp",
+                        surface,
+                        &BTreeMap::new(),
+                        &BTreeMap::new(),
+                        state.memory(),
+                        &predicate_environment,
+                        &click_function_environment,
+                    )
+                    .expect("each restricted equality premise should lower")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(restricted_kernels[0], kernel_less_equal);
+            assert!(condition_polarity_equivalent(
+                &restricted_kernels[1],
+                &kernel_not_less_than
+            ));
+            let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            pure_facts.extend(restricted_kernels.iter().cloned());
+            let theorem_context = PureTheoremContext {
+                memory: state.memory().clone(),
+                values: BTreeMap::new(),
+                array_refs: BTreeMap::new(),
+                requires: pure_facts.clone(),
+                surface_requirements: surface_propositions.clone(),
+            };
+            let pure_root = Proof::for_pure_goal(
+                "persistent restricted <=/not-< equality simp",
+                &pure_facts,
+                kernel_equality.clone(),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_pure_root = pure_root.clone();
+            for omitted in [
+                std::slice::from_ref(&less_equal),
+                std::slice::from_ref(&not_less_than),
+            ] {
+                assert!(pure_root.try_restricted_simp_closure(omitted).is_none());
+                assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+            }
+            let restricted_derivation = plan_simp_certificate(
+                &kernel_equality,
+                &assumptions_from_propositions(&restricted_kernels),
+            )
+            .expect("the restricted equality facts should produce a derivation");
+            let SimpEvidence::Derivation(restricted_derivation) = restricted_derivation else {
+                panic!("the equality rule should be contextual")
+            };
+            assert!(
+                restricted_derivation
+                    .int32_le_and_not_lt_implies_equality_premises()
+                    .is_some(),
+                "the restricted derivation should retain the named equality rule"
+            );
+            let restricted_pairs = restricted_kernels
+                .iter()
+                .cloned()
+                .zip(selected.iter().cloned())
+                .collect::<Vec<_>>();
+            let recorded = recorded_int32_le_and_not_lt_implies_equality_pairs(
+                &restricted_derivation,
+                &restricted_pairs,
+            )
+            .expect("the typed equality evidence should recover both Surface premises");
+            let planned = plan_recorded_int32_le_and_not_lt_implies_equality_for_context(
+                &kernel_equality,
+                &recorded,
+                false,
+            )
+            .expect("the typed equality evidence should select the named theorem");
+            let planned_certificate = ProofCertificate::from_proof_tactics(&planned)
+                .expect("the named equality theorem should form a simple certificate");
+            pure_root
+                .check_certificate(&planned_certificate)
+                .unwrap_or_else(|error| panic!("the named equality certificate failed: {error:?}"));
+            let pure_closed = pure_root
+                .try_restricted_simp_closure(&selected)
+                .expect("restricted simp should retain the checked equality theorem");
+            assert!(matches!(
+                pure_closed.certificate().steps(),
+                [
+                    SimpleProofStep::ApplyTheoremUsing { application, premises },
+                    SimpleProofStep::Assumption,
+                ] if application.name == "int32_le_and_not_lt_implies_eq"
+                    && premises.as_slice() == selected
+            ));
+            assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
         }
     }
 

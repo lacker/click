@@ -816,7 +816,11 @@ fn loop_exit_simp_expands_invariant_conjuncts_explicitly() {
             .expect("loop-exit simp should expand through explicit invariant conjuncts");
 
     assert!(
-        expanded.contains("extract(at(loop(0).exit, i) <= at(loop(0).exit, n));"),
+        expanded.contains("at(loop(0).exit, i) <= at(loop(0).exit, n);"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("not at(loop(0).exit, i) < at(loop(0).exit, n);"),
         "{expanded}"
     );
     assert!(

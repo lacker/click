@@ -1001,6 +1001,25 @@ impl PureFactContext {
                 .map(AtomicPropositionDerivationEvidence::BitvectorEqualityPath),
             _ => None,
         };
+        let le_and_not_lt_equality_evidence = match proposition {
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
+                let less_equal =
+                    ConditionTerm::signed_less_equal(left.as_ref().clone(), right.as_ref().clone());
+                let less_than =
+                    ConditionTerm::signed_less_than(left.as_ref().clone(), right.as_ref().clone());
+                (self.exact_condition_value(&less_equal) == Some(true)
+                    && self.exact_condition_value(&less_than) == Some(false))
+                .then(|| {
+                    AtomicPropositionDerivationEvidence::Int32LeAndNotLtImpliesEquality(Box::new(
+                        Int32LeAndNotLtEqualityEvidence {
+                            less_equal: Proposition::ConditionIs(less_equal, true),
+                            not_less_than: Proposition::ConditionIs(less_than, false),
+                        },
+                    ))
+                })
+            }
+            _ => None,
+        };
         let increment_upper_bound_evidence = match proposition {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedLessEqual(incremented, upper),
@@ -1179,6 +1198,7 @@ impl PureFactContext {
         };
         let result = memory_evidence
             .or(equality_path_evidence)
+            .or(le_and_not_lt_equality_evidence)
             .or(signed_order_evidence)
             .or(increment_upper_bound_evidence)
             .or(increment_strictly_increases_evidence)
@@ -1529,6 +1549,23 @@ impl PureFactContext {
                 && step.upper == base
                 && !step.strict
                 && self.replays_exact_order_step(step);
+        }
+        if let AtomicPropositionDerivationEvidence::Int32LeAndNotLtImpliesEquality(evidence) =
+            evidence
+        {
+            let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+                proposition
+            else {
+                return false;
+            };
+            let less_equal =
+                ConditionTerm::signed_less_equal(left.as_ref().clone(), right.as_ref().clone());
+            let less_than =
+                ConditionTerm::signed_less_than(left.as_ref().clone(), right.as_ref().clone());
+            return evidence.less_equal == Proposition::ConditionIs(less_equal.clone(), true)
+                && evidence.not_less_than == Proposition::ConditionIs(less_than.clone(), false)
+                && self.exact_condition_value(&less_equal) == Some(true)
+                && self.exact_condition_value(&less_than) == Some(false);
         }
         if !decide_memo_disabled()
             && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {

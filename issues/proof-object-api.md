@@ -1165,6 +1165,18 @@ leave the ancestor unchanged, and the common 16-through-4096 unrelated-fact
 curve covers the nested structure. Derived predecessor variants that require
 equality rewriting, rather than the direct `1 <= value` edge, remain pending.
 
+The two-premise signed equality decision now uses the same theorem seam.
+Search retains the exact `left <= right` and `not (left < right)` condition
+facts, selects their Surface spellings through fixed-size polarity probes,
+and applies `int32_le_and_not_lt_implies_eq` once to the immutable `Proof`.
+This closes the common kernel-versus-Surface polarity mismatch without
+scanning ambient facts. Pure and point descendants retain only that named
+application (plus the pure goal's ordinary `assumption`), rejected premise
+subsets leave their ancestor untouched, and deterministic 16-through-4096
+coverage bounds persistent updates logarithmically. The source regression
+observes no ordinary construction replay and independently verifies the
+expanded theorem step.
+
 Mid-execution bare theorem application now crosses the same query/transition
 seam. The smart form asks its immutable execution-frontier `Proof` for one
 concrete `ApplyTheoremUsing`, and only `Proof::apply_step` may add the theorem

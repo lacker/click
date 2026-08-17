@@ -11,6 +11,36 @@ fn atomic_derivation_evidence_does_not_inline_multi_premise_payloads() {
 }
 
 #[test]
+fn int32_le_and_not_lt_equality_derivation_retains_both_exact_premises() {
+    let left = Bitvector32Term::Variable(Variable(90_000));
+    let right = Bitvector32Term::Variable(Variable(90_001));
+    let less_equal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+        true,
+    );
+    let not_less_than = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(left.clone(), right.clone()),
+        false,
+    );
+    let goal = Proposition::ConditionIs(ConditionTerm::equal(left, right), true);
+    let assumptions = PureFactContext::new()
+        .assume_proposition(less_equal.clone())
+        .assume_proposition(not_less_than.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("<= plus not-< should derive int32 equality");
+    assert_eq!(
+        derivation.int32_le_and_not_lt_implies_equality_premises(),
+        Some((&less_equal, &not_less_than))
+    );
+    assert!(derivation.replay(&assumptions));
+
+    let missing = PureFactContext::new().assume_proposition(less_equal);
+    assert!(!derivation.replay(&missing));
+}
+
+#[test]
 fn conjunction_builder_has_logarithmic_depth() {
     fn conjunction_depth(proposition: &Proposition) -> usize {
         match proposition {

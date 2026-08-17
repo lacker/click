@@ -303,3 +303,15 @@ These are the first members of the interval/overflow family, not completion
 of that family. Other arithmetic-definedness, derived predecessor, interval,
 and derived-order decisions remain `Legacy` until each decision retains its
 exact rule and operands.
+
+The signed equality rule `left <= right` plus `not (left < right)` now retains
+those two exact source conditions behind a boxed typed evidence value. Replay
+checks the equality goal shape and both recorded condition values directly;
+it does not rerun order search. Pure and point `simp` consume the evidence as
+one checked `int32_le_and_not_lt_implies_eq` application through `Proof`.
+The pure Surface spelling may remain structural `not (...)` while the kernel
+condition index stores the equivalent false condition; selection resolves
+that fixed polarity family by bounded exact-index probes rather than an
+ambient scan. Expansion independently verifies the named step, omitted
+premises are transactional, and the 16-through-4096 unrelated-fact curve
+pins logarithmic Proof updates.

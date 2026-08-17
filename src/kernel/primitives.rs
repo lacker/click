@@ -1678,6 +1678,12 @@ pub(super) struct Int32PredecessorUpperBoundEvidence {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Int32LeAndNotLtEqualityEvidence {
+    pub(super) less_equal: Proposition,
+    pub(super) not_less_than: Proposition,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum AtomicPropositionDerivationEvidence {
     MemoryDag(AtomicMemoryLoadEqualityEvidence),
     PointerOffsetMemoryDag(PointerOffsetEqualityEvidence),
@@ -1695,6 +1701,7 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32NonnegativePredecessorUpperBound(Box<Int32PredecessorUpperBoundEvidence>),
     Int32OneLePredecessorIsNonnegative(SignedOrderDerivationStep),
     Int32OneLePredecessorStrictlyDecreases(SignedOrderDerivationStep),
+    Int32LeAndNotLtImpliesEquality(Box<Int32LeAndNotLtEqualityEvidence>),
     Legacy,
 }
 

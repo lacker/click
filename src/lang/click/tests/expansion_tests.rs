@@ -3174,6 +3174,54 @@ fn smart_simp_transcribes_a_three_edge_bitvector_equality_path() {
 }
 
 #[test]
+fn smart_simp_retains_le_and_not_lt_as_one_named_equality_step() {
+    let click_source = r#"
+        theorem le_and_not_lt_are_equal(left: int32, right: int32) {
+            requires left <= right;
+            requires not (left < right);
+            ensures left == right by {
+                simp();
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the typed <=/not-< equality rule should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "le_and_not_lt_are_equal.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the named equality step must not use construction replay: {events:#?}"
+    );
+
+    let offset = click_source.find("simp();").unwrap();
+    let line = click_source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset
+        - click_source[..offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let expanded = expand_c0_tactic_source_at(click_source, &[], line, column)
+        .expect("the retained equality theorem should expand");
+    assert!(
+        expanded.contains("apply(int32_le_and_not_lt_implies_eq(left, right)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("left <= right;"), "{expanded}");
+    assert!(expanded.contains("not (left < right);"), "{expanded}");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_click_theorems(&expanded).expect("the named equality step should independently replay");
+}
+
+#[test]
 fn outcome_simp_consumes_its_recorded_bitvector_equality_path() {
     let c_source = r#"
         int32 choose_first(int32 first, int32 second, int32 third, int32 last) {
