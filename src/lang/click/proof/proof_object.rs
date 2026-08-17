@@ -316,7 +316,19 @@ struct ExecutionProofStepDelta {
 #[derive(Clone)]
 enum Goal {
     Proposition(Arc<Proposition>),
-    ExecutionFrontier,
+    Frontier(EffectGoalSelection),
+}
+
+/// Function-effect obligations owned alongside an execution frontier.
+///
+/// The selection is intentionally symbolic: grouped verification does not
+/// copy every effect clause into every short-lived execution `Proof` root.
+/// The immutable function block remains the indexed clause store.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EffectGoalSelection {
+    None,
+    One(usize),
+    All,
 }
 
 /// Private persistent provenance node. Smart tactics can retain a `Proof`,
@@ -517,7 +529,7 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
             available,
-            Goal::ExecutionFrontier,
+            Goal::Frontier(EffectGoalSelection::None),
             parameters,
             arguments,
             pre_state,
@@ -615,6 +627,17 @@ impl<'a> Proof<'a> {
         click_function_environment: &'a ClickFunctionEnvironment,
         theorem_environment: &'a TheoremEnvironment,
     ) -> Self {
+        let effect_goals = match execution.replay.proof_site.as_ref() {
+            Some(ProofSite::FunctionClaim {
+                claim: CProofClaim::Grouped,
+                ..
+            }) => EffectGoalSelection::All,
+            Some(ProofSite::FunctionClaim {
+                claim: CProofClaim::Effect(index),
+                ..
+            }) => EffectGoalSelection::One(*index),
+            _ => EffectGoalSelection::None,
+        };
         let ProofReplayContext {
             state,
             pure_facts,
@@ -639,7 +662,7 @@ impl<'a> Proof<'a> {
                 facts: ProofFacts::from_ordered(&pure_facts),
                 locals: ProofLocals::default(),
                 unfolded_predicates: PersistentOrderedSet::default(),
-                goal: Goal::ExecutionFrontier,
+                goal: Goal::Frontier(effect_goals),
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
@@ -661,7 +684,26 @@ impl<'a> Proof<'a> {
     pub(super) fn goal(&self) -> Option<&Proposition> {
         match &self.state.goal {
             Goal::Proposition(goal) => Some(goal),
-            Goal::ExecutionFrontier => None,
+            Goal::Frontier(_) => None,
+        }
+    }
+
+    /// Number of selected function-effect obligations represented by this
+    /// frontier without materializing their clauses.
+    #[cfg(test)]
+    fn effect_goal_count(&self) -> usize {
+        let Goal::Frontier(selection) = self.state.goal else {
+            return 0;
+        };
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return 0;
+        };
+        match selection {
+            EffectGoalSelection::None => 0,
+            EffectGoalSelection::One(index) => {
+                usize::from(index < context.function_block.effects().len())
+            }
+            EffectGoalSelection::All => context.function_block.effects().len(),
         }
     }
 
@@ -676,7 +718,7 @@ impl<'a> Proof<'a> {
     /// a proof that already owns a proposition goal cannot replace it.
     pub(super) fn focus_point_goal(&self, goal: Proposition) -> Result<Self, ClickError> {
         if !matches!(self.context.as_ref(), ProofContext::Point(_))
-            || !matches!(&self.state.goal, Goal::ExecutionFrontier)
+            || !matches!(&self.state.goal, Goal::Frontier(_))
         {
             return Err(
                 self.step_error("a proposition goal can be focused only from a point frontier")
@@ -726,7 +768,7 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("point obligation completion requires at least one goal"));
         }
         if !matches!(self.context.as_ref(), ProofContext::Point(_))
-            || !matches!(self.state.goal, Goal::ExecutionFrontier)
+            || !matches!(self.state.goal, Goal::Frontier(_))
         {
             return Err(self.step_error("point obligations require an open point frontier"));
         }
@@ -1073,9 +1115,9 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("`have` follows a completed proof"));
         }
         match (&self.state.goal, self.context.as_ref()) {
-            (Goal::Proposition(_), _) | (Goal::ExecutionFrontier, ProofContext::Point(_)) => {}
-            (Goal::ExecutionFrontier, ProofContext::Execution(_)) => {}
-            (Goal::ExecutionFrontier, ProofContext::Pure(_)) => {
+            (Goal::Proposition(_), _) | (Goal::Frontier(_), ProofContext::Point(_)) => {}
+            (Goal::Frontier(_), ProofContext::Execution(_)) => {}
+            (Goal::Frontier(_), ProofContext::Pure(_)) => {
                 return Err(self.step_error("`have` requires a proposition or point context"));
             }
         }
@@ -1157,7 +1199,7 @@ impl<'a> Proof<'a> {
                 facts: checked.facts,
                 locals: self.state.locals.clone(),
                 unfolded_predicates: self.state.unfolded_predicates.clone(),
-                goal: Goal::ExecutionFrontier,
+                goal: self.state.goal.clone(),
                 complete: false,
                 added_facts: Arc::new(checked.added_facts.clone()),
                 checked_facts: Arc::new(checked.added_facts),
@@ -1192,7 +1234,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`branch` requires an execution-frontier proof"));
         };
-        if self.state.complete || !matches!(self.state.goal, Goal::ExecutionFrontier) {
+        if self.state.complete || !matches!(self.state.goal, Goal::Frontier(_)) {
             return Err(self.step_error("`branch` requires an open execution frontier"));
         }
         let execution =
@@ -1326,7 +1368,7 @@ impl<'a> Proof<'a> {
                         facts: transition.pure_facts,
                         locals: self.state.locals.clone(),
                         unfolded_predicates: self.state.unfolded_predicates.clone(),
-                        goal: Goal::ExecutionFrontier,
+                        goal: self.state.goal.clone(),
                         complete: false,
                         added_facts: Arc::new(transition.path_facts.clone()),
                         checked_facts: Arc::new(transition.path_facts.clone()),
@@ -1731,7 +1773,7 @@ impl<'a> Proof<'a> {
                 )
                 .map_err(|message| self.step_error(message))?,
             )),
-            Goal::ExecutionFrontier => Goal::ExecutionFrontier,
+            Goal::Frontier(selection) => Goal::Frontier(*selection),
         };
         let mut unfolded_predicates = self.state.unfolded_predicates.clone();
         unfolded_predicates.insert(name.clone());
@@ -3963,7 +4005,7 @@ impl<'a> Proof<'a> {
     }
 
     fn require_execution_frontier(&self, operation: &str) -> Result<(), ClickError> {
-        matches!(self.state.goal, Goal::ExecutionFrontier)
+        matches!(self.state.goal, Goal::Frontier(_))
             .then_some(())
             .ok_or_else(|| {
                 self.step_error(format!(
@@ -4483,7 +4525,7 @@ impl<'a> ExecutionProofBranches<'a> {
                 facts,
                 locals: self.root.state.locals.clone(),
                 unfolded_predicates,
-                goal: Goal::ExecutionFrontier,
+                goal: self.root.state.goal.clone(),
                 complete: false,
                 added_facts: Arc::new(common_added_facts.clone()),
                 checked_facts: Arc::new(common_added_facts),
@@ -4757,7 +4799,7 @@ impl<'a> ExecutionProofBranches<'a> {
                 facts,
                 locals: self.root.state.locals.clone(),
                 unfolded_predicates,
-                goal: Goal::ExecutionFrontier,
+                goal: self.root.state.goal.clone(),
                 complete: false,
                 added_facts: Arc::new(common_added_facts.clone()),
                 checked_facts: Arc::new(common_added_facts),
@@ -5741,6 +5783,73 @@ mod tests {
             }
             Proposition::Not(body) => *body.clone(),
             other => Proposition::Not(Box::new(other.clone())),
+        }
+    }
+
+    #[test]
+    fn execution_frontier_owns_compact_selected_effect_goals() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                verifying "identity.c";
+                int32 identity(int32 x) {
+                    immutable;
+                    ensures result == x;
+                } by {
+                    execute();
+                    frame();
+                    simp();
+                }
+            "#,
+        )
+        .expect("the effect-goal fixture should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+            .expect("the effect-goal C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let arguments = vec![CExpression::Value(int32(7))];
+        let function_environment = CExecutionEnvironment::new();
+        let resource_environment = ResourceEnvironment::new(&[]);
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+
+        for (claim, expected, selection) in [
+            (CProofClaim::Grouped, 1, EffectGoalSelection::All),
+            (CProofClaim::Effect(0), 1, EffectGoalSelection::One(0)),
+            (CProofClaim::Ensure(0), 0, EffectGoalSelection::None),
+        ] {
+            let root = Proof::for_execution_frontier(
+                "typed effect goals",
+                0,
+                ProofReplayContext {
+                    state: CState::new(),
+                    pure_facts: Vec::new(),
+                    replay: TacticReplayState {
+                        proof_site: Some(ProofSite::FunctionClaim {
+                            function_name: "identity".to_string(),
+                            claim,
+                        }),
+                        ..TacticReplayState::default()
+                    },
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            assert_eq!(root.effect_goal_count(), expected);
+            assert!(matches!(root.state.goal, Goal::Frontier(actual) if actual == selection));
+            let marked = root
+                .apply_step(SimpleProofStep::Mark("selected".to_string()))
+                .expect("an ordinary frontier step should preserve its effect goals");
+            assert_eq!(marked.effect_goal_count(), expected);
+            assert!(matches!(marked.state.goal, Goal::Frontier(actual) if actual == selection));
         }
     }
 

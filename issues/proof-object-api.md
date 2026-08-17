@@ -1410,6 +1410,17 @@ scope step, pins their one ordered child certificate, observes no ordinary
 replay, and independently verifies expansion. General execute search and
 branch traversal remain to migrate.
 
+Execution frontiers now own a typed function-effect goal selection. The goal
+is `None`, one effect-clause index for an individual effect proof, or symbolic
+`All` for a grouped contract; grouped roots therefore do not copy the whole
+claim list each time the legacy boundary creates a short-lived `Proof`. The
+selection is preserved by ordinary steps, resource scopes, and both audited
+execution joins. A focused regression covers grouped, individual-effect, and
+ensure-only proof sites and verifies that a checked successor retains the
+same goal. `FrameUsing` does not consume this goal yet: the remaining seam is
+an audited terminal effect operation that records its post-execution ordering
+without asking the legacy drain to recheck the effect.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
