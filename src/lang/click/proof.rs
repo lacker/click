@@ -1664,6 +1664,7 @@ enum InternalProofNode {
     },
     If {
         index: usize,
+        source_index: usize,
         condition: ClickProposition,
         then_branch: Box<InternalProofNode>,
         else_branch: Box<InternalProofNode>,
@@ -1671,6 +1672,7 @@ enum InternalProofNode {
     },
     Branch {
         index: usize,
+        source_index: usize,
         ensuring: Option<Vec<ProofAssertion>>,
         then_branch: Box<InternalProofNode>,
         else_branch: Box<InternalProofNode>,
@@ -1744,17 +1746,20 @@ fn set_generated_proof_source_index(node: &mut InternalProofNode, owning_source_
             set_generated_proof_source_index(continuation, owning_source_index);
         }
         InternalProofNode::If {
+            source_index,
             then_branch,
             else_branch,
             continuation,
             ..
         }
         | InternalProofNode::Branch {
+            source_index,
             then_branch,
             else_branch,
             continuation,
             ..
         } => {
+            *source_index = owning_source_index;
             set_generated_proof_source_index(then_branch, owning_source_index);
             set_generated_proof_source_index(else_branch, owning_source_index);
             set_generated_proof_source_index(continuation, owning_source_index);
@@ -1793,17 +1798,24 @@ fn detach_generated_suffix_from_source_indices(
             detach_generated_suffix_from_source_indices(continuation, first_generated_tactic_index);
         }
         InternalProofNode::If {
+            index,
+            source_index,
             then_branch,
             else_branch,
             continuation,
             ..
         }
         | InternalProofNode::Branch {
+            index,
+            source_index,
             then_branch,
             else_branch,
             continuation,
             ..
         } => {
+            if *index >= first_generated_tactic_index {
+                *source_index = usize::MAX;
+            }
             detach_generated_suffix_from_source_indices(then_branch, first_generated_tactic_index);
             detach_generated_suffix_from_source_indices(else_branch, first_generated_tactic_index);
             detach_generated_suffix_from_source_indices(continuation, first_generated_tactic_index);
@@ -1842,6 +1854,7 @@ fn build_internal_proof_at(
             let then_width = source_tactic_count(&proof_if.then_tactics);
             InternalProofNode::If {
                 index,
+                source_index,
                 condition: proof_if.condition.clone(),
                 then_branch: Box::new(build_internal_proof_at(
                     &proof_if.then_tactics,
@@ -1864,6 +1877,7 @@ fn build_internal_proof_at(
             let then_width = source_tactic_count(&proof_branch.then_tactics);
             InternalProofNode::Branch {
                 index,
+                source_index,
                 ensuring: proof_branch.ensuring.clone(),
                 then_branch: Box::new(build_internal_proof_at(
                     &proof_branch.then_tactics,

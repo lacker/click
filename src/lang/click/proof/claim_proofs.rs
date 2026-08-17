@@ -3238,15 +3238,22 @@ pub(super) fn finish_ordered_proof_replay(
                                         authority.len()
                                     )));
                                 }
-                                apply_checked_contract_resource_transition(
-                                    &mut outcome,
-                                    pre_state,
-                                    function,
-                                    arguments,
-                                    &path_requirements,
-                                    &path.execution_facts(),
+                                crate::instrumentation::measure_operation(
+                                    function_block.signature().name(),
                                     &proof_label,
-                                    path_index,
+                                    "frame resource transition",
+                                    || {
+                                        apply_checked_contract_resource_transition(
+                                            &mut outcome,
+                                            pre_state,
+                                            function,
+                                            arguments,
+                                            &path_requirements,
+                                            &path.execution_facts(),
+                                            &proof_label,
+                                            path_index,
+                                        )
+                                    },
                                 )?;
                                 record_post_execution_surface_tactic(
                                     deferred.surface_recorded,

@@ -1438,13 +1438,28 @@ Premise-free smart `frame()` now inspects the typed goal, selects an empty
 `FrameUsing`, and submits that candidate directly to this operation. This
 covers immutable effects and mutable footprints that check exactly from their
 declared shape without any pure fact. For a single unpartitioned execution
-context, mutable smart frames that need facts now reuse contextual footprint
-planning only to select a flat simple candidate, then apply its explicit
-`Have` and `FrameUsing` steps once through the owned Proof. Branch-shaped
-frame candidates remain on the legacy path until execution-outcome partitions
-have a checked Proof container. The legacy empty-premise source spelling also
-still conflates an explicit empty set with ambient-fact selection and must not
-be imported into the simple checker.
+context, mutable smart frames that need facts reuse contextual footprint
+planning only to select a simple candidate, then apply its explicit `Have`
+and `FrameUsing` steps once through the owned Proof. Branch-shaped candidates
+now use a separate `ExecutionOutcomeProofBranches` container: its arms are
+disjoint, exhaustive subsets of the already-checked terminal outcomes, each
+path must decide exactly one polarity, and the join accepts only matching
+checked effect authority. It restores the complete execution and schedules
+one resource transition per original outcome rather than replaying either
+arm. The legacy empty-premise source spelling still conflates an explicit
+empty set with ambient-fact selection and must not be imported into the
+simple checker.
+
+The path-specific regression keeps the original dynamic store
+`p[index] = 1` under `index == 0` and the constant store `p[0] = 2` in the
+other C arm. Contextual frame construction retains each equality and derived
+bound only in the outcome leaf that selected it. Certified-frame lowering now
+uses the derivation's exact per-path context rather than the global ambient
+fact set, and proposition rewrites inside an execution `have` check through
+the nested proposition Proof while the scope join restores the outer
+frontier. Verification and the independent expansion gate observe no surface
+certificate replay or legacy exact-effect recheck; each performs exactly one
+resource transition for each of the two outcomes.
 
 Scoped smart `execute()` now drives a terminal C `if` through the existing
 `ExecutionProofBranches` container when both arms are straight-line statement
@@ -1466,7 +1481,13 @@ its enclosing execution arm, so the outer certificate retains the nested
 arm imports only the inner branch's recorded metadata delta. A second source
 regression nests a real array-writing `if` in one outer arm, retains the
 nested `If` before one common exact frame, and independently verifies the
-expanded proof. Genuinely path-specific frame premises remain to migrate.
+expanded proof. Expanded execution-branch certificates are also re-derived
+through `ExecutionProofBranches`: the checker validates and consumes the
+synthetic branch-entry steps, applies only the retained arm deltas through
+simple operations, and compares the resulting condition and arm certificate
+exactly before proceeding to a later outcome partition. Structured `if` and
+`branch` nodes now retain their source index, so this checked path does not
+borrow provenance from either leaf.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

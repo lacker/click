@@ -40,12 +40,54 @@ fn linear_execution_simple_steps(node: &InternalProofNode) -> Option<Vec<SimpleP
         .collect()
 }
 
+fn linear_execution_certificate(node: &InternalProofNode) -> Option<ProofCertificate> {
+    let tactics = linear_execution_tactics(node)?
+        .iter()
+        .map(|indexed| indexed.tactic.clone())
+        .collect::<Vec<_>>();
+    ProofCertificate::from_proof_tactics(&tactics).ok()
+}
+
+/// The checked open driver can participate in expansion capture when the
+/// selected source tactic is one of the smart operations for which it can
+/// return the exact retained Proof delta. Captures outside this open are
+/// unaffected; unsupported captures inside it keep using the legacy driver.
+fn checked_open_scope_can_service_capture(
+    body: &InternalProofNode,
+    capture: Option<&ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
+) -> bool {
+    let Some(site) = proof_site else {
+        return capture.is_none();
+    };
+    let Some(wanted) = selected_tactic_index_for_site(capture, site) else {
+        return true;
+    };
+    if !internal_proof_contains_source_index(body, wanted) {
+        return true;
+    }
+    linear_execution_tactics(body).is_some_and(|tactics| {
+        tactics.iter().any(|indexed| {
+            indexed.source_index == wanted
+                && matches!(
+                    indexed.tactic,
+                    ProofTactic::SmartExecute
+                        | ProofTactic::SmartExecuteAllPaths
+                        | ProofTactic::SmartFrame(_)
+                        | ProofTactic::ExecuteUntil(_)
+                )
+        })
+    })
+}
+
 /// Advances a linear resource scope one checked node at a time. A nested
 /// `have` is joined back through the scope API, so its selected theorem steps
 /// and its published proposition are retained by the same immutable proof.
 fn advance_linear_open_scope<'a>(
     mut scope: ProofScope<'a>,
     tactics: &[IndexedTactic],
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
 ) -> Result<Option<ProofScope<'a>>, ClickError> {
     for indexed in tactics {
         if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
@@ -63,26 +105,56 @@ fn advance_linear_open_scope<'a>(
             indexed.tactic,
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
         ) {
+            let checkpoint = scope.checkpoint();
             let Some(executed) = scope.try_linear_execute()? else {
                 return Ok(None);
             };
             scope = executed;
+            if let Some(site) = proof_site {
+                let certificate = scope.certificate_since(&checkpoint)?;
+                record_proof_site_tactic_expansion(
+                    expansion_capture.as_deref_mut(),
+                    site,
+                    indexed.source_index,
+                    &certificate.to_proof_tactics(),
+                );
+            }
             continue;
         }
         if let ProofTactic::SmartFrame(region) = &indexed.tactic {
+            let checkpoint = scope.checkpoint();
             let Some(framed) =
                 scope.try_smart_frame_at(region.as_ref(), indexed.index, indexed.source_index)?
             else {
                 return Ok(None);
             };
             scope = framed;
+            if let Some(site) = proof_site {
+                let certificate = scope.certificate_since(&checkpoint)?;
+                record_proof_site_tactic_expansion(
+                    expansion_capture.as_deref_mut(),
+                    site,
+                    indexed.source_index,
+                    &certificate.to_proof_tactics(),
+                );
+            }
             continue;
         }
         if let ProofTactic::ExecuteUntil(region) = &indexed.tactic {
+            let checkpoint = scope.checkpoint();
             let Some(executed) = scope.try_linear_execute_until(region)? else {
                 return Ok(None);
             };
             scope = executed;
+            if let Some(site) = proof_site {
+                let certificate = scope.certificate_since(&checkpoint)?;
+                record_proof_site_tactic_expansion(
+                    expansion_capture.as_deref_mut(),
+                    site,
+                    indexed.source_index,
+                    &certificate.to_proof_tactics(),
+                );
+            }
             continue;
         }
         let ProofTactic::Have(have) = &indexed.tactic else {
@@ -115,9 +187,97 @@ fn advance_linear_open_scope<'a>(
 fn advance_checked_open_scope<'a>(
     scope: ProofScope<'a>,
     body: &InternalProofNode,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
 ) -> Result<Option<ProofScope<'a>>, ClickError> {
+    if matches!(body, InternalProofNode::Done) {
+        return Ok(Some(scope));
+    }
     if let Some(tactics) = linear_execution_tactics(body) {
-        return advance_linear_open_scope(scope, tactics);
+        return advance_linear_open_scope(scope, tactics, expansion_capture, proof_site);
+    }
+    if let InternalProofNode::Linear {
+        tactics,
+        continuation,
+    } = body
+    {
+        let Some(scope) = advance_linear_open_scope(
+            scope,
+            tactics,
+            expansion_capture.as_deref_mut(),
+            proof_site,
+        )?
+        else {
+            return Ok(None);
+        };
+        return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);
+    }
+    if let InternalProofNode::If {
+        condition,
+        then_branch,
+        else_branch,
+        continuation,
+        ..
+    } = body
+        && let Some(then_proof) = linear_execution_certificate(then_branch)
+        && let Some(else_proof) = linear_execution_certificate(else_branch)
+        && matches!(
+            then_proof.steps().last(),
+            Some(SimpleProofStep::StepUsing(_))
+        )
+        && matches!(
+            else_proof.steps().last(),
+            Some(SimpleProofStep::StepUsing(_))
+        )
+    {
+        let checkpoint = scope.checkpoint();
+        let branches = scope.begin_execution_branch()?;
+        if !branches.has_both_feasible_arms() {
+            return Ok(None);
+        }
+        let branches = branches.check_terminal_arm_certificate(true, &then_proof)?;
+        let branches = branches.check_terminal_arm_certificate(false, &else_proof)?;
+        let scope = scope.join_execution_branch(branches, false)?;
+        let actual = scope.certificate_since(&checkpoint)?;
+        let expected = ProofCertificate::from_steps(vec![SimpleProofStep::If {
+            condition: condition.clone(),
+            then_proof: Box::new(then_proof),
+            else_proof: Box::new(else_proof),
+        }]);
+        if actual.steps() != expected.steps() {
+            return Err(ClickError::new(
+                "expanded execution branch does not match the checked C branch certificate",
+            ));
+        }
+        return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);
+    }
+    if let InternalProofNode::If {
+        index,
+        source_index,
+        condition,
+        then_branch,
+        else_branch,
+        continuation,
+    } = body
+        && let Some(then_proof) = linear_execution_certificate(then_branch)
+        && let Some(else_proof) = linear_execution_certificate(else_branch)
+        && matches!(
+            then_proof.steps().last(),
+            Some(SimpleProofStep::FrameUsing { region: None, .. })
+        )
+        && matches!(
+            else_proof.steps().last(),
+            Some(SimpleProofStep::FrameUsing { region: None, .. })
+        )
+    {
+        let certificate = ProofCertificate::from_steps(vec![SimpleProofStep::If {
+            condition: condition.clone(),
+            then_proof: Box::new(then_proof),
+            else_proof: Box::new(else_proof),
+        }]);
+        let scope =
+            scope.apply_contextual_frame_certificate_at(&certificate, *index, *source_index)?;
+        return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);
     }
     let InternalProofNode::Branch {
         ensuring: None,
@@ -160,6 +320,7 @@ fn advance_checked_open_scope<'a>(
 #[allow(clippy::too_many_arguments)]
 fn execute_checked_open_scope<'a>(
     context: ProofReplayContext,
+    expansion_capture: Option<&mut ExpansionCapture>,
     resource: ResourceClause,
     source_index: usize,
     body: &InternalProofNode,
@@ -175,6 +336,7 @@ fn execute_checked_open_scope<'a>(
     arguments: &'a [CExpression],
     tactic_index: usize,
 ) -> Result<Option<ProofReplayContext>, ClickError> {
+    let proof_site = context.replay.proof_site.clone();
     let root = Proof::for_execution_frontier(
         claim_label,
         tactic_index,
@@ -190,7 +352,9 @@ fn execute_checked_open_scope<'a>(
         theorem_environment,
     );
     let scope = root.begin_open(resource, source_index)?;
-    let Some(scope) = advance_checked_open_scope(scope, body)? else {
+    let Some(scope) =
+        advance_checked_open_scope(scope, body, expansion_capture, proof_site.as_ref())?
+    else {
         return Ok(None);
     };
     let proof = scope.join()?;
@@ -209,6 +373,7 @@ fn execute_checked_open_scope<'a>(
 #[allow(clippy::too_many_arguments)]
 fn try_execute_checked_open_scope<'a>(
     context: &ProofReplayContext,
+    expansion_capture: Option<&mut ExpansionCapture>,
     body: &InternalProofNode,
     resource: ResourceClause,
     source_index: usize,
@@ -226,6 +391,7 @@ fn try_execute_checked_open_scope<'a>(
 ) -> Result<Option<ProofReplayContext>, ClickError> {
     execute_checked_open_scope(
         context.clone(),
+        expansion_capture,
         resource,
         source_index,
         body,
@@ -247,6 +413,7 @@ fn try_execute_checked_open_scope<'a>(
 #[allow(clippy::too_many_arguments)]
 fn try_execute_checked_open_scope_and_continue<'a>(
     context: &ProofReplayContext,
+    expansion_capture: Option<&mut ExpansionCapture>,
     body: &InternalProofNode,
     continuation: &InternalProofNode,
     resource: ResourceClause,
@@ -266,6 +433,7 @@ fn try_execute_checked_open_scope_and_continue<'a>(
 ) -> Result<Option<Vec<ProofReplayContext>>, ClickError> {
     let Some(context) = try_execute_checked_open_scope(
         context,
+        expansion_capture,
         body,
         resource,
         source_index,
@@ -385,9 +553,15 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             body,
             continuation,
         } => {
-            if expansion_capture.is_none() {
+            let checked_supported = checked_open_scope_can_service_capture(
+                body,
+                expansion_capture.as_deref(),
+                context.replay.proof_site.as_ref(),
+            );
+            if checked_supported {
                 let checked = try_execute_checked_open_scope_and_continue(
                     &context,
+                    expansion_capture.as_deref_mut(),
                     body,
                     continuation,
                     resource.clone(),
@@ -518,6 +692,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             then_branch,
             else_branch,
             continuation,
+            ..
         } => {
             let mut context = context;
             // A mid-execution case condition may name the current statement's
@@ -625,6 +800,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             then_branch,
             else_branch,
             continuation,
+            ..
         } => {
             // Ordinary linear simple arms advance only through the checked
             // execution Proof container. Expansion capture continues through

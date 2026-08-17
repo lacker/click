@@ -42,6 +42,23 @@ pub(super) struct ProofBranches<'a> {
     arms: [Proof<'a>; 2],
 }
 
+/// Two exhaustive terminal-execution outcome partitions selected by one
+/// proof-level condition.
+///
+/// Unlike [`ProofBranches`], these arms retain execution-frontier goals and
+/// own disjoint subsets of an already-checked function execution. Branch-local
+/// facts can therefore justify terminal simple steps without being exposed to
+/// incompatible outcomes. The audited join restores the complete execution,
+/// records one structured `If`, and combines matching checked-frame authority
+/// into one ordered resource transition.
+struct ExecutionOutcomeProofBranches<'a> {
+    root: Proof<'a>,
+    root_checkpoint: ProofCheckpoint<'a>,
+    condition: ClickProposition,
+    arms: [Proof<'a>; 2],
+    root_post_execution_count: usize,
+}
+
 /// Feasible arms of one checked C `if` frontier.
 ///
 /// Entering the container performs the audited condition transition and C
@@ -166,6 +183,104 @@ fn source_proof_is_supported(proof: &SourceProof) -> bool {
             }
         }
         SourceProof::Tactic(SmartTactic::Frame) => false,
+    }
+}
+
+fn certificate_leaves_end_in_frame(certificate: &ProofCertificate) -> bool {
+    match certificate.steps().last() {
+        Some(SimpleProofStep::FrameUsing { region: None, .. }) => true,
+        Some(SimpleProofStep::If {
+            then_proof,
+            else_proof,
+            ..
+        }) => {
+            certificate_leaves_end_in_frame(then_proof)
+                && certificate_leaves_end_in_frame(else_proof)
+        }
+        _ => false,
+    }
+}
+
+fn certificate_branch_conditions(
+    certificate: &ProofCertificate,
+    conditions: &mut Vec<ClickProposition>,
+) {
+    for step in certificate.steps() {
+        if let SimpleProofStep::If {
+            condition,
+            then_proof,
+            else_proof,
+        } = step
+        {
+            if !conditions.contains(condition) {
+                conditions.push(condition.clone());
+            }
+            certificate_branch_conditions(then_proof, conditions);
+            certificate_branch_conditions(else_proof, conditions);
+        }
+    }
+}
+
+fn contextual_frame_leaf_certificates(
+    certificate: &ProofCertificate,
+    leaves: &mut Vec<ProofCertificate>,
+) {
+    if let [
+        SimpleProofStep::If {
+            then_proof,
+            else_proof,
+            ..
+        },
+    ] = certificate.steps()
+    {
+        contextual_frame_leaf_certificates(then_proof, leaves);
+        contextual_frame_leaf_certificates(else_proof, leaves);
+    } else {
+        leaves.push(certificate.clone());
+    }
+}
+
+fn flatten_path_independent_frame_candidate(candidate: ProofCertificate) -> ProofCertificate {
+    let mut leaves = Vec::new();
+    contextual_frame_leaf_certificates(&candidate, &mut leaves);
+    match leaves.first() {
+        Some(first) if leaves.iter().all(|leaf| leaf.steps() == first.steps()) => first.clone(),
+        _ => candidate,
+    }
+}
+
+fn reverse_surface_comparison(proposition: &ClickProposition) -> Option<ClickProposition> {
+    match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => {
+            let operator = match operator {
+                ComparisonOperator::Equal => ComparisonOperator::Equal,
+                ComparisonOperator::NotEqual => ComparisonOperator::NotEqual,
+                ComparisonOperator::LessThan => ComparisonOperator::GreaterThan,
+                ComparisonOperator::LessEqual => ComparisonOperator::GreaterEqual,
+                ComparisonOperator::GreaterThan => ComparisonOperator::LessThan,
+                ComparisonOperator::GreaterEqual => ComparisonOperator::LessEqual,
+            };
+            Some(ClickProposition::Comparison {
+                left: right.clone(),
+                operator,
+                right: left.clone(),
+            })
+        }
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Some(ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(reverse_surface_comparison(proposition)?),
+        }),
+        ClickProposition::Not(body) => Some(ClickProposition::Not(Box::new(
+            reverse_surface_comparison(body)?,
+        ))),
+        _ => None,
     }
 }
 
@@ -1094,14 +1209,36 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Applies a contextual frame candidate through checked simple steps.
+    /// A branch-shaped candidate partitions the owned terminal outcomes and
+    /// recursively checks each leaf; it never treats a proof condition as a
+    /// globally available fact across incompatible paths.
+    fn apply_contextual_frame_candidate_certificate(
+        &self,
+        certificate: &ProofCertificate,
+        origin: Option<ProofStepOrigin>,
+    ) -> Result<Self, ClickError> {
+        let [
+            SimpleProofStep::If {
+                condition,
+                then_proof,
+                else_proof,
+            },
+        ] = certificate.steps()
+        else {
+            return self.check_certificate_with_origin(certificate, origin);
+        };
+        let branches = self.begin_execution_outcome_if(condition.clone())?;
+        let branches = branches.check_arm_certificate(0, then_proof, origin)?;
+        let branches = branches.check_arm_certificate(1, else_proof, origin)?;
+        branches.join()
+    }
+
     /// Uses the existing contextual footprint planner only to select Surface
     /// simple steps. The returned certificate has performed no semantic
-    /// transition; its candidate steps still have to be applied to this
-    /// `Proof`. Branch-shaped candidates remain on the legacy path until
-    /// outcome partitions have a dedicated checked Proof container.
-    fn select_flat_contextual_frame_candidate(
-        &self,
-    ) -> Result<Option<ProofCertificate>, ClickError> {
+    /// transition; its flat or branch-shaped candidate still has to advance
+    /// through the checked `Proof` operations above.
+    fn select_contextual_frame_candidate(&self) -> Result<Option<ProofCertificate>, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Ok(None);
         };
@@ -1144,9 +1281,65 @@ impl<'a> Proof<'a> {
                 path.outcome(),
             )?);
         }
-
+        let skeleton = surface_branch_skeleton(self.certificate().steps());
         let mut construction_replay = execution_state.replay.clone();
+        let mut branch_conditions = Vec::new();
+        certificate_branch_conditions(
+            &ProofCertificate::from_steps(skeleton.clone()),
+            &mut branch_conditions,
+        );
+        for condition in &branch_conditions {
+            let negated = ClickProposition::Not(Box::new(condition.clone()));
+            let mut surface_spellings = vec![condition.clone(), negated.clone()];
+            for candidate in [
+                reverse_surface_comparison(condition),
+                reverse_surface_comparison(&negated),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !surface_spellings.contains(&candidate) {
+                    surface_spellings.push(candidate);
+                }
+            }
+            for (path_index, path) in execution.paths().iter().enumerate() {
+                let CFunctionOutcome::Return {
+                    value: result,
+                    state: post_state,
+                } = path.outcome()
+                else {
+                    return Err(self.step_error(format!(
+                        "execution path {path_index} cannot decide a proof branch without a return outcome"
+                    )));
+                };
+                let mut path_facts = available.clone();
+                path_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+                for surface in &surface_spellings {
+                    let kernel = lower_outcome_proposition_with_program_points(
+                        context.parsed_function.parameters(),
+                        context.arguments,
+                        pre_state,
+                        post_state,
+                        result,
+                        &path_facts,
+                        surface,
+                        context.predicate_environment,
+                        context.click_function_environment,
+                        &execution_state.replay.program_point_states,
+                    )
+                    .map_err(|message| {
+                        self.step_error(format!(
+                            "could not lower execution outcome branch condition: {message}"
+                        ))
+                    })?;
+                    construction_replay
+                        .surface_propositions
+                        .record_lowering(surface, &kernel)?;
+                }
+            }
+        }
         construction_replay.proof_certificate_builder = ProofCertificateBuilder {
+            steps: skeleton,
             certificate_facts: ProofFactStore::from_ordered(available),
             last_step_entry: execution_state
                 .replay
@@ -1175,19 +1368,13 @@ impl<'a> Proof<'a> {
                 "smart frame candidate construction failed: {blocker}"
             )));
         }
-        if construction.steps.is_empty()
-            || construction
-                .steps
-                .iter()
-                .any(|step| matches!(step, SimpleProofStep::If { .. }))
-            || !matches!(
-                construction.steps.last(),
-                Some(SimpleProofStep::FrameUsing { region: None, .. })
-            )
-        {
+        let candidate = flatten_path_independent_frame_candidate(ProofCertificate::from_steps(
+            construction.steps,
+        ));
+        if candidate.steps().is_empty() || !certificate_leaves_end_in_frame(&candidate) {
             return Ok(None);
         }
-        Ok(Some(ProofCertificate::from_steps(construction.steps)))
+        Ok(Some(candidate))
     }
 
     #[inline(never)]
@@ -1415,6 +1602,154 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Partitions an already-checked terminal execution by one proof-level
+    /// condition. Every owned outcome must decide exactly one polarity; no
+    /// path may be copied into both arms or silently discarded.
+    fn begin_execution_outcome_if(
+        &self,
+        condition: ClickProposition,
+    ) -> Result<ExecutionOutcomeProofBranches<'a>, ClickError> {
+        if self.state.complete {
+            return Err(self.step_error("execution outcome `if` follows a completed proof"));
+        }
+        let ProofContext::Execution(_) = self.context.as_ref() else {
+            return Err(self.step_error("execution outcome `if` requires an execution proof"));
+        };
+        self.require_execution_frontier("execution outcome `if`")?;
+        let root_execution =
+            self.state.execution.as_ref().ok_or_else(|| {
+                self.step_error("execution outcome `if` lost its semantic frontier")
+            })?;
+        if !root_execution.replay.is_at_function_exit() {
+            return Err(self.step_error("execution outcome `if` requires function exit"));
+        }
+        let checked = root_execution.replay.execution().ok_or_else(|| {
+            self.step_error("execution outcome `if` has no checked execution paths")
+        })?;
+        let then_fact =
+            self.lower_surface_proposition(&condition, "execution outcome condition")?;
+        let else_surface = ClickProposition::Not(Box::new(condition.clone()));
+        let else_fact =
+            self.lower_surface_proposition(&else_surface, "execution outcome negation")?;
+        let shared_facts = self.state.facts.to_vec();
+        type OutcomePath = (
+            CFunctionOutcome,
+            Vec<ExecutionPureFact>,
+            Vec<ProofObligation>,
+        );
+        let mut partition_paths: [Vec<OutcomePath>; 2] = [Vec::new(), Vec::new()];
+        let mut common_path_facts: [Option<Vec<Proposition>>; 2] = [None, None];
+
+        for (path_index, path) in checked.paths().iter().enumerate() {
+            let mut available = shared_facts.clone();
+            let path_facts = path
+                .facts()
+                .iter()
+                .map(|fact| fact.proposition().clone())
+                .collect::<Vec<_>>();
+            available.extend(path_facts.iter().cloned());
+            let assumptions = assumptions_from_propositions(&available);
+            let selects_then =
+                exact_fact_is_available(&then_fact, &available) || assumptions.proves(&then_fact);
+            let selects_else = exact_fact_is_available(&else_fact, &available)
+                || assumptions.proves(&else_fact)
+                || fact_conflicts_with_assumptions(&then_fact, &assumptions);
+            let arm_index = match (selects_then, selects_else) {
+                (true, false) => 0,
+                (false, true) => 1,
+                (false, false) => {
+                    return Err(self.step_error(format!(
+                        "execution path {path_index} does not decide outcome branch `{}`",
+                        describe_click_proposition(&condition)
+                    )));
+                }
+                (true, true) => {
+                    return Err(self.step_error(format!(
+                        "execution path {path_index} proves both sides of outcome branch `{}`",
+                        describe_click_proposition(&condition)
+                    )));
+                }
+            };
+            match &mut common_path_facts[arm_index] {
+                Some(common) => common.retain(|fact| path_facts.contains(fact)),
+                slot @ None => *slot = Some(path_facts),
+            }
+            partition_paths[arm_index].push((
+                path.outcome().clone(),
+                path.execution_facts(),
+                path.obligations().to_vec(),
+            ));
+        }
+        if partition_paths.iter().any(Vec::is_empty) {
+            return Err(self.step_error(
+                "execution outcome `if` requires at least one checked path in each arm",
+            ));
+        }
+
+        let execution_state = checked.state().clone();
+        let function = checked.function().clone();
+        let arguments = checked.arguments().to_vec();
+        let polarity_facts = [then_fact, else_fact];
+        let polarity_surfaces = [condition.clone(), else_surface];
+        let mut arms = Vec::with_capacity(2);
+        for arm_index in 0..2 {
+            let mut execution = root_execution.clone();
+            let paths = std::mem::take(&mut partition_paths[arm_index]);
+            execution.replay.frontier.point = ProofExecutionPoint::FunctionExit {
+                execution: c_function_execution_candidates_from_outcomes(
+                    execution_state.clone(),
+                    function.clone(),
+                    arguments.clone(),
+                    paths,
+                ),
+            };
+            execution.last_step_delta = ExecutionProofStepDelta::default();
+            execution
+                .replay
+                .surface_propositions
+                .record_lowering(&polarity_surfaces[arm_index], &polarity_facts[arm_index])?;
+
+            let mut facts = self.state.facts.clone();
+            let mut added_facts = Vec::new();
+            for fact in std::iter::once(&polarity_facts[arm_index])
+                .chain(common_path_facts[arm_index].as_ref().into_iter().flatten())
+            {
+                if !facts.contains(fact) {
+                    facts = facts.with_fact(fact.clone());
+                    added_facts.push(fact.clone());
+                }
+            }
+            arms.push(Proof {
+                context: self.context.clone(),
+                state: Arc::new(ProofState {
+                    facts,
+                    locals: self.state.locals.clone(),
+                    unfolded_predicates: self.state.unfolded_predicates.clone(),
+                    goal: self.state.goal.clone(),
+                    complete: false,
+                    added_facts: Arc::new(added_facts.clone()),
+                    checked_facts: Arc::new(added_facts),
+                    execution: Some(execution),
+                }),
+                node: self.node.clone(),
+            });
+        }
+        let mut arms = arms.into_iter();
+        let then_arm = arms
+            .next()
+            .expect("the then outcome partition was constructed");
+        let else_arm = arms
+            .next()
+            .expect("the else outcome partition was constructed");
+        Ok(ExecutionOutcomeProofBranches {
+            root: self.clone(),
+            root_checkpoint: self.checkpoint(),
+            condition,
+            arms: [then_arm, else_arm],
+            root_post_execution_count: root_execution.replay.post_execution_tactics.len(),
+        })
+    }
+
     /// Opens a nested proof for one surface proposition. The body has a fresh
     /// provenance root but shares the persistent semantic fact index and
     /// immutable checking context with its enclosing proof.
@@ -1596,6 +1931,13 @@ impl<'a> Proof<'a> {
         else {
             return Err(self.step_error("`branch` source region did not contain a C `if`"));
         };
+        let surface_condition = surface_with_source_site(
+            &surface_c_condition(&condition),
+            &ProgramPointRef {
+                region: CodeRegionRef::Statement(statement_index),
+                kind: ProgramPointKind::Entry,
+            },
+        )?;
         let transitions = certified_proof_condition_transitions(
             &current_state,
             &self.state.facts,
@@ -1669,6 +2011,35 @@ impl<'a> Proof<'a> {
                 context.tactic_index,
                 "branch",
             )?;
+            let surface_path_fact = if take_then {
+                surface_condition.clone()
+            } else {
+                negate_click_proposition(&surface_condition)
+            };
+            let pre_state = arm_execution
+                .replay
+                .old_reference_state(&arm_execution.state);
+            let kernel_path_fact = lower_point_proposition_with_assumptions(
+                &surface_path_fact,
+                transition.pure_facts.assumptions(),
+                context.parsed_function.parameters(),
+                context.arguments,
+                pre_state,
+                &arm_execution.state,
+                None,
+                &arm_execution.replay.program_point_states,
+                context.predicate_environment,
+                context.click_function_environment,
+            )
+            .map_err(|message| {
+                self.step_error(format!(
+                    "could not retain the checked C branch condition spelling: {message}"
+                ))
+            })?;
+            arm_execution
+                .replay
+                .surface_propositions
+                .record_lowering(&surface_path_fact, &kernel_path_fact)?;
             arm_execution.replay.has_structured_branch_history = true;
             arm_execution.branch_path.push(format!(
                 "{} arm of C `if` at statement({statement_index})",
@@ -2974,6 +3345,20 @@ impl<'a> Proof<'a> {
             return Ok(None);
         }
         let mut local_dependencies = BTreeSet::new();
+        if allow_unrelated_context {
+            for fact in self.state.added_facts.iter() {
+                if execution
+                    .replay
+                    .surface_propositions
+                    .surfaces(fact)
+                    .next()
+                    .is_some()
+                    && !selected.contains(fact)
+                {
+                    selected.push(fact.clone());
+                }
+            }
+        }
         if let Some(name) = assigned_local {
             for fact in execution
                 .replay
@@ -3930,6 +4315,12 @@ impl<'a> Proof<'a> {
         match self.context.as_ref() {
             ProofContext::Pure(_) => self.apply_pure_rewrite(surface_equality),
             ProofContext::Point(context) => self.apply_point_rewrite(context, surface_equality),
+            // A nested execution `have` is still a proposition proof. It
+            // borrows the execution context only for lowering; its scope join
+            // restores the exact outer frontier after this checked rewrite.
+            ProofContext::Execution(_) if self.goal().is_some() => {
+                self.apply_pure_rewrite(surface_equality)
+            }
             ProofContext::Execution(_) => {
                 Err(self.step_error("`rewrite` requires a proposition proof"))
             }
@@ -4502,7 +4893,184 @@ impl<'a> ProofBranches<'a> {
     }
 }
 
+impl<'a> ExecutionOutcomeProofBranches<'a> {
+    fn check_arm_certificate(
+        mut self,
+        arm_index: usize,
+        certificate: &ProofCertificate,
+        origin: Option<ProofStepOrigin>,
+    ) -> Result<Self, ClickError> {
+        self.arms[arm_index] = self.arms[arm_index]
+            .apply_contextual_frame_candidate_certificate(certificate, origin)?;
+        Ok(self)
+    }
+
+    /// Joins two exhaustive terminal outcome partitions after both have
+    /// checked the same effect selection. Each arm may retain different
+    /// simple evidence, but ordered finalization receives one authority and
+    /// therefore performs the resource transition once per original path.
+    fn join(self) -> Result<Proof<'a>, ClickError> {
+        let ProofContext::Execution(context) = self.root.context.as_ref() else {
+            unreachable!("execution outcome branches retained a non-execution context")
+        };
+        let expected_effects = self.root.selected_effect_indices(context)?;
+        let arm_certificates = [
+            self.arms[0].certificate_since(&self.root_checkpoint)?,
+            self.arms[1].certificate_since(&self.root_checkpoint)?,
+        ];
+        let mut checked_deferrals = Vec::with_capacity(2);
+        for (name, arm) in [("then", &self.arms[0]), ("else", &self.arms[1])] {
+            if !matches!(arm.state.goal, Goal::Frontier(EffectGoalSelection::None)) {
+                return Err(self.root.step_error(format!(
+                    "execution outcome {name} arm did not close its effect goal"
+                )));
+            }
+            let execution = arm.state.execution.as_ref().ok_or_else(|| {
+                self.root.step_error(format!(
+                    "execution outcome {name} arm lost its semantic frontier"
+                ))
+            })?;
+            if !execution.replay.is_at_function_exit() {
+                return Err(self.root.step_error(format!(
+                    "execution outcome {name} arm did not remain at function exit"
+                )));
+            }
+            let mut added = execution
+                .replay
+                .post_execution_tactics
+                .iter()
+                .skip(self.root_post_execution_count);
+            let deferred = added.next().ok_or_else(|| {
+                self.root.step_error(format!(
+                    "execution outcome {name} arm retained no checked terminal operation"
+                ))
+            })?;
+            if added.next().is_some() {
+                return Err(self.root.step_error(format!(
+                    "execution outcome {name} arm retained more than one terminal operation"
+                )));
+            }
+            let PostExecutionTactic::CheckedFrameUsing { authority, .. } = &deferred.tactic else {
+                return Err(self.root.step_error(format!(
+                    "execution outcome {name} arm did not retain checked frame authority"
+                )));
+            };
+            if authority.effect_indices.as_ref() != &expected_effects {
+                return Err(self.root.step_error(format!(
+                    "execution outcome {name} arm closed a different effect selection"
+                )));
+            }
+            checked_deferrals.push(deferred.clone());
+        }
+        if checked_deferrals[0].tactic_index != checked_deferrals[1].tactic_index
+            || checked_deferrals[0].source_index != checked_deferrals[1].source_index
+        {
+            return Err(self.root.step_error(
+                "execution outcome arms attribute their frame to different source tactics",
+            ));
+        }
+
+        let mut execution = self
+            .root
+            .state
+            .execution
+            .clone()
+            .expect("validated execution outcome branch root");
+        execution.replay.defer_checked_post_execution(
+            checked_deferrals[0].tactic_index,
+            checked_deferrals[0].source_index,
+            PostExecutionTactic::CheckedFrameUsing {
+                authority: CheckedFrameAuthority::new(expected_effects),
+                // The structured node below owns the two exact surface
+                // spellings. This deferral is semantic authority only.
+                region: None,
+                premises: Vec::new(),
+            },
+        );
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        Ok(Proof {
+            context: self.root.context.clone(),
+            state: Arc::new(ProofState {
+                facts: self.root.state.facts.clone(),
+                locals: self.root.state.locals.clone(),
+                unfolded_predicates: self.root.state.unfolded_predicates.clone(),
+                goal: Goal::Frontier(EffectGoalSelection::None),
+                complete: false,
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+                execution: Some(execution),
+            }),
+            node: Arc::new(ProofNode {
+                parent: Some(self.root.node.clone()),
+                step: Some(Arc::new(SimpleProofStep::If {
+                    condition: self.condition,
+                    then_proof: Box::new(arm_certificates[0].clone()),
+                    else_proof: Box::new(arm_certificates[1].clone()),
+                })),
+                depth: self.root.node.depth + 1,
+            }),
+        })
+    }
+}
+
 impl<'a> ExecutionProofBranches<'a> {
+    /// Re-derives one terminal arm from its retained Surface certificate.
+    /// `join_terminal` records one synthetic branch-entry `step using` (two
+    /// for an empty C arm); those structural entry steps are validated here
+    /// and skipped because `begin_execution_branch` already performed them.
+    pub(super) fn check_terminal_arm_certificate(
+        mut self,
+        take_then: bool,
+        certificate: &ProofCertificate,
+    ) -> Result<Self, ClickError> {
+        let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
+            self.root
+                .step_error("execution branch root lost its semantic state")
+        })?;
+        let ProofContext::Execution(context) = self.root.context.as_ref() else {
+            unreachable!("execution branch retained a non-execution context")
+        };
+        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+            &root_execution.replay,
+            &root_execution.state,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "terminal branch certificate",
+        )?;
+        let CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } = statement
+        else {
+            return Err(self
+                .root
+                .step_error("terminal branch certificate root is not a C `if`"));
+        };
+        let source_arm = if take_then {
+            then_branch.as_ref()
+        } else {
+            else_branch.as_ref()
+        };
+        let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
+        if certificate.steps().len() < entry_steps
+            || !certificate.steps()[..entry_steps].iter().all(
+                |step| matches!(step, SimpleProofStep::StepUsing(premises) if premises.is_empty()),
+            )
+        {
+            return Err(self.root.step_error(format!(
+                "terminal execution {} certificate does not begin with its {entry_steps} checked branch-entry step(s)",
+                if take_then { "then" } else { "else" },
+            )));
+        }
+        for step in &certificate.steps()[entry_steps..] {
+            self = self.apply_step(take_then, step.clone())?;
+        }
+        Ok(self)
+    }
+
     fn retain_arm_successor(
         arm: &mut ExecutionProofArm<'a>,
         successor: Proof<'a>,
@@ -5401,6 +5969,37 @@ impl<'a> ProofScope<'a> {
         Ok(next)
     }
 
+    pub(super) fn checkpoint(&self) -> ProofCheckpoint<'a> {
+        self.body.checkpoint()
+    }
+
+    pub(super) fn certificate_since(
+        &self,
+        checkpoint: &ProofCheckpoint<'a>,
+    ) -> Result<ProofCertificate, ClickError> {
+        self.body.certificate_since(checkpoint)
+    }
+
+    /// Checks an already-expanded, branch-shaped contextual frame through the
+    /// same outcome-partition operation used by smart frame search.
+    pub(super) fn apply_contextual_frame_certificate_at(
+        &self,
+        certificate: &ProofCertificate,
+        tactic_index: usize,
+        source_index: usize,
+    ) -> Result<Self, ClickError> {
+        let body = self.body.apply_contextual_frame_candidate_certificate(
+            certificate,
+            Some(ProofStepOrigin {
+                tactic_index,
+                source_index,
+            }),
+        )?;
+        let mut next = self.clone();
+        next.body = body;
+        Ok(next)
+    }
+
     /// Applies a source-owned simple step inside the scope. Terminal steps use
     /// the site only to schedule already-checked ordered outcome work.
     pub(super) fn apply_step_at(
@@ -5466,7 +6065,7 @@ impl<'a> ProofScope<'a> {
         if region.is_some() {
             return Ok(None);
         }
-        let Some(candidate) = self.body.select_flat_contextual_frame_candidate()? else {
+        let Some(candidate) = self.body.select_contextual_frame_candidate()? else {
             return Ok(None);
         };
         let origin = Some(ProofStepOrigin {
@@ -5475,7 +6074,7 @@ impl<'a> ProofScope<'a> {
         });
         let body = self
             .body
-            .check_certificate_with_origin(&candidate, origin)
+            .apply_contextual_frame_candidate_certificate(&candidate, origin)
             .map_err(|error| {
                 self.root.step_error(format!(
                     "smart frame selected a simple candidate that Proof rejected: {}",

@@ -5092,6 +5092,123 @@ fn smart_execute_retains_nested_terminal_c_branches_before_checked_frame() {
 }
 
 #[test]
+fn contextual_frame_checks_path_specific_evidence_on_partitioned_outcomes() {
+    let c_source = r#"
+        int32 write_conditionally_indexed(int32 p[1], int32 index) {
+            if (index == 0) {
+                p[index] = 1;
+            } else {
+                p[0] = 2;
+            }
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "write_conditionally_indexed.c";
+
+        int32 write_conditionally_indexed(int32 p[1], int32 index) {
+            owns marker(index);
+            consumes p[0..1];
+            mutable p[0..1];
+            ensures result == 0;
+        } by {
+            open(marker(index)) {
+                execute();
+                frame();
+            }
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("write_conditionally_indexed.c", c_source)])
+    });
+    let verified =
+        verified.expect("path-specific frame evidence should check on outcome partitions");
+    let forbidden_operations = events
+        .iter()
+        .filter_map(|event| match event {
+            crate::instrumentation::VerificationEvent::OperationFinished {
+                claim, name, ..
+            } if claim == "write_conditionally_indexed.contract"
+                && matches!(
+                    name.as_str(),
+                    "surface certificate replay" | "frame exact effect check"
+                ) =>
+            {
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        forbidden_operations.is_empty(),
+        "partitioned frame search must neither replay nor recheck its checked Proof arms: {forbidden_operations:?}"
+    );
+    let resource_transitions = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                    if claim == "write_conditionally_indexed.contract"
+                        && name == "frame resource transition"
+            )
+        })
+        .count();
+    assert_eq!(
+        resource_transitions, 4,
+        "source verification and the independent expansion gate must each transition both original outcomes once"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("partitioned frame should retain an expansion");
+    let Some(ProofTactic::Open(open)) = tactics.first() else {
+        panic!("{tactics:#?}");
+    };
+    let frame_branch = open
+        .tactics
+        .iter()
+        .rev()
+        .find_map(|tactic| match tactic {
+            ProofTactic::If(proof_if)
+                if matches!(
+                    proof_if.then_tactics.last(),
+                    Some(ProofTactic::FrameUsing { region: None, .. })
+                ) && matches!(
+                    proof_if.else_tactics.last(),
+                    Some(ProofTactic::FrameUsing { region: None, .. })
+                ) =>
+            {
+                Some(proof_if)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("frame evidence should remain branch-local: {tactics:#?}"));
+    assert!(
+        frame_branch
+            .then_tactics
+            .iter()
+            .chain(&frame_branch.else_tactics)
+            .any(|tactic| matches!(tactic, ProofTactic::Have(_))),
+        "one outcome partition should retain its explicit derived bound: {tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("write_conditionally_indexed.c", c_source)],
+        "write_conditionally_indexed",
+        CProofClaim::Grouped,
+    )
+    .expect("partitioned contextual frame should expand");
+    verify_c0_sources(&expanded, &[("write_conditionally_indexed.c", c_source)])
+        .expect("the retained outcome-partition certificate should independently replay");
+}
+
+#[test]
 fn linear_execute_until_inside_open_stops_on_checked_frontier() {
     let c_source = r#"
         int32 three_steps(int32 x) {

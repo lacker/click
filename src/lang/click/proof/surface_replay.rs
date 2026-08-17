@@ -1966,10 +1966,21 @@ pub(super) fn append_simple_proof_step_for_operation(
                     check_verification_deadline()?;
                     let mut tactics = Vec::new();
                     let mut premises = Vec::new();
+                    let mut path_available = available.to_vec();
+                    for fact in derivations
+                        .iter()
+                        .flat_map(PropositionDerivation::context_premises)
+                    {
+                        if !path_available.contains(&fact) {
+                            path_available.push(fact);
+                        }
+                    }
                     // A certified frame's derivation contexts are its exact
-                    // dependency boundary. Surface-lowering every ambient
-                    // snapshot here made expansion grow with unrelated proof
-                    // history even though exact replay never consulted it.
+                    // per-path dependency boundary. Lower against that
+                    // boundary rather than the global proof facts: a branch
+                    // fact may be named only in the leaf whose derivation
+                    // selected it, while unrelated ambient history remains
+                    // invisible.
                     for fact in derivations
                         .iter()
                         .flat_map(PropositionDerivation::context_premises)
@@ -1978,7 +1989,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         if let Ok(surface) = checked_surface_fact_at_point(
                             replay,
                             &fact,
-                            available,
+                            &path_available,
                             parameters,
                             arguments,
                             state,
@@ -2028,7 +2039,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             derivation,
                             None,
                             anchor_point.as_ref(),
-                            available,
+                            &path_available,
                             parameters,
                             arguments,
                             state,
