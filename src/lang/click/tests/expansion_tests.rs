@@ -4730,6 +4730,74 @@ fn explicit_frame_inside_open_closes_its_owned_effect_goal_once() {
 }
 
 #[test]
+fn smart_immutable_frame_inside_open_selects_a_checked_simple_step() {
+    let c_source = r#"
+        int32 identity(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "identity.c";
+
+        int32 identity(int32 x) {
+            owns marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            open(marker(x)) {
+                execute();
+                frame();
+            }
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    let verified = verified.expect("the smart frame should retain its checked simple successor");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "identity.contract"
+                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+        )),
+        "smart frame search must not replay or recheck its selected step: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the smart frame proof should expose its retained certificate");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(open))
+                if matches!(
+                    open.tactics.as_slice(),
+                    [
+                        ProofTactic::StepUsing(_),
+                        ProofTactic::FrameUsing { region: None, premises }
+                    ] if premises.is_empty()
+                )
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("identity.c", c_source)],
+        "identity",
+        CProofClaim::Grouped,
+    )
+    .expect("the smart immutable frame should expand");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("the selected empty frame step should independently replay");
+}
+
+#[test]
 fn empty_mutable_frame_inside_open_retains_legacy_ambient_fact_semantics() {
     let c_source = r#"
         int32 increment(int32 p[]) {

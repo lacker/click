@@ -5216,6 +5216,31 @@ impl<'a> ProofScope<'a> {
             .supports_checked_execution_frame_using(region, premises)
     }
 
+    /// Selects the premise-free immutable frame candidate and immediately
+    /// submits it to the checked terminal operation. This is the first smart
+    /// frame slice: the search inspects the typed effect goal, but the only
+    /// semantic transition is the retained `FrameUsing` step.
+    pub(super) fn try_smart_immutable_frame_at(
+        &self,
+        region: Option<&CodeRegionRef>,
+        tactic_index: usize,
+        source_index: usize,
+    ) -> Result<Option<Self>, ClickError> {
+        let premises = Vec::new();
+        if !self.supports_checked_frame_using(region, &premises)? {
+            return Ok(None);
+        }
+        let step = SimpleProofStep::FrameUsing {
+            region: region.cloned(),
+            premises,
+        };
+        Ok(Some(self.apply_step_at(
+            step,
+            tactic_index,
+            source_index,
+        )?))
+    }
+
     /// Runs the narrow linear `execute` search inside this scope.
     ///
     /// Each selected statement is checked and retained by

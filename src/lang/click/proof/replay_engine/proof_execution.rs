@@ -69,6 +69,18 @@ fn advance_linear_open_scope<'a>(
             scope = executed;
             continue;
         }
+        if let ProofTactic::SmartFrame(region) = &indexed.tactic {
+            let Some(framed) = scope.try_smart_immutable_frame_at(
+                region.as_ref(),
+                indexed.index,
+                indexed.source_index,
+            )?
+            else {
+                return Ok(None);
+            };
+            scope = framed;
+            continue;
+        }
         if let ProofTactic::ExecuteUntil(region) = &indexed.tactic {
             let Some(executed) = scope.try_linear_execute_until(region)? else {
                 return Ok(None);
