@@ -775,6 +775,7 @@ impl<'a> Proof<'a> {
                 application,
                 premises,
             } => self.apply_theorem_using(application, premises),
+            SimpleProofStep::Step => self.apply_execution_statement_using(&[]),
             SimpleProofStep::StepUsing(premises) => self.apply_execution_statement_using(premises),
             SimpleProofStep::TransportUsing {
                 source,
@@ -10525,7 +10526,7 @@ mod tests {
 
             let before = fact_node_allocations();
             let completed = root
-                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .apply_step(SimpleProofStep::Step)
                 .expect("an explicit return step should certify");
             let allocations = fact_node_allocations() - before;
             samples.push((
@@ -10544,10 +10545,10 @@ mod tests {
             );
             assert!(matches!(
                 completed.certificate().steps(),
-                [SimpleProofStep::StepUsing(premises)] if premises.is_empty()
+                [SimpleProofStep::Step]
             ));
             let alternative = root
-                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .apply_step(SimpleProofStep::Step)
                 .expect("the retained ancestor should support another checked descendant");
             assert_eq!(alternative.certificate(), completed.certificate());
             let root_execution = root.state.execution.as_ref().expect("root execution state");
@@ -10569,7 +10570,7 @@ mod tests {
             assert!(exported.replay.is_at_function_exit());
             assert!(matches!(
                 retained_completed.certificate().steps(),
-                [SimpleProofStep::StepUsing(premises)] if premises.is_empty()
+                [SimpleProofStep::Step]
             ));
         }
 

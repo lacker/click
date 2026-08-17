@@ -1169,7 +1169,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     click_function_environment,
                     theorem_environment,
                 );
-                let proof = proof.apply_step(SimpleProofStep::StepUsing(Vec::new()))?;
+                let proof = proof.apply_step(SimpleProofStep::Step)?;
                 let result = proof.into_execution_context()?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
