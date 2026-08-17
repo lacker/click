@@ -1672,6 +1672,12 @@ pub(super) struct Int32IncrementBoundsEvidence {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Int32PredecessorUpperBoundEvidence {
+    pub(super) nonnegative: SignedOrderDerivationStep,
+    pub(super) upper_bound: SignedOrderDerivationStep,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum AtomicPropositionDerivationEvidence {
     MemoryDag(AtomicMemoryLoadEqualityEvidence),
     PointerOffsetMemoryDag(PointerOffsetEqualityEvidence),
@@ -1684,6 +1690,9 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32IncrementGreaterEqualLowerBound(Box<Int32IncrementBoundsEvidence>),
     Int32IncrementStrictGreaterLowerBound(Box<Int32IncrementBoundsEvidence>),
     Int32IncrementPreservesOrder(Box<Int32IncrementBoundsEvidence>),
+    Int32PositivePredecessorIsNonnegative(SignedOrderDerivationStep),
+    Int32PositivePredecessorStrictlyDecreases(SignedOrderDerivationStep),
+    Int32NonnegativePredecessorUpperBound(Box<Int32PredecessorUpperBoundEvidence>),
     Legacy,
 }
 

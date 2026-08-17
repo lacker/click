@@ -8,6 +8,13 @@ thread_local! {
 
 const CONTEXT_INCONSISTENCY_MEMO_LIMIT: usize = 200_000;
 
+fn exact_predecessor_base(term: &Bitvector32Term) -> Option<Bitvector32Term> {
+    let Bitvector32Term::Subtract(value, amount) = term else {
+        return None;
+    };
+    (amount.as_ref() == &Bitvector32Term::Constant(1)).then(|| value.as_ref().clone())
+}
+
 #[cfg(test)]
 thread_local! {
     static CONTEXT_INCONSISTENCY_FULL_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1083,6 +1090,61 @@ impl PureFactContext {
                 }),
             _ => None,
         };
+        let positive_predecessor_is_nonnegative_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(lower, predecessor),
+                true,
+            ) if lower.as_ref() == &Bitvector32Term::Constant(0) => {
+                exact_predecessor_base(predecessor).and_then(|value| {
+                    self.exact_direct_order_step(
+                        &Bitvector32Term::Constant(0),
+                        &value,
+                        true,
+                    )
+                    .map(
+                        AtomicPropositionDerivationEvidence::Int32PositivePredecessorIsNonnegative,
+                    )
+                })
+            }
+            _ => None,
+        };
+        let positive_predecessor_strictly_decreases_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(predecessor, value),
+                true,
+            ) => exact_predecessor_base(predecessor)
+                .filter(|base| base == value.as_ref())
+                .and_then(|base| {
+                    self.exact_direct_order_step(
+                        &Bitvector32Term::Constant(0),
+                        &base,
+                        true,
+                    )
+                    .map(
+                        AtomicPropositionDerivationEvidence::Int32PositivePredecessorStrictlyDecreases,
+                    )
+                }),
+            _ => None,
+        };
+        let nonnegative_predecessor_upper_bound_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(predecessor, upper),
+                true,
+            ) => exact_predecessor_base(predecessor).and_then(|value| {
+                let nonnegative =
+                    self.exact_direct_order_step(&Bitvector32Term::Constant(0), &value, false)?;
+                let upper_bound = self.exact_direct_order_step(&value, upper, false)?;
+                Some(
+                    AtomicPropositionDerivationEvidence::Int32NonnegativePredecessorUpperBound(
+                        Box::new(Int32PredecessorUpperBoundEvidence {
+                            nonnegative,
+                            upper_bound,
+                        }),
+                    ),
+                )
+            }),
+            _ => None,
+        };
         let result = memory_evidence
             .or(equality_path_evidence)
             .or(signed_order_evidence)
@@ -1093,6 +1155,9 @@ impl PureFactContext {
             .or(increment_greater_equal_lower_bound_evidence)
             .or(increment_strict_greater_lower_bound_evidence)
             .or(increment_preserves_order_evidence)
+            .or(positive_predecessor_is_nonnegative_evidence)
+            .or(positive_predecessor_strictly_decreases_evidence)
+            .or(nonnegative_predecessor_upper_bound_evidence)
             .or_else(|| {
                 let proved = if for_simp {
                     match proposition {
@@ -1332,6 +1397,67 @@ impl PureFactContext {
             };
             return self.replays_increment_bounds(bounds, &lower, &value);
         }
+        if let AtomicPropositionDerivationEvidence::Int32PositivePredecessorIsNonnegative(step) =
+            evidence
+        {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(lower, predecessor),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            let Some(value) = exact_predecessor_base(predecessor) else {
+                return false;
+            };
+            return lower.as_ref() == &Bitvector32Term::Constant(0)
+                && step.lower == Bitvector32Term::Constant(0)
+                && step.upper == value
+                && step.strict
+                && self.replays_exact_order_step(step);
+        }
+        if let AtomicPropositionDerivationEvidence::Int32PositivePredecessorStrictlyDecreases(
+            step,
+        ) = evidence
+        {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(predecessor, value),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            let Some(base) = exact_predecessor_base(predecessor) else {
+                return false;
+            };
+            return base == **value
+                && step.lower == Bitvector32Term::Constant(0)
+                && step.upper == base
+                && step.strict
+                && self.replays_exact_order_step(step);
+        }
+        if let AtomicPropositionDerivationEvidence::Int32NonnegativePredecessorUpperBound(bounds) =
+            evidence
+        {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(predecessor, upper),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            let Some(value) = exact_predecessor_base(predecessor) else {
+                return false;
+            };
+            return bounds.nonnegative.lower == Bitvector32Term::Constant(0)
+                && bounds.nonnegative.upper == value
+                && !bounds.nonnegative.strict
+                && bounds.upper_bound.lower == value
+                && bounds.upper_bound.upper == **upper
+                && !bounds.upper_bound.strict
+                && self.replays_exact_order_step(&bounds.nonnegative)
+                && self.replays_exact_order_step(&bounds.upper_bound);
+        }
         if !decide_memo_disabled()
             && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {
                 memo.borrow()
@@ -1354,14 +1480,74 @@ impl PureFactContext {
             .into_iter()
             .flat_map(|bounds| bounds.iter())
             .filter(|((_, strict, forward), _)| *strict && *forward)
-            .find_map(|((upper, _, _), _)| {
-                self.exact_signed_order_path_evidence(base, upper, true)
-                    .and_then(|path| match path.as_slice() {
-                        [step] if step.lower == *base && step.upper == *upper && step.strict => {
-                            Some(step.clone())
-                        }
-                        _ => None,
-                    })
+            .find_map(|((upper, _, _), _)| self.exact_direct_order_step(base, upper, true))
+    }
+
+    fn exact_direct_order_step(
+        &self,
+        lower: &Bitvector32Term,
+        upper: &Bitvector32Term,
+        strict: bool,
+    ) -> Option<SignedOrderDerivationStep> {
+        let candidates = if strict {
+            [
+                (
+                    ConditionTerm::signed_less_than(lower.clone(), upper.clone()),
+                    true,
+                ),
+                (
+                    ConditionTerm::signed_less_equal(upper.clone(), lower.clone()),
+                    false,
+                ),
+                (
+                    ConditionTerm::Bitvector32SignedGreaterThan(
+                        Box::new(upper.clone()),
+                        Box::new(lower.clone()),
+                    ),
+                    true,
+                ),
+                (
+                    ConditionTerm::Bitvector32SignedGreaterEqual(
+                        Box::new(lower.clone()),
+                        Box::new(upper.clone()),
+                    ),
+                    false,
+                ),
+            ]
+        } else {
+            [
+                (
+                    ConditionTerm::signed_less_equal(lower.clone(), upper.clone()),
+                    true,
+                ),
+                (
+                    ConditionTerm::signed_less_than(upper.clone(), lower.clone()),
+                    false,
+                ),
+                (
+                    ConditionTerm::Bitvector32SignedGreaterEqual(
+                        Box::new(upper.clone()),
+                        Box::new(lower.clone()),
+                    ),
+                    true,
+                ),
+                (
+                    ConditionTerm::Bitvector32SignedGreaterThan(
+                        Box::new(lower.clone()),
+                        Box::new(upper.clone()),
+                    ),
+                    false,
+                ),
+            ]
+        };
+        candidates
+            .into_iter()
+            .find(|(condition, truth)| self.condition_facts.get(condition) == Some(truth))
+            .map(|(condition, truth)| SignedOrderDerivationStep {
+                lower: lower.clone(),
+                upper: upper.clone(),
+                strict,
+                premise: Proposition::ConditionIs(condition, truth),
             })
     }
 
@@ -1370,14 +1556,7 @@ impl PureFactContext {
         lower: &Bitvector32Term,
         value: &Bitvector32Term,
     ) -> Option<Box<Int32IncrementBoundsEvidence>> {
-        let lower_bound = self
-            .exact_signed_order_path_evidence(lower, value, false)
-            .and_then(|path| match path.as_slice() {
-                [step] if step.lower == *lower && step.upper == *value && !step.strict => {
-                    Some(step.clone())
-                }
-                _ => None,
-            })?;
+        let lower_bound = self.exact_direct_order_step(lower, value, false)?;
         let upper_bound = self.exact_direct_strict_upper_bound_step(value)?;
         Some(Box::new(Int32IncrementBoundsEvidence {
             lower_bound,
@@ -1391,22 +1570,23 @@ impl PureFactContext {
         lower: &Bitvector32Term,
         value: &Bitvector32Term,
     ) -> bool {
-        let exact_step_replays = |step: &SignedOrderDerivationStep| {
-            matches!(
-                &step.premise,
-                Proposition::ConditionIs(condition, truth)
-                    if self.exact_condition_value(condition) == Some(*truth)
-                        && condition_as_order_fact(condition, *truth)
-                            == Some((step.lower.clone(), step.upper.clone(), step.strict))
-            )
-        };
         bounds.lower_bound.lower == *lower
             && bounds.lower_bound.upper == *value
             && !bounds.lower_bound.strict
             && bounds.upper_bound.lower == *value
             && bounds.upper_bound.strict
-            && exact_step_replays(&bounds.lower_bound)
-            && exact_step_replays(&bounds.upper_bound)
+            && self.replays_exact_order_step(&bounds.lower_bound)
+            && self.replays_exact_order_step(&bounds.upper_bound)
+    }
+
+    fn replays_exact_order_step(&self, step: &SignedOrderDerivationStep) -> bool {
+        matches!(
+            &step.premise,
+            Proposition::ConditionIs(condition, truth)
+                if self.exact_condition_value(condition) == Some(*truth)
+                    && condition_as_order_fact(condition, *truth)
+                        == Some((step.lower.clone(), step.upper.clone(), step.strict))
+        )
     }
 
     fn derive_finite_forall(

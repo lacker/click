@@ -2479,6 +2479,18 @@ fn restricted_simp_expands_positive_predecessor_to_theorem_application() {
             }
         }
     "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the typed predecessor-nonnegative rule should verify through the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "positive_predecessor_is_nonnegative.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained predecessor-nonnegative rule must not use construction replay: {events:#?}"
+    );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
         .bytes()
@@ -2517,6 +2529,18 @@ fn restricted_simp_expands_positive_predecessor_decrease_to_theorem_application(
             }
         }
     "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the typed predecessor-decrease rule should verify through the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "positive_predecessor_decreases.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained predecessor-decrease rule must not use construction replay: {events:#?}"
+    );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
         .bytes()
@@ -2541,6 +2565,48 @@ fn restricted_simp_expands_positive_predecessor_decrease_to_theorem_application(
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+}
+
+#[test]
+fn restricted_simp_expands_predecessor_upper_bound_to_theorem_application() {
+    let click_source = r#"
+        theorem predecessor_keeps_upper_bound(value: int32, bound: int32) {
+            requires 0 <= value;
+            requires value <= bound;
+            ensures value - 1 <= bound by {
+                simp() using {
+                    0 <= value;
+                    value <= bound;
+                }
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the typed predecessor-upper-bound rule should verify through the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "predecessor_keeps_upper_bound.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained predecessor-upper-bound rule must not use construction replay: {events:#?}"
+    );
+    let offset = click_source.find("simp() using").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("predecessor upper-bound simp should expand");
+    assert!(
+        expanded.contains("apply(int32_nonnegative_predecessor_upper_bound(value, bound)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("0 <= value;"), "{expanded}");
+    assert!(expanded.contains("value <= bound;"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded predecessor theorem should replay");
 }
 
 #[test]

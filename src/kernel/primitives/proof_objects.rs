@@ -165,6 +165,51 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact strict positivity premise selected when the atomic
+    /// prover established that a predecessor is nonnegative.
+    pub fn int32_positive_predecessor_is_nonnegative_step(
+        &self,
+    ) -> Option<&SignedOrderDerivationStep> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32PositivePredecessorIsNonnegative(step),
+                ..
+            } => Some(step),
+            _ => None,
+        }
+    }
+
+    /// Return the exact strict positivity premise selected when the atomic
+    /// prover established that a predecessor strictly decreases its input.
+    pub fn int32_positive_predecessor_strictly_decreases_step(
+        &self,
+    ) -> Option<&SignedOrderDerivationStep> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32PositivePredecessorStrictlyDecreases(step),
+                ..
+            } => Some(step),
+            _ => None,
+        }
+    }
+
+    /// Return the exact nonnegative and upper-bound edges selected when the
+    /// atomic prover established an upper bound on a predecessor.
+    pub fn int32_nonnegative_predecessor_upper_bound_steps(
+        &self,
+    ) -> Option<(&SignedOrderDerivationStep, &SignedOrderDerivationStep)> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32NonnegativePredecessorUpperBound(bounds),
+                ..
+            } => Some((&bounds.nonnegative, &bounds.upper_bound)),
+            _ => None,
+        }
+    }
+
     pub fn context_premises(&self) -> Vec<Proposition> {
         let mut premises = BTreeSet::new();
         self.collect_context_premises(&mut premises);

@@ -344,6 +344,42 @@ pub(super) fn lower_surface_atomic_derivation(
                 false,
             )
         });
+    let typed_positive_predecessor_nonnegative_pairs =
+        recorded_int32_positive_predecessor_is_nonnegative_pairs(derivation, &premise_pairs);
+    let typed_positive_predecessor_nonnegative_plan = typed_positive_predecessor_nonnegative_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_positive_predecessor_is_nonnegative_for_context(
+                &lowered_conclusion,
+                pairs,
+                false,
+            )
+        });
+    let typed_positive_predecessor_decrease_pairs =
+        recorded_int32_positive_predecessor_strictly_decreases_pairs(derivation, &premise_pairs);
+    let typed_positive_predecessor_decrease_plan = typed_positive_predecessor_decrease_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_positive_predecessor_strictly_decreases_for_context(
+                &lowered_conclusion,
+                pairs,
+                false,
+            )
+        });
+    let typed_predecessor_upper_bound_pairs =
+        recorded_int32_nonnegative_predecessor_upper_bound_pairs(derivation, &premise_pairs);
+    let typed_predecessor_upper_bound_plan = typed_predecessor_upper_bound_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_nonnegative_predecessor_upper_bound_for_context(
+                &lowered_conclusion,
+                pairs,
+                false,
+            )
+        });
     let typed_path_spelled = typed_order_plan.is_some()
         || typed_equality_plan.is_some()
         || typed_increment_plan.is_some()
@@ -352,7 +388,10 @@ pub(super) fn lower_surface_atomic_derivation(
         || typed_increment_lower_bound_plan.is_some()
         || typed_increment_greater_equal_plan.is_some()
         || typed_increment_strict_greater_plan.is_some()
-        || typed_increment_preserves_order_plan.is_some();
+        || typed_increment_preserves_order_plan.is_some()
+        || typed_positive_predecessor_nonnegative_plan.is_some()
+        || typed_positive_predecessor_decrease_plan.is_some()
+        || typed_predecessor_upper_bound_plan.is_some();
     if typed_order_plan.is_some() {
         premise_pairs = typed_order_pairs.expect("a typed order plan retains its path premises");
     } else if typed_equality_plan.is_some() {
@@ -379,6 +418,15 @@ pub(super) fn lower_surface_atomic_derivation(
     } else if typed_increment_preserves_order_plan.is_some() {
         premise_pairs = typed_increment_preserves_order_pairs
             .expect("a typed increment-order plan retains both exact premises");
+    } else if typed_positive_predecessor_nonnegative_plan.is_some() {
+        premise_pairs = typed_positive_predecessor_nonnegative_pairs
+            .expect("a typed predecessor-nonnegative plan retains its exact premise");
+    } else if typed_positive_predecessor_decrease_plan.is_some() {
+        premise_pairs = typed_positive_predecessor_decrease_pairs
+            .expect("a typed predecessor-decrease plan retains its exact premise");
+    } else if typed_predecessor_upper_bound_plan.is_some() {
+        premise_pairs = typed_predecessor_upper_bound_pairs
+            .expect("a typed predecessor-upper-bound plan retains both exact premises");
     }
     if !surface_normalizes_context_free
         && !typed_path_spelled
@@ -560,6 +608,30 @@ pub(super) fn lower_surface_atomic_derivation(
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "recorded increment-order rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_positive_predecessor_nonnegative_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded predecessor-nonnegative rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_positive_predecessor_decrease_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded predecessor-decrease rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_predecessor_upper_bound_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded predecessor-upper-bound rule produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -3110,6 +3182,51 @@ pub(super) fn recorded_int32_increment_preserves_order_pairs(
         .collect()
 }
 
+pub(super) fn recorded_int32_positive_predecessor_is_nonnegative_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    let premise = derivation
+        .int32_positive_predecessor_is_nonnegative_step()?
+        .premise();
+    premise_pairs
+        .iter()
+        .find(|(kernel, _)| kernel == premise)
+        .cloned()
+        .map(|pair| vec![pair])
+}
+
+pub(super) fn recorded_int32_positive_predecessor_strictly_decreases_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    let premise = derivation
+        .int32_positive_predecessor_strictly_decreases_step()?
+        .premise();
+    premise_pairs
+        .iter()
+        .find(|(kernel, _)| kernel == premise)
+        .cloned()
+        .map(|pair| vec![pair])
+}
+
+pub(super) fn recorded_int32_nonnegative_predecessor_upper_bound_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    let (nonnegative, upper_bound) =
+        derivation.int32_nonnegative_predecessor_upper_bound_steps()?;
+    [nonnegative.premise(), upper_bound.premise()]
+        .into_iter()
+        .map(|premise| {
+            premise_pairs
+                .iter()
+                .find(|(kernel, _)| kernel == premise)
+                .cloned()
+        })
+        .collect()
+}
+
 pub(super) fn plan_recorded_int32_increment_upper_bound_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
@@ -3188,6 +3305,42 @@ pub(super) fn plan_recorded_int32_increment_preserves_order_for_context(
     point_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_increment_preserves_order(goal, premise_pairs)?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut tactics)?;
+    }
+    Some(tactics)
+}
+
+pub(super) fn plan_recorded_int32_positive_predecessor_is_nonnegative_for_context(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
+    let mut tactics = plan_explicit_positive_predecessor_is_nonnegative(goal, premise_pairs)?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut tactics)?;
+    }
+    Some(tactics)
+}
+
+pub(super) fn plan_recorded_int32_positive_predecessor_strictly_decreases_for_context(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
+    let mut tactics = plan_explicit_positive_predecessor_strictly_decreases(goal, premise_pairs)?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut tactics)?;
+    }
+    Some(tactics)
+}
+
+pub(super) fn plan_recorded_int32_nonnegative_predecessor_upper_bound_for_context(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
+    let mut tactics = plan_explicit_predecessor_upper_bound(goal, premise_pairs, false)?;
     if point_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }

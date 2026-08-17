@@ -1894,6 +1894,39 @@ impl<'a> Proof<'a> {
                     &recorded,
                     point_application_closes_goal,
                 )
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_positive_predecessor_is_nonnegative_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_positive_predecessor_is_nonnegative_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_positive_predecessor_strictly_decreases_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_positive_predecessor_strictly_decreases_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_nonnegative_predecessor_upper_bound_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_nonnegative_predecessor_upper_bound_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
             })?;
         let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
         let proof = self.check_certificate(&candidate).ok()?;
@@ -7516,6 +7549,213 @@ mod tests {
                         SimpleProofStep::Assumption,
                     ] if application.name == *theorem_name
                         && premises.as_slice() == selected_premises
+                ));
+                assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+                assert!(pure_root.certificate().steps().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn predecessor_simps_retain_indexed_named_rule_premises() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("the standard predecessor theorems should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test C function should parse");
+        let state = CState::new();
+        let arguments = Vec::new();
+        let program_point_states = ProgramPointStates::new();
+        let value = Bitvector32Term::Variable(Variable(8_179_000));
+        let bound = Bitvector32Term::Variable(Variable(8_179_001));
+        let expression = |term: Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term)))
+        };
+        let predecessor = || {
+            ContractExpression::Subtract(
+                Box::new(expression(value.clone())),
+                Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
+            )
+        };
+        let positive = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(0)),
+            operator: ComparisonOperator::LessThan,
+            right: expression(value.clone()),
+        };
+        let nonnegative = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(0)),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(value.clone()),
+        };
+        let bounded = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(bound.clone()),
+        };
+        let surface_goals = [
+            (
+                ClickProposition::Comparison {
+                    left: expression(Bitvector32Term::Constant(0)),
+                    operator: ComparisonOperator::LessEqual,
+                    right: predecessor(),
+                },
+                "int32_positive_predecessor_is_nonnegative",
+                vec![positive.clone()],
+            ),
+            (
+                ClickProposition::Comparison {
+                    left: predecessor(),
+                    operator: ComparisonOperator::LessThan,
+                    right: expression(value.clone()),
+                },
+                "int32_positive_predecessor_strictly_decreases",
+                vec![positive.clone()],
+            ),
+            (
+                ClickProposition::Comparison {
+                    left: predecessor(),
+                    operator: ComparisonOperator::LessEqual,
+                    right: expression(bound),
+                },
+                "int32_nonnegative_predecessor_upper_bound",
+                vec![nonnegative.clone(), bounded.clone()],
+            ),
+        ];
+        let lower_surface = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the fixed predecessor proposition should lower")
+        };
+        let kernel_positive = lower_surface(&positive);
+        let kernel_nonnegative = lower_surface(&nonnegative);
+        let kernel_bounded = lower_surface(&bounded);
+        let goals = surface_goals
+            .iter()
+            .map(|(surface, theorem, selected)| {
+                (lower_surface(surface), *theorem, selected.clone())
+            })
+            .collect::<Vec<_>>();
+        let mut surface_propositions = SurfacePropositionMap::default();
+        for (surface, kernel) in [
+            (&positive, &kernel_positive),
+            (&nonnegative, &kernel_nonnegative),
+            (&bounded, &kernel_bounded),
+        ] {
+            surface_propositions
+                .record_lowering(surface, kernel)
+                .expect("each exact predecessor premise should be indexed");
+        }
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.extend([
+                kernel_positive.clone(),
+                kernel_nonnegative.clone(),
+                kernel_bounded.clone(),
+            ]);
+            for (goal, theorem_name, selected) in &goals {
+                let root = Proof::for_point_goal(
+                    "persistent point predecessor simp",
+                    0,
+                    &facts,
+                    goal.clone(),
+                    parsed_function.parameters(),
+                    &arguments,
+                    &state,
+                    &state,
+                    &program_point_states,
+                    &surface_propositions,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &theorem_environment,
+                    &[],
+                    &[],
+                );
+                let retained_root = root.clone();
+                let before = fact_node_allocations();
+                let closed = root
+                    .try_simp_closure()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "the typed predecessor rule {theorem_name} should build a checked Proof descendant"
+                        )
+                    });
+                let allocations = fact_node_allocations() - before;
+                let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+                let allocation_bound = 96 * logarithmic_height + 384;
+                assert!(
+                    allocations <= allocation_bound,
+                    "size {size} point {theorem_name} allocated {allocations} persistent nodes (bound {allocation_bound})"
+                );
+                assert!(closed.is_complete());
+                assert!(matches!(
+                    closed.certificate().steps(),
+                    [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                        if application.name == *theorem_name && premises == selected
+                ));
+                assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+                assert!(root.certificate().steps().is_empty());
+
+                let theorem_context = PureTheoremContext {
+                    memory: state.memory().clone(),
+                    values: BTreeMap::new(),
+                    array_refs: BTreeMap::new(),
+                    requires: facts.clone(),
+                    surface_requirements: surface_propositions.clone(),
+                };
+                let pure_root = Proof::for_pure_goal(
+                    "persistent restricted predecessor simp",
+                    &facts,
+                    goal.clone(),
+                    &theorem_context,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &theorem_environment,
+                );
+                let retained_pure_root = pure_root.clone();
+                for omitted_index in 0..selected.len() {
+                    let omitted = selected
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| *index != omitted_index)
+                        .map(|(_, premise)| premise.clone())
+                        .collect::<Vec<_>>();
+                    assert!(
+                        pure_root.try_restricted_simp_closure(&omitted).is_none(),
+                        "omitting a theorem premise must reject the restricted candidate"
+                    );
+                    assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+                }
+                let before_restricted = fact_node_allocations();
+                let pure_closed = pure_root
+                    .try_restricted_simp_closure(selected)
+                    .expect("restricted simp should retain the checked predecessor rule");
+                let restricted_allocations = fact_node_allocations() - before_restricted;
+                assert!(
+                    restricted_allocations <= allocation_bound,
+                    "size {size} restricted {theorem_name} allocated {restricted_allocations} persistent nodes (bound {allocation_bound})"
+                );
+                assert!(pure_closed.is_complete());
+                assert!(matches!(
+                    pure_closed.certificate().steps(),
+                    [
+                        SimpleProofStep::ApplyTheoremUsing { application, premises },
+                        SimpleProofStep::Assumption,
+                    ] if application.name == *theorem_name && premises == selected
                 ));
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
                 assert!(pure_root.certificate().steps().is_empty());

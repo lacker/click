@@ -1261,6 +1261,82 @@ fn remaining_increment_bound_derivations_retain_both_exact_bounds() {
 }
 
 #[test]
+fn predecessor_derivations_retain_their_exact_named_rule_premises() {
+    let value = Bitvector32Term::Variable(Variable(221));
+    let bound = Bitvector32Term::Variable(Variable(222));
+    let zero = Bitvector32Term::Constant(0);
+    let predecessor = Bitvector32Term::Subtract(
+        Box::new(value.clone()),
+        Box::new(Bitvector32Term::Constant(1)),
+    );
+    let positive = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_than(value.clone(), zero.clone()),
+        true,
+    );
+    let nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(value.clone(), zero.clone()),
+        true,
+    );
+    let bounded = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(bound.clone(), value.clone()),
+        true,
+    );
+
+    let positive_assumptions = PureFactContext::new().assume_proposition(positive.clone());
+    let nonnegative_goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(zero.clone(), predecessor.clone()),
+        true,
+    );
+    let nonnegative_derivation = positive_assumptions
+        .derive_simp_proposition(&nonnegative_goal)
+        .expect("strict positivity should prove a nonnegative predecessor");
+    let nonnegative_step = nonnegative_derivation
+        .int32_positive_predecessor_is_nonnegative_step()
+        .expect("the decision should retain its exact positivity premise");
+    assert_eq!(nonnegative_step.lower(), &zero);
+    assert_eq!(nonnegative_step.upper(), &value);
+    assert!(nonnegative_step.is_strict());
+    assert_eq!(nonnegative_step.premise(), &positive);
+    assert!(nonnegative_derivation.replay(&positive_assumptions));
+
+    let decrease_goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(predecessor.clone(), value.clone()),
+        true,
+    );
+    let decrease_derivation = positive_assumptions
+        .derive_simp_proposition(&decrease_goal)
+        .expect("strict positivity should prove predecessor decrease");
+    let decrease_step = decrease_derivation
+        .int32_positive_predecessor_strictly_decreases_step()
+        .expect("the decision should retain its exact positivity premise");
+    assert_eq!(decrease_step.premise(), &positive);
+    assert!(decrease_derivation.replay(&positive_assumptions));
+
+    let bounded_assumptions = PureFactContext::new()
+        .assume_proposition(nonnegative.clone())
+        .assume_proposition(bounded.clone());
+    let bounded_goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(predecessor, bound.clone()),
+        true,
+    );
+    let bounded_derivation = bounded_assumptions
+        .derive_simp_proposition(&bounded_goal)
+        .expect("the two exact bounds should prove the predecessor bound");
+    let (nonnegative_step, bounded_step) = bounded_derivation
+        .int32_nonnegative_predecessor_upper_bound_steps()
+        .expect("the decision should retain both exact bound premises");
+    assert_eq!(nonnegative_step.lower(), &zero);
+    assert_eq!(nonnegative_step.upper(), &value);
+    assert!(!nonnegative_step.is_strict());
+    assert_eq!(nonnegative_step.premise(), &nonnegative);
+    assert_eq!(bounded_step.lower(), &value);
+    assert_eq!(bounded_step.upper(), &bound);
+    assert!(!bounded_step.is_strict());
+    assert_eq!(bounded_step.premise(), &bounded);
+    assert!(bounded_derivation.replay(&bounded_assumptions));
+}
+
+#[test]
 fn bitvector_equality_derivation_retains_its_exact_oriented_path() {
     let left = Bitvector32Term::Variable(Variable(215));
     let middle = Bitvector32Term::Variable(Variable(216));

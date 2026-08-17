@@ -250,6 +250,24 @@ surface-certificate replay or ambient rewrite harvesting. The shared
 16-through-4096 family curve covers accepted applications, either-premise
 rejection, ancestor isolation, and logarithmic persistent allocation.
 
+The three direct predecessor rules now retain typed evidence as well.
+`int32_positive_predecessor_is_nonnegative` and
+`int32_positive_predecessor_strictly_decreases` retain the exact strict
+positivity source. `int32_nonnegative_predecessor_upper_bound` retains its
+exact nonnegative and upper-bound sources behind a boxed two-edge payload.
+Exact direct-edge selection probes the four polarity/orientation spellings by
+persistent-map lookup, so a coexisting strict and non-strict edge cannot make
+the path chooser discard the theorem's required source. Replay checks the
+literal predecessor shape, rule-specific conclusion, endpoints, strictness,
+and exact original facts. Point and restricted-pure Proof regressions cover
+all three rules over 16 through 4096 unrelated facts, including rejected
+premise subsets; independent expansion checks all three named applications.
+
+Outcome predecessor proofs that first derive a missing nonnegative leg by
+equality rewriting deliberately remain legacy. Their retained object must
+include that nested equality derivation rather than falsely presenting the
+derived leg as a direct source premise.
+
 Multi-premise evidence is stored behind an indirection. Inlining the two
 retained propositions in the evidence enum enlarged unrelated recursive proof
 frames enough to overflow the existing deeply branched `sort3` expansion.
@@ -263,6 +281,6 @@ narrow, fuel-free one-premise rule as the named theorem; this does not admit
 general interval reconstruction into the simple checker.
 
 These are the first members of the interval/overflow family, not completion
-of that family. Other arithmetic-definedness, predecessor, interval, and
-derived-order decisions remain `Legacy` until each decision retains its exact
-rule and operands.
+of that family. Other arithmetic-definedness, derived predecessor, interval,
+and derived-order decisions remain `Legacy` until each decision retains its
+exact rule and operands.

@@ -1062,7 +1062,7 @@ logarithmic persistent updates for both the point theorem and rewrite paths.
 Execution-frontier atomic search and the remaining non-order/equality theory
 decisions still require their corresponding typed Proof queries.
 
-The first seven named arithmetic decisions now cross the same boundary. The
+The first ten named arithmetic decisions now cross the same boundary. The
 kernel retains `Int32IncrementUpperBound` and
 `Int32IncrementStrictlyIncreases` evidence, plus
 `Int32IncrementBelowMaxIsDefined` evidence for `defined(value + 1)`, with
@@ -1094,6 +1094,18 @@ Contract certification has the matching narrow, fuel-free
 crosses the seam without invoking general arithmetic search.
 The rest of the named arithmetic family remains a typed-provenance migration
 under the child issue.
+
+Three direct predecessor decisions now use the same theorem-application seam:
+positive-to-nonnegative, positive-to-strict-decrease, and the two-premise
+nonnegative predecessor upper bound. Exact premise selection uses a bounded
+set of persistent-map lookups across comparison orientations, so a coexisting
+strict edge cannot displace the non-strict theorem leg. Both pure and point
+Proof paths retain only the accepted named application, reject missing
+premises without mutating their ancestor, and stay within logarithmic
+persistent-allocation bounds from 16 through 4096 unrelated facts. The
+outcome path that synthesizes a missing nonnegative leg through equality
+rewrites remains separate migration work because its certificate must retain
+that nested derivation.
 
 Resource operations remain a distinct representation prerequisite rather
 than being wrapped around the legacy vector APIs. `ResourceContext` currently
