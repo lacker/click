@@ -1392,6 +1392,18 @@ the nested certificate shape, and independently verifies expansion. Branches
 with one feasible arm, assertions, structural arm bodies, or a structural
 continuation still take the legacy path.
 
+Straight-line smart `execute()` inside an open resource scope now searches on
+the scope's checked child `Proof` itself. The indexed statement query selects
+one explicit `StepUsing`, submits it immediately through `apply_step`, and the
+executor repeats only over the returned descendant; it never advances a
+planning clone or reconstructs steps from semantic aftermath. The scope path
+is selected only when at least one checked statement reaches function exit,
+so unsupported statements and branches still fall back without publishing a
+partial descendant. A source regression pins the retained pair of statement
+steps, observes no ordinary construction replay, and independently verifies
+the expanded scope. General execute search, branch traversal, and
+`execute_until` remain to migrate.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

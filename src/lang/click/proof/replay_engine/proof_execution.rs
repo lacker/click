@@ -51,6 +51,16 @@ fn advance_linear_open_scope<'a>(
             scope = scope.apply_step(step)?;
             continue;
         }
+        if matches!(
+            indexed.tactic,
+            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
+        ) {
+            let Some(executed) = scope.try_linear_execute()? else {
+                return Ok(None);
+            };
+            scope = executed;
+            continue;
+        }
         let ProofTactic::Have(have) = &indexed.tactic else {
             return Ok(None);
         };

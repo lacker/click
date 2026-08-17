@@ -2622,6 +2622,17 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Whether this execution proof has reached the function-exit frontier.
+    ///
+    /// This is a read-only smart-tactic query: it exposes no replay state and
+    /// grants no authority to advance the proof.
+    fn is_at_function_exit(&self) -> bool {
+        self.state
+            .execution
+            .as_ref()
+            .is_some_and(|execution| execution.replay.is_at_function_exit())
+    }
+
     /// Searches explicit premise spellings for one point fact transport.
     ///
     /// Every candidate is checked by applying the corresponding simple step
@@ -4858,6 +4869,38 @@ impl<'a> ProofScope<'a> {
         }
         next.body = body;
         Ok(next)
+    }
+
+    /// Runs the narrow linear `execute` search inside this scope.
+    ///
+    /// Each selected statement is checked and retained by
+    /// `Proof::try_indexed_statement_step`; the search never mutates a second
+    /// semantic context or reconstructs steps from its aftermath. A partial
+    /// advance is discarded unless the checked descendant reaches function
+    /// exit, so unsupported frontiers continue through the legacy path.
+    pub(super) fn try_linear_execute(&self) -> Result<Option<Self>, ClickError> {
+        let mut proof = self.body.clone();
+        let mut introduced_facts = self.introduced_facts.clone();
+        let mut advanced = false;
+        while !proof.is_at_function_exit() {
+            let Some(next) = proof.try_indexed_statement_step()? else {
+                return Ok(None);
+            };
+            for fact in next.added_facts() {
+                if !introduced_facts.contains(fact) {
+                    introduced_facts.push(fact.clone());
+                }
+            }
+            proof = next;
+            advanced = true;
+        }
+        if !advanced {
+            return Ok(None);
+        }
+        let mut next = self.clone();
+        next.introduced_facts = introduced_facts;
+        next.body = proof;
+        Ok(Some(next))
     }
 
     /// Runs the small shared smart closure search inside the nested proof.
