@@ -4798,7 +4798,7 @@ fn smart_immutable_frame_inside_open_selects_a_checked_simple_step() {
 }
 
 #[test]
-fn empty_mutable_frame_inside_open_retains_legacy_ambient_fact_semantics() {
+fn mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate() {
     let c_source = r#"
         int32 increment(int32 p[]) {
             p[0] = p[0] + 1;
@@ -4828,6 +4828,48 @@ fn empty_mutable_frame_inside_open_retains_legacy_ambient_fact_semantics() {
 
     verify_c0_sources(click_source, &[("increment.c", c_source)])
         .expect("an empty mutable frame must fall back to ambient-fact selection");
+
+    let smart_source = click_source.replace("frame() using {};", "frame();");
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(&smart_source, &[("increment.c", c_source)])
+    });
+    let verified = verified.expect("smart frame should select the exact empty mutable candidate");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "increment.contract"
+                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+        )),
+        "the accepted mutable candidate must not be replayed or rechecked: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the smart mutable frame should retain its selected candidate");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(open))
+                if matches!(
+                    open.tactics.as_slice(),
+                    [
+                        ProofTactic::StepUsing(_),
+                        ProofTactic::StepUsing(_),
+                        ProofTactic::FrameUsing { region: None, premises }
+                    ] if premises.is_empty()
+                )
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        &smart_source,
+        &[("increment.c", c_source)],
+        "increment",
+        CProofClaim::Grouped,
+    )
+    .expect("the smart mutable frame should expand");
+    verify_c0_sources(&expanded, &[("increment.c", c_source)])
+        .expect("the selected empty mutable frame should independently replay");
 }
 
 #[test]

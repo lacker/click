@@ -1434,11 +1434,13 @@ ordinary replay nor the legacy exact-effect-check phase, pins the nested
 certificate, and independently verifies expansion. Empty-premise mutable
 frames deliberately remain on the legacy path because their current meaning
 is “scan all ambient facts,” which is not an acceptable simple-step contract.
-Premise-free immutable smart `frame()` now inspects the typed goal, selects an
-empty `FrameUsing`, and submits that candidate directly to this operation.
-Mutable smart `frame()` still needs to select genuinely explicit premises;
-its legacy empty-premise spelling currently conflates an explicit empty set
-with ambient-fact selection and must not be imported into the simple checker.
+Premise-free smart `frame()` now inspects the typed goal, selects an empty
+`FrameUsing`, and submits that candidate directly to this operation. This
+covers immutable effects and mutable footprints that check exactly from their
+declared shape without any pure fact. Mutable smart frames that need facts
+still need to select genuinely explicit premises; their legacy empty-premise
+spelling currently conflates an explicit empty set with ambient-fact
+selection and must not be imported into the simple checker.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

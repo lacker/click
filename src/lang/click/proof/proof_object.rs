@@ -1010,18 +1010,6 @@ impl<'a> Proof<'a> {
         }
 
         let effect_indices = self.selected_effect_indices(context)?;
-        if premises.is_empty()
-            && effect_indices.iter().any(|index| {
-                matches!(
-                    context.function_block.effects()[*index].effect(),
-                    Effect::Mutable(_)
-                )
-            })
-        {
-            return Err(self.step_error(
-                "an empty explicit frame context for a mutable effect still requires legacy ambient-fact selection",
-            ));
-        }
 
         let mut frame_facts = Vec::with_capacity(premises.len());
         for surface in premises {
@@ -5216,29 +5204,29 @@ impl<'a> ProofScope<'a> {
             .supports_checked_execution_frame_using(region, premises)
     }
 
-    /// Selects the premise-free immutable frame candidate and immediately
-    /// submits it to the checked terminal operation. This is the first smart
-    /// frame slice: the search inspects the typed effect goal, but the only
-    /// semantic transition is the retained `FrameUsing` step.
-    pub(super) fn try_smart_immutable_frame_at(
+    /// Tries the exact premise-free frame candidate and immediately submits
+    /// it to the checked terminal operation. Immutable effects always fit;
+    /// direct mutable footprints can fit as well. Failure is an ordinary
+    /// search miss and leaves this scope untouched, allowing the contextual
+    /// premise planner to remain on the legacy path.
+    pub(super) fn try_smart_exact_empty_frame_at(
         &self,
         region: Option<&CodeRegionRef>,
         tactic_index: usize,
         source_index: usize,
     ) -> Result<Option<Self>, ClickError> {
-        let premises = Vec::new();
-        if !self.supports_checked_frame_using(region, &premises)? {
+        if !matches!(region, None | Some(CodeRegionRef::Function)) {
             return Ok(None);
         }
         let step = SimpleProofStep::FrameUsing {
             region: region.cloned(),
-            premises,
+            premises: Vec::new(),
         };
-        Ok(Some(self.apply_step_at(
-            step,
-            tactic_index,
-            source_index,
-        )?))
+        match self.apply_step_at(step, tactic_index, source_index) {
+            Ok(framed) => Ok(Some(framed)),
+            Err(error) if crate::instrumentation::deadline_exceeded() => Err(error),
+            Err(_) => Ok(None),
+        }
     }
 
     /// Runs the narrow linear `execute` search inside this scope.
