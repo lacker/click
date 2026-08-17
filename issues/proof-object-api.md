@@ -559,11 +559,15 @@ two C frontiers without creating detached certificate-builder evidence.
 continuation and equal C states, then derives common replay metadata from the
 shared root and source branch structure rather than selecting one arm's
 metadata. It records one `SimpleProofStep::Branch` atomically. Ordinary source
-verification uses this path for an unqualified empty `branch`; selected-source
-expansion, decided paths, nonempty bodies, and `ensuring` still use the legacy
-driver. A 16-through-4096 fact regression bounds the complete checked
+verification and selected-source expansion use this path for unqualified
+empty and linear-simple `branch` arms. Structured nodes retain their source
+offset, so expansion capture records the exact checked branch delta and then
+continues with the still-active capture instead of replaying the branch in the
+legacy driver. Decided paths, structural arm bodies, and `ensuring` still use
+that driver. A 16-through-4096 fact regression bounds the complete checked
 fork/join by logarithmic persistent-node growth and executes the retained
-continuation afterward.
+continuation afterward; the selected-source regression also forbids ordinary
+surface-certificate replay.
 
 Statement certification now exposes the exact facts emitted by the checked
 transition as an output-sized semantic delta. Snapshot transports rewrite

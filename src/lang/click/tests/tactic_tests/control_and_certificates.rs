@@ -149,6 +149,37 @@ fn linear_frontier_branch_uses_the_checked_structural_join() {
             error.message()
         )
     });
+
+    let (captured, events) = crate::instrumentation::collect(|| {
+        super::super::proof::capture_c0_tactic_expansion(
+            click_source,
+            &[("constant.c", c_source)],
+            super::super::expansion::ProofSite::FunctionClaim {
+                function_name: "constant".to_string(),
+                claim: CProofClaim::Grouped,
+            },
+            0,
+        )
+    });
+    let captured = captured.expect("the checked branch should expose its retained expansion");
+    assert!(
+        matches!(
+            captured.as_slice(),
+            [ProofTactic::Branch(branch)]
+                if branch.ensuring.is_none()
+                    && branch.then_tactics.len() == 2
+                    && branch.else_tactics.len() == 2
+        ),
+        "{captured:#?}"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "constant.contract" && name == "surface certificate replay"
+        )),
+        "selected branch expansion must come from its checked Proof delta: {events:#?}"
+    );
 }
 
 #[test]

@@ -796,17 +796,20 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
         }
         InternalProofNode::Branch {
             index,
+            source_index,
             ensuring,
             then_branch,
             else_branch,
             continuation,
-            ..
         } => {
-            // Ordinary linear simple arms advance only through the checked
-            // execution Proof container. Expansion capture continues through
-            // the legacy path until selected-source offsets migrate into the
-            // same structural container.
-            if expansion_capture.is_none()
+            let selected_source_index = context.replay.proof_site.as_ref().and_then(|site| {
+                selected_tactic_index_for_site(expansion_capture.as_deref(), site)
+            });
+            let checked_capture_supported = selected_source_index.is_none_or(|wanted| {
+                wanted == *source_index
+                    || internal_proof_contains_source_index(continuation, wanted)
+            });
+            if checked_capture_supported
                 && ensuring.is_none()
                 && let Some(then_steps) = linear_execution_simple_steps(then_branch)
                 && let Some(else_steps) = linear_execution_simple_steps(else_branch)
@@ -838,6 +841,14 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     let proof = join_linear_execution_branches(branches, empty)?;
                     let certificate = proof.certificate_since(&checkpoint)?;
                     let mut joined_context = proof.into_execution_context()?;
+                    if let Some(site) = joined_context.replay.proof_site.as_ref() {
+                        record_proof_site_tactic_expansion(
+                            expansion_capture.as_deref_mut(),
+                            site,
+                            *source_index,
+                            &certificate.to_proof_tactics(),
+                        );
+                    }
                     for step in certificate.steps() {
                         joined_context
                             .replay
@@ -847,7 +858,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     return execute_internal_proof(
                         continuation,
                         joined_context,
-                        None,
+                        expansion_capture,
                         function_block,
                         parsed_function,
                         claims,
