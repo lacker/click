@@ -1711,6 +1711,7 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32PositiveIsNonnegative(SignedOrderDerivationStep),
     Int32StrictlyPositiveIsNonnegative(SignedOrderDerivationStep),
     Int32SuccessorLeImpliesLt(SignedOrderDerivationStep),
+    Int32ConstantLowerBoundWeakening(SignedOrderDerivationStep),
     Int32NegatedStrictSuccessorBound(SignedOrderDerivationStep),
     Int32PositivePredecessorIsNonnegative(SignedOrderDerivationStep),
     Int32PositivePredecessorStrictlyDecreases(SignedOrderDerivationStep),

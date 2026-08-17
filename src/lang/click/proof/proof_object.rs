@@ -2009,6 +2009,17 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| {
+                let recorded = recorded_int32_constant_lower_bound_weakening_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_constant_lower_bound_weakening_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
                 let recorded = recorded_int32_negated_strict_successor_bound_pairs(
                     derivation,
                     &premise_pairs,
@@ -7971,6 +7982,11 @@ mod tests {
             operator: ComparisonOperator::LessEqual,
             right: expression(value.clone()),
         };
+        let strong_constant_lower_premise = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(3)),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(value.clone()),
+        };
         let negated_successor_premise =
             ClickProposition::Not(Box::new(ClickProposition::Comparison {
                 left: expression(value.clone()),
@@ -8039,6 +8055,7 @@ mod tests {
         let kernel_positive_premise = lower(&positive_premise);
         let kernel_strictly_positive_premise = lower(&strictly_positive_premise);
         let kernel_successor_lower_premise = lower(&successor_lower_premise);
+        let kernel_strong_constant_lower_premise = lower(&strong_constant_lower_premise);
         let kernel_negated_successor_premise = lower(&negated_successor_premise);
         let goals = [
             (
@@ -8090,6 +8107,14 @@ mod tests {
                 false,
             ),
             (
+                lower(&surface_nonnegative_goal),
+                "int32_le_transitive",
+                "constant lower-bound weakening",
+                &strong_constant_lower_premise,
+                &kernel_strong_constant_lower_premise,
+                false,
+            ),
+            (
                 lower(&surface_successor_lower_goal),
                 "int32_ge_transitive",
                 "negated strict successor bound",
@@ -8111,6 +8136,12 @@ mod tests {
         surface_propositions
             .record_lowering(&successor_lower_premise, &kernel_successor_lower_premise)
             .expect("the exact successor lower-bound premise should be indexed");
+        surface_propositions
+            .record_lowering(
+                &strong_constant_lower_premise,
+                &kernel_strong_constant_lower_premise,
+            )
+            .expect("the exact stronger constant lower bound should be indexed");
         surface_propositions
             .record_lowering(
                 &strictly_positive_premise,

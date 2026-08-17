@@ -1361,6 +1361,15 @@ non-strict source edge, and pure, point, and outcome `simp` submit
 `int32_successor_le_implies_lt` directly to `Proof`. This one-step case shares
 the same deterministic unrelated-fact curve and expansion check.
 
+Constant lower-bound weakening now crosses the seam too. For
+`stronger <= value` proving `weaker <= value`, the kernel retains the exact
+stronger source edge and `Proof` checks one `int32_le_transitive` application;
+the context-free constant leg remains an internal requirement of that named
+simple theorem. The symmetric strict upper-bound form was already covered by
+the retained signed-order path's context-free constant tail. Source
+regressions now require both forms to avoid construction replay, and the
+lower-bound case joins the 16-through-4096 persistent-update curve.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

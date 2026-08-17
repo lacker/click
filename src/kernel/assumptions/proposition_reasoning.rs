@@ -1199,6 +1199,29 @@ impl PureFactContext {
             },
             _ => None,
         };
+        let constant_lower_bound_weakening_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(goal_lower, value),
+                true,
+            ) => match goal_lower.as_ref() {
+                Bitvector32Term::Constant(goal_bits) => self
+                    .signed_order_bounds
+                    .get(value.as_ref())
+                    .into_iter()
+                    .flat_map(|bounds| bounds.iter())
+                    .find_map(|((candidate, strict, forward), _)| {
+                        let Bitvector32Term::Constant(candidate_bits) = candidate else {
+                            return None;
+                        };
+                        (!*strict && !*forward && (*goal_bits as i32) < (*candidate_bits as i32))
+                            .then(|| self.exact_direct_order_step(candidate, value, false))
+                            .flatten()
+                    })
+                    .map(AtomicPropositionDerivationEvidence::Int32ConstantLowerBoundWeakening),
+                _ => None,
+            },
+            _ => None,
+        };
         let negated_strict_successor_bound_evidence = match proposition {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedGreaterEqual(value, lower),
@@ -1322,6 +1345,7 @@ impl PureFactContext {
             .or(positive_is_nonnegative_evidence)
             .or(strictly_positive_is_nonnegative_evidence)
             .or(successor_le_implies_lt_evidence)
+            .or(constant_lower_bound_weakening_evidence)
             .or(negated_strict_successor_bound_evidence)
             .or(signed_order_evidence)
             .or(increment_upper_bound_evidence)
@@ -1620,6 +1644,26 @@ impl PureFactContext {
                 return false;
             };
             return step.lower == Bitvector32Term::Constant(successor_bits as u32)
+                && step.upper == **value
+                && !step.strict
+                && self.replays_exact_order_step(step);
+        }
+        if let AtomicPropositionDerivationEvidence::Int32ConstantLowerBoundWeakening(step) =
+            evidence
+        {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(goal_lower, value),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            let (Bitvector32Term::Constant(goal_bits), Bitvector32Term::Constant(premise_bits)) =
+                (goal_lower.as_ref(), &step.lower)
+            else {
+                return false;
+            };
+            return (*goal_bits as i32) < (*premise_bits as i32)
                 && step.upper == **value
                 && !step.strict
                 && self.replays_exact_order_step(step);

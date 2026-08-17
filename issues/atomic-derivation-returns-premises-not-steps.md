@@ -367,3 +367,12 @@ as well. It records the exact non-strict edge and transcribes it as the
 existing `int32_successor_le_implies_lt` simple theorem application. Pure and
 point Proof paths now retain that application without construction replay;
 the existing expansion regression independently verifies it.
+
+Constant lower-bound weakening is now typed as a distinct one-edge decision.
+The exact `stronger <= value` source is retained while the smaller-to-stronger
+constant comparison is checked inside the existing `int32_le_transitive`
+simple theorem. This fills the context-free *prefix* case that a forward
+signed-order path cannot encode. The symmetric strict-upper-bound rule needs
+no new evidence variant: the generic signed-order path already retains its
+exact `value <= tighter` edge and validates the context-free constant tail.
+Both pure expansion regressions now pin the absence of construction replay.

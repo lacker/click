@@ -3532,6 +3532,18 @@ fn restricted_simp_expands_constant_order_weakening_to_theorem_application() {
             }
         }
     "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the constant lower-bound weakening should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "three_at_least_implies_nonnegative.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the constant lower-bound proof should retain its checked Proof successor: {events:#?}"
+    );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
         .bytes()
@@ -3556,6 +3568,44 @@ fn restricted_simp_expands_constant_order_weakening_to_theorem_application() {
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+}
+
+#[test]
+fn restricted_simp_expands_constant_strict_upper_bound_to_theorem_application() {
+    let click_source = r#"
+        theorem three_at_most_implies_below_five(value: int32) {
+            requires value <= 3;
+            ensures value < 5 by {
+                simp() using {
+                    value <= 3;
+                }
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the constant strict upper-bound weakening should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "three_at_most_implies_below_five.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the constant upper-bound proof should retain its checked Proof successor: {events:#?}"
+    );
+    let offset = click_source.find("simp() using").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("constant strict upper-bound simp should expand");
+    assert!(
+        expanded.contains("apply(int32_le_lt_transitive(value, 3, 5)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("value <= 3;"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded strict upper-bound proof should replay");
 }
 
 #[test]

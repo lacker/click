@@ -204,6 +204,19 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact stronger constant lower bound selected when the
+    /// atomic prover established a weaker constant lower bound.
+    pub fn int32_constant_lower_bound_weakening_step(&self) -> Option<&SignedOrderDerivationStep> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32ConstantLowerBoundWeakening(step),
+                ..
+            } => Some(step),
+            _ => None,
+        }
+    }
+
     /// Return the exact `not (value < lower + 1)` premise selected when the
     /// atomic prover established `value >= lower`.
     pub fn int32_negated_strict_successor_bound_step(&self) -> Option<&SignedOrderDerivationStep> {
