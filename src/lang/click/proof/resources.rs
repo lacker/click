@@ -12,6 +12,81 @@ pub(super) enum ResourceBodyClosure {
     CloseOpen { preserve_exposed_body: bool },
 }
 
+/// The pure-fact surface needed by resource semantics.
+///
+/// Legacy replay adapts its ordered vector once at the boundary. Checked
+/// `Proof` transitions implement this over `ProofFacts`, preserving the
+/// incrementally indexed assumption context and exact-membership index.
+trait ResourcePureFacts {
+    fn assumptions(&self) -> &PureFactContext;
+    fn insert(&mut self, fact: Proposition) -> bool;
+    fn materialize(&self) -> Vec<Proposition>;
+}
+
+struct LegacyResourcePureFacts<'a> {
+    facts: &'a mut Vec<Proposition>,
+    assumptions: PureFactContext,
+}
+
+impl<'a> LegacyResourcePureFacts<'a> {
+    fn new(facts: &'a mut Vec<Proposition>) -> Self {
+        let assumptions = assumptions_from_propositions(facts);
+        Self { facts, assumptions }
+    }
+}
+
+impl ResourcePureFacts for LegacyResourcePureFacts<'_> {
+    fn assumptions(&self) -> &PureFactContext {
+        &self.assumptions
+    }
+
+    fn insert(&mut self, fact: Proposition) -> bool {
+        if self.facts.contains(&fact) {
+            return false;
+        }
+        self.assumptions = self.assumptions.clone().assume_proposition(fact.clone());
+        self.facts.push(fact);
+        true
+    }
+
+    fn materialize(&self) -> Vec<Proposition> {
+        self.facts.clone()
+    }
+}
+
+struct ProofResourcePureFacts {
+    facts: ProofFacts,
+    added: Vec<Proposition>,
+}
+
+impl ProofResourcePureFacts {
+    fn new(facts: ProofFacts) -> Self {
+        Self {
+            facts,
+            added: Vec::new(),
+        }
+    }
+}
+
+impl ResourcePureFacts for ProofResourcePureFacts {
+    fn assumptions(&self) -> &PureFactContext {
+        self.facts.assumptions()
+    }
+
+    fn insert(&mut self, fact: Proposition) -> bool {
+        if self.facts.contains_top_level(&fact) {
+            return false;
+        }
+        self.facts = self.facts.with_fact(fact.clone());
+        self.added.push(fact);
+        true
+    }
+
+    fn materialize(&self) -> Vec<Proposition> {
+        self.facts.to_vec()
+    }
+}
+
 pub(super) struct UnfoldedCompositeResource {
     pub(super) state: CState,
     pub(super) body_was_already_exposed: bool,
@@ -215,7 +290,7 @@ pub(super) fn project_initial_composite_resource_cores(
             &state,
             &state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
-            available_pure_facts,
+            &assumptions,
             predicate_environment,
             click_function_environment,
         )
@@ -407,13 +482,22 @@ fn project_folded_resource_observable_facts(
     Ok(propositions)
 }
 
-pub(super) fn observe_composite_resource(
+pub(super) struct CheckedResourceObservation {
+    pub(super) state: CState,
+    pub(super) facts: ProofFacts,
+    pub(super) added_facts: Vec<Proposition>,
+    pub(super) added_derivations: Vec<Theorem>,
+    pub(super) added_certification_facts: Vec<Proposition>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn observe_composite_resource_for_proof(
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: CState,
-    available_pure_facts: &mut Vec<Proposition>,
+    facts: ProofFacts,
     surface_propositions: &mut SurfacePropositionMap,
     count_derivations: &mut PersistentOrderedSet<Theorem>,
     count_certification_facts: &mut PersistentOrderedSet<Proposition>,
@@ -421,9 +505,56 @@ pub(super) fn observe_composite_resource(
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
     tactic_index: usize,
+) -> Result<CheckedResourceObservation, ClickError> {
+    let mut facts = ProofResourcePureFacts::new(facts);
+    let mut added_derivations = Vec::new();
+    let mut added_certification_facts = Vec::new();
+    let state = observe_composite_resource_with_facts(
+        resource_environment,
+        resource,
+        parameters,
+        arguments,
+        state,
+        &mut facts,
+        surface_propositions,
+        count_derivations,
+        count_certification_facts,
+        &mut added_derivations,
+        &mut added_certification_facts,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+        tactic_index,
+    )?;
+    Ok(CheckedResourceObservation {
+        state,
+        facts: facts.facts,
+        added_facts: facts.added,
+        added_derivations,
+        added_certification_facts,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: CState,
+    available_pure_facts: &mut F,
+    surface_propositions: &mut SurfacePropositionMap,
+    count_derivations: &mut PersistentOrderedSet<Theorem>,
+    count_certification_facts: &mut PersistentOrderedSet<Proposition>,
+    added_derivations: &mut Vec<Theorem>,
+    added_certification_facts: &mut Vec<Proposition>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
 ) -> Result<CState, ClickError> {
     let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
-    let assumptions = assumptions_from_propositions(available_pure_facts);
+    let assumptions = available_pure_facts.assumptions().clone();
     if !state
         .resources()
         .satisfies_fact(&abstract_resource, &assumptions)
@@ -433,7 +564,7 @@ pub(super) fn observe_composite_resource(
             describe_resource_clause(resource),
             describe_missing_resource_fact(
                 &abstract_resource,
-                available_pure_facts,
+                &available_pure_facts.materialize(),
                 state.resources().facts(),
                 parameters,
                 arguments,
@@ -462,23 +593,23 @@ pub(super) fn observe_composite_resource(
             operator: ComparisonOperator::LessEqual,
             right: ContractExpression::ResourceCount(Box::new(counted_resource)),
         };
-        let count_kernel = lower_outcome_proposition(
-        parameters,
-        arguments,
-        &state,
-        &state,
-        &CValue::Int32(Bitvector32Term::Constant(0)),
-        available_pure_facts,
-        &count_witness,
-        predicate_environment,
-        click_function_environment,
-    )
-    .map_err(|message| {
-        ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: could not lower `observe({})` count witness: {message}",
-            describe_resource_clause(resource)
-        ))
-    })?;
+        let count_kernel = lower_outcome_proposition_with_assumptions(
+            parameters,
+            arguments,
+            &state,
+            &state,
+            &CValue::Int32(Bitvector32Term::Constant(0)),
+            available_pure_facts.assumptions(),
+            &count_witness,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: could not lower `observe({})` count witness: {message}",
+                describe_resource_clause(resource)
+            ))
+        })?;
         let count_authority = abstract_resource.clone();
         if assumptions.proves(&count_kernel) {
             let derivation = prove_owned_resource_count_lower_bound(
@@ -493,12 +624,16 @@ pub(super) fn observe_composite_resource(
                     describe_resource_clause(resource)
                 ))
             })?;
-            count_derivations.insert(derivation);
-            count_certification_facts.insert(count_kernel.clone());
-            surface_propositions.record_lowering(&count_witness, &count_kernel)?;
-            if !available_pure_facts.contains(&count_kernel) {
-                available_pure_facts.push(count_kernel);
+            if !count_derivations.contains(&derivation) {
+                count_derivations.insert(derivation.clone());
+                added_derivations.push(derivation);
             }
+            if !count_certification_facts.contains(&count_kernel) {
+                count_certification_facts.insert(count_kernel.clone());
+                added_certification_facts.push(count_kernel.clone());
+            }
+            surface_propositions.record_lowering(&count_witness, &count_kernel)?;
+            available_pure_facts.insert(count_kernel);
         } else if explicit_quantity {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `observe({})` could not certify its resource-count lower bound",
@@ -510,23 +645,23 @@ pub(super) fn observe_composite_resource(
             operator: ComparisonOperator::LessEqual,
             right: observed_quantity.clone(),
         };
-        let nonnegative_kernel = lower_outcome_proposition(
-        parameters,
-        arguments,
-        &state,
-        &state,
-        &CValue::Int32(Bitvector32Term::Constant(0)),
-        available_pure_facts,
-        &nonnegative_witness,
-        predicate_environment,
-        click_function_environment,
-    )
-    .map_err(|message| {
-        ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: could not lower `observe({})` quantity witness: {message}",
-            describe_resource_clause(resource)
-        ))
-    })?;
+        let nonnegative_kernel = lower_outcome_proposition_with_assumptions(
+            parameters,
+            arguments,
+            &state,
+            &state,
+            &CValue::Int32(Bitvector32Term::Constant(0)),
+            available_pure_facts.assumptions(),
+            &nonnegative_witness,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: could not lower `observe({})` quantity witness: {message}",
+                describe_resource_clause(resource)
+            ))
+        })?;
         let nonnegative_derivation = prove_owned_resource_quantity_nonnegative(
             &state,
             &count_authority,
@@ -540,15 +675,15 @@ pub(super) fn observe_composite_resource(
             ))
         })?;
         if !count_derivations.contains(&nonnegative_derivation) {
-            count_derivations.insert(nonnegative_derivation);
+            count_derivations.insert(nonnegative_derivation.clone());
+            added_derivations.push(nonnegative_derivation);
         }
         if !count_certification_facts.contains(&nonnegative_kernel) {
             count_certification_facts.insert(nonnegative_kernel.clone());
+            added_certification_facts.push(nonnegative_kernel.clone());
         }
         surface_propositions.record_lowering(&nonnegative_witness, &nonnegative_kernel)?;
-        if !available_pure_facts.contains(&nonnegative_kernel) {
-            available_pure_facts.push(nonnegative_kernel);
-        }
+        available_pure_facts.insert(nonnegative_kernel);
     }
     let underlying_resource = match resource {
         ResourceClause::Quantified { resource, .. } => resource.as_ref(),
@@ -601,7 +736,7 @@ pub(super) fn observe_composite_resource(
     let surface_substitutions =
         resource_argument_substitutions(definition, resource, claim_label, tactic_index)?;
     let observation_pre_state = state.clone();
-    let (memory, contained_resources) = apply_composite_observation_law(
+    let (memory, contained_resources) = apply_composite_observation_law_with_facts(
         definition,
         resource_arguments,
         parameters,
@@ -642,9 +777,7 @@ pub(super) fn observe_composite_resource(
     let viewed_contained_resources = contained_resources
         .facts()
         .iter()
-        .filter_map(|fact| {
-            fact.core_with_assumptions(&assumptions_from_propositions(available_pure_facts))
-        })
+        .filter_map(|fact| fact.core_with_assumptions(available_pure_facts.assumptions()))
         .collect::<Vec<_>>();
     // Holding the folded composite certifies its instantiated body. Observation
     // only adds the body's duplicable cores, so it must not revalidate ownership.
@@ -656,7 +789,7 @@ pub(super) fn observe_composite_resource(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn record_observed_composite_surface_facts(
+fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
     definition: &ResourceDefinition,
     resource: &ResourceClause,
     substitutions: &BTreeMap<String, ContractExpression>,
@@ -664,7 +797,7 @@ fn record_observed_composite_surface_facts(
     arguments: &[CExpression],
     pre_state: &CState,
     fact_state: &CState,
-    available_pure_facts: &[Proposition],
+    available_pure_facts: &F,
     surface_propositions: &mut SurfacePropositionMap,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -680,7 +813,7 @@ fn record_observed_composite_surface_facts(
         pre_state,
         fact_state,
         &CValue::Int32(Bitvector32Term::Constant(0)),
-        available_pure_facts,
+        available_pure_facts.assumptions(),
         predicate_environment,
         click_function_environment,
     )?
@@ -761,13 +894,13 @@ fn record_observed_composite_surface_facts(
                 definition.name()
             )
         })?;
-        let kernel = lower_outcome_proposition(
+        let kernel = lower_outcome_proposition_with_assumptions(
             parameters,
             arguments,
             pre_state,
             fact_state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
-            available_pure_facts,
+            available_pure_facts.assumptions(),
             &surface,
             predicate_environment,
             click_function_environment,
@@ -820,6 +953,7 @@ pub(super) fn record_initial_composite_surface_facts(
     click_function_environment: &ClickFunctionEnvironment,
     active_resources: &mut BTreeSet<String>,
 ) -> Result<(), String> {
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     let ResourceClause::Declared { name, .. } = resource else {
         return Ok(());
     };
@@ -844,7 +978,7 @@ pub(super) fn record_initial_composite_surface_facts(
             state,
             state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
-            available_pure_facts,
+            &assumptions,
             predicate_environment,
             click_function_environment,
         )?
@@ -924,7 +1058,7 @@ fn try_select_composite_resource_body(
     pre_state: &CState,
     state: &CState,
     result: &CValue,
-    available_pure_facts: &[Proposition],
+    assumptions: &PureFactContext,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Option<bool>, String> {
@@ -940,13 +1074,13 @@ fn try_select_composite_resource_body(
             definition.name()
         )
     })?;
-    let lowered = lower_outcome_proposition(
+    let lowered = lower_outcome_proposition_with_assumptions(
         parameters,
         arguments,
         pre_state,
         state,
         result,
-        available_pure_facts,
+        assumptions,
         &condition,
         predicate_environment,
         click_function_environment,
@@ -958,7 +1092,6 @@ fn try_select_composite_resource_body(
             describe_click_proposition(&condition)
         )
     })?;
-    let assumptions = assumptions_from_propositions(available_pure_facts);
     let proves_condition = |proposition: &Proposition| match proposition {
         Proposition::ConditionIs(condition, value) => {
             assumptions.proves_condition_exact_or_snapshot(condition, *value)
@@ -1017,6 +1150,7 @@ fn composite_resource_body_is_active(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<bool, String> {
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     try_select_composite_resource_body(
         definition,
         substitutions,
@@ -1025,7 +1159,7 @@ fn composite_resource_body_is_active(
         pre_state,
         state,
         result,
-        available_pure_facts,
+        &assumptions,
         predicate_environment,
         click_function_environment,
     )?
@@ -1053,6 +1187,34 @@ pub(super) fn apply_composite_observation_law(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(CMemory, ResourceContext), String> {
+    let mut facts = LegacyResourcePureFacts::new(available_pure_facts);
+    apply_composite_observation_law_with_facts(
+        definition,
+        resource_arguments,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        result,
+        &mut facts,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
+    definition: &ResourceDefinition,
+    resource_arguments: &[CValue],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: &CValue,
+    available_pure_facts: &mut F,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(CMemory, ResourceContext), String> {
     let Some(composite_body) = definition.composite_body() else {
         return Ok((state.memory().clone(), ResourceContext::new()));
     };
@@ -1072,7 +1234,7 @@ pub(super) fn apply_composite_observation_law(
         pre_state,
         state,
         result,
-        available_pure_facts,
+        available_pure_facts.assumptions(),
         predicate_environment,
         click_function_environment,
     )?
@@ -1096,11 +1258,11 @@ pub(super) fn apply_composite_observation_law(
         .filter(|fact| fact.is_own())
         .collect::<Vec<_>>();
     if !owned_body_resources.is_empty() {
-        let assumptions = assumptions_from_propositions(available_pure_facts);
-        if owned_body_resources
-            .iter()
-            .all(|fact| state.resources().satisfies_fact(fact, &assumptions))
-        {
+        if owned_body_resources.iter().all(|fact| {
+            state
+                .resources()
+                .satisfies_fact(fact, available_pure_facts.assumptions())
+        }) {
             // `open` retains the folded head for contract accounting while
             // exposing the unique owned body. Until that body is closed, do
             // not re-project its invariant at a newer memory/count snapshot.
@@ -1130,7 +1292,7 @@ pub(super) fn apply_composite_observation_law(
     Ok((memory, contained_resources))
 }
 
-fn append_composite_definition_observable_facts(
+fn append_composite_definition_observable_facts<F: ResourcePureFacts>(
     definition: &ResourceDefinition,
     composite_body: &CompositeResourceBody,
     parent_resource: &CResource,
@@ -1141,13 +1303,17 @@ fn append_composite_definition_observable_facts(
     pre_state: &CState,
     fact_state: &CState,
     result: &CValue,
-    propositions: &mut Vec<Proposition>,
+    propositions: &mut F,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(), String> {
-    append_resource_context_observable_facts(contained_resources, propositions);
+    append_resource_context_observable_facts_with_store(contained_resources, propositions);
 
-    append_composite_resource_relation_facts(parent_resource, contained_resources, propositions);
+    append_composite_resource_relation_facts_with_store(
+        parent_resource,
+        contained_resources,
+        propositions,
+    );
 
     append_composite_resource_loadable_facts(
         definition,
@@ -1175,10 +1341,10 @@ fn append_composite_definition_observable_facts(
     )
 }
 
-fn append_composite_resource_relation_facts(
+fn append_composite_resource_relation_facts_with_store<F: ResourcePureFacts>(
     parent_resource: &CResource,
     contained_resources: &ResourceContext,
-    propositions: &mut Vec<Proposition>,
+    propositions: &mut F,
 ) {
     let owned_children = contained_resources
         .facts()
@@ -1191,9 +1357,7 @@ fn append_composite_resource_relation_facts(
             parent: parent_resource.clone(),
             child: child.clone(),
         };
-        if !propositions.contains(&proposition) {
-            propositions.push(proposition);
-        }
+        propositions.insert(proposition);
     }
     for i in 0..owned_children.len() {
         for right in &owned_children[i + 1..] {
@@ -1201,21 +1365,32 @@ fn append_composite_resource_relation_facts(
                 left: owned_children[i].clone(),
                 right: right.clone(),
             };
-            if !propositions.contains(&proposition) {
-                propositions.push(proposition);
-            }
+            propositions.insert(proposition);
         }
     }
 }
 
-fn append_composite_resource_loadable_facts(
+fn append_composite_resource_relation_facts(
+    parent_resource: &CResource,
+    contained_resources: &ResourceContext,
+    propositions: &mut Vec<Proposition>,
+) {
+    let mut facts = LegacyResourcePureFacts::new(propositions);
+    append_composite_resource_relation_facts_with_store(
+        parent_resource,
+        contained_resources,
+        &mut facts,
+    );
+}
+
+fn append_composite_resource_loadable_facts<F: ResourcePureFacts>(
     definition: &ResourceDefinition,
     composite_body: &CompositeResourceBody,
     substitutions: &BTreeMap<String, ContractExpression>,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     memory: &CMemory,
-    propositions: &mut Vec<Proposition>,
+    propositions: &mut F,
 ) -> Result<(), String> {
     for contained in composite_body.contains() {
         let contained = instantiate_resource_clause(contained, substitutions).map_err(|message| {
@@ -1224,7 +1399,7 @@ fn append_composite_resource_loadable_facts(
                 definition.name()
             )
         })?;
-        append_resource_clause_loadable_fact(
+        append_resource_clause_loadable_fact_with_store(
             &contained,
             parameters,
             arguments,
@@ -1243,6 +1418,21 @@ fn append_composite_resource_loadable_facts(
     Ok(())
 }
 
+fn append_resource_clause_loadable_fact_with_store<F: ResourcePureFacts>(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    memory: &CMemory,
+    propositions: &mut F,
+) -> Result<(), ClickError> {
+    let Some(proposition) = resource_clause_loadable_prop(resource, parameters, arguments, memory)?
+    else {
+        return Ok(());
+    };
+    propositions.insert(proposition);
+    Ok(())
+}
+
 fn append_resource_clause_loadable_fact(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -1250,14 +1440,10 @@ fn append_resource_clause_loadable_fact(
     memory: &CMemory,
     propositions: &mut Vec<Proposition>,
 ) -> Result<(), ClickError> {
-    let Some(proposition) = resource_clause_loadable_prop(resource, parameters, arguments, memory)?
-    else {
-        return Ok(());
-    };
-    if !propositions.contains(&proposition) {
-        propositions.push(proposition);
-    }
-    Ok(())
+    let mut facts = LegacyResourcePureFacts::new(propositions);
+    append_resource_clause_loadable_fact_with_store(
+        resource, parameters, arguments, memory, &mut facts,
+    )
 }
 
 pub(super) fn append_lowered_resource_clause_loadable_fact(
@@ -1286,7 +1472,7 @@ pub(super) fn append_lowered_resource_clause_loadable_fact(
     }
 }
 
-fn append_composite_resource_declared_facts(
+fn append_composite_resource_declared_facts<F: ResourcePureFacts>(
     definition: &ResourceDefinition,
     composite_body: &CompositeResourceBody,
     substitutions: &BTreeMap<String, ContractExpression>,
@@ -1296,7 +1482,7 @@ fn append_composite_resource_declared_facts(
     pre_state: &CState,
     fact_state: &CState,
     result: &CValue,
-    propositions: &mut Vec<Proposition>,
+    propositions: &mut F,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(), String> {
@@ -1307,13 +1493,13 @@ fn append_composite_resource_declared_facts(
                 definition.name()
             )
         })?;
-        let lowered = lower_outcome_proposition(
+        let lowered = lower_outcome_proposition_with_assumptions(
             parameters,
             arguments,
             pre_state,
             fact_state,
             result,
-            propositions,
+            propositions.assumptions(),
             &fact,
             predicate_environment,
             click_function_environment,
@@ -1323,28 +1509,31 @@ fn append_composite_resource_declared_facts(
                 "could not lower resource `{}` pure fact `{}`: {message}\n  pure facts: {}\n  resource facts: {}",
                 definition.name(),
                 describe_click_proposition(&fact),
-                describe_pure_facts(propositions),
+                describe_pure_facts(&propositions.materialize()),
                 describe_resource_facts(contained_resources.facts(), parameters, arguments)
             )
         })?;
-        if !propositions.contains(&lowered) {
-            propositions.push(lowered);
-        }
+        propositions.insert(lowered);
     }
     Ok(())
+}
+
+fn append_resource_context_observable_facts_with_store<F: ResourcePureFacts>(
+    resources: &ResourceContext,
+    propositions: &mut F,
+) {
+    let facts = resources.observable_facts_assuming_valid(propositions.assumptions());
+    for proposition in facts {
+        propositions.insert(proposition);
+    }
 }
 
 pub(super) fn append_resource_context_observable_facts(
     resources: &ResourceContext,
     propositions: &mut Vec<Proposition>,
 ) {
-    let assumptions = assumptions_from_propositions(propositions);
-    let facts = resources.observable_facts_assuming_valid(&assumptions);
-    for proposition in facts {
-        if !propositions.contains(&proposition) {
-            propositions.push(proposition);
-        }
-    }
+    let mut facts = LegacyResourcePureFacts::new(propositions);
+    append_resource_context_observable_facts_with_store(resources, &mut facts);
 }
 
 fn describe_resource_context_validity_error(

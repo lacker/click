@@ -60,6 +60,42 @@ pub(in crate::lang::click) fn lower_outcome_proposition(
     )
 }
 
+/// Lowers an outcome proposition against an already-indexed assumption
+/// context. Proof-object transitions use this entry point so one simple step
+/// does not rebuild the complete ambient fact context merely to lower its
+/// explicit surface proposition.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click) fn lower_outcome_proposition_with_assumptions(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    assumptions: &PureFactContext,
+    proposition: &ClickProposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
+    let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
+    let mut next_variable = 2_000_000;
+    let mut active_functions = BTreeSet::new();
+    lower_outcome_proposition_with_environment(
+        &mut values,
+        &array_refs,
+        pre_state,
+        post_state,
+        Some(result),
+        assumptions,
+        proposition,
+        &mut next_variable,
+        predicate_environment,
+        click_function_environment,
+        &ProgramPointStates::new(),
+        &mut active_functions,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click) fn lower_outcome_proposition_with_program_points(
     parameters: &[syntax::C0Parameter],

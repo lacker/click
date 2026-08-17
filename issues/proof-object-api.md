@@ -1300,6 +1300,22 @@ zero allocation for an exact lookup, ancestor isolation, stable ordered
 materialization, and shared clone identity. Resource operations can now move
 onto `Proof` without inheriting the former context-wide clone/reindex cost.
 
+`observe(resource)` is the first resource operation through that seam. The
+shared resource checker now consumes a small indexed fact-store interface:
+the checked `Proof` path reuses `ProofFacts`' persistent exact index and
+`PureFactContext`, while the remaining legacy resource paths adapt their
+ordered vectors at an explicit boundary. Lowering an observation witness no
+longer rebuilds assumptions from every ambient fact. One accepted
+`SimpleProofStep::ObserveResource` atomically retains the surface step, updated
+C/resource state, projected pure facts and surface lowerings, and any
+resource-count theorem/prerequisite evidence. Ordinary verification routes
+the source tactic through this transition; certificate extraction does not
+rediscover or replay the observation. A 16-through-4096 unrelated-fact
+regression bounds successful observation work logarithmically and checks
+exact certificate identity, ancestor isolation, and failed-step
+transactionality. Existing expansion/resource examples independently check
+the serialized simple step.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

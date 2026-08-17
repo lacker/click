@@ -244,6 +244,7 @@ struct ExecutionProofContext<'a> {
     parsed_function: &'a syntax::C0Function,
     arguments: &'a [CExpression],
     function_environment: &'a CExecutionEnvironment,
+    resource_environment: &'a ResourceEnvironment,
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
     theorem_environment: &'a TheoremEnvironment,
@@ -603,6 +604,7 @@ impl<'a> Proof<'a> {
         parsed_function: &'a syntax::C0Function,
         arguments: &'a [CExpression],
         function_environment: &'a CExecutionEnvironment,
+        resource_environment: &'a ResourceEnvironment,
         predicate_environment: &'a PredicateEnvironment,
         click_function_environment: &'a ClickFunctionEnvironment,
         theorem_environment: &'a TheoremEnvironment,
@@ -622,6 +624,7 @@ impl<'a> Proof<'a> {
                 parsed_function,
                 arguments,
                 function_environment,
+                resource_environment,
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
@@ -779,6 +782,9 @@ impl<'a> Proof<'a> {
                 premises,
             } => self.apply_transport_using(source, target, premises),
             SimpleProofStep::UnfoldPredicate(name) => self.apply_predicate_unfold(name),
+            SimpleProofStep::ObserveResource(resource) => {
+                self.apply_execution_resource_observation(resource)
+            }
             SimpleProofStep::Choose(choice) => self.apply_point_choose(choice),
             SimpleProofStep::Witness(witness) => self.apply_point_witness(witness),
             SimpleProofStep::InstantiateUsing {
@@ -1672,6 +1678,55 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates,
+            goal: self.state.goal.clone(),
+            complete: false,
+            added_facts: Arc::new(checked.added_facts.clone()),
+            checked_facts: Arc::new(checked.added_facts),
+            execution: Some(execution),
+        })
+    }
+
+    fn apply_execution_resource_observation(
+        &self,
+        resource: &ResourceClause,
+    ) -> Result<ProofState, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("`observe` requires an execution-frontier proof"));
+        };
+        let mut execution =
+            self.state.execution.clone().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+        if execution.replay.is_at_function_exit() {
+            return Err(
+                self.step_error("`observe` must run before execution reaches function exit")
+            );
+        }
+        let checked = observe_composite_resource_for_proof(
+            context.resource_environment,
+            resource,
+            context.parsed_function.parameters(),
+            context.arguments,
+            (*execution.state).clone(),
+            self.state.facts.clone(),
+            &mut execution.replay.surface_propositions,
+            &mut execution.replay.function_entry_derivations,
+            &mut execution.replay.function_entry_execution_prerequisites,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.claim_label,
+            context.tactic_index,
+        )?;
+        execution.state = checked.state.into();
+        execution.last_step_delta = ExecutionProofStepDelta {
+            function_entry_prerequisites: checked.added_certification_facts,
+            function_entry_derivations: checked.added_derivations,
+            unfolded_predicates: Vec::new(),
+        };
+        Ok(ProofState {
+            facts: checked.facts,
+            locals: self.state.locals.clone(),
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
             goal: self.state.goal.clone(),
             complete: false,
             added_facts: Arc::new(checked.added_facts.clone()),
@@ -7012,6 +7067,7 @@ mod tests {
             .expect("test C function should parse");
         let function = parsed_function.to_kernel_function();
         let function_environment = CExecutionEnvironment::new();
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
         let state = CState::new();
         let left = CValue::Int32(Bitvector32Term::Variable(Variable(8_000_000)));
         let right = CValue::Int32(Bitvector32Term::Variable(Variable(8_000_001)));
@@ -7081,6 +7137,7 @@ mod tests {
                 &parsed_function,
                 &arguments,
                 &function_environment,
+                &resource_environment,
                 &predicate_environment,
                 &click_function_environment,
                 &theorem_environment,
@@ -9654,6 +9711,7 @@ mod tests {
         let function_environment = CExecutionEnvironment::new();
         let state = CState::new();
         let argument = CExpression::Value(CValue::Int32(Bitvector32Term::Constant(7)));
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
         let arguments = vec![argument.clone()];
         let surface = ClickProposition::PredicateCall {
             name: "selected".to_string(),
@@ -9689,6 +9747,7 @@ mod tests {
                 &parsed_function,
                 &arguments,
                 &function_environment,
+                &resource_environment,
                 &predicate_environment,
                 &click_function_environment,
                 &theorem_environment,
@@ -9755,6 +9814,110 @@ mod tests {
     }
 
     #[test]
+    fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                resource marker(x: int32) {
+                    fact x == x;
+                }
+                verifying "identity.c";
+                int32 identity(int32 x) {
+                    views marker(x);
+                    immutable;
+                    ensures returns_x: result == x;
+                } by {
+                    observe(marker(x));
+                    execute();
+                    frame();
+                }
+            "#,
+        )
+        .expect("test resource and function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let resource = function_block
+            .requires()
+            .iter()
+            .find_map(|requirement| match requirement.inner() {
+                Requirement::Resource(resource) => Some(resource.clone()),
+                _ => None,
+            })
+            .expect("the test function should require its marker view");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+        let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+            .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let function_environment = CExecutionEnvironment::new();
+        let arguments = vec![CExpression::Value(int32(7))];
+        let empty_state = CState::new();
+        let lowered = lower_resource_clause(
+            &resource,
+            parsed_function.parameters(),
+            &arguments,
+            empty_state.memory(),
+        )
+        .expect("the required marker view should lower");
+        let state =
+            empty_state.with_resource_context(ResourceContext::new().unchecked_with_fact(lowered));
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let root = Proof::for_execution_frontier(
+                "persistent resource observation",
+                0,
+                ProofReplayContext {
+                    state: state.clone(),
+                    pure_facts: (0..size).map(indexed_fact).collect(),
+                    replay: TacticReplayState::default(),
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let observed = root
+                .apply_step(SimpleProofStep::ObserveResource(resource.clone()))
+                .expect("the held marker view should be observable");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 96 * logarithmic_height + 256;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} observation allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert_eq!(
+                observed.certificate().steps(),
+                &[SimpleProofStep::ObserveResource(resource.clone())]
+            );
+            assert!(!observed.added_facts().is_empty());
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+
+            let mut missing = resource.clone();
+            let ResourceClause::Declared { name, .. } = &mut missing else {
+                panic!("the marker resource should be declared");
+            };
+            *name = "missing_marker".to_string();
+            assert!(
+                root.apply_step(SimpleProofStep::ObserveResource(missing))
+                    .is_err()
+            );
+            assert!(root.certificate().steps().is_empty());
+            assert_eq!(root.state.facts.to_vec().len(), size as usize);
+        }
+    }
+
+    #[test]
     fn execution_transport_forks_without_copying_unrelated_state() {
         let click_file = crate::lang::click::parse(
             r#"
@@ -9775,6 +9938,7 @@ mod tests {
         let function_environment = CExecutionEnvironment::new();
         let state = CState::new();
         let arguments = vec![CExpression::Value(int32(7))];
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
         let surface = ClickProposition::Comparison {
             left: ContractExpression::CFragment(CExpression::Value(int32(7))),
             operator: ComparisonOperator::Equal,
@@ -9816,6 +9980,7 @@ mod tests {
                 &parsed_function,
                 &arguments,
                 &function_environment,
+                &resource_environment,
                 &predicate_environment,
                 &click_function_environment,
                 &theorem_environment,
@@ -9889,6 +10054,7 @@ mod tests {
         let function_environment = CExecutionEnvironment::new();
         let arguments = vec![CExpression::Value(int32(7))];
         let mut samples = Vec::new();
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
 
         for size in [16_u32, 64, 256, 1024, 4096] {
             let replay = TacticReplayState {
@@ -9909,6 +10075,7 @@ mod tests {
                 &parsed_function,
                 &arguments,
                 &function_environment,
+                &resource_environment,
                 &predicate_environment,
                 &click_function_environment,
                 &theorem_environment,
@@ -9974,6 +10141,7 @@ mod tests {
         let function = parsed_function.to_kernel_function();
         let function_environment = CExecutionEnvironment::new();
         let arguments = vec![CExpression::Value(int32(7))];
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
         let unavailable = ClickProposition::Comparison {
             left: ContractExpression::CFragment(CExpression::Value(int32(0))),
             operator: ComparisonOperator::Equal,
@@ -10000,6 +10168,7 @@ mod tests {
                 &parsed_function,
                 &arguments,
                 &function_environment,
+                &resource_environment,
                 &predicate_environment,
                 &click_function_environment,
                 &theorem_environment,
@@ -10123,6 +10292,7 @@ mod tests {
         let function = parsed_function.to_kernel_function();
         let function_environment = CExecutionEnvironment::new();
         let arguments = vec![CExpression::Value(int32(7))];
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
 
         for size in [16_u32, 64, 256, 1024, 4096] {
             let make_root = |loop_invariant_region| {
@@ -10144,6 +10314,7 @@ mod tests {
                     &parsed_function,
                     &arguments,
                     &function_environment,
+                    &resource_environment,
                     &predicate_environment,
                     &click_function_environment,
                     &theorem_environment,
@@ -10269,6 +10440,7 @@ mod tests {
         let arguments = vec![argument];
         let function_environment = CExecutionEnvironment::new();
         let mut allocation_samples = Vec::new();
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
         let mut statement_delta: Option<Vec<Proposition>> = None;
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut replay = TacticReplayState {
@@ -10290,6 +10462,7 @@ mod tests {
                 &parsed_function,
                 &arguments,
                 &function_environment,
+                &resource_environment,
                 &predicate_environment,
                 &click_function_environment,
                 &theorem_environment,
@@ -10385,6 +10558,7 @@ mod tests {
         ))];
         let function_environment = CExecutionEnvironment::new();
         let mut allocation_samples = Vec::new();
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut replay = TacticReplayState {
                 source_layout: SourceExecutionLayout::new(parsed_function.body()),
@@ -10405,6 +10579,7 @@ mod tests {
                 &parsed_function,
                 &arguments,
                 &function_environment,
+                &resource_environment,
                 &predicate_environment,
                 &click_function_environment,
                 &theorem_environment,
@@ -10482,6 +10657,7 @@ mod tests {
         ))];
         let function_environment = CExecutionEnvironment::new();
         let mut allocation_samples = Vec::new();
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
         let mut expected_outcome_fact_sizes = None;
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut replay = TacticReplayState {
@@ -10503,6 +10679,7 @@ mod tests {
                 &parsed_function,
                 &arguments,
                 &function_environment,
+                &resource_environment,
                 &predicate_environment,
                 &click_function_environment,
                 &theorem_environment,

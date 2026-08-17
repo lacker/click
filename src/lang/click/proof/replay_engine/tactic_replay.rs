@@ -597,6 +597,7 @@ fn try_indexed_step_on_proof<'a>(
     parsed_function: &'a syntax::C0Function,
     arguments: &'a [CExpression],
     function_environment: &'a CExecutionEnvironment,
+    resource_environment: &'a ResourceEnvironment,
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
     theorem_environment: &'a TheoremEnvironment,
@@ -618,6 +619,7 @@ fn try_indexed_step_on_proof<'a>(
         parsed_function,
         arguments,
         function_environment,
+        resource_environment,
         predicate_environment,
         click_function_environment,
         theorem_environment,
@@ -894,6 +896,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 parsed_function,
                 arguments,
                 function_environment,
+                resource_environment,
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
@@ -933,6 +936,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     parsed_function,
                     arguments,
                     function_environment,
+                    resource_environment,
                     predicate_environment,
                     click_function_environment,
                     theorem_environment,
@@ -968,26 +972,35 @@ fn replay_linear_tactics_without_frontier_loops(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::ObserveResource(resource) => {
-                if replay.is_at_function_exit() {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `observe` must run before execution reaches function exit"
-                    )));
-                }
-                state = observe_composite_resource(
-                    resource_environment,
-                    resource,
-                    parsed_function.parameters(),
-                    arguments,
-                    state,
-                    &mut requirement_pure_facts,
-                    &mut replay.surface_propositions,
-                    &mut replay.function_entry_derivations,
-                    &mut replay.function_entry_execution_prerequisites,
-                    predicate_environment,
-                    click_function_environment,
+                let proof = Proof::for_execution_frontier(
                     claim_label,
                     tactic_index,
-                )?;
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    function,
+                    parsed_function,
+                    arguments,
+                    function_environment,
+                    resource_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    theorem_environment,
+                );
+                let proof = proof.apply_step(SimpleProofStep::ObserveResource(resource.clone()))?;
+                let certificate = proof.certificate();
+                let result = proof.into_execution_context()?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
+                for step in certificate.steps() {
+                    replay.proof_certificate_builder.push_step(step.clone());
+                }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::Transport {
@@ -1046,6 +1059,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     parsed_function,
                     arguments,
                     function_environment,
+                    resource_environment,
                     predicate_environment,
                     click_function_environment,
                     theorem_environment,
@@ -1077,6 +1091,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     parsed_function,
                     arguments,
                     function_environment,
+                    resource_environment,
                     predicate_environment,
                     click_function_environment,
                     theorem_environment,
@@ -1104,6 +1119,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     parsed_function,
                     arguments,
                     function_environment,
+                    resource_environment,
                     predicate_environment,
                     click_function_environment,
                     theorem_environment,
@@ -1127,6 +1143,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     parsed_function,
                     arguments,
                     function_environment,
+                    resource_environment,
                     predicate_environment,
                     click_function_environment,
                     theorem_environment,
@@ -1210,6 +1227,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         parsed_function,
                         arguments,
                         function_environment,
+                        resource_environment,
                         predicate_environment,
                         click_function_environment,
                         theorem_environment,
@@ -1358,6 +1376,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         parsed_function,
                         arguments,
                         function_environment,
+                        resource_environment,
                         predicate_environment,
                         click_function_environment,
                         theorem_environment,
@@ -1487,6 +1506,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         parsed_function,
                         arguments,
                         function_environment,
+                        resource_environment,
                         predicate_environment,
                         click_function_environment,
                         theorem_environment,
@@ -2030,6 +2050,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     parsed_function,
                     arguments,
                     function_environment,
+                    resource_environment,
                     predicate_environment,
                     click_function_environment,
                     theorem_environment,
@@ -2110,6 +2131,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     parsed_function,
                     arguments,
                     function_environment,
+                    resource_environment,
                     predicate_environment,
                     click_function_environment,
                     theorem_environment,
@@ -2515,6 +2537,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     parsed_function,
                     arguments,
                     function_environment,
+                    resource_environment,
                     predicate_environment,
                     click_function_environment,
                     theorem_environment,

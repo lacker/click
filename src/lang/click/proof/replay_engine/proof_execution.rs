@@ -349,6 +349,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     parsed_function,
                     arguments,
                     function_environment,
+                    resource_environment,
                     predicate_environment,
                     click_function_environment,
                     theorem_environment,
