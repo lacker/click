@@ -70,7 +70,7 @@ use crate::kernel::{
     substitute_int32_variable_in_proposition,
 };
 use crate::lang::c::syntax::{self, C0Expression, C0Type};
-use crate::persistent::PersistentMap;
+use crate::persistent::{PersistentMap, PersistentSet};
 
 mod checking;
 mod diagnostics;
@@ -430,11 +430,20 @@ pub enum ClickProposition {
 /// to in one proof context.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SurfacePropositionMap {
+    storage: std::sync::Arc<SurfacePropositionStorage>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct SurfacePropositionStorage {
     by_kernel: PersistentMap<Proposition, KernelSurfaceSpellings>,
     // The debug spelling is a deterministic structural bucket key. Exact
     // equality inside the bucket preserves soundness even if two future
     // syntax variants ever acquire the same debug rendering.
     by_surface: PersistentMap<String, Vec<(ClickProposition, KernelLowerings)>>,
+    /// Kernel facts with a current Surface spelling that reads one named C
+    /// local. Assignment-step search probes only the assigned local's bucket
+    /// instead of scanning every recorded fact.
+    by_current_c_variable: PersistentMap<String, PersistentSet<Proposition>>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -468,11 +477,225 @@ impl KernelLowerings {
     }
 }
 
+fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet<String>) {
+    match expression {
+        CExpression::Value(_) => {}
+        CExpression::Variable(name) => {
+            names.insert(name.clone());
+        }
+        CExpression::AddressOf(inner)
+        | CExpression::PointerOffsetBytes { pointer: inner, .. }
+        | CExpression::Not(inner)
+        | CExpression::BitwiseNot(inner)
+        | CExpression::Load(inner)
+        | CExpression::TypedLoad { pointer: inner, .. } => {
+            collect_c_expression_variables(inner, names);
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            collect_c_expression_variables(left, names);
+            collect_c_expression_variables(right, names);
+        }
+    }
+}
+
+fn collect_current_segment_variables(segment: &ContractSegment, names: &mut BTreeSet<String>) {
+    if segment.state != ContractSegmentState::Current {
+        return;
+    }
+    collect_c_expression_variables(&segment.base, names);
+    collect_c_expression_variables(&segment.start, names);
+    collect_c_expression_variables(&segment.end, names);
+}
+
+fn collect_current_resource_clause_variables(
+    resource: &ResourceClause,
+    names: &mut BTreeSet<String>,
+) {
+    match resource {
+        ResourceClause::Read(segment) | ResourceClause::Write(segment) => {
+            collect_current_segment_variables(segment, names);
+        }
+        ResourceClause::Quantified { quantity, resource } => {
+            collect_current_contract_expression_variables(quantity, names);
+            collect_current_resource_clause_variables(resource, names);
+        }
+        ResourceClause::Declared { arguments, .. } => {
+            for argument in arguments {
+                collect_current_contract_expression_variables(argument, names);
+            }
+        }
+    }
+}
+
+fn collect_current_resource_subject_variables(
+    subject: &ResourceSubject,
+    names: &mut BTreeSet<String>,
+) {
+    match subject {
+        ResourceSubject::Memory(segment) => collect_current_segment_variables(segment, names),
+        ResourceSubject::Declared { arguments, .. } => {
+            for argument in arguments {
+                collect_current_contract_expression_variables(argument, names);
+            }
+        }
+    }
+}
+
+fn collect_current_contract_expression_variables(
+    expression: &ContractExpression,
+    names: &mut BTreeSet<String>,
+) {
+    match expression {
+        ContractExpression::CFragment(expression) => {
+            collect_c_expression_variables(expression, names);
+        }
+        ContractExpression::Field { base, lowered, .. } => {
+            collect_current_contract_expression_variables(base, names);
+            collect_c_expression_variables(lowered, names);
+        }
+        ContractExpression::CBinding(_) | ContractExpression::ResourceWildcard => {}
+        ContractExpression::ResourceCount(resource) => {
+            collect_current_resource_clause_variables(resource, names);
+        }
+        // Explicitly anchored expressions are stable across a local write.
+        ContractExpression::Old(_) | ContractExpression::At { .. } => {}
+        ContractExpression::BitwiseNot(inner) => {
+            collect_current_contract_expression_variables(inner, names);
+        }
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
+        | ContractExpression::Index(left, right) => {
+            collect_current_contract_expression_variables(left, names);
+            collect_current_contract_expression_variables(right, names);
+        }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_current_proposition_variables(condition, names);
+            collect_current_contract_expression_variables(then_branch, names);
+            collect_current_contract_expression_variables(else_branch, names);
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            collect_current_contract_expression_variables(start, names);
+            collect_current_contract_expression_variables(end, names);
+            collect_current_contract_expression_variables(initial, names);
+            collect_current_contract_expression_variables(body, names);
+        }
+        ContractExpression::Let { value, body, .. } => {
+            collect_current_contract_expression_variables(value, names);
+            collect_current_contract_expression_variables(body, names);
+        }
+        ContractExpression::Call { arguments, .. } => {
+            for argument in arguments {
+                collect_current_contract_expression_variables(argument, names);
+            }
+        }
+    }
+}
+
+fn collect_current_proposition_variables(
+    proposition: &ClickProposition,
+    names: &mut BTreeSet<String>,
+) {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            collect_current_contract_expression_variables(left, names);
+            collect_current_contract_expression_variables(right, names);
+        }
+        ClickProposition::Separate { left, right }
+        | ClickProposition::Contains {
+            parent: left,
+            child: right,
+        } => {
+            collect_current_resource_subject_variables(left, names);
+            collect_current_resource_subject_variables(right, names);
+        }
+        ClickProposition::Loadable { segment } => {
+            collect_current_segment_variables(segment, names);
+        }
+        ClickProposition::Defined { expression } => {
+            collect_current_contract_expression_variables(expression, names);
+        }
+        // The proposition itself is anchored, so current-local writes cannot
+        // change its meaning even if its body contains a C fragment.
+        ClickProposition::At { .. } => {}
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            collect_current_proposition_variables(left, names);
+            collect_current_proposition_variables(right, names);
+        }
+        ClickProposition::Not(body)
+        | ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. } => {
+            collect_current_proposition_variables(body, names);
+        }
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            collect_current_contract_expression_variables(start, names);
+            collect_current_contract_expression_variables(end, names);
+            collect_current_proposition_variables(body, names);
+        }
+        ClickProposition::PredicateCall { arguments, .. } => {
+            for argument in arguments {
+                collect_current_contract_expression_variables(argument, names);
+            }
+        }
+    }
+}
+
 impl SurfacePropositionMap {
     #[cfg(test)]
     pub(crate) fn shares_persistent_storage_with(&self, other: &Self) -> bool {
-        self.by_kernel.shares_root_with(&other.by_kernel)
-            && self.by_surface.shares_root_with(&other.by_surface)
+        self.storage
+            .by_kernel
+            .shares_root_with(&other.storage.by_kernel)
+            && self
+                .storage
+                .by_surface
+                .shares_root_with(&other.storage.by_surface)
+            && self
+                .storage
+                .by_current_c_variable
+                .shares_root_with(&other.storage.by_current_c_variable)
     }
 
     pub fn record_lowering(
@@ -480,28 +703,45 @@ impl SurfacePropositionMap {
         surface: &ClickProposition,
         kernel: &Proposition,
     ) -> Result<(), ClickError> {
+        let mut current_c_variables = BTreeSet::new();
+        collect_current_proposition_variables(surface, &mut current_c_variables);
         let surface_key = format!("{surface:?}");
-        let mut spellings = self.by_kernel.get(kernel).cloned().unwrap_or_default();
-        spellings.insert(surface, &surface_key);
-        self.by_kernel = self.by_kernel.with_inserted(kernel.clone(), spellings);
-        let mut bucket = self
-            .by_surface
-            .get(&surface_key)
-            .cloned()
-            .unwrap_or_default();
-        let lowerings = if let Some((_, lowerings)) =
-            bucket.iter_mut().find(|(recorded, _)| recorded == surface)
         {
-            lowerings
-        } else {
-            bucket.push((surface.clone(), KernelLowerings::default()));
-            &mut bucket
-                .last_mut()
-                .expect("surface lowering was just inserted")
-                .1
-        };
-        lowerings.insert(kernel);
-        self.by_surface = self.by_surface.with_inserted(surface_key, bucket);
+            let storage = std::sync::Arc::make_mut(&mut self.storage);
+            for name in current_c_variables {
+                let existing = storage.by_current_c_variable.get(&name);
+                if existing.is_some_and(|facts| facts.contains(kernel)) {
+                    continue;
+                }
+                let facts = existing
+                    .cloned()
+                    .unwrap_or_default()
+                    .with_value(kernel.clone());
+                storage.by_current_c_variable =
+                    storage.by_current_c_variable.with_inserted(name, facts);
+            }
+            let mut spellings = storage.by_kernel.get(kernel).cloned().unwrap_or_default();
+            spellings.insert(surface, &surface_key);
+            storage.by_kernel = storage.by_kernel.with_inserted(kernel.clone(), spellings);
+            let mut bucket = storage
+                .by_surface
+                .get(&surface_key)
+                .cloned()
+                .unwrap_or_default();
+            let lowerings = if let Some((_, lowerings)) =
+                bucket.iter_mut().find(|(recorded, _)| recorded == surface)
+            {
+                lowerings
+            } else {
+                bucket.push((surface.clone(), KernelLowerings::default()));
+                &mut bucket
+                    .last_mut()
+                    .expect("surface lowering was just inserted")
+                    .1
+            };
+            lowerings.insert(kernel);
+            storage.by_surface = storage.by_surface.with_inserted(surface_key, bucket);
+        }
         match (surface, kernel) {
             (ClickProposition::And(surface_left, surface_right), Proposition::And(left, right))
             | (ClickProposition::Or(surface_left, surface_right), Proposition::Or(left, right))
@@ -544,7 +784,8 @@ impl SurfacePropositionMap {
     }
 
     pub fn surface(&self, kernel: &Proposition) -> Result<&ClickProposition, ClickError> {
-        self.by_kernel
+        self.storage
+            .by_kernel
             .get(kernel)
             .and_then(|spellings| spellings.ordered.last())
             .ok_or_else(|| {
@@ -555,14 +796,45 @@ impl SurfacePropositionMap {
     }
 
     pub fn surfaces(&self, kernel: &Proposition) -> impl Iterator<Item = &ClickProposition> {
-        self.by_kernel
+        self.storage
+            .by_kernel
             .get(kernel)
             .into_iter()
             .flat_map(|spellings| spellings.ordered.iter())
     }
 
     pub fn kernel_facts(&self) -> impl Iterator<Item = &Proposition> {
-        self.by_kernel.keys()
+        self.storage.by_kernel.keys()
+    }
+
+    pub(crate) fn current_c_variable_kernel_facts(
+        &self,
+        name: &str,
+    ) -> impl Iterator<Item = &Proposition> {
+        self.storage
+            .by_current_c_variable
+            .get(&name.to_string())
+            .into_iter()
+            .flat_map(PersistentSet::iter)
+    }
+
+    pub(crate) fn current_c_variable_surface<'a>(
+        &'a self,
+        kernel: &Proposition,
+        name: &str,
+    ) -> Option<&'a ClickProposition> {
+        self.surfaces(kernel).find(|surface| {
+            let mut names = BTreeSet::new();
+            collect_current_proposition_variables(surface, &mut names);
+            names.contains(name)
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn current_c_variable_lookup_comparisons(&self, name: &str) -> usize {
+        self.storage
+            .by_current_c_variable
+            .lookup_comparisons(&name.to_string())
     }
 
     pub fn available_kernel(
@@ -580,6 +852,7 @@ impl SurfacePropositionMap {
     ) -> Option<&Proposition> {
         let surface_key = format!("{surface:?}");
         let mut matches = self
+            .storage
             .by_surface
             .get(&surface_key)?
             .iter()
@@ -597,6 +870,7 @@ impl SurfacePropositionMap {
     pub fn unique_kernel(&self, surface: &ClickProposition) -> Option<&Proposition> {
         let surface_key = format!("{surface:?}");
         let mut lowerings = self
+            .storage
             .by_surface
             .get(&surface_key)?
             .iter()
@@ -609,7 +883,8 @@ impl SurfacePropositionMap {
 
     pub fn has_distinct_lowering(&self, surface: &ClickProposition, kernel: &Proposition) -> bool {
         let surface_key = format!("{surface:?}");
-        self.by_surface
+        self.storage
+            .by_surface
             .get(&surface_key)
             .into_iter()
             .flatten()
@@ -625,7 +900,7 @@ impl SurfacePropositionMap {
     where
         F: FnMut(&ClickProposition) -> Result<Proposition, ClickError>,
     {
-        let spellings = self.by_kernel.get(kernel).ok_or_else(|| {
+        let spellings = self.storage.by_kernel.get(kernel).ok_or_else(|| {
             ClickError::new(format!(
                 "kernel proposition has no recorded Click surface spelling: {kernel:?}"
             ))

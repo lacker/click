@@ -373,15 +373,30 @@ their structural paths. A rejected candidate leaves the root intact and falls
 through to the richer transport planner; deadline failure is not swallowed as
 rejection.
 
+Local assignment is the first dependency-indexed exception to the complete-
+ambient-set restriction. `SurfacePropositionMap` incrementally indexes kernel
+facts by each unanchored current C local in their checked Click spellings. A
+smart assignment probes only the assigned name, adds those exact facts to its
+`StepUsing`, and leaves every unrelated fact shared in the ancestor. Explicit
+`old(...)` and `at(...)` spellings are excluded from the current-local bucket;
+if a kernel fact has both current and anchored spellings, selection retains
+the current one. The index is persistent, so recording one lowering or
+forking a proof copies only logarithmic paths. All three surface indexes live
+behind one shared storage pointer, keeping `SurfacePropositionMap` smaller than
+its former two-inline-map representation; the deep pure case-split canary
+caught the stack regression from initially placing the new map inline.
+
 Focused counter regressions require zero mutable planning transitions for
 the empty assignment/return path and the overflow-premise return, and
 expansion independently verifies both retained forms. The existing
-16-through-4096 unrelated-fact
-curve additionally requires this bounded query to reject without allocating
-any persistent fact nodes, rather than scanning or cloning the ambient facts.
-Statements with unrelated facts still retain automatic transport planning
-because a current or later postcondition may depend on facts that smart
-`step()` must carry forward. This is the first
+16-through-4096 unrelated-fact curve requires a generic ineligible query to
+reject without allocating persistent fact nodes, and a separate assignment
+curve requires successful selection/update to stay logarithmic while sharing
+the complete unrelated fact context. A 16-through-4096-name curve also bounds
+the local-dependency lookup itself by persistent-index height. Memory writes,
+calls, and other statements with unrelated facts still retain automatic
+transport planning because a current or later postcondition may depend on
+facts that smart `step()` must carry forward. This is the first
 execution search path where smart selection operates on proof objects, not
 merely where planner output is checked by one afterward.
 

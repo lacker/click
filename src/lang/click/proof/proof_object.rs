@@ -2118,18 +2118,18 @@ impl<'a> Proof<'a> {
         source_proof_contains_linear_search(proof) && source_proof_is_supported(proof)
     }
 
-    /// Tries the bounded linear statement candidate whose complete premise set
-    /// is visible before executing the statement: its exact expression-
-    /// definedness requirements.
+    /// Tries a bounded linear statement candidate whose explicit dependencies
+    /// are visible before executing the statement.
     ///
     /// This is deliberately narrower than general smart `step` planning. It
-    /// accepts only a non-branching, non-loop frontier whose proof facts
-    /// consist exactly of those requirements, with no effect or resource
-    /// context that would need preservation. Selection performs indexed
-    /// fact/surface lookups only; the C transition runs once, when the
+    /// A general statement still requires its proof facts to consist exactly
+    /// of expression-definedness evidence. A local assignment additionally
+    /// selects the current Surface facts indexed under the assigned name;
+    /// unrelated facts remain shared and are never scanned. Selection performs
+    /// indexed fact/surface lookups only; the C transition runs once, when the
     /// resulting `StepUsing` is submitted to `apply_step` and retained by the
     /// returned descendant.
-    pub(super) fn try_exact_definedness_statement_step(&self) -> Result<Option<Self>, ClickError> {
+    pub(super) fn try_indexed_statement_step(&self) -> Result<Option<Self>, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Ok(None);
         };
@@ -2154,13 +2154,17 @@ impl<'a> Proof<'a> {
         if matches!(statement, CStatement::If { .. } | CStatement::While { .. }) {
             return Ok(None);
         }
+        let assigned_local = match &statement {
+            CStatement::Assign { name, .. } => Some(name.as_str()),
+            _ => None,
+        };
         let mut required = statement_expression_definedness(&current_state, &statement)
             .into_iter()
             .filter(|fact| !PureFactContext::new().proves(fact))
             .collect::<Vec<_>>();
         required.sort();
         required.dedup();
-        if self.state.facts.ordered.len() != required.len() {
+        if assigned_local.is_none() && self.state.facts.ordered.len() != required.len() {
             return Ok(None);
         }
         let mut selected = Vec::with_capacity(required.len());
@@ -2179,18 +2183,36 @@ impl<'a> Proof<'a> {
                 }
             }
         }
-        if selected.len() != self.state.facts.ordered.len() {
+        if assigned_local.is_none() && selected.len() != self.state.facts.ordered.len() {
             return Ok(None);
+        }
+        let mut local_dependencies = BTreeSet::new();
+        if let Some(name) = assigned_local {
+            for fact in execution
+                .replay
+                .surface_propositions
+                .current_c_variable_kernel_facts(name)
+            {
+                if self.state.facts.contains_top_level(fact) {
+                    local_dependencies.insert(fact.clone());
+                    if !selected.contains(fact) {
+                        selected.push(fact.clone());
+                    }
+                }
+            }
         }
         let mut premises = Vec::with_capacity(selected.len());
         for fact in selected {
-            let Some(surface) = execution
-                .replay
-                .surface_propositions
-                .surfaces(&fact)
-                .next()
-                .cloned()
-            else {
+            let surface = assigned_local
+                .filter(|_| local_dependencies.contains(&fact))
+                .and_then(|name| {
+                    execution
+                        .replay
+                        .surface_propositions
+                        .current_c_variable_surface(&fact, name)
+                })
+                .or_else(|| execution.replay.surface_propositions.surfaces(&fact).next());
+            let Some(surface) = surface.cloned() else {
                 return Ok(None);
             };
             premises.push(surface);
@@ -8856,6 +8878,92 @@ mod tests {
     }
 
     #[test]
+    fn smart_local_assignment_selection_ignores_unrelated_proof_facts() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 set_one(int32 x) {
+                    ensures returns_one: result == 1 by { assumption(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let parsed_function = syntax::parse_function("int32 set_one(int32 x) { x = 1; return x; }")
+            .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let function_environment = CExecutionEnvironment::new();
+        let arguments = vec![CExpression::Value(int32(7))];
+        let mut samples = Vec::new();
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let replay = TacticReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..TacticReplayState::default()
+            };
+            let root = Proof::for_execution_frontier(
+                "indexed local assignment",
+                0,
+                ProofReplayContext {
+                    state: CState::new(),
+                    pure_facts: (0..size).map(indexed_fact).collect(),
+                    replay,
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let selected = root
+                .try_indexed_statement_step()
+                .expect("indexed assignment selection should remain available")
+                .expect("unrelated facts should not force mutable planning");
+            let allocations = fact_node_allocations() - before;
+            samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                allocations,
+            ));
+
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+            assert!(matches!(
+                selected.certificate().steps(),
+                [SimpleProofStep::StepUsing(premises)] if premises.is_empty()
+            ));
+            assert_eq!(selected.state.facts.to_vec(), root.state.facts.to_vec());
+            assert!(
+                !selected
+                    .state
+                    .execution
+                    .as_ref()
+                    .expect("assignment successor retains execution")
+                    .replay
+                    .is_at_function_exit()
+            );
+        }
+
+        let (_, base_height, base_allocations) = samples[0];
+        for (size, height, allocations) in samples {
+            let logarithmic_bound = base_allocations + 8 * (height - base_height);
+            assert!(
+                allocations <= logarithmic_bound,
+                "size {size} assignment selection allocated {allocations} persistent nodes (bound {logarithmic_bound})"
+            );
+        }
+    }
+
+    #[test]
     fn checked_statement_step_ignores_unrelated_proof_facts() {
         let click_file = crate::lang::click::parse(
             r#"
@@ -8908,7 +9016,7 @@ mod tests {
             let retained_root = root.clone();
             let before_selection = fact_node_allocations();
             assert!(
-                root.try_exact_definedness_statement_step()
+                root.try_indexed_statement_step()
                     .expect("bounded smart-step selection should remain available")
                     .is_none(),
                 "unrelated ambient facts require the richer transport planner"

@@ -833,6 +833,17 @@ fn retains_distinct_surface_spellings_for_the_same_kernel_fact() {
     assert_eq!(spellings.surface(&kernel).unwrap(), &snapshot);
     assert_eq!(
         spellings
+            .current_c_variable_kernel_facts("x")
+            .collect::<Vec<_>>(),
+        vec![&kernel]
+    );
+    assert_eq!(
+        spellings.current_c_variable_surface(&kernel, "x"),
+        Some(&current),
+        "an anchored spelling must not replace the current-local dependency spelling"
+    );
+    assert_eq!(
+        spellings
             .checked_surface(&kernel, |surface| {
                 Ok(if surface == &current {
                     kernel.clone()
@@ -930,6 +941,72 @@ fn surface_lowering_map_forks_and_local_updates_scale_logarithmically() {
         );
         assert!(ancestor.surface(&kernel).is_err());
         assert_eq!(spellings.surface(&kernel).unwrap(), &surface);
+    }
+}
+
+#[test]
+fn current_c_variable_fact_selection_scales_by_index_height() {
+    for size in [16_u32, 64, 256, 1024, 4096] {
+        let mut spellings = SurfacePropositionMap::default();
+        let mut kernels = Vec::with_capacity(size as usize);
+        for index in 0..size {
+            let name = format!("local_{index}");
+            let surface = ClickProposition::Comparison {
+                left: current_var(&name),
+                operator: ComparisonOperator::Equal,
+                right: current_int(index),
+            };
+            let kernel = Proposition::ConditionIs(
+                ConditionTerm::Variable(Variable((100_000 + index).into())),
+                true,
+            );
+            spellings.record_lowering(&surface, &kernel).unwrap();
+            kernels.push(kernel);
+        }
+
+        let ancestor = spellings.clone();
+        let added_name = format!("local_{size}");
+        let added_surface = ClickProposition::Comparison {
+            left: current_var(&added_name),
+            operator: ComparisonOperator::Equal,
+            right: current_int(size),
+        };
+        let added_kernel = Proposition::ConditionIs(
+            ConditionTerm::Variable(Variable((100_000 + size).into())),
+            true,
+        );
+        let before = crate::persistent::persistent_node_allocations();
+        spellings
+            .record_lowering(&added_surface, &added_kernel)
+            .unwrap();
+        let allocations = crate::persistent::persistent_node_allocations() - before;
+        let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+        let allocation_bound = 12 * logarithmic_height + 24;
+        assert!(
+            allocations <= allocation_bound,
+            "size {size} local-index update allocated {allocations} map nodes (bound {allocation_bound})"
+        );
+        assert_eq!(
+            ancestor
+                .current_c_variable_kernel_facts(&added_name)
+                .count(),
+            0,
+            "updating a fork must not mutate its ancestor"
+        );
+
+        let selected_index = size / 2;
+        let selected_name = format!("local_{selected_index}");
+        assert_eq!(
+            spellings
+                .current_c_variable_kernel_facts(&selected_name)
+                .collect::<Vec<_>>(),
+            vec![&kernels[selected_index as usize]]
+        );
+        let comparisons = spellings.current_c_variable_lookup_comparisons(&selected_name);
+        assert!(
+            comparisons <= 2 * logarithmic_height + 2,
+            "size {size} local dependency lookup used {comparisons} comparisons"
+        );
     }
 }
 

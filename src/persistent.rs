@@ -188,6 +188,20 @@ pub(crate) struct PersistentSet<T> {
     map: PersistentMap<T, ()>,
 }
 
+impl<T: Ord + PartialEq> PartialEq for PersistentSet<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.map == other.map
+    }
+}
+
+impl<T: Ord + Eq> Eq for PersistentSet<T> {}
+
+impl<T: Ord + fmt::Debug> fmt::Debug for PersistentSet<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.map.fmt(formatter)
+    }
+}
+
 impl<T> Default for PersistentSet<T> {
     fn default() -> Self {
         Self {
@@ -205,6 +219,10 @@ impl<T: Ord> PersistentSet<T> {
 
     pub(crate) fn contains(&self, value: &T) -> bool {
         self.map.contains_key(value)
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &T> {
+        self.map.keys()
     }
 
     #[cfg(test)]

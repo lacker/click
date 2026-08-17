@@ -474,6 +474,66 @@ fn fact_free_linear_smart_steps_search_directly_on_proof() {
 }
 
 #[test]
+fn local_assignment_smart_step_selects_only_local_surface_dependencies() {
+    let c_source = r#"
+            int32 set_one(int32 x) {
+                x = 1;
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "set_one.c";
+
+            int32 set_one(int32 x) {
+                requires x >= 0;
+                ensures result == 1;
+            } by {
+                step();
+                step() using {}
+                normalize();
+            }
+        "#;
+
+    let ((verified, events), planning_transitions) = count_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| {
+            verify_c0_sources(click_source, &[("set_one.c", c_source)])
+        })
+    });
+    let verified = verified.expect("the local assignment dependency should be selected by Proof");
+    assert_eq!(
+        planning_transitions, 0,
+        "the smart local assignment must not execute on a mutable planning context"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "set_one.contract" && name == "surface certificate replay"
+        )),
+        "the retained Proof path must not pass through ordinary construction replay: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked assignment should retain its expansion");
+    assert!(matches!(
+        expanded.as_slice(),
+        [ProofTactic::StepUsing(first), ProofTactic::StepUsing(second), ProofTactic::Normalize]
+            if first.len() == 1 && second.is_empty()
+    ));
+
+    let expanded_source = expand_c0_claim_source(
+        click_source,
+        &[("set_one.c", c_source)],
+        "set_one",
+        CProofClaim::Grouped,
+    )
+    .expect("the selected local dependency should expand into source");
+    assert!(expanded_source.contains("x >= 0;"), "{expanded_source}");
+    verify_c0_sources(&expanded_source, &[("set_one.c", c_source)])
+        .expect("the retained assignment dependency should independently reverify");
+}
+
+#[test]
 fn execute_rest_return_certificate_omits_unused_ambient_facts() {
     let c_source = r#"
             int32 return_x(int32 x) {
