@@ -1128,6 +1128,23 @@ impl PureFactContext {
                 .map(AtomicPropositionDerivationEvidence::Int32IncrementStrictlyIncreases),
             _ => None,
         };
+        let one_plus_strictly_increases_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(value, sum),
+                true,
+            ) => match sum.as_ref() {
+                Bitvector32Term::Add(left, right)
+                    if left.as_ref() == &Bitvector32Term::Constant(1)
+                        && right.as_ref() == value.as_ref() =>
+                {
+                    let int_max = Bitvector32Term::Constant(i32::MAX as u32);
+                    self.exact_direct_order_step(value, &int_max, true)
+                        .map(AtomicPropositionDerivationEvidence::Int32OnePlusStrictlyIncreases)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
         let increment_below_max_is_defined_evidence = match proposition {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedAddOverflows(base, amount),
@@ -1142,6 +1159,17 @@ impl PureFactContext {
                         _ => None,
                     })
                     .map(AtomicPropositionDerivationEvidence::Int32IncrementBelowMaxIsDefined)
+            }
+            _ => None,
+        };
+        let one_plus_below_max_is_defined_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedAddOverflows(one, value),
+                false,
+            ) if one.as_ref() == &Bitvector32Term::Constant(1) => {
+                let int_max = Bitvector32Term::Constant(i32::MAX as u32);
+                self.exact_direct_order_step(value, &int_max, true)
+                    .map(AtomicPropositionDerivationEvidence::Int32OnePlusBelowMaxIsDefined)
             }
             _ => None,
         };
@@ -1418,8 +1446,10 @@ impl PureFactContext {
             .or(signed_order_evidence)
             .or(increment_upper_bound_evidence)
             .or(increment_constant_upper_bound_evidence)
+            .or(one_plus_strictly_increases_evidence)
             .or(increment_strictly_increases_evidence)
             .or(increment_below_max_is_defined_evidence)
+            .or(one_plus_below_max_is_defined_evidence)
             .or(nonnegative_add_within_max_evidence)
             .or(nonnegative_subtract_within_value_evidence)
             .or(increment_lower_bound_evidence)
@@ -1611,6 +1641,25 @@ impl PureFactContext {
                                 == Some((step.lower.clone(), step.upper.clone(), true))
                 );
         }
+        if let AtomicPropositionDerivationEvidence::Int32OnePlusStrictlyIncreases(step) = evidence {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(value, sum),
+                true,
+            ) = proposition
+            else {
+                return false;
+            };
+            let Bitvector32Term::Add(left, right) = sum.as_ref() else {
+                return false;
+            };
+            let int_max = Bitvector32Term::Constant(i32::MAX as u32);
+            return left.as_ref() == &Bitvector32Term::Constant(1)
+                && right.as_ref() == value.as_ref()
+                && step.lower == **value
+                && step.upper == int_max
+                && step.strict
+                && self.replays_exact_order_step(step);
+        }
         if let AtomicPropositionDerivationEvidence::Int32IncrementBelowMaxIsDefined(step) = evidence
         {
             let Proposition::ConditionIs(
@@ -1632,6 +1681,21 @@ impl PureFactContext {
                             && condition_as_order_fact(condition, *value)
                                 == Some((step.lower.clone(), step.upper.clone(), true))
                 );
+        }
+        if let AtomicPropositionDerivationEvidence::Int32OnePlusBelowMaxIsDefined(step) = evidence {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedAddOverflows(one, value),
+                false,
+            ) = proposition
+            else {
+                return false;
+            };
+            let int_max = Bitvector32Term::Constant(i32::MAX as u32);
+            return one.as_ref() == &Bitvector32Term::Constant(1)
+                && step.lower == **value
+                && step.upper == int_max
+                && step.strict
+                && self.replays_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32NonnegativeAddWithinMaxIsDefined(bounds) =
             evidence

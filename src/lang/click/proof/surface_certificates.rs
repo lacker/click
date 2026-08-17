@@ -300,6 +300,18 @@ pub(super) fn lower_surface_atomic_derivation(
                 false,
             )
         });
+    let typed_one_plus_strict_pairs =
+        recorded_int32_one_plus_strictly_increases_pairs(derivation, &premise_pairs);
+    let typed_one_plus_strict_plan = typed_one_plus_strict_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_one_plus_strictly_increases_for_context(
+                &lowered_conclusion,
+                pairs,
+                false,
+            )
+        });
     let typed_increment_definedness_pairs =
         recorded_int32_increment_below_max_is_defined_pairs(derivation, &premise_pairs);
     let typed_increment_definedness_plan = typed_increment_definedness_pairs
@@ -307,6 +319,18 @@ pub(super) fn lower_surface_atomic_derivation(
         .filter(|pairs| replay_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_increment_below_max_is_defined_for_context(
+                &lowered_conclusion,
+                pairs,
+                false,
+            )
+        });
+    let typed_one_plus_definedness_pairs =
+        recorded_int32_one_plus_below_max_is_defined_pairs(derivation, &premise_pairs);
+    let typed_one_plus_definedness_plan = typed_one_plus_definedness_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_one_plus_below_max_is_defined_for_context(
                 &lowered_conclusion,
                 pairs,
                 false,
@@ -530,7 +554,9 @@ pub(super) fn lower_surface_atomic_derivation(
         || typed_increment_plan.is_some()
         || typed_increment_constant_upper_plan.is_some()
         || typed_strict_increment_plan.is_some()
+        || typed_one_plus_strict_plan.is_some()
         || typed_increment_definedness_plan.is_some()
+        || typed_one_plus_definedness_plan.is_some()
         || typed_nonnegative_add_plan.is_some()
         || typed_nonnegative_subtract_plan.is_some()
         || typed_increment_lower_bound_plan.is_some()
@@ -563,9 +589,15 @@ pub(super) fn lower_surface_atomic_derivation(
     } else if typed_strict_increment_plan.is_some() {
         premise_pairs = typed_strict_increment_pairs
             .expect("a typed strict-increment plan retains its exact premise");
+    } else if typed_one_plus_strict_plan.is_some() {
+        premise_pairs = typed_one_plus_strict_pairs
+            .expect("a typed one-plus strict-increment plan retains its exact premise");
     } else if typed_increment_definedness_plan.is_some() {
         premise_pairs = typed_increment_definedness_pairs
             .expect("a typed increment-definedness plan retains its exact premise");
+    } else if typed_one_plus_definedness_plan.is_some() {
+        premise_pairs = typed_one_plus_definedness_pairs
+            .expect("a typed one-plus definedness plan retains its exact premise");
     } else if typed_nonnegative_add_plan.is_some() {
         premise_pairs = typed_nonnegative_add_pairs
             .expect("a typed symbolic-add-definedness plan retains both exact premises");
@@ -773,10 +805,26 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
     }
+    if let Some(tactics) = typed_one_plus_strict_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded one-plus strict-increment rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
     if let Some(tactics) = typed_increment_definedness_plan {
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "recorded increment-definedness rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_one_plus_definedness_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded one-plus definedness rule produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -3142,6 +3190,7 @@ pub(super) fn plan_explicit_named_signed_rule(
 ) -> Option<Vec<ProofTactic>> {
     plan_explicit_implies_refuted_antecedent(goal, premise_pairs)
         .or_else(|| plan_explicit_discharged_implication_consequent(goal, premise_pairs))
+        .or_else(|| plan_explicit_one_plus_strictly_increases(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_strictly_increases(goal, premise_pairs))
         .or_else(|| plan_explicit_successor_le_implies_lt(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_preserves_order(goal, premise_pairs))
@@ -3164,6 +3213,7 @@ pub(super) fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_constant_strict_upper_bound_weakening(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_constant_upper_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_below_max_is_defined(goal, premise_pairs))
+        .or_else(|| plan_explicit_one_plus_below_max_is_defined(goal, premise_pairs))
         .or_else(|| plan_explicit_nonnegative_add_within_max_is_defined(goal, premise_pairs))
         .or_else(|| plan_explicit_nonnegative_subtract_within_value_is_defined(goal, premise_pairs))
         .or_else(|| plan_explicit_positive_predecessor_is_nonnegative(goal, premise_pairs))
@@ -3413,6 +3463,34 @@ pub(super) fn recorded_int32_increment_below_max_is_defined_pairs(
 ) -> Option<Vec<(Proposition, ClickProposition)>> {
     let premise = derivation
         .int32_increment_below_max_is_defined_step()?
+        .premise();
+    premise_pairs
+        .iter()
+        .find(|(kernel, _)| kernel == premise)
+        .cloned()
+        .map(|pair| vec![pair])
+}
+
+pub(super) fn recorded_int32_one_plus_below_max_is_defined_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    let premise = derivation
+        .int32_one_plus_below_max_is_defined_step()?
+        .premise();
+    premise_pairs
+        .iter()
+        .find(|(kernel, _)| kernel == premise)
+        .cloned()
+        .map(|pair| vec![pair])
+}
+
+pub(super) fn recorded_int32_one_plus_strictly_increases_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    let premise = derivation
+        .int32_one_plus_strictly_increases_step()?
         .premise();
     premise_pairs
         .iter()
@@ -3757,6 +3835,30 @@ pub(super) fn plan_recorded_int32_increment_below_max_is_defined_for_context(
     point_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_increment_below_max_is_defined(goal, premise_pairs)?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut tactics)?;
+    }
+    Some(tactics)
+}
+
+pub(super) fn plan_recorded_int32_one_plus_below_max_is_defined_for_context(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
+    let mut tactics = plan_explicit_one_plus_below_max_is_defined(goal, premise_pairs)?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut tactics)?;
+    }
+    Some(tactics)
+}
+
+pub(super) fn plan_recorded_int32_one_plus_strictly_increases_for_context(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
+    let mut tactics = plan_explicit_one_plus_strictly_increases(goal, premise_pairs)?;
     if point_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
@@ -5204,6 +5306,76 @@ fn plan_explicit_increment_below_max_is_defined(
             ProofTactic::ApplyTheoremUsing {
                 application: TheoremApplication {
                     name: "int32_increment_below_max_is_defined".to_string(),
+                    arguments: vec![surface_value],
+                },
+                premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
+}
+
+fn plan_explicit_one_plus_below_max_is_defined(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32SignedAddOverflows(one, value), false) =
+        goal
+    else {
+        return None;
+    };
+    if one.as_ref() != &Bitvector32Term::Constant(1) {
+        return None;
+    }
+    for (kernel, surface) in premise_pairs {
+        let Some((premise_value, upper)) = signed_strict_parts(kernel) else {
+            continue;
+        };
+        if premise_value != value.as_ref() || upper != &Bitvector32Term::Constant(i32::MAX as u32) {
+            continue;
+        }
+        let (surface_value, _) = surface_strict_parts(surface)?;
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_one_plus_below_max_is_defined".to_string(),
+                    arguments: vec![surface_value],
+                },
+                premises: vec![surface.clone()],
+            },
+            ProofTactic::Assumption,
+        ]);
+    }
+    None
+}
+
+fn plan_explicit_one_plus_strictly_increases(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32SignedLessThan(value, sum), true) = goal
+    else {
+        return None;
+    };
+    let Bitvector32Term::Add(one, added_value) = sum.as_ref() else {
+        return None;
+    };
+    if one.as_ref() != &Bitvector32Term::Constant(1) || added_value.as_ref() != value.as_ref() {
+        return None;
+    }
+    for (kernel, surface) in premise_pairs {
+        let Some((premise_value, upper)) = signed_strict_parts(kernel) else {
+            continue;
+        };
+        if premise_value != value.as_ref() || upper != &Bitvector32Term::Constant(i32::MAX as u32) {
+            continue;
+        }
+        let (surface_value, _) = surface_strict_parts(surface)?;
+        return Some(vec![
+            ProofTactic::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: "int32_one_plus_strictly_increases".to_string(),
                     arguments: vec![surface_value],
                 },
                 premises: vec![surface.clone()],

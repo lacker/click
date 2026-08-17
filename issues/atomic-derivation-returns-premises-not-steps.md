@@ -416,3 +416,18 @@ of leaving the interval solver's successful result without an explicit
 certificate. Replay validates the subtraction operands and both exact
 non-strict edges. The same source-orientation, omitted-premise, expansion,
 and multi-size Proof regressions cover this application.
+
+### Progress (2026-08-16: operand-order-specific one-plus rules)
+
+Atomic search now distinguishes the two existing `1 + value` named rules
+from their `value + 1` counterparts. Both
+`int32_one_plus_below_max_is_defined` and
+`int32_one_plus_strictly_increases` retain the exact `value < INT32_MAX`
+source edge. This prevents the former legacy outcomes: one-plus definedness
+had no explicit certificate at all, and one-plus strict increase reconstructed
+the wrong operand-order theorem before failing replay.
+
+Pure, point, and outcome smart `simp` submit the selected application to the
+immutable `Proof`. Reversed source comparison spelling survives expansion,
+ordinary verification performs no construction replay, and the shared
+16-through-4096 single-premise curve covers both rules and rejected omission.

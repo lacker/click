@@ -3740,6 +3740,61 @@ fn restricted_simp_retains_symbolic_subtract_definedness_theorem() {
 }
 
 #[test]
+fn restricted_simp_retains_one_plus_operand_specific_theorems() {
+    let cases = [
+        (
+            r#"
+                theorem one_plus_is_defined(value: int32) {
+                    requires 2147483647 > value;
+                    ensures defined(1 + value) by {
+                        simp() using { 2147483647 > value; }
+                    }
+                }
+            "#,
+            "one_plus_is_defined.ensures_0",
+            "apply(int32_one_plus_below_max_is_defined(value)) using",
+        ),
+        (
+            r#"
+                theorem one_plus_increases(value: int32) {
+                    requires 2147483647 > value;
+                    ensures value < 1 + value by {
+                        simp() using { 2147483647 > value; }
+                    }
+                }
+            "#,
+            "one_plus_increases.ensures_0",
+            "apply(int32_one_plus_strictly_increases(value)) using",
+        ),
+    ];
+    for (click_source, claim, application) in cases {
+        let (verified, events) =
+            crate::instrumentation::collect(|| verify_click_theorems(click_source));
+        verified.expect("the operand-order-specific one-plus rule should verify through Proof");
+        assert!(
+            events.iter().all(|event| !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished {
+                    claim: event_claim,
+                    name,
+                    ..
+                } if event_claim == claim && name == "surface certificate replay"
+            )),
+            "the one-plus proof must retain its checked theorem application: {events:#?}"
+        );
+        let offset = click_source.find("simp() using").unwrap();
+        let position = expansion::position_at_offset(click_source, offset);
+        let expanded =
+            expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+                .expect("one-plus simp should expand");
+        assert!(expanded.contains(application), "{expanded}");
+        assert!(expanded.contains("2147483647 > value;"), "{expanded}");
+        assert!(!expanded.contains("simp() using"), "{expanded}");
+        verify_click_theorems(&expanded).expect("expanded one-plus proof should replay");
+    }
+}
+
+#[test]
 fn restricted_simp_composes_equality_rewrites_with_adjacent_order() {
     let click_source = r#"
         theorem aliased_positive_bound(

@@ -1868,11 +1868,29 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| {
+                let recorded =
+                    recorded_int32_one_plus_strictly_increases_pairs(derivation, &premise_pairs)?;
+                plan_recorded_int32_one_plus_strictly_increases_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
                 let recorded = recorded_int32_increment_below_max_is_defined_pairs(
                     derivation,
                     &premise_pairs,
                 )?;
                 plan_recorded_int32_increment_below_max_is_defined_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
+                let recorded =
+                    recorded_int32_one_plus_below_max_is_defined_pairs(derivation, &premise_pairs)?;
+                plan_recorded_int32_one_plus_below_max_is_defined_for_context(
                     goal,
                     &recorded,
                     point_application_closes_goal,
@@ -8063,6 +8081,20 @@ mod tests {
                 Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
             ),
         };
+        let surface_one_plus_defined_goal = ClickProposition::Defined {
+            expression: ContractExpression::Add(
+                Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
+                Box::new(expression(value.clone())),
+            ),
+        };
+        let surface_one_plus_strict_goal = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::LessThan,
+            right: ContractExpression::Add(
+                Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
+                Box::new(expression(value.clone())),
+            ),
+        };
         let surface_nonnegative_goal = ClickProposition::Comparison {
             left: expression(Bitvector32Term::Constant(0)),
             operator: ComparisonOperator::LessEqual,
@@ -8135,6 +8167,22 @@ mod tests {
                 lower(&surface_defined_goal),
                 "int32_increment_below_max_is_defined",
                 "increment definedness",
+                &definedness_premise,
+                &kernel_definedness_premise,
+                ArithmeticProofShape::Direct,
+            ),
+            (
+                lower(&surface_one_plus_defined_goal),
+                "int32_one_plus_below_max_is_defined",
+                "one-plus definedness",
+                &definedness_premise,
+                &kernel_definedness_premise,
+                ArithmeticProofShape::Direct,
+            ),
+            (
+                lower(&surface_one_plus_strict_goal),
+                "int32_one_plus_strictly_increases",
+                "one-plus strict increase",
                 &definedness_premise,
                 &kernel_definedness_premise,
                 ArithmeticProofShape::Direct,

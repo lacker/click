@@ -1425,6 +1425,56 @@ fn increment_definedness_derivation_retains_its_exact_max_bound() {
 }
 
 #[test]
+fn one_plus_rules_retain_their_exact_max_bound_and_operand_order() {
+    let value = Bitvector32Term::Variable(Variable(211_050));
+    let int_max = Bitvector32Term::Constant(i32::MAX as u32);
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_than(int_max.clone(), value.clone()),
+        true,
+    );
+    let one_plus = Bitvector32Term::Add(
+        Box::new(Bitvector32Term::Constant(1)),
+        Box::new(value.clone()),
+    );
+    let defined_goal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedAddOverflows(
+            Box::new(Bitvector32Term::Constant(1)),
+            Box::new(value.clone()),
+        ),
+        false,
+    );
+    let strict_goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), one_plus),
+        true,
+    );
+    let assumptions = PureFactContext::new().assume_proposition(premise.clone());
+
+    let defined = assumptions
+        .derive_simp_proposition(&defined_goal)
+        .expect("the maximum bound should prove one-plus definedness");
+    let defined_step = defined
+        .int32_one_plus_below_max_is_defined_step()
+        .expect("definedness must retain the operand-order-specific rule");
+    assert_eq!(defined_step.lower(), &value);
+    assert_eq!(defined_step.upper(), &int_max);
+    assert!(defined_step.is_strict());
+    assert_eq!(defined_step.premise(), &premise);
+    assert!(defined.replay(&assumptions));
+
+    let strict = assumptions
+        .derive_simp_proposition(&strict_goal)
+        .expect("the maximum bound should prove one-plus strict increase");
+    let strict_step = strict
+        .int32_one_plus_strictly_increases_step()
+        .expect("strict increase must not select the value-plus-one theorem");
+    assert_eq!(strict_step.lower(), &value);
+    assert_eq!(strict_step.upper(), &int_max);
+    assert!(strict_step.is_strict());
+    assert_eq!(strict_step.premise(), &premise);
+    assert!(strict.replay(&assumptions));
+}
+
+#[test]
 fn symbolic_add_definedness_retains_both_exact_named_theorem_bounds() {
     let value = Bitvector32Term::Variable(Variable(211_100));
     let amount = Bitvector32Term::Variable(Variable(211_101));

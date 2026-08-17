@@ -119,6 +119,28 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact maximum bound selected for `defined(1 + value)`.
+    pub fn int32_one_plus_below_max_is_defined_step(&self) -> Option<&SignedOrderDerivationStep> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::Int32OnePlusBelowMaxIsDefined(step),
+                ..
+            } => Some(step),
+            _ => None,
+        }
+    }
+
+    /// Return the exact maximum bound selected for `value < 1 + value`.
+    pub fn int32_one_plus_strictly_increases_step(&self) -> Option<&SignedOrderDerivationStep> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::Int32OnePlusStrictlyIncreases(step),
+                ..
+            } => Some(step),
+            _ => None,
+        }
+    }
+
     /// Return the exact nonnegative-amount and remaining-headroom premises
     /// selected when the atomic prover established symbolic addition
     /// definedness through the named int32 theorem.

@@ -1400,6 +1400,17 @@ certificate existed. Reversed source comparisons, no ordinary replay,
 independent expansion, omitted-premise transactionality, and the shared
 16-through-4096 point/restricted-pure allocation curve are all pinned.
 
+The two operand-order-specific `1 + value` rules now cross the seam as well.
+Previously `defined(1 + value)` had a semantic result but no explicit
+certificate, while `value < 1 + value` reconstructed the `value + 1` theorem
+and then failed ordinary replay because the kernel goal retained the opposite
+operand order. Atomic search now records either
+`int32_one_plus_below_max_is_defined` or
+`int32_one_plus_strictly_increases` together with the exact maximum-bound
+edge. `Proof` checks that selected application directly; reversed premise
+spelling, no ordinary replay, independent expansion, omitted-premise
+transactionality, and the shared 16-through-4096 curve are pinned.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

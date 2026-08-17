@@ -1717,6 +1717,8 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32IncrementConstantUpperBound(SignedOrderDerivationStep),
     Int32IncrementStrictlyIncreases(SignedOrderDerivationStep),
     Int32IncrementBelowMaxIsDefined(SignedOrderDerivationStep),
+    Int32OnePlusBelowMaxIsDefined(SignedOrderDerivationStep),
+    Int32OnePlusStrictlyIncreases(SignedOrderDerivationStep),
     Int32NonnegativeAddWithinMaxIsDefined(Box<Int32NonnegativeAddWithinMaxEvidence>),
     Int32NonnegativeSubtractWithinValueIsDefined(Box<Int32NonnegativeSubtractWithinValueEvidence>),
     Int32IncrementLowerBound(Box<Int32IncrementBoundsEvidence>),
