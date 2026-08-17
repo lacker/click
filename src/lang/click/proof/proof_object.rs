@@ -5451,6 +5451,77 @@ impl<'a> ExecutionProofBranches<'a> {
             .map(|arm| &arm.proof)
     }
 
+    /// Opens one proposition proof rooted at the selected execution arm's
+    /// exact current Proof. The nested scope cannot be published into the arm
+    /// except through `join_nested`, which checks this ancestry again.
+    pub(super) fn begin_have(
+        &self,
+        take_then: bool,
+        proposition: ClickProposition,
+    ) -> Result<ProofScope<'a>, ClickError> {
+        let arm = self.arms[usize::from(!take_then)].as_ref().ok_or_else(|| {
+            self.root.step_error(format!(
+                "cannot begin `have` in the infeasible {} execution arm",
+                if take_then { "then" } else { "else" }
+            ))
+        })?;
+        arm.proof.begin_have(proposition)
+    }
+
+    /// Incorporates one completed proposition scope as the selected arm's
+    /// next direct checked successor. A scope searched from another arm or an
+    /// earlier arm state cannot be spliced into this container.
+    pub(super) fn join_nested(
+        &self,
+        take_then: bool,
+        nested: ProofScope<'a>,
+    ) -> Result<Self, ClickError> {
+        let arm_index = usize::from(!take_then);
+        let arm = self.arms[arm_index].as_ref().ok_or_else(|| {
+            self.root.step_error(format!(
+                "cannot join `have` into the infeasible {} execution arm",
+                if take_then { "then" } else { "else" }
+            ))
+        })?;
+        if !Arc::ptr_eq(&nested.root.context, &arm.proof.context)
+            || !Arc::ptr_eq(&nested.root.state, &arm.proof.state)
+            || !Arc::ptr_eq(&nested.root.node, &arm.proof.node)
+        {
+            return Err(self
+                .root
+                .step_error("nested proof scope is not rooted at the selected execution arm"));
+        }
+        let prior_effect_count = arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .ok_or_else(|| {
+                self.root
+                    .step_error("execution branch arm lost its semantic state")
+            })?
+            .replay
+            .effect_facts
+            .len();
+        let successor = nested.join()?;
+        let Some(parent) = successor.node.parent.as_ref() else {
+            return Err(self
+                .root
+                .step_error("nested arm proof produced a root without provenance"));
+        };
+        if !Arc::ptr_eq(parent, &arm.proof.node) {
+            return Err(self
+                .root
+                .step_error("nested arm proof did not produce one direct checked successor"));
+        }
+        let mut next = self.clone();
+        let next_arm = next.arms[arm_index]
+            .as_mut()
+            .expect("the cloned feasible arm is retained");
+        Self::retain_arm_successor(next_arm, successor, prior_effect_count);
+        Ok(next)
+    }
+
     /// Applies one checked simple step inside the selected C arm and retains
     /// only that step's semantic fact delta for the eventual join.
     pub(super) fn apply_step(
@@ -6988,6 +7059,7 @@ impl<'a> ProofScope<'a> {
     /// only that operation's output-sized fact delta to the outer scope.
     pub(super) fn join_nested(&self, nested: ProofScope<'a>) -> Result<Self, ClickError> {
         if !Arc::ptr_eq(&nested.root.context, &self.body.context)
+            || !Arc::ptr_eq(&nested.root.state, &self.body.state)
             || !Arc::ptr_eq(&nested.root.node, &self.body.node)
         {
             return Err(self
@@ -7037,6 +7109,7 @@ impl<'a> ProofScope<'a> {
         ensuring: Option<Vec<ProofAssertion>>,
     ) -> Result<Self, ClickError> {
         if !Arc::ptr_eq(&branches.root.context, &self.body.context)
+            || !Arc::ptr_eq(&branches.root.state, &self.body.state)
             || !Arc::ptr_eq(&branches.root.node, &self.body.node)
         {
             return Err(self
@@ -10268,6 +10341,7 @@ mod tests {
         };
 
         let mut samples = Vec::new();
+        let mut nested_samples = Vec::new();
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
             pure_facts.push(kernel_premise.clone());
@@ -10301,6 +10375,7 @@ mod tests {
             let branches = root
                 .begin_execution_branch()
                 .expect("the symbolic condition should expose two theorem-search arms");
+            let nested_branches = branches.clone();
             let missing = branches
                 .try_theorem_application(true, &missing_application)
                 .err()
@@ -10345,6 +10420,70 @@ mod tests {
                     }] if retained == &application && premises == std::slice::from_ref(&premise)
                 ));
             }
+
+            if size == 16 {
+                let foreign = nested_branches
+                    .begin_have(true, premise.clone())
+                    .expect("the then arm should open a proposition proof")
+                    .apply_step(SimpleProofStep::Assumption)
+                    .expect("the root premise should close the nested arm proof");
+                let rejected = match nested_branches.join_nested(false, foreign) {
+                    Ok(_) => panic!("a nested proof from the then arm must not enter the else arm"),
+                    Err(error) => error,
+                };
+                assert!(
+                    rejected.message().contains("not rooted at the selected"),
+                    "{rejected:?}"
+                );
+                for take_then in [true, false] {
+                    assert!(
+                        nested_branches
+                            .arm(take_then)
+                            .expect("both nested-proof arms remain feasible")
+                            .certificate()
+                            .steps()
+                            .is_empty(),
+                        "a rejected cross-arm join must not alter either arm"
+                    );
+                }
+            }
+
+            let before_nested = fact_node_allocations();
+            let then_nested = nested_branches
+                .begin_have(true, premise.clone())
+                .expect("the then arm should open a proposition proof")
+                .apply_step(SimpleProofStep::Assumption)
+                .expect("the root premise should close the then-arm proof");
+            let nested_branches = nested_branches
+                .join_nested(true, then_nested)
+                .expect("the completed proof should advance the then arm");
+            let else_nested = nested_branches
+                .begin_have(false, premise.clone())
+                .expect("the else arm should open a proposition proof")
+                .apply_step(SimpleProofStep::Assumption)
+                .expect("the root premise should close the else-arm proof");
+            let nested_branches = nested_branches
+                .join_nested(false, else_nested)
+                .expect("the completed proof should advance the else arm");
+            nested_samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before_nested,
+            ));
+            for take_then in [true, false] {
+                assert!(matches!(
+                    nested_branches
+                        .arm(take_then)
+                        .expect("both nested-proof arms remain feasible")
+                        .certificate()
+                        .steps(),
+                    [SimpleProofStep::Have {
+                        proposition: retained,
+                        proof,
+                    }] if retained == &premise
+                        && proof.steps() == [SimpleProofStep::Assumption]
+                ));
+            }
             assert!(root.certificate().steps().is_empty());
         }
         let (_, base_height, base_allocations) = samples[0];
@@ -10353,6 +10492,14 @@ mod tests {
             assert!(
                 allocations <= bound,
                 "size {size} two-arm theorem search allocated {allocations} persistent nodes (bound {bound})"
+            );
+        }
+        let (_, base_height, base_allocations) = nested_samples[0];
+        for (size, height, allocations) in nested_samples {
+            let bound = base_allocations + 96 * (height - base_height);
+            assert!(
+                allocations <= bound,
+                "size {size} two-arm nested proof allocated {allocations} persistent nodes (bound {bound})"
             );
         }
     }

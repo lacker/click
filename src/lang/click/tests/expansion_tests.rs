@@ -5927,6 +5927,107 @@ fn branch_arms_retain_bare_fact_transports_on_proof() {
 }
 
 #[test]
+fn branch_arms_retain_nested_have_proofs() {
+    let c_source = r#"
+        int32 select_nonnegative(int32 flag) {
+            int32 selected;
+            if (flag != 0) {
+                selected = 1;
+            } else {
+                selected = 2;
+            }
+            return selected;
+        }
+    "#;
+    let click_source = r#"
+        theorem int32_reflexive(value: int32) {
+            ensures value == value by {
+                normalize();
+            }
+        }
+
+        verifying "select_nonnegative.c";
+
+        int32 select_nonnegative(int32 flag) {
+            immutable;
+            ensures result >= 0;
+        } by {
+            step();
+            branch {
+                ensuring {
+                    fact selected >= 0;
+                }
+                then {
+                    step();
+                    have selected == selected by {
+                        apply(int32_reflexive(selected));
+                    }
+                }
+                else {
+                    step();
+                    have selected == selected by {
+                        apply(int32_reflexive(selected));
+                    }
+                }
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("select_nonnegative.c", c_source)])
+    });
+    let verified = verified.expect("nested arm haves should advance the branch Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "select_nonnegative.contract"
+                    && name == "surface certificate replay"
+        )),
+        "ordinary branch-have construction must not replay its retained scopes: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked branch haves should retain an expansion");
+    let retained_have = |tactics: &[ProofTactic]| {
+        matches!(
+            tactics,
+            [ProofTactic::StepUsing(_), ProofTactic::Have(have)]
+                if matches!(
+                    &have.proof,
+                    SourceProof::Script(body)
+                        if matches!(
+                            body.as_slice(),
+                            [ProofTactic::ApplyTheoremUsing { application, premises }]
+                                if application.name == "int32_reflexive" && premises.is_empty()
+                        )
+                )
+        )
+    };
+    assert!(
+        matches!(
+            tactics.get(1),
+            Some(ProofTactic::Branch(branch))
+                if retained_have(&branch.then_tactics)
+                    && retained_have(&branch.else_tactics)
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("select_nonnegative.c", c_source)],
+        "select_nonnegative",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained branch haves should expand");
+    verify_c0_sources(&expanded, &[("select_nonnegative.c", c_source)])
+        .expect("the explicit nested arm proofs should independently re-derive");
+}
+
+#[test]
 fn transformed_resource_branch_interface_retains_its_common_descendant() {
     let markdown = include_str!("../../../../mdtests/proof_branch_composite_resource_transform.md");
     let mdtest = crate::cli::parse_mdtest(

@@ -44,9 +44,32 @@ fn linear_execution_branch_tactics(node: &InternalProofNode) -> Option<&[Indexed
                     ProofTactic::SmartStep
                         | ProofTactic::ApplyTheorem(_)
                         | ProofTactic::Transport { .. }
+                        | ProofTactic::Have(_)
                 )
         })
         .then_some(tactics)
+}
+
+fn solve_nested_have<'a>(
+    nested: ProofScope<'a>,
+    have: &ProofHave,
+) -> Result<Option<ProofScope<'a>>, ClickError> {
+    let selected = match &have.proof {
+        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
+            nested.try_simp_closure()
+        }
+        SourceProof::Script(body) => {
+            if let Some(selected) = nested.try_linear_smart_script(body)? {
+                Some(selected)
+            } else if let Ok(certificate) = ProofCertificate::from_proof_tactics(body) {
+                nested.apply_candidate_certificate(&certificate).ok()
+            } else {
+                None
+            }
+        }
+        SourceProof::Tactic(SmartTactic::Frame) => None,
+    };
+    Ok(selected)
 }
 
 fn advance_execution_branch_arm<'a>(
@@ -73,6 +96,12 @@ fn advance_execution_branch_arm<'a>(
                 return Ok(None);
             };
             branches = next;
+        } else if let ProofTactic::Have(have) = &indexed.tactic {
+            let nested = branches.begin_have(take_then, have.proposition.clone())?;
+            let Some(nested) = solve_nested_have(nested, have)? else {
+                return Ok(None);
+            };
+            branches = branches.join_nested(take_then, nested)?;
         } else {
             return Ok(None);
         }
@@ -255,21 +284,7 @@ fn advance_linear_open_scope<'a>(
             return Ok(None);
         };
         let nested = scope.begin_have(have.proposition.clone())?;
-        let selected = match &have.proof {
-            SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
-                nested.try_simp_closure()
-            }
-            SourceProof::Script(body) => {
-                if let Some(selected) = nested.try_linear_smart_script(body)? {
-                    Some(selected)
-                } else if let Ok(certificate) = ProofCertificate::from_proof_tactics(body) {
-                    nested.apply_candidate_certificate(&certificate).ok()
-                } else {
-                    None
-                }
-            }
-            SourceProof::Tactic(SmartTactic::Frame) => None,
-        };
+        let selected = solve_nested_have(nested, have)?;
         let Some(selected) = selected else {
             return Ok(None);
         };

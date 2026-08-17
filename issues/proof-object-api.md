@@ -1612,6 +1612,19 @@ logarithmic persistent updates and checks transactional rejection. Branch and
 store, observe no ordinary replay, retain the exact `TransportUsing`, and
 independently verify expansion.
 
+Nested proposition proofs inside execution branches now use the same audited
+scope operations as top-level and `open` proofs. `begin_have` roots the scope
+at the selected arm's exact current `Proof`; `join_nested` accepts only the
+direct completed successor of that same arm, so a checked proof from the
+other arm or an earlier arm state cannot be spliced into the branch. The
+source executor shares one nested-`have` solver with `open` instead of
+constructing a separate semantic aftermath. A deterministic 16-through-4096
+unrelated-fact curve bounds two arm-local scopes, checks rejected cross-arm
+joins are transactional, and pins the exact nested `Have { Assumption }`
+certificates. A source regression retains explicit theorem applications
+inside both C arms, observes no ordinary replay, and independently verifies
+expansion.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
