@@ -1631,20 +1631,31 @@ to the arm's current `Proof`; the terminal join retains the two exact paths as
 one logical `If` and does not reconstruct either arm from returned contexts.
 The source selector deliberately requires the symmetric terminal shape:
 mixed return/continuation arms still need a typed multi-outcome join and stay
-on the legacy driver. An immediately following top-level effect `frame()` now
-stays on that terminal `Proof` as well. The source-attributed frame adapter
-lives on `Proof` itself and `ProofScope` delegates to it, so both paths submit
-the same empty or planner-selected `FrameUsing` candidate to the same checked
-operation. Only after the frame has retained its effect authority does the
-driver export the descendant and resume the untouched linear suffix. A miss
-discards the descendant and leaves the original context available for the
-legacy path; a frame hidden behind an unsupported intervening operation is
-not claimed by this slice. The 16-through-4096 unrelated-fact curve now
-includes the two arm searches, terminal join, and immutable frame, and checks
-an unavailable explicit frame premise is transactional. The source regression
-observes neither ordinary replay nor the legacy exact-effect recheck, pins the
-entry, return, and frame steps in each arm, and independently verifies
-expansion.
+on the legacy driver. The checked branch successor now also owns its supported
+linear continuation prefix. Explicit simple operations and contextual smart
+`step()` each advance the returned two-arm join `Proof`; a following immutable
+effect `frame()` stays on that descendant rather than receiving exported
+outcomes. Mutable smart frames remain on the compatibility path until their
+path-specific evidence planner consumes the joined Proof state directly.
+One-feasible-arm paths retain the already-migrated immediate terminal frame,
+but export before an ordinary continuation because the compatibility surface
+builder cannot yet preserve its closed branch marker across an unexported
+successor. The source-attributed frame adapter lives on `Proof` itself and `ProofScope`
+delegates to it, so both paths submit the same empty or planner-selected
+`FrameUsing` candidate to the same checked operation. Only after this prefix
+has retained its semantic and certificate deltas does the driver export the
+descendant and resume the untouched unsupported suffix. A smart miss discards
+the candidate and leaves the original context available for the legacy path;
+a frame hidden behind an unsupported intervening operation is not claimed by
+this slice. One 16-through-4096 unrelated-fact curve includes the two terminal
+arm searches, join, and immutable frame and checks an unavailable explicit
+frame premise is transactional. A second curve covers a nonterminal arm join,
+common return, and frame. Source regressions observe neither ordinary replay
+nor the legacy exact-effect recheck, pin the retained branch/statement/frame
+steps, and independently verify expansion. Generated certificate suffixes keep
+their owning smart tactic's source index, so the continuation driver records
+only distinct source continuations; it never publishes a generated suffix as
+a second, conflicting expansion of its owning branch.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

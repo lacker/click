@@ -5545,9 +5545,10 @@ fn branch_interface_retains_its_checked_abstract_join() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "nonnegative.contract" && name == "surface certificate replay"
+                if claim == "nonnegative.contract"
+                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
         )),
-        "branch-interface construction must retain its checked Proof directly: {events:#?}"
+        "the branch, common return, and frame must retain one checked Proof: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -6153,6 +6154,22 @@ fn transformed_resource_branch_interface_retains_its_common_descendant() {
         .expect("select_ready should be the final verified function")
         .expanded_proof_tactics()
         .expect("the transformed interface should retain an expansion");
+    let arm_retains_fold_evidence = |arm: &[ProofTactic]| {
+        matches!(
+            arm,
+            [
+                ProofTactic::StepUsing(_),
+                ProofTactic::Have(ProofHave {
+                    proposition: ClickProposition::Comparison {
+                        operator: ComparisonOperator::Equal,
+                        ..
+                    },
+                    proof: SourceProof::Script(proof),
+                }),
+                ProofTactic::FoldResource(_),
+            ] if matches!(proof.as_slice(), [ProofTactic::Assumption])
+        )
+    };
     assert!(
         matches!(
             tactics.as_slice(),
@@ -6171,13 +6188,8 @@ fn transformed_resource_branch_interface_retains_its_common_descendant() {
                         ..
                     }),
                 ]) if name == "ready_bundle"
-            ) && matches!(
-                branch.then_tactics.as_slice(),
-                [ProofTactic::StepUsing(_), ProofTactic::FoldResource(_)]
-            ) && matches!(
-                branch.else_tactics.as_slice(),
-                [ProofTactic::StepUsing(_), ProofTactic::FoldResource(_)]
-            )
+            ) && arm_retains_fold_evidence(&branch.then_tactics)
+                && arm_retains_fold_evidence(&branch.else_tactics)
         ),
         "{tactics:#?}"
     );

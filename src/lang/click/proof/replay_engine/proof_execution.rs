@@ -122,6 +122,29 @@ fn internal_proof_contains_frame(node: &InternalProofNode) -> bool {
     }
 }
 
+fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
+    linear_execution_simple_step(tactic).is_some()
+        || matches!(tactic, ProofTactic::SmartStep | ProofTactic::SmartFrame(_))
+}
+
+fn checked_linear_continuation_reaches_frame(node: &InternalProofNode) -> bool {
+    let Some(tactics) = linear_execution_tactics(node) else {
+        return false;
+    };
+    for indexed in tactics {
+        if matches!(
+            indexed.tactic,
+            ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
+        ) {
+            return true;
+        }
+        if !checked_linear_continuation_tactic(&indexed.tactic) {
+            return false;
+        }
+    }
+    false
+}
+
 fn linear_terminal_frame_prefix(node: &InternalProofNode) -> Option<&IndexedTactic> {
     linear_execution_tactics(node)?.first().filter(|indexed| {
         matches!(
@@ -131,71 +154,88 @@ fn linear_terminal_frame_prefix(node: &InternalProofNode) -> Option<&IndexedTact
     })
 }
 
-/// A terminal checked branch may retain one immediately following frame on
-/// Proof. A frame hidden behind another unsupported continuation still stays
-/// on the legacy path until that intervening operation is migrated.
+/// Selects a branch only when any later frame is reachable through operations
+/// already represented by the checked linear continuation driver. Otherwise
+/// exporting a partially migrated terminal outcome would hand its ownership
+/// back to the legacy frame path.
 fn exportable_linear_execution_branch_pair<'a>(
     then_branch: &'a InternalProofNode,
     else_branch: &'a InternalProofNode,
     continuation: &InternalProofNode,
 ) -> Option<(&'a [IndexedTactic], &'a [IndexedTactic])> {
     let pair = linear_execution_branch_pair(then_branch, else_branch)?;
-    if execution_branch_tactics_end_at_exit(pair.0)
-        && internal_proof_contains_frame(continuation)
-        && linear_terminal_frame_prefix(continuation).is_none()
+    if internal_proof_contains_frame(continuation)
+        && !checked_linear_continuation_reaches_frame(continuation)
     {
         return None;
     }
     Some(pair)
 }
 
-/// Advances the immediate top-level terminal frame on the checked branch
-/// successor and returns the untouched linear suffix for the compatibility
-/// driver. A miss is transactional: the caller can discard this descendant
-/// and run the original branch from its unchanged context.
-fn advance_checked_terminal_frame<'a>(
-    proof: Proof<'a>,
+/// Advances the checked linear prefix following a structural branch. Every
+/// accepted explicit or smart operation returns the next Proof directly; the
+/// first unsupported tactic and its suffix remain untouched for the
+/// compatibility driver. A smart miss rejects the whole candidate path, so
+/// the caller can fall back from its unchanged root context.
+fn advance_checked_linear_continuation<'a>(
+    mut proof: Proof<'a>,
     continuation: &InternalProofNode,
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
 ) -> Result<Option<(Proof<'a>, Vec<IndexedTactic>)>, ClickError> {
-    let Some(indexed) = linear_terminal_frame_prefix(continuation) else {
+    let Some(tactics) = linear_execution_tactics(continuation) else {
         return Ok(None);
     };
-    let tactics = linear_execution_tactics(continuation)
-        .expect("a terminal frame prefix belongs to a linear continuation");
-    let checkpoint = proof.checkpoint();
-    let framed = if let Some(SimpleProofStep::FrameUsing { region, premises }) =
-        linear_execution_simple_step(&indexed.tactic)
-    {
-        if !proof.supports_checked_frame_using(region.as_ref(), &premises)? {
-            return Ok(None);
-        }
-        proof.apply_step_at(
-            SimpleProofStep::FrameUsing { region, premises },
-            indexed.index,
-            indexed.source_index,
-        )?
-    } else if let ProofTactic::SmartFrame(region) = &indexed.tactic {
-        let Some(framed) =
-            proof.try_smart_frame_at(region.as_ref(), indexed.index, indexed.source_index)?
-        else {
-            return Ok(None);
+    for (offset, indexed) in tactics.iter().enumerate() {
+        let checkpoint = proof.checkpoint();
+        let next = if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
+            if let SimpleProofStep::FrameUsing { region, premises } = &step
+                && !proof.supports_checked_frame_using(region.as_ref(), premises)?
+            {
+                return Ok(None);
+            }
+            proof.apply_step_at(step, indexed.index, indexed.source_index)?
+        } else if matches!(indexed.tactic, ProofTactic::SmartStep) {
+            let Some(stepped) = proof.try_smart_step()? else {
+                return Ok(None);
+            };
+            stepped
+        } else if let ProofTactic::SmartFrame(region) = &indexed.tactic {
+            // The checked empty-frame capability is the audited immutable
+            // subset. A mutable smart frame may need path-specific planned
+            // evidence; leave the entire candidate path to the compatibility
+            // driver until that planner operates on the joined Proof state.
+            if !proof.supports_checked_frame_using(region.as_ref(), &[])? {
+                return Ok(None);
+            }
+            let Some(framed) =
+                proof.try_smart_frame_at(region.as_ref(), indexed.index, indexed.source_index)?
+            else {
+                return Ok(None);
+            };
+            framed
+        } else {
+            return Ok(Some((proof, tactics[offset..].to_vec())));
         };
-        framed
-    } else {
-        unreachable!("the prefix query accepts only source frame tactics")
-    };
-    if let Some(site) = proof_site {
-        let certificate = framed.certificate_since(&checkpoint)?;
-        record_proof_site_tactic_expansion(
-            expansion_capture.as_deref_mut(),
-            site,
-            indexed.source_index,
-            &certificate.to_proof_tactics(),
-        );
+        // Generated certificates retain the source index of the smart
+        // operation that produced them. Their nested steps are part of that
+        // operation's already-recorded branch certificate, not independent
+        // expansions of the same source occurrence.
+        if indexed.source_index != owning_source_index
+            && let Some(site) = proof_site
+        {
+            let certificate = next.certificate_since(&checkpoint)?;
+            record_proof_site_tactic_expansion(
+                expansion_capture.as_deref_mut(),
+                site,
+                indexed.source_index,
+                &certificate.to_proof_tactics(),
+            );
+        }
+        proof = next;
     }
-    Ok(Some((framed, tactics[1..].to_vec())))
+    Ok(Some((proof, Vec::new())))
 }
 
 fn solve_nested_have<'a>(
@@ -1166,29 +1206,33 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                         join_linear_execution_branches(branches, empty)?
                     };
                     let branch_certificate = branch_proof.certificate_since(&checkpoint)?;
-                    let terminal = execution_branch_tactics_end_at_exit(then_tactics);
-                    let advanced =
-                        if terminal && linear_terminal_frame_prefix(continuation).is_some() {
-                            advance_checked_terminal_frame(
-                                branch_proof,
-                                continuation,
-                                expansion_capture.as_deref_mut(),
-                                context.replay.proof_site.as_ref(),
-                            )?
-                            .map(|(proof, remaining)| {
-                                let continuation = if remaining.is_empty() {
-                                    InternalProofNode::Done
-                                } else {
-                                    InternalProofNode::Linear {
-                                        tactics: remaining,
-                                        continuation: Box::new(InternalProofNode::Done),
-                                    }
-                                };
-                                (proof, Some(continuation))
-                            })
-                        } else {
-                            Some((branch_proof, None))
-                        };
+                    let can_advance_continuation = feasible_arm.is_none()
+                        || (execution_branch_tactics_end_at_exit(then_tactics)
+                            && linear_terminal_frame_prefix(continuation).is_some());
+                    let advanced = if can_advance_continuation
+                        && linear_execution_tactics(continuation).is_some()
+                    {
+                        advance_checked_linear_continuation(
+                            branch_proof,
+                            continuation,
+                            expansion_capture.as_deref_mut(),
+                            context.replay.proof_site.as_ref(),
+                            *source_index,
+                        )?
+                        .map(|(proof, remaining)| {
+                            let continuation = if remaining.is_empty() {
+                                InternalProofNode::Done
+                            } else {
+                                InternalProofNode::Linear {
+                                    tactics: remaining,
+                                    continuation: Box::new(InternalProofNode::Done),
+                                }
+                            };
+                            (proof, Some(continuation))
+                        })
+                    } else {
+                        Some((branch_proof, None))
+                    };
                     if let Some((proof, checked_continuation)) = advanced {
                         if let Some(site) = context.replay.proof_site.as_ref() {
                             record_proof_site_tactic_expansion(

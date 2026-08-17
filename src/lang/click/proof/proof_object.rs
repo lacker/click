@@ -3372,6 +3372,28 @@ impl<'a> Proof<'a> {
         self.try_indexed_statement_step_with_unrelated_context(false)
     }
 
+    /// Selects one source smart statement step on this exact checked Proof.
+    /// Preserve the established exact-context selection first; only when it
+    /// cannot advance may unrelated retained effects or facts be shared by
+    /// the broader checked selector. Both paths return only an accepted
+    /// `StepUsing` descendant, never planning aftermath.
+    pub(super) fn try_smart_step(&self) -> Result<Option<Self>, ClickError> {
+        if let Some(proof) = self.try_indexed_statement_step()? {
+            return Ok(Some(proof));
+        }
+        let Some(execution) = self.state.execution.as_ref() else {
+            return Ok(None);
+        };
+        // `execute` may traverse a retained resource without spelling it as a
+        // statement premise. A source `step()` inside that scope instead owns
+        // the planner-selected resource evidence, so it must stay on the
+        // scoped path until that selection is represented by Proof directly.
+        if !execution.state.resources().facts().is_empty() {
+            return Ok(None);
+        }
+        self.try_indexed_execute_step()
+    }
+
     /// The same bounded statement selection used by a scoped smart `execute`,
     /// where unrelated facts, resources, and effects remain shared across the
     /// checked transition instead of preventing a candidate. This is separate
@@ -14475,6 +14497,7 @@ mod tests {
         let click_file = crate::lang::click::parse(
             r#"
                 int32 constant(int32 x) {
+                    immutable;
                     ensures returns_one: result == 1 by { assumption(); }
                 }
             "#,
@@ -14499,6 +14522,10 @@ mod tests {
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut replay = TacticReplayState {
                 source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                proof_site: Some(ProofSite::FunctionClaim {
+                    function_name: "constant".to_string(),
+                    claim: CProofClaim::Grouped,
+                }),
                 ..TacticReplayState::default()
             };
             replay.frontier.next_statement_index = 0;
@@ -14542,11 +14569,6 @@ mod tests {
             let joined = branches
                 .join()
                 .expect("identical checked assignment arms should rejoin");
-            allocation_samples.push((
-                size,
-                (u32::BITS - size.leading_zeros()) as usize,
-                fact_node_allocations() - before,
-            ));
             assert!(matches!(
                 joined.certificate().steps(),
                 [SimpleProofStep::Branch {
@@ -14568,13 +14590,33 @@ mod tests {
                     .replay
                     .is_at_function_exit()
             );
+            let framed = completed
+                .try_smart_frame_at(None, 2, 2)
+                .expect("common terminal frame search should run")
+                .expect("the immutable effect should produce a checked descendant");
+            allocation_samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before,
+            ));
+            assert!(matches!(
+                framed.certificate().steps(),
+                [
+                    SimpleProofStep::Branch { .. },
+                    SimpleProofStep::StepUsing(_),
+                    SimpleProofStep::FrameUsing {
+                        region: None,
+                        premises,
+                    },
+                ] if premises.is_empty()
+            ));
         }
         let (_, base_height, base_allocations) = allocation_samples[0];
         for (size, height, allocations) in allocation_samples {
             let allocation_bound = base_allocations + 32 * (height - base_height);
             assert!(
                 allocations <= allocation_bound,
-                "size {size} nonempty branch join allocated {allocations} persistent nodes (logarithmic bound {allocation_bound})"
+                "size {size} branch, common return, and frame allocated {allocations} persistent nodes (logarithmic bound {allocation_bound})"
             );
         }
     }
