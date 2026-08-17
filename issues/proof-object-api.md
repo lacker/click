@@ -346,6 +346,12 @@ transport, statement execution, and the resulting frontier/fact update. This
 is the shared audited transition the execution-goal `Proof` slice will call;
 explicit source replay already delegates to it.
 
+Bare explicit `step()` now enters that same execution-frontier `Proof` and
+submits `StepUsing([])`. It no longer advances `ProofReplayContext` through a
+separate mutable dispatcher path; the empty premise list preserves bare
+`step()`'s exact-prerequisite and no-automatic-transport semantics, while the
+checked successor owns the state, fact delta, and canonical retained step.
+
 Linear smart `step()` plans that select exactly one `StepUsing` now move the
 outer execution context into an execution-frontier `Proof`, apply the shared
 checker through the ordinary immutable successor API, move the checked
