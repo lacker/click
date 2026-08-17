@@ -1631,15 +1631,20 @@ to the arm's current `Proof`; the terminal join retains the two exact paths as
 one logical `If` and does not reconstruct either arm from returned contexts.
 The source selector deliberately requires the symmetric terminal shape:
 mixed return/continuation arms still need a typed multi-outcome join and stay
-on the legacy driver. A later top-level effect frame also keeps the established
-legacy boundary: exporting the checked terminal outcomes and then asking the
-legacy frame driver to own them would duplicate their representation. That
-source shape was not previously complete—the legacy branch returns completed
-contexts before its continuation—and remains unsupported until the effect
-frame itself stays on Proof, as it already does inside `open`. A
-16-through-4096 unrelated-fact curve bounds the two arm searches and terminal
-join, while a source regression observes no ordinary replay, pins the
-entry-and-return steps in each arm, and independently verifies expansion.
+on the legacy driver. An immediately following top-level effect `frame()` now
+stays on that terminal `Proof` as well. The source-attributed frame adapter
+lives on `Proof` itself and `ProofScope` delegates to it, so both paths submit
+the same empty or planner-selected `FrameUsing` candidate to the same checked
+operation. Only after the frame has retained its effect authority does the
+driver export the descendant and resume the untouched linear suffix. A miss
+discards the descendant and leaves the original context available for the
+legacy path; a frame hidden behind an unsupported intervening operation is
+not claimed by this slice. The 16-through-4096 unrelated-fact curve now
+includes the two arm searches, terminal join, and immutable frame, and checks
+an unavailable explicit frame premise is transactional. The source regression
+observes neither ordinary replay nor the legacy exact-effect recheck, pins the
+entry, return, and frame steps in each arm, and independently verifies
+expansion.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

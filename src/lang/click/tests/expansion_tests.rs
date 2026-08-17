@@ -6042,6 +6042,7 @@ fn explicit_branch_arms_retain_terminal_execute_search() {
         verifying "choose_one_or_two.c";
 
         int32 choose_one_or_two(int32 flag) {
+            immutable;
             ensures result == 1 or result == 2;
         } by {
             branch {
@@ -6052,6 +6053,7 @@ fn explicit_branch_arms_retain_terminal_execute_search() {
                     execute();
                 }
             }
+            frame();
             simp();
         }
     "#;
@@ -6065,9 +6067,9 @@ fn explicit_branch_arms_retain_terminal_execute_search() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "choose_one_or_two.contract"
-                    && name == "surface certificate replay"
+                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
         )),
-        "ordinary terminal arm execution must not replay its retained steps: {events:#?}"
+        "terminal arm execution and framing must retain their checked Proof operations: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -6090,6 +6092,13 @@ fn explicit_branch_arms_retain_terminal_execute_search() {
                 ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
             )),
             "terminal arm expansion must not retain smart execution: {arm:#?}"
+        );
+        assert!(
+            arm.iter().any(|tactic| matches!(
+                tactic,
+                ProofTactic::FrameUsing { region: None, premises } if premises.is_empty()
+            )),
+            "each terminal arm must retain the checked immutable frame: {arm:#?}"
         );
     }
     let expanded = expand_c0_claim_source(

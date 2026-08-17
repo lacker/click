@@ -1411,6 +1411,77 @@ impl<'a> Proof<'a> {
         Ok(Some(candidate))
     }
 
+    /// Reports whether a source-owned terminal frame can advance this exact
+    /// checked Proof. This is a capability query only; a false result leaves
+    /// the proof available for a legacy compatibility fallback.
+    pub(super) fn supports_checked_frame_using(
+        &self,
+        region: Option<&CodeRegionRef>,
+        premises: &[ClickProposition],
+    ) -> Result<bool, ClickError> {
+        self.supports_checked_execution_frame_using(region, premises)
+    }
+
+    /// Applies one source-attributed simple step to this Proof. The source
+    /// coordinates schedule already-checked ordered outcome work; they grant
+    /// no additional semantic authority.
+    pub(super) fn apply_step_at(
+        &self,
+        step: SimpleProofStep,
+        tactic_index: usize,
+        source_index: usize,
+    ) -> Result<Self, ClickError> {
+        self.apply_step_with_origin(
+            step,
+            Some(ProofStepOrigin {
+                tactic_index,
+                source_index,
+            }),
+        )
+    }
+
+    /// Searches for a terminal frame candidate and submits the selected
+    /// simple certificate directly to this Proof. Successful search returns
+    /// the already-checked descendant; it does not export outcomes or replay
+    /// the candidate through a second semantic representation.
+    pub(super) fn try_smart_frame_at(
+        &self,
+        region: Option<&CodeRegionRef>,
+        tactic_index: usize,
+        source_index: usize,
+    ) -> Result<Option<Self>, ClickError> {
+        if !matches!(region, None | Some(CodeRegionRef::Function)) {
+            return Ok(None);
+        }
+        let step = SimpleProofStep::FrameUsing {
+            region: region.cloned(),
+            premises: Vec::new(),
+        };
+        match self.apply_step_at(step, tactic_index, source_index) {
+            Ok(framed) => return Ok(Some(framed)),
+            Err(error) if crate::instrumentation::deadline_exceeded() => return Err(error),
+            Err(_) => {}
+        }
+        if region.is_some() {
+            return Ok(None);
+        }
+        let Some(candidate) = self.select_contextual_frame_candidate()? else {
+            return Ok(None);
+        };
+        let origin = Some(ProofStepOrigin {
+            tactic_index,
+            source_index,
+        });
+        self.apply_contextual_frame_candidate_certificate(&candidate, origin)
+            .map(Some)
+            .map_err(|error| {
+                self.step_error(format!(
+                    "smart frame selected a simple candidate that Proof rejected: {}",
+                    error.message()
+                ))
+            })
+    }
+
     #[inline(never)]
     fn apply_assumption(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
@@ -7245,37 +7316,14 @@ impl<'a> ProofScope<'a> {
         tactic_index: usize,
         source_index: usize,
     ) -> Result<Option<Self>, ClickError> {
-        if !matches!(region, None | Some(CodeRegionRef::Function)) {
-            return Ok(None);
-        }
-        let step = SimpleProofStep::FrameUsing {
-            region: region.cloned(),
-            premises: Vec::new(),
-        };
-        match self.apply_step_at(step, tactic_index, source_index) {
-            Ok(framed) => return Ok(Some(framed)),
-            Err(error) if crate::instrumentation::deadline_exceeded() => return Err(error),
-            Err(_) => {}
-        }
-        if region.is_some() {
-            return Ok(None);
-        }
-        let Some(candidate) = self.body.select_contextual_frame_candidate()? else {
-            return Ok(None);
-        };
-        let origin = Some(ProofStepOrigin {
-            tactic_index,
-            source_index,
-        });
-        let body = self
+        let checkpoint = self.body.checkpoint();
+        let Some(body) = self
             .body
-            .apply_contextual_frame_candidate_certificate(&candidate, origin)
-            .map_err(|error| {
-                self.root.step_error(format!(
-                    "smart frame selected a simple candidate that Proof rejected: {}",
-                    error.message()
-                ))
-            })?;
+            .try_smart_frame_at(region, tactic_index, source_index)?
+        else {
+            return Ok(None);
+        };
+        let candidate = body.certificate_since(&checkpoint)?;
         let mut next = self.clone();
         for step in candidate.steps() {
             if let SimpleProofStep::Have { proposition, .. } = step {
@@ -10282,6 +10330,7 @@ mod tests {
         let click_file = crate::lang::click::parse(
             r#"
                 int32 choose(int32 left, int32 right, int32 choose_left) {
+                    immutable;
                     ensures reflexive_result: result == result by { assumption(); }
                 }
             "#,
@@ -10314,6 +10363,11 @@ mod tests {
             left: ContractExpression::CFragment(CExpression::Value(left.clone())),
             operator: ComparisonOperator::LessThan,
             right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+        };
+        let unavailable_frame_premise = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(right.clone())),
+            operator: ComparisonOperator::LessThan,
+            right: ContractExpression::CFragment(CExpression::Value(left.clone())),
         };
         let kernel_premise = lower_point_proposition_with_assumptions(
             &premise,
@@ -10348,6 +10402,10 @@ mod tests {
             pure_facts.push(kernel_premise.clone());
             let mut replay = TacticReplayState {
                 source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                proof_site: Some(ProofSite::FunctionClaim {
+                    function_name: "choose".to_string(),
+                    claim: CProofClaim::Grouped,
+                }),
                 ..TacticReplayState::default()
             };
             replay
@@ -10495,11 +10553,6 @@ mod tests {
                 .try_execute_arm_to_exit(false)
                 .expect("else-arm execution search should run")
                 .expect("the direct else return should produce a checked descendant");
-            execute_samples.push((
-                size,
-                (u32::BITS - size.leading_zeros()) as usize,
-                fact_node_allocations() - before_execute,
-            ));
             for take_then in [true, false] {
                 assert!(matches!(
                     execute_branches
@@ -10520,6 +10573,43 @@ mod tests {
                     else_proof,
                     ..
                 }] if then_proof.steps().len() == 2 && else_proof.steps().len() == 2
+            ));
+            if size == 16 {
+                let retained = terminal.clone();
+                assert!(
+                    terminal
+                        .apply_step_at(
+                            SimpleProofStep::FrameUsing {
+                                region: None,
+                                premises: vec![unavailable_frame_premise.clone()],
+                            },
+                            1,
+                            1,
+                        )
+                        .is_err(),
+                    "an unavailable frame premise must reject the checked descendant"
+                );
+                assert!(Arc::ptr_eq(&terminal.state, &retained.state));
+                assert_eq!(terminal.certificate(), retained.certificate());
+            }
+            let framed = terminal
+                .try_smart_frame_at(None, 1, 1)
+                .expect("terminal frame search should run")
+                .expect("the immutable effect should produce a checked frame descendant");
+            execute_samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before_execute,
+            ));
+            assert!(matches!(
+                framed.certificate().steps(),
+                [
+                    SimpleProofStep::If { .. },
+                    SimpleProofStep::FrameUsing {
+                        region: None,
+                        premises,
+                    },
+                ] if premises.is_empty()
             ));
             assert!(root.certificate().steps().is_empty());
         }
@@ -10544,7 +10634,7 @@ mod tests {
             let bound = base_allocations + 128 * (height - base_height);
             assert!(
                 allocations <= bound,
-                "size {size} two-arm terminal execution allocated {allocations} persistent nodes (bound {bound})"
+                "size {size} two-arm terminal execution and frame allocated {allocations} persistent nodes (bound {bound})"
             );
         }
     }

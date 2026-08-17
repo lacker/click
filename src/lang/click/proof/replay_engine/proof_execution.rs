@@ -122,19 +122,80 @@ fn internal_proof_contains_frame(node: &InternalProofNode) -> bool {
     }
 }
 
-/// A terminal checked branch can currently be exported to the top-level
-/// legacy driver only when no later effect frame will consume its outcomes.
-/// Checked open scopes keep that frame on Proof and do not need this guard.
+fn linear_terminal_frame_prefix(node: &InternalProofNode) -> Option<&IndexedTactic> {
+    linear_execution_tactics(node)?.first().filter(|indexed| {
+        matches!(
+            indexed.tactic,
+            ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
+        )
+    })
+}
+
+/// A terminal checked branch may retain one immediately following frame on
+/// Proof. A frame hidden behind another unsupported continuation still stays
+/// on the legacy path until that intervening operation is migrated.
 fn exportable_linear_execution_branch_pair<'a>(
     then_branch: &'a InternalProofNode,
     else_branch: &'a InternalProofNode,
     continuation: &InternalProofNode,
 ) -> Option<(&'a [IndexedTactic], &'a [IndexedTactic])> {
     let pair = linear_execution_branch_pair(then_branch, else_branch)?;
-    if execution_branch_tactics_end_at_exit(pair.0) && internal_proof_contains_frame(continuation) {
+    if execution_branch_tactics_end_at_exit(pair.0)
+        && internal_proof_contains_frame(continuation)
+        && linear_terminal_frame_prefix(continuation).is_none()
+    {
         return None;
     }
     Some(pair)
+}
+
+/// Advances the immediate top-level terminal frame on the checked branch
+/// successor and returns the untouched linear suffix for the compatibility
+/// driver. A miss is transactional: the caller can discard this descendant
+/// and run the original branch from its unchanged context.
+fn advance_checked_terminal_frame<'a>(
+    proof: Proof<'a>,
+    continuation: &InternalProofNode,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
+) -> Result<Option<(Proof<'a>, Vec<IndexedTactic>)>, ClickError> {
+    let Some(indexed) = linear_terminal_frame_prefix(continuation) else {
+        return Ok(None);
+    };
+    let tactics = linear_execution_tactics(continuation)
+        .expect("a terminal frame prefix belongs to a linear continuation");
+    let checkpoint = proof.checkpoint();
+    let framed = if let Some(SimpleProofStep::FrameUsing { region, premises }) =
+        linear_execution_simple_step(&indexed.tactic)
+    {
+        if !proof.supports_checked_frame_using(region.as_ref(), &premises)? {
+            return Ok(None);
+        }
+        proof.apply_step_at(
+            SimpleProofStep::FrameUsing { region, premises },
+            indexed.index,
+            indexed.source_index,
+        )?
+    } else if let ProofTactic::SmartFrame(region) = &indexed.tactic {
+        let Some(framed) =
+            proof.try_smart_frame_at(region.as_ref(), indexed.index, indexed.source_index)?
+        else {
+            return Ok(None);
+        };
+        framed
+    } else {
+        unreachable!("the prefix query accepts only source frame tactics")
+    };
+    if let Some(site) = proof_site {
+        let certificate = framed.certificate_since(&checkpoint)?;
+        record_proof_site_tactic_expansion(
+            expansion_capture.as_deref_mut(),
+            site,
+            indexed.source_index,
+            &certificate.to_proof_tactics(),
+        );
+    }
+    Ok(Some((framed, tactics[1..].to_vec())))
 }
 
 fn solve_nested_have<'a>(
@@ -1099,50 +1160,76 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     None
                 };
                 if let Some(branches) = checked {
-                    let proof = if let Some(assertions) = ensuring {
+                    let branch_proof = if let Some(assertions) = ensuring {
                         branches.join_with_interface(assertions.clone())?
                     } else {
                         join_linear_execution_branches(branches, empty)?
                     };
-                    let certificate = proof.certificate_since(&checkpoint)?;
-                    let mut joined_context = proof.into_execution_context()?;
-                    if let Some(site) = joined_context.replay.proof_site.as_ref() {
-                        record_proof_site_tactic_expansion(
-                            expansion_capture.as_deref_mut(),
-                            site,
-                            *source_index,
-                            &certificate.to_proof_tactics(),
+                    let branch_certificate = branch_proof.certificate_since(&checkpoint)?;
+                    let terminal = execution_branch_tactics_end_at_exit(then_tactics);
+                    let advanced =
+                        if terminal && linear_terminal_frame_prefix(continuation).is_some() {
+                            advance_checked_terminal_frame(
+                                branch_proof,
+                                continuation,
+                                expansion_capture.as_deref_mut(),
+                                context.replay.proof_site.as_ref(),
+                            )?
+                            .map(|(proof, remaining)| {
+                                let continuation = if remaining.is_empty() {
+                                    InternalProofNode::Done
+                                } else {
+                                    InternalProofNode::Linear {
+                                        tactics: remaining,
+                                        continuation: Box::new(InternalProofNode::Done),
+                                    }
+                                };
+                                (proof, Some(continuation))
+                            })
+                        } else {
+                            Some((branch_proof, None))
+                        };
+                    if let Some((proof, checked_continuation)) = advanced {
+                        if let Some(site) = context.replay.proof_site.as_ref() {
+                            record_proof_site_tactic_expansion(
+                                expansion_capture.as_deref_mut(),
+                                site,
+                                *source_index,
+                                &branch_certificate.to_proof_tactics(),
+                            );
+                        }
+                        let certificate = proof.certificate_since(&checkpoint)?;
+                        let mut joined_context = proof.into_execution_context()?;
+                        for (step_index, step) in certificate.steps().iter().enumerate() {
+                            if feasible_arm.is_some() && ensuring.is_none() && step_index == 0 {
+                                joined_context
+                                    .replay
+                                    .proof_certificate_builder
+                                    .push_decided_step(step.clone());
+                            } else {
+                                joined_context
+                                    .replay
+                                    .proof_certificate_builder
+                                    .push_step(step.clone());
+                            }
+                        }
+                        return execute_internal_proof(
+                            checked_continuation.as_ref().unwrap_or(continuation),
+                            joined_context,
+                            expansion_capture,
+                            function_block,
+                            parsed_function,
+                            claims,
+                            claim_label,
+                            function_environment,
+                            predicate_environment,
+                            click_function_environment,
+                            resource_environment,
+                            theorem_environment,
+                            function,
+                            arguments,
                         );
                     }
-                    for step in certificate.steps() {
-                        if feasible_arm.is_some() && ensuring.is_none() {
-                            joined_context
-                                .replay
-                                .proof_certificate_builder
-                                .push_decided_step(step.clone());
-                        } else {
-                            joined_context
-                                .replay
-                                .proof_certificate_builder
-                                .push_step(step.clone());
-                        }
-                    }
-                    return execute_internal_proof(
-                        continuation,
-                        joined_context,
-                        expansion_capture,
-                        function_block,
-                        parsed_function,
-                        claims,
-                        claim_label,
-                        function_environment,
-                        predicate_environment,
-                        click_function_environment,
-                        resource_environment,
-                        theorem_environment,
-                        function,
-                        arguments,
-                    );
                 }
             }
             let mut context = context;
