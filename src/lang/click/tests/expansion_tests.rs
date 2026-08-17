@@ -3652,6 +3652,51 @@ fn restricted_simp_retains_increment_under_a_larger_constant() {
 }
 
 #[test]
+fn restricted_simp_retains_symbolic_add_definedness_theorem() {
+    let click_source = r#"
+        theorem symbolic_add_is_defined(value: int32, amount: int32) {
+            requires amount >= 0;
+            requires 2147483647 - amount >= value;
+            ensures defined(value + amount) by {
+                simp() using {
+                    amount >= 0;
+                    2147483647 - amount >= value;
+                }
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the symbolic-add definedness rule should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "symbolic_add_is_defined.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the symbolic-add proof must retain its checked theorem application: {events:#?}"
+    );
+    let offset = click_source.find("simp() using").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("symbolic-add definedness simp should expand");
+    assert!(
+        expanded
+            .contains("apply(int32_nonnegative_add_within_max_is_defined(value, amount)) using"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("amount >= 0;"), "{expanded}");
+    assert!(
+        expanded.contains("2147483647 - amount >= value;"),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    verify_click_theorems(&expanded)
+        .expect("expanded symbolic-add definedness proof should replay");
+}
+
+#[test]
 fn restricted_simp_composes_equality_rewrites_with_adjacent_order() {
     let click_source = r#"
         theorem aliased_positive_bound(

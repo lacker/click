@@ -1145,6 +1145,29 @@ impl PureFactContext {
             }
             _ => None,
         };
+        let nonnegative_add_within_max_evidence = match proposition {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedAddOverflows(value, amount),
+                false,
+            ) => {
+                let zero = Bitvector32Term::Constant(0);
+                let headroom = Bitvector32Term::Subtract(
+                    Box::new(Bitvector32Term::Constant(i32::MAX as u32)),
+                    Box::new(amount.as_ref().clone()),
+                );
+                self.exact_direct_order_step(&zero, amount, false)
+                    .zip(self.exact_direct_order_step(value, &headroom, false))
+                    .map(|(amount_nonnegative, within_headroom)| {
+                        AtomicPropositionDerivationEvidence::Int32NonnegativeAddWithinMaxIsDefined(
+                            Box::new(Int32NonnegativeAddWithinMaxEvidence {
+                                amount_nonnegative,
+                                within_headroom,
+                            }),
+                        )
+                    })
+            }
+            _ => None,
+        };
         let increment_lower_bound_evidence = match proposition {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedLessEqual(lower, incremented),
@@ -1378,6 +1401,7 @@ impl PureFactContext {
             .or(increment_constant_upper_bound_evidence)
             .or(increment_strictly_increases_evidence)
             .or(increment_below_max_is_defined_evidence)
+            .or(nonnegative_add_within_max_evidence)
             .or(increment_lower_bound_evidence)
             .or(increment_greater_equal_lower_bound_evidence)
             .or(increment_strict_greater_lower_bound_evidence)
@@ -1588,6 +1612,29 @@ impl PureFactContext {
                             && condition_as_order_fact(condition, *value)
                                 == Some((step.lower.clone(), step.upper.clone(), true))
                 );
+        }
+        if let AtomicPropositionDerivationEvidence::Int32NonnegativeAddWithinMaxIsDefined(bounds) =
+            evidence
+        {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedAddOverflows(value, amount),
+                false,
+            ) = proposition
+            else {
+                return false;
+            };
+            let headroom = Bitvector32Term::Subtract(
+                Box::new(Bitvector32Term::Constant(i32::MAX as u32)),
+                Box::new(amount.as_ref().clone()),
+            );
+            return bounds.amount_nonnegative.lower == Bitvector32Term::Constant(0)
+                && bounds.amount_nonnegative.upper == **amount
+                && !bounds.amount_nonnegative.strict
+                && bounds.within_headroom.lower == **value
+                && bounds.within_headroom.upper == headroom
+                && !bounds.within_headroom.strict
+                && self.replays_exact_order_step(&bounds.amount_nonnegative)
+                && self.replays_exact_order_step(&bounds.within_headroom);
         }
         if let AtomicPropositionDerivationEvidence::Int32IncrementLowerBound(bounds) = evidence {
             let Proposition::ConditionIs(

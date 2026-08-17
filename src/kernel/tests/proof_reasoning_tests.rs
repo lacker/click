@@ -1425,6 +1425,51 @@ fn increment_definedness_derivation_retains_its_exact_max_bound() {
 }
 
 #[test]
+fn symbolic_add_definedness_retains_both_exact_named_theorem_bounds() {
+    let value = Bitvector32Term::Variable(Variable(211_100));
+    let amount = Bitvector32Term::Variable(Variable(211_101));
+    let headroom = Bitvector32Term::Subtract(
+        Box::new(Bitvector32Term::Constant(i32::MAX as u32)),
+        Box::new(amount.clone()),
+    );
+    let amount_nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(amount.clone(), Bitvector32Term::Constant(0)),
+        true,
+    );
+    let within_headroom = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(headroom.clone(), value.clone()),
+        true,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedAddOverflows(
+            Box::new(value.clone()),
+            Box::new(amount.clone()),
+        ),
+        false,
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(amount_nonnegative.clone())
+        .assume_proposition(within_headroom.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("the two named-theorem bounds should prove symbolic addition definedness");
+    let (nonnegative_step, headroom_step) = derivation
+        .int32_nonnegative_add_within_max_steps()
+        .expect("the atomic decision should retain both named-theorem premises");
+    assert_eq!(nonnegative_step.lower(), &Bitvector32Term::Constant(0));
+    assert_eq!(nonnegative_step.upper(), &amount);
+    assert!(!nonnegative_step.is_strict());
+    assert_eq!(nonnegative_step.premise(), &amount_nonnegative);
+    assert_eq!(headroom_step.lower(), &value);
+    assert_eq!(headroom_step.upper(), &headroom);
+    assert!(!headroom_step.is_strict());
+    assert_eq!(headroom_step.premise(), &within_headroom);
+    assert!(derivation.replay(&assumptions));
+    assert!(!derivation.replay(&PureFactContext::new()));
+}
+
+#[test]
 fn increment_lower_bound_derivation_retains_both_exact_bounds() {
     let lower = Bitvector32Term::Variable(Variable(212));
     let value = Bitvector32Term::Variable(Variable(213));

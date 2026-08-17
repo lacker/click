@@ -391,3 +391,20 @@ verification emits no construction-replay event; expansion independently
 checks both serialized applications. The shared 16-through-4096
 unrelated-fact curve covers the two-step successor chain, including
 transactional rejection when the named source premise is omitted.
+
+### Progress (2026-08-16: symbolic addition definedness)
+
+The exact two-premise symbolic-addition rule now retains its nonnegative
+amount edge and remaining-headroom edge as typed evidence. Smart `simp` can
+therefore select the already-existing
+`int32_nonnegative_add_within_max_is_defined` theorem and submit that one
+application to `Proof`; it no longer needs a general interval result followed
+by certificate rediscovery. Replay validates the exact addition operands,
+headroom subtraction, edge orientation, non-strictness, and original source
+facts.
+
+Pure, point, and outcome consumers share the recorded application. A source
+regression preserves reversed comparison spellings, observes no ordinary
+construction replay, and independently verifies expansion. Omitted-premise
+and 16-through-4096 unrelated-fact regressions pin transactionality and
+logarithmic persistent updates.

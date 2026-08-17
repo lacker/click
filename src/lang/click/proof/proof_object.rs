@@ -1880,6 +1880,15 @@ impl<'a> Proof<'a> {
             })
             .or_else(|| {
                 let recorded =
+                    recorded_int32_nonnegative_add_within_max_pairs(derivation, &premise_pairs)?;
+                plan_recorded_int32_nonnegative_add_within_max_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
+                let recorded =
                     recorded_int32_increment_lower_bound_pairs(derivation, &premise_pairs)?;
                 plan_recorded_int32_increment_lower_bound_for_context(
                     goal,
@@ -8982,6 +8991,160 @@ mod tests {
             ));
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn symbolic_add_definedness_retains_two_indexed_theorem_premises() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("the standard symbolic-add theorem should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test C function should parse");
+        let state = CState::new();
+        let arguments = Vec::new();
+        let program_point_states = ProgramPointStates::new();
+        let value = Bitvector32Term::Variable(Variable(8_178_100));
+        let amount = Bitvector32Term::Variable(Variable(8_178_101));
+        let expression = |term: Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term)))
+        };
+        let amount_nonnegative = ClickProposition::Comparison {
+            left: expression(amount.clone()),
+            operator: ComparisonOperator::GreaterEqual,
+            right: expression(Bitvector32Term::Constant(0)),
+        };
+        let headroom = ContractExpression::Subtract(
+            Box::new(expression(Bitvector32Term::Constant(i32::MAX as u32))),
+            Box::new(expression(amount.clone())),
+        );
+        let within_headroom = ClickProposition::Comparison {
+            left: headroom,
+            operator: ComparisonOperator::GreaterEqual,
+            right: expression(value.clone()),
+        };
+        let surface_goal = ClickProposition::Defined {
+            expression: ContractExpression::Add(
+                Box::new(expression(value.clone())),
+                Box::new(expression(amount.clone())),
+            ),
+        };
+        let lower = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the symbolic-add proposition should lower")
+        };
+        let kernel_nonnegative = lower(&amount_nonnegative);
+        let kernel_headroom = lower(&within_headroom);
+        let kernel_goal = lower(&surface_goal);
+        let selected = [amount_nonnegative.clone(), within_headroom.clone()];
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
+            .record_lowering(&amount_nonnegative, &kernel_nonnegative)
+            .expect("the exact nonnegative premise should be indexed");
+        surface_propositions
+            .record_lowering(&within_headroom, &kernel_headroom)
+            .expect("the exact headroom premise should be indexed");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.extend([kernel_nonnegative.clone(), kernel_headroom.clone()]);
+            let root = Proof::for_point_goal(
+                "persistent point symbolic-add simp",
+                0,
+                &facts,
+                kernel_goal.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("the typed symbolic-add rule should build one checked Proof descendant");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 96 * logarithmic_height + 384;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} point symbolic-add simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                    if application.name == "int32_nonnegative_add_within_max_is_defined"
+                        && premises.as_slice() == selected
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+
+            let theorem_context = PureTheoremContext {
+                memory: state.memory().clone(),
+                values: BTreeMap::new(),
+                array_refs: BTreeMap::new(),
+                requires: facts.clone(),
+                surface_requirements: surface_propositions.clone(),
+            };
+            let pure_root = Proof::for_pure_goal(
+                "persistent restricted symbolic-add simp",
+                &facts,
+                kernel_goal.clone(),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_pure_root = pure_root.clone();
+            for omitted in [
+                std::slice::from_ref(&amount_nonnegative),
+                std::slice::from_ref(&within_headroom),
+            ] {
+                assert!(pure_root.try_restricted_simp_closure(omitted).is_none());
+                assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+            }
+            let before_restricted = fact_node_allocations();
+            let pure_closed = pure_root
+                .try_restricted_simp_closure(&selected)
+                .expect("restricted simp should retain the symbolic-add theorem");
+            let restricted_allocations = fact_node_allocations() - before_restricted;
+            assert!(
+                restricted_allocations <= allocation_bound,
+                "size {size} restricted symbolic-add simp allocated {restricted_allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(matches!(
+                pure_closed.certificate().steps(),
+                [
+                    SimpleProofStep::ApplyTheoremUsing { application, premises },
+                    SimpleProofStep::Assumption,
+                ] if application.name == "int32_nonnegative_add_within_max_is_defined"
+                    && premises.as_slice() == selected
+            ));
+            assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+            assert!(pure_root.certificate().steps().is_empty());
         }
     }
 

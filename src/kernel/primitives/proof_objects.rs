@@ -119,6 +119,22 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact nonnegative-amount and remaining-headroom premises
+    /// selected when the atomic prover established symbolic addition
+    /// definedness through the named int32 theorem.
+    pub fn int32_nonnegative_add_within_max_steps(
+        &self,
+    ) -> Option<(&SignedOrderDerivationStep, &SignedOrderDerivationStep)> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32NonnegativeAddWithinMaxIsDefined(evidence),
+                ..
+            } => Some((&evidence.amount_nonnegative, &evidence.within_headroom)),
+            _ => None,
+        }
+    }
+
     /// Return the exact non-strict lower edge and strict upper edge selected
     /// when the atomic prover established a lower bound on `value + 1`.
     pub fn int32_increment_lower_bound_steps(

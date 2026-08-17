@@ -1380,6 +1380,17 @@ certificate is exactly those two applications (plus the pure proof's terminal
 replays them. Point and restricted-pure tests pin the structure and bound
 persistent allocations from 16 through 4096 unrelated facts.
 
+Symbolic addition definedness now uses the same seam. Given the exact named
+theorem premises `0 <= amount` and
+`value <= 2147483647 - amount`, smart `simp` selects and checks one
+`int32_nonnegative_add_within_max_is_defined(value, amount)` application on
+the immutable `Proof`. This was previously a prompt smart-proof failure even
+though the explicit simple theorem already existed. The kernel now retains
+both selected order edges, including their original reversed Surface Click
+spellings; ordinary verification does no construction replay, expansion
+independently verifies the application, and a 16-through-4096 unrelated-fact
+curve bounds both point and restricted-pure transitions logarithmically.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
