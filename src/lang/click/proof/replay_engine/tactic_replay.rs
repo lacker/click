@@ -674,7 +674,9 @@ fn apply_resource_step_on_proof<'a>(
 ) -> Result<(), ClickError> {
     debug_assert!(matches!(
         step,
-        SimpleProofStep::UnfoldResource(_) | SimpleProofStep::ObserveResource(_)
+        SimpleProofStep::FoldResource(_)
+            | SimpleProofStep::UnfoldResource(_)
+            | SimpleProofStep::ObserveResource(_)
     ));
     let root = Proof::for_execution_frontier(
         claim_label,
@@ -2204,21 +2206,25 @@ fn replay_linear_tactics_without_frontier_loops(
                         )));
                     }
                 } else {
-                    let pre_state = replay.old_reference_state(&state).clone();
-                    state = fold_composite_resource_at_current_point(
-                        resource_environment,
-                        resource,
-                        claim_label,
-                        tactic_index,
-                        &requirement_pure_facts,
-                        parsed_function.parameters(),
+                    apply_resource_step_on_proof(
+                        &mut state,
+                        &mut requirement_pure_facts,
+                        &mut replay,
+                        &mut branch_path,
+                        SimpleProofStep::FoldResource(resource.clone()),
+                        function_block,
+                        function,
+                        parsed_function,
                         arguments,
-                        &pre_state,
-                        state,
+                        function_environment,
+                        resource_environment,
                         predicate_environment,
                         click_function_environment,
-                        &replay.unfolded_predicates,
+                        theorem_environment,
+                        claim_label,
+                        tactic_index,
                     )?;
+                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
                 }
             }
             ProofTactic::Have(have) => {

@@ -785,6 +785,7 @@ impl<'a> Proof<'a> {
             SimpleProofStep::UnfoldResource(resource) => {
                 self.apply_execution_resource_unfold(resource)
             }
+            SimpleProofStep::FoldResource(resource) => self.apply_execution_resource_fold(resource),
             SimpleProofStep::ObserveResource(resource) => {
                 self.apply_execution_resource_observation(resource)
             }
@@ -1776,6 +1777,54 @@ impl<'a> Proof<'a> {
             complete: false,
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
+            execution: Some(execution),
+        })
+    }
+
+    fn apply_execution_resource_fold(
+        &self,
+        resource: &ResourceClause,
+    ) -> Result<ProofState, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("resource `fold` requires an execution-frontier proof"));
+        };
+        let mut execution =
+            self.state.execution.clone().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+        if execution.replay.is_at_function_exit() {
+            return Err(
+                self.step_error("resource `fold` must run before execution reaches function exit")
+            );
+        }
+        let pre_state = execution
+            .replay
+            .old_reference_state(&execution.state)
+            .clone();
+        let checked = fold_composite_resource_for_proof(
+            context.resource_environment,
+            resource,
+            context.claim_label,
+            context.tactic_index,
+            self.state.facts.clone(),
+            context.parsed_function.parameters(),
+            context.arguments,
+            &pre_state,
+            (*execution.state).clone(),
+            context.predicate_environment,
+            context.click_function_environment,
+            &execution.replay.unfolded_predicates,
+        )?;
+        execution.state = checked.state.into();
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        Ok(ProofState {
+            facts: checked.facts,
+            locals: self.state.locals.clone(),
+            unfolded_predicates: self.state.unfolded_predicates.clone(),
+            goal: self.state.goal.clone(),
+            complete: false,
+            added_facts: Arc::new(Vec::new()),
+            checked_facts: Arc::new(Vec::new()),
             execution: Some(execution),
         })
     }
@@ -10063,6 +10112,119 @@ mod tests {
             );
             assert!(root.certificate().steps().is_empty());
             assert_eq!(root.state.facts.to_vec().len(), size as usize);
+        }
+    }
+
+    #[test]
+    fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                resource marker(x: int32) {
+                    fact x == x;
+                }
+                verifying "identity.c";
+                int32 identity(int32 x) {
+                    owns marker(x);
+                    immutable;
+                    ensures returns_x: result == x;
+                } by {
+                    unfold(marker(x));
+                    fold(marker(x));
+                    execute();
+                    frame();
+                }
+            "#,
+        )
+        .expect("test resource and function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let resource = function_block
+            .requires()
+            .iter()
+            .find_map(|requirement| match requirement.inner() {
+                Requirement::Resource(resource) => Some(resource.clone()),
+                _ => None,
+            })
+            .expect("the test function should own its marker resource");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+        let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+            .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let function_environment = CExecutionEnvironment::new();
+        let arguments = vec![CExpression::Value(int32(7))];
+        let empty_state = CState::new();
+        let lowered = lower_resource_clause(
+            &resource,
+            parsed_function.parameters(),
+            &arguments,
+            empty_state.memory(),
+        )
+        .expect("the owned marker resource should lower");
+        let state =
+            empty_state.with_resource_context(ResourceContext::new().unchecked_with_fact(lowered));
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let root = Proof::for_execution_frontier(
+                "persistent resource fold",
+                0,
+                ProofReplayContext {
+                    state: state.clone(),
+                    pure_facts: (0..size).map(indexed_fact).collect(),
+                    replay: TacticReplayState::default(),
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let unfolded = root
+                .apply_step(SimpleProofStep::UnfoldResource(resource.clone()))
+                .expect("the owned marker resource should unfold before folding");
+            let retained_unfolded = unfolded.clone();
+            let before = fact_node_allocations();
+            let folded = unfolded
+                .apply_step(SimpleProofStep::FoldResource(resource.clone()))
+                .expect("the exposed marker body should fold");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 96 * logarithmic_height + 256;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} fold allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert_eq!(
+                folded.certificate().steps(),
+                &[
+                    SimpleProofStep::UnfoldResource(resource.clone()),
+                    SimpleProofStep::FoldResource(resource.clone()),
+                ]
+            );
+            assert!(folded.added_facts().is_empty());
+            assert!(Arc::ptr_eq(&unfolded.state, &retained_unfolded.state));
+
+            let mut missing = resource.clone();
+            let ResourceClause::Declared { name, .. } = &mut missing else {
+                panic!("the marker resource should be declared");
+            };
+            *name = "missing_marker".to_string();
+            assert!(
+                unfolded
+                    .apply_step(SimpleProofStep::FoldResource(missing))
+                    .is_err()
+            );
+            assert_eq!(
+                unfolded.certificate().steps(),
+                &[SimpleProofStep::UnfoldResource(resource.clone())]
+            );
         }
     }
 

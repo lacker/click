@@ -19,6 +19,17 @@ pub(super) enum ResourceBodyClosure {
 /// incrementally indexed assumption context and exact-membership index.
 trait ResourcePureFacts {
     fn assumptions(&self) -> &PureFactContext;
+    fn contains_top_level(&self, fact: &Proposition) -> bool;
+    fn exact_available_across_effects(
+        &self,
+        required: &Proposition,
+        framing: &[ExecutionPureFact],
+    ) -> bool;
+    fn directly_matches_separation(
+        &self,
+        required: &Proposition,
+        assumptions: &PureFactContext,
+    ) -> bool;
     fn insert(&mut self, fact: Proposition) -> bool;
     fn materialize(&self) -> Vec<Proposition>;
 }
@@ -38,6 +49,26 @@ impl<'a> LegacyResourcePureFacts<'a> {
 impl ResourcePureFacts for LegacyResourcePureFacts<'_> {
     fn assumptions(&self) -> &PureFactContext {
         &self.assumptions
+    }
+
+    fn contains_top_level(&self, fact: &Proposition) -> bool {
+        self.facts.contains(fact)
+    }
+
+    fn exact_available_across_effects(
+        &self,
+        required: &Proposition,
+        framing: &[ExecutionPureFact],
+    ) -> bool {
+        exact_fact_is_available_across_effects(required, self.facts, framing)
+    }
+
+    fn directly_matches_separation(
+        &self,
+        required: &Proposition,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        directly_matching_separation_fact_under(required, self.facts, assumptions).is_some()
     }
 
     fn insert(&mut self, fact: Proposition) -> bool {
@@ -71,6 +102,30 @@ impl ProofResourcePureFacts {
 impl ResourcePureFacts for ProofResourcePureFacts {
     fn assumptions(&self) -> &PureFactContext {
         self.facts.assumptions()
+    }
+
+    fn contains_top_level(&self, fact: &Proposition) -> bool {
+        self.facts.contains_top_level(fact)
+    }
+
+    fn exact_available_across_effects(
+        &self,
+        required: &Proposition,
+        framing: &[ExecutionPureFact],
+    ) -> bool {
+        self.facts.exact_available_across_effects(required, framing)
+    }
+
+    fn directly_matches_separation(
+        &self,
+        _required: &Proposition,
+        _assumptions: &PureFactContext,
+    ) -> bool {
+        // `ProofFacts` already gives exact and snapshot-compatible facts an
+        // indexed route above. Any remaining semantic resource-separation
+        // consequence is decided by its incrementally maintained kernel
+        // context, not by scanning every unrelated ambient proposition.
+        false
     }
 
     fn insert(&mut self, fact: Proposition) -> bool {
@@ -1143,34 +1198,6 @@ fn try_select_composite_resource_body(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn composite_resource_body_is_active(
-    definition: &ResourceDefinition,
-    substitutions: &BTreeMap<String, ContractExpression>,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    state: &CState,
-    result: &CValue,
-    available_pure_facts: &[Proposition],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-) -> Result<bool, String> {
-    let assumptions = assumptions_from_propositions(available_pure_facts);
-    composite_resource_body_is_active_with_assumptions(
-        definition,
-        substitutions,
-        parameters,
-        arguments,
-        pre_state,
-        state,
-        result,
-        &assumptions,
-        predicate_environment,
-        click_function_environment,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 fn composite_resource_body_is_active_with_assumptions(
     definition: &ResourceDefinition,
     substitutions: &BTreeMap<String, ContractExpression>,
@@ -2089,6 +2116,49 @@ pub(super) fn fold_composite_resources_on_outcome(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
+    outcome: CFunctionOutcome,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+    closure: ResourceBodyClosure,
+) -> Result<CFunctionOutcome, ClickError> {
+    // Outcome/finalization replay still owns an ordered legacy fact vector.
+    // Adapt it once here; the checked fold core below also serves the
+    // persistent Proof transition without requiring that transition to
+    // materialize all ambient facts.
+    let mut legacy_facts = available_pure_facts.to_vec();
+    let pure_facts = LegacyResourcePureFacts::new(&mut legacy_facts);
+    fold_composite_resources_on_outcome_with_facts(
+        resource_environment,
+        resource_folds,
+        claim_label,
+        path_index,
+        execution_pure_facts,
+        &pure_facts,
+        surface_propositions,
+        parameters,
+        arguments,
+        pre_state,
+        outcome,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        closure,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fold_composite_resources_on_outcome_with_facts(
+    resource_environment: &ResourceEnvironment,
+    resource_folds: &[ResourceClause],
+    claim_label: &str,
+    path_index: usize,
+    execution_pure_facts: &[ExecutionPureFact],
+    pure_facts: &impl ResourcePureFacts,
+    surface_propositions: &SurfacePropositionMap,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
     mut outcome: CFunctionOutcome,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -2118,7 +2188,7 @@ pub(super) fn fold_composite_resources_on_outcome(
                 )));
             }
         };
-        let mut body_active = composite_resource_body_is_active(
+        let mut body_active = composite_resource_body_is_active_with_assumptions(
             definition,
             &substitutions,
             parameters,
@@ -2126,7 +2196,7 @@ pub(super) fn fold_composite_resources_on_outcome(
             pre_state,
             guard_state,
             guard_result,
-            available_pure_facts,
+            pure_facts.assumptions(),
             predicate_environment,
             click_function_environment,
         )
@@ -2160,7 +2230,7 @@ pub(super) fn fold_composite_resources_on_outcome(
                     )));
                 }
             };
-            let assumptions = assumptions_from_propositions(available_pure_facts);
+            let assumptions = pure_facts.assumptions();
             let quantity_is_zero = quantity.as_const() == Some(0)
                 || assumptions.proves(&Proposition::ConditionIs(
                     ConditionTerm::Bitvector32Equal(
@@ -2219,7 +2289,7 @@ pub(super) fn fold_composite_resources_on_outcome(
             let population = lower_resource_clause_at_state_with_result(
                 resource, parameters, arguments, state, value,
             )?;
-            let assumptions = assumptions_from_propositions(available_pure_facts);
+            let assumptions = pure_facts.assumptions();
             if !state.resources().satisfies_fact(&population, &assumptions) {
                 let viewed_population = CResourceFact::View(population.resource().clone());
                 closing_view = state
@@ -2256,13 +2326,10 @@ pub(super) fn fold_composite_resources_on_outcome(
         } else {
             &[]
         };
-        let mut body_fact_context = available_pure_facts.to_vec();
-        body_fact_context.extend(
-            execution_pure_facts
-                .iter()
-                .map(|fact| fact.proposition().clone()),
-        );
-        let body_assumptions = assumptions_from_propositions(&body_fact_context);
+        let mut body_assumptions = pure_facts.assumptions().clone();
+        for fact in execution_pure_facts {
+            body_assumptions = body_assumptions.assume_proposition(fact.proposition().clone());
+        }
         for fact in body_facts {
             let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                     ClickError::new(format!(
@@ -2270,27 +2337,41 @@ pub(super) fn fold_composite_resources_on_outcome(
                         describe_resource_clause(resource)
                     ))
                 })?;
-            let required = if let Some(recorded) =
-                surface_propositions.available_kernel(&fact, available_pure_facts)
+            let required = if let Some(recorded) = surface_propositions
+                .available_kernel_matching(&fact, |kernel| pure_facts.contains_top_level(kernel))
             {
                 recorded.clone()
             } else {
-                let program_point_states = ProgramPointStates::new();
-                lower_ensure_proposition_goal(
-                    available_pure_facts,
-                    &fact,
+                let CFunctionOutcome::Return { value, state } = &outcome else {
+                    unreachable!("the return outcome was checked above")
+                };
+                let lowered = lower_outcome_proposition_with_assumptions(
                     parameters,
                     arguments,
                     pre_state,
-                    &outcome,
+                    state,
+                    value,
+                    pure_facts.assumptions(),
+                    &fact,
                     predicate_environment,
                     click_function_environment,
-                    &program_point_states,
-                    unfolded_predicates,
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
                         "`{claim_label}` path {path_index}: could not lower exact `fold({})` fact: {message}",
+                        describe_resource_clause(resource)
+                    ))
+                })?;
+                unfold_predicates_in_proposition(
+                    predicate_environment,
+                    click_function_environment,
+                    unfolded_predicates,
+                    &lowered,
+                    pure_facts.assumptions(),
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` path {path_index}: could not unfold exact `fold({})` fact: {message}",
                         describe_resource_clause(resource)
                     ))
                 })?
@@ -2303,16 +2384,9 @@ pub(super) fn fold_composite_resources_on_outcome(
             // work proportional to the fact being checked, so an exactly
             // available body fact never rides on the open-ended kernel search
             // below, which can consume a large share of the fold's budget.
-            let exactly_available = exact_fact_is_available_across_effects(
-                &required,
-                available_pure_facts,
-                execution_pure_facts,
-            ) || directly_matching_separation_fact_under(
-                &required,
-                available_pure_facts,
-                &body_assumptions,
-            )
-            .is_some();
+            let exactly_available = pure_facts
+                .exact_available_across_effects(&required, execution_pure_facts)
+                || pure_facts.directly_matches_separation(&required, &body_assumptions);
             if !exactly_available
                 && !matches!(normalize_proposition(&required), SimpProposition::True)
                 && !body_assumptions.proves(&required)
@@ -2321,6 +2395,7 @@ pub(super) fn fold_composite_resources_on_outcome(
                 // mid-derivation. Reporting that truncation as a missing fact
                 // is misleading, so surface the budget state itself first.
                 check_verification_deadline()?;
+                let available_pure_facts = pure_facts.materialize();
                 let resources = match &outcome {
                     CFunctionOutcome::Return { state, .. } => state.resources().facts(),
                     _ => pre_state.resources().facts(),
@@ -2342,7 +2417,7 @@ pub(super) fn fold_composite_resources_on_outcome(
                     describe_resource_clause(resource),
                     describe_missing_pure_fact(
                         &required,
-                        available_pure_facts,
+                        &available_pure_facts,
                         resources,
                         parameters,
                         arguments,
@@ -2363,13 +2438,10 @@ pub(super) fn fold_composite_resources_on_outcome(
         // Range spellings in held resource facts embed loads at their
         // creation snapshot; carrying them to the fold point needs the
         // execution's store effect facts alongside the pure facts.
-        let mut fold_facts = available_pure_facts.to_vec();
-        fold_facts.extend(
-            execution_pure_facts
-                .iter()
-                .map(|fact| fact.proposition().clone()),
-        );
-        let assumptions = assumptions_from_propositions(&fold_facts);
+        let mut assumptions = pure_facts.assumptions().clone();
+        for fact in execution_pure_facts {
+            assumptions = assumptions.assume_proposition(fact.proposition().clone());
+        }
         let _assumptions_id_scope = crate::kernel::PureFactContextIdScope::enter(&assumptions);
         let mut lowered_contained = Vec::new();
         let preserve_exposed_body = matches!(
@@ -2450,6 +2522,7 @@ pub(super) fn fold_composite_resources_on_outcome(
             }
             let diagnostic_facts = resources.facts().to_vec();
             let Some(next) = resources.without_fact(lowered, &assumptions) else {
+                let available_pure_facts = pure_facts.materialize();
                 let action = match closure {
                     ResourceBodyClosure::Initialize => {
                         format!("`fold({})`", describe_resource_clause(resource))
@@ -2462,7 +2535,7 @@ pub(super) fn fold_composite_resources_on_outcome(
                     "`{claim_label}` path {path_index}: {action} failed: {}",
                     describe_missing_resource_fact(
                         lowered,
-                        available_pure_facts,
+                        &available_pure_facts,
                         &diagnostic_facts,
                         parameters,
                         arguments,
@@ -2502,6 +2575,61 @@ pub(super) fn fold_composite_resources_on_outcome(
     }
 
     Ok(outcome)
+}
+
+pub(super) struct CheckedResourceFold {
+    pub(super) state: CState,
+    pub(super) facts: ProofFacts,
+}
+
+/// Checks one ordinary pre-execution `fold` against a persistent Proof
+/// frontier. Outcome finalization continues to use the legacy batch wrapper;
+/// this transition owns exactly one source step and does not materialize the
+/// complete ambient fact sequence on its success path.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn fold_composite_resource_for_proof(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    claim_label: &str,
+    tactic_index: usize,
+    facts: ProofFacts,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<CheckedResourceFold, ClickError> {
+    let facts = ProofResourcePureFacts::new(facts);
+    let outcome = CFunctionOutcome::Return {
+        value: CValue::Int32(Bitvector32Term::Constant(0)),
+        state,
+    };
+    let outcome = fold_composite_resources_on_outcome_with_facts(
+        resource_environment,
+        std::slice::from_ref(resource),
+        claim_label,
+        tactic_index,
+        &[],
+        &facts,
+        &SurfacePropositionMap::default(),
+        parameters,
+        arguments,
+        pre_state,
+        outcome,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        ResourceBodyClosure::Initialize,
+    )?;
+    let CFunctionOutcome::Return { state, .. } = outcome else {
+        unreachable!("folding a synthetic return outcome preserves its outcome kind")
+    };
+    Ok(CheckedResourceFold {
+        state,
+        facts: facts.facts,
+    })
 }
 
 /// Resolves the source declaration that supplies fold, unfold, and observation

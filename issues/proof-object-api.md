@@ -1329,6 +1329,21 @@ driver enough to trip the deep pure-case stack canary; resource-step boundary
 export is now outlined in a non-inlined adapter, and the unchanged canary is
 green.
 
+Pre-execution `fold(resource)` completes the ordinary simple resource trio on
+that seam. The checked transition selects the active body from the persistent
+assumption context, verifies each declared pure body fact through indexed
+exact/snapshot availability or the maintained kernel context, consumes the
+contained resource representation, restores the abstract resource, and
+retains exactly one `SimpleProofStep::FoldResource`. Its success path neither
+clones nor scans the complete ambient pure-fact sequence; materialization is
+reserved for diagnostics and the explicit legacy outcome boundary. A
+16-through-4096 unrelated-fact curve checks logarithmic allocation, exact
+certificate identity, ancestor isolation, and failed-step transactionality,
+and whole-claim expansion independently reverifies the one retained source
+step. Post-execution fold remains a distinct outcome/finalization operation;
+this migration does not pretend that batch finalization is an ordinary
+frontier-local step.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

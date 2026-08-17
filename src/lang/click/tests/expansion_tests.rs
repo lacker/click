@@ -4474,6 +4474,64 @@ fn execution_resource_observe_is_recorded_once_and_replays() {
 }
 
 #[test]
+fn execution_resource_fold_is_recorded_once_and_replays() {
+    let c_source = r#"
+        int32 preserve(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "preserve.c";
+
+        int32 preserve(int32 x) {
+            owns marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            unfold(marker(x));
+            fold(marker(x));
+            execute();
+            frame();
+            simp();
+        }
+    "#;
+
+    let verified = verify_c0_sources(click_source, &[("preserve.c", c_source)])
+        .expect("the explicit resource fold should verify through Proof");
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked grouped proof should retain its simple expansion");
+    assert_eq!(
+        tactics
+            .iter()
+            .filter(|tactic| matches!(tactic, ProofTactic::FoldResource(_)))
+            .count(),
+        1,
+        "one source fold must produce exactly one retained step"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("preserve.c", c_source)],
+        "preserve",
+        CProofClaim::Grouped,
+    )
+    .expect("the grouped resource proof should expand");
+    assert_eq!(
+        expanded
+            .lines()
+            .filter(|line| line.trim() == "fold(marker(x));")
+            .count(),
+        1
+    );
+    verify_c0_sources(&expanded, &[("preserve.c", c_source)])
+        .expect("the one retained fold should independently replay");
+}
+
+#[test]
 fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
     let c_source = r#"
             int32 choose(int32 value) {
