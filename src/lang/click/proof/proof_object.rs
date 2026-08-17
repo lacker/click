@@ -147,26 +147,6 @@ enum ProofBranchStructure {
     If { condition: ClickProposition },
 }
 
-fn branch_interface_exports_ownership(assertions: &[ProofAssertion]) -> bool {
-    assertions.iter().any(|assertion| {
-        let ProofAssertion::Resource(resource) = assertion else {
-            return false;
-        };
-        let mut resource = resource;
-        while let ResourceClause::Quantified { resource: body, .. } = resource {
-            resource = body;
-        }
-        matches!(
-            resource,
-            ResourceClause::Write(_)
-                | ResourceClause::Declared {
-                    access: ResourceAccessMode::Own,
-                    ..
-                }
-        )
-    })
-}
-
 fn explicit_linear_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
     let certificate = ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).ok()?;
     let [step] = certificate.steps() else {
@@ -5097,68 +5077,6 @@ impl<'a> ExecutionProofBranches<'a> {
         None
     }
 
-    /// Whether every owned resource exported by this interface already has
-    /// the exact same representation in both arm snapshots.
-    ///
-    /// Such an interface can retain the common persistent context unchanged.
-    /// A merely entailed ownership fact may require consuming and rebuilding
-    /// another representation, so it stays behind the normalization boundary.
-    fn ownership_exports_are_exact(
-        &self,
-        assertions: &[ProofAssertion],
-    ) -> Result<bool, ClickError> {
-        if !branch_interface_exports_ownership(assertions) {
-            return Ok(true);
-        }
-        let [Some(then_arm), Some(else_arm)] = &self.arms else {
-            return Ok(false);
-        };
-        let ProofContext::Execution(context) = self.root.context.as_ref() else {
-            return Ok(false);
-        };
-        let then_execution = then_arm.proof.state.execution.as_ref().ok_or_else(|| {
-            self.root
-                .step_error("then interface arm lost its execution state")
-        })?;
-        let else_execution = else_arm.proof.state.execution.as_ref().ok_or_else(|| {
-            self.root
-                .step_error("else interface arm lost its execution state")
-        })?;
-        for assertion in assertions {
-            let ProofAssertion::Resource(resource) = assertion else {
-                continue;
-            };
-            let then_expected = lower_resource_clause_at_state(
-                resource,
-                context.parsed_function.parameters(),
-                context.arguments,
-                &then_execution.state,
-            )?;
-            if !then_expected.is_own() {
-                continue;
-            }
-            let else_expected = lower_resource_clause_at_state(
-                resource,
-                context.parsed_function.parameters(),
-                context.arguments,
-                &else_execution.state,
-            )?;
-            if then_expected != else_expected
-                || !then_execution
-                    .state
-                    .resources()
-                    .contains_exact_representation(&then_expected)
-                || !else_execution
-                    .state
-                    .resources()
-                    .contains_exact_representation(&else_expected)
-            {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
     fn resource_contexts_descend_from_root(&self) -> bool {
         let Some(root_execution) = self.root.state.execution.as_ref() else {
             return false;
@@ -5182,18 +5100,83 @@ impl<'a> ExecutionProofBranches<'a> {
                 .descends_from(root_execution.state.resources())
     }
 
-    fn common_resource_context(&self) -> Option<ResourceContext> {
-        let root_execution = self.root.state.execution.as_ref()?;
-        let [Some(then_arm), Some(else_arm)] = &self.arms else {
-            return None;
+    fn common_resources_after_interface_consumption(
+        root: &Proof<'a>,
+        then_arm: &ExecutionProofArm<'a>,
+        else_arm: &ExecutionProofArm<'a>,
+        assertions: &[ProofAssertion],
+    ) -> Result<ResourceContext, ClickError> {
+        let root_execution =
+            root.state.execution.as_ref().ok_or_else(|| {
+                root.step_error("execution branch root lost its resource context")
+            })?;
+        let then_execution = then_arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .ok_or_else(|| root.step_error("then interface arm lost its execution state"))?;
+        let else_execution = else_arm
+            .proof
+            .state
+            .execution
+            .as_ref()
+            .ok_or_else(|| root.step_error("else interface arm lost its execution state"))?;
+        let ProofContext::Execution(context) = root.context.as_ref() else {
+            return Err(root.step_error("resource interface requires an execution proof"));
         };
-        let then_execution = then_arm.proof.state.execution.as_ref()?;
-        let else_execution = else_arm.proof.state.execution.as_ref()?;
+        let mut then_residual = then_execution.state.resources().clone();
+        let mut else_residual = else_execution.state.resources().clone();
+        for assertion in assertions {
+            let ProofAssertion::Resource(resource) = assertion else {
+                continue;
+            };
+            let then_expected = lower_resource_clause_at_state(
+                resource,
+                context.parsed_function.parameters(),
+                context.arguments,
+                &then_execution.state,
+            )?;
+            if !then_expected.is_own() {
+                continue;
+            }
+            let else_expected = lower_resource_clause_at_state(
+                resource,
+                context.parsed_function.parameters(),
+                context.arguments,
+                &else_execution.state,
+            )?;
+            then_residual = then_residual
+                .without_fact_incrementally(
+                    &then_expected,
+                    then_arm.proof.state.facts.assumptions(),
+                )
+                .ok_or_else(|| {
+                    root.step_error(
+                        "then arm could not consume its established `branch ensuring` ownership representation",
+                    )
+                })?;
+            else_residual = else_residual
+                .without_fact_incrementally(
+                    &else_expected,
+                    else_arm.proof.state.facts.assumptions(),
+                )
+                .ok_or_else(|| {
+                    root.step_error(
+                        "else arm could not consume its established `branch ensuring` ownership representation",
+                    )
+                })?;
+        }
         ResourceContext::common_exact_descendant(
-            then_execution.state.resources(),
-            else_execution.state.resources(),
+            &then_residual,
+            &else_residual,
             root_execution.state.resources(),
         )
+        .ok_or_else(|| {
+            root.step_error(
+                "checked `branch ensuring` resource snapshots do not descend from the branch root",
+            )
+        })
     }
 
     fn arm_reached_shared_continuation(&self, arm: &ExecutionProofArm<'a>) -> bool {
@@ -5406,31 +5389,6 @@ impl<'a> ExecutionProofBranches<'a> {
         self.sole_feasible_arm().is_some()
             || (self.derived_join_continuation().is_some()
                 && self.resource_contexts_descend_from_root())
-    }
-
-    /// Whether completed interface arms own a structural continuation and
-    /// can retain the complete exact common resource context without
-    /// enumerating it.
-    ///
-    /// Resource snapshots retain exact changed-fact ancestry, so independently
-    /// edited descendants can derive their common representation from only
-    /// the arm-local delta. Identical snapshots remain the O(1) case.
-    /// End-of-arm joins derive their continuation by popping the root's
-    /// persistent enclosing-continuation stack exactly as C execution does.
-    pub(super) fn supports_interface_join(&self, assertions: &[ProofAssertion]) -> bool {
-        if !self.supports_interface_branch() {
-            return false;
-        }
-        if self.sole_feasible_arm().is_some() {
-            return true;
-        }
-        if !self
-            .ownership_exports_are_exact(assertions)
-            .unwrap_or(false)
-        {
-            return false;
-        }
-        true
     }
 
     #[cfg(test)]
@@ -6085,16 +6043,6 @@ impl<'a> ExecutionProofBranches<'a> {
         if self.sole_feasible_arm().is_some() {
             return self.finish_decided_with_interface(assertions);
         }
-        if !self.ownership_exports_are_exact(&assertions)? {
-            return Err(self.root.step_error(
-                "checked `branch ensuring` cannot yet normalize an exported owned resource representation",
-            ));
-        }
-        let common_resources = self.common_resource_context().ok_or_else(|| {
-            self.root.step_error(
-                "checked `branch ensuring` resource snapshots do not descend from the branch root",
-            )
-        })?;
         let join_continuation = self.derived_join_continuation().ok_or_else(|| {
             self.root
                 .step_error("execution `branch` has no shared continuation statement")
@@ -6273,28 +6221,42 @@ impl<'a> ExecutionProofBranches<'a> {
             ));
         }
 
-        // The common exact resource representation was derived from only the
-        // facts changed since the branch root. Validate the output-sized
-        // interface additions against that already-valid subset.
+        // Consume owned exports from both concrete arms before intersecting
+        // their exact residuals. Re-adding the normalized interface below
+        // therefore neither duplicates a common representation nor loses the
+        // portion of ownership selected by the interface.
+        let common_resources = Self::common_resources_after_interface_consumption(
+            &self.root,
+            &then_arm,
+            &else_arm,
+            &assertions,
+        )?;
+
+        // Owned interface facts were consumed above and must be restored once.
+        // Duplicable views are added only when the residual common context
+        // does not already establish them.
         let mut resources = common_resources;
         let additions = then_abstract
             .state
             .resources()
             .facts()
             .iter()
-            .filter(|fact| !resources.satisfies_fact(fact, then_interface_facts.assumptions()))
+            .filter(|fact| {
+                fact.is_own() || !resources.satisfies_fact(fact, then_interface_facts.assumptions())
+            })
             .cloned()
             .collect::<Vec<_>>();
         resources = resources
             .try_compose_into_valid_context_delaying_normalization(
-                additions,
+                additions.iter().cloned(),
                 then_interface_facts.assumptions(),
             )
             .map_err(|error| {
                 self.root.step_error(format!(
                     "invalid automatic common `branch ensuring` resource interface: {error:?}"
                 ))
-            })?;
+            })?
+            .normalized_around_facts(&additions, then_interface_facts.assumptions());
         let state = (*then_abstract.state)
             .clone()
             .with_resource_context(resources);
@@ -14050,7 +14012,6 @@ mod tests {
                 .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
                 .expect("owned-interface else assignment should check");
             let assertions = vec![ProofAssertion::Resource(marker_clause.clone())];
-            assert!(branches.supports_interface_join(&assertions));
             let before = fact_node_allocations();
             let joined = branches
                 .join_with_interface(assertions.clone())
@@ -14102,11 +14063,6 @@ mod tests {
                 branches.supports_interface_branch(),
                 "a structural preflight must not require a resource folded later in the arms"
             );
-            assert!(
-                !branches
-                    .supports_interface_join(&[ProofAssertion::Resource(ready_clause.clone())]),
-                "the incomplete arms do not establish their exported resource yet"
-            );
             let branches = branches
                 .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
                 .expect("transformed-interface then assignment should check")
@@ -14137,7 +14093,6 @@ mod tests {
             assert!(!then_resources.shares_storage_with(else_resources));
 
             let assertions = vec![ProofAssertion::Resource(ready_clause.clone())];
-            assert!(branches.supports_interface_join(&assertions));
             let before = fact_node_allocations();
             let joined = branches
                 .join_with_interface(assertions)
@@ -14181,22 +14136,74 @@ mod tests {
             },
             Bitvector32Term::Constant(2),
         );
-        let branches = make_root(
+        let mut normalized_quantity_samples = Vec::new();
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let resources = ResourceContext::new()
+                .unchecked_with_facts((0..size).map(|index| {
+                    CResourceFact::own_token(format!("quantity_unrelated_{index}"), Vec::new())
+                }))
+                .unchecked_with_fact(represented_quantity.clone());
+            let branches = make_root(16, CState::new().with_resource_context(resources))
+                .begin_execution_branch()
+                .expect("the normalized-ownership probe should expose both arms")
+                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+                .expect("normalized-ownership then assignment should check")
+                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .expect("normalized-ownership else assignment should check");
+            let before = fact_node_allocations();
+            let normalized_join = branches
+                .join_with_interface(vec![ProofAssertion::Resource(marker_clause.clone())])
+                .expect("an entailed quantity representation should be consumed and restored once");
+            normalized_quantity_samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before,
+            ));
+            assert!(
+                normalized_join
+                    .state
+                    .execution
+                    .as_ref()
+                    .expect("normalized interface retains execution")
+                    .state
+                    .resources()
+                    .contains_exact_representation(&represented_quantity),
+                "the common quantity must not be duplicated or weakened by its unit interface"
+            );
+        }
+        let (_, base_height, base_allocations) = normalized_quantity_samples[0];
+        for (size, height, allocations) in normalized_quantity_samples {
+            let bound = base_allocations + 160 * (height - base_height);
+            assert!(
+                allocations <= bound,
+                "size {size} normalized quantity interface allocated {allocations} persistent nodes (bound {bound})"
+            );
+        }
+
+        let invalid_branches = make_root(
             16,
             CState::new().with_resource_context(
                 ResourceContext::new().unchecked_with_fact(represented_quantity),
             ),
         )
         .begin_execution_branch()
-        .expect("the normalized-ownership probe should expose both arms")
+        .expect("the rejected quantity probe should expose both arms")
         .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
-        .expect("normalized-ownership then assignment should check")
+        .expect("rejected quantity then assignment should check")
         .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
-        .expect("normalized-ownership else assignment should check");
+        .expect("rejected quantity else assignment should check");
+        let invalid_root = invalid_branches.root.clone();
+        let quantity_three = ResourceClause::Quantified {
+            quantity: ContractExpression::CFragment(CExpression::Value(int32(3))),
+            resource: Box::new(marker_clause),
+        };
         assert!(
-            !branches.supports_interface_join(&[ProofAssertion::Resource(marker_clause)]),
-            "an entailed but non-exact ownership export still requires normalization"
+            invalid_branches
+                .join_with_interface(vec![ProofAssertion::Resource(quantity_three)])
+                .is_err(),
+            "an interface may not manufacture a quantity larger than either arm owns"
         );
+        assert!(invalid_root.certificate().steps().is_empty());
     }
 
     #[test]
@@ -14276,7 +14283,6 @@ mod tests {
                 .expect("nested else assignment should check");
             let nested_statement = nested.statement_index;
             assert!(nested.continuation_remaining.is_none());
-            assert!(nested.supports_interface_join(&[ProofAssertion::Fact(nonnegative.clone())]));
 
             let before = fact_node_allocations();
             let joined = nested

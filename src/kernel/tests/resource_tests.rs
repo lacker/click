@@ -756,6 +756,97 @@ fn resource_consumption_ignores_unrelated_exact_shapes() {
 }
 
 #[test]
+fn incremental_quantity_consumption_normalizes_only_the_exact_resource_bucket() {
+    let mut samples = Vec::new();
+    for size in [16_u32, 64, 256, 1024, 4096] {
+        let target_resource = CResource::Token {
+            name: "shared_name".to_string(),
+            arguments: vec![int32(size + 1)],
+        };
+        let unit = CResourceFact::Own(
+            target_resource.clone(),
+            Box::new(Bitvector32Term::Constant(1)),
+        );
+        let required =
+            CResourceFact::own_quantity(target_resource.clone(), Bitvector32Term::Constant(2));
+        let context = ResourceContext::new()
+            .unchecked_with_facts((0..size).map(|index| {
+                CResourceFact::own_token("shared_name".to_string(), vec![int32(index)])
+            }))
+            .unchecked_with_fact(unit.clone())
+            .unchecked_with_fact(unit.clone());
+        let ancestor = context.clone();
+        assert!(context.storage.materialized.get().is_none());
+
+        let before = crate::persistent::persistent_node_allocations();
+        let (remaining, work) = crate::instrumentation::measure_deterministic_work(|| {
+            context
+                .clone()
+                .without_fact_incrementally(&required, &PureFactContext::new())
+        });
+        let remaining = remaining.expect("two retained units should satisfy quantity two");
+        samples.push((
+            size,
+            usize::BITS as usize - (size as usize).leading_zeros() as usize,
+            crate::persistent::persistent_node_allocations() - before,
+            work,
+        ));
+        assert!(!remaining.satisfies_fact(&unit, &PureFactContext::new()));
+        assert!(
+            remaining.contains_exact_representation(&CResourceFact::own_token(
+                "shared_name".to_string(),
+                vec![int32(size / 2)],
+            ))
+        );
+        assert!(remaining.storage.materialized.get().is_none());
+        assert_eq!(
+            ancestor
+                .storage
+                .index
+                .exact
+                .get(&unit)
+                .map_or(0, |entries| entries.len()),
+            2,
+            "incremental consumption must leave its ancestor unchanged"
+        );
+        assert!(ancestor.shares_storage_with(&context));
+    }
+
+    let (_, base_height, base_allocations, base_work) = samples[0];
+    for (size, height, allocations, work) in samples {
+        let allocation_bound = base_allocations + 96 * (height - base_height);
+        assert!(
+            allocations <= allocation_bound,
+            "size {size} incremental quantity consumption allocated {allocations} persistent nodes (bound {allocation_bound})"
+        );
+        assert!(
+            work <= base_work + 2,
+            "size {size} incremental quantity consumption used {work} deterministic units (base {base_work})"
+        );
+    }
+
+    let unit = CResourceFact::own_token("target".to_string(), Vec::new());
+    let context = ResourceContext::new()
+        .unchecked_with_fact(unit.clone())
+        .unchecked_with_fact(unit);
+    let unavailable = CResourceFact::own_quantity(
+        CResource::Token {
+            name: "target".to_string(),
+            arguments: Vec::new(),
+        },
+        Bitvector32Term::Constant(3),
+    );
+    assert!(
+        context
+            .clone()
+            .without_fact_incrementally(&unavailable, &PureFactContext::new())
+            .is_none(),
+        "failed incremental consumption must not manufacture a larger quantity"
+    );
+    assert_eq!(context.facts().len(), 2);
+}
+
+#[test]
 fn missing_composite_query_ignores_ambient_memory_splits() {
     let base = Pointer {
         block: "backing".into(),

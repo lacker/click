@@ -5525,6 +5525,94 @@ fn branch_interface_retains_exact_unchanged_ownership() {
 }
 
 #[test]
+fn branch_interface_normalizes_an_entailed_owned_quantity_on_proof() {
+    let c_source = r#"
+        int32 preserve_two_markers(int32 x, int32 flag) {
+            int32 y;
+            if (flag != 0) {
+                y = 1;
+            } else {
+                y = 2;
+            }
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        abstract resource marker(x: int32);
+
+        verifying "preserve_two_markers.c";
+
+        int32 preserve_two_markers(int32 x, int32 flag) {
+            owns 2 of marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            step();
+            branch {
+                ensuring {
+                    fact y >= 0;
+                    owns marker(x);
+                }
+                then { step(); }
+                else { step(); }
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let ((verified, events), checked_interface_joins) =
+        crate::lang::click::proof::count_checked_execution_interface_joins(|| {
+            crate::instrumentation::collect(|| {
+                verify_c0_sources(click_source, &[("preserve_two_markers.c", c_source)])
+            })
+        });
+    let verified = verified.expect("the entailed quantity interface should stay on Proof");
+    assert!(
+        checked_interface_joins > 0,
+        "the quantity interface must reach the checked two-arm Proof join"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "preserve_two_markers.contract"
+                    && name == "surface certificate replay"
+        )),
+        "quantity-interface construction must not replay its surface certificate: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the quantity interface should retain an expansion");
+    assert!(matches!(
+        tactics.get(1),
+        Some(ProofTactic::Branch(branch))
+            if matches!(
+                branch.ensuring.as_deref(),
+                Some([
+                    ProofAssertion::Fact(_),
+                    ProofAssertion::Resource(ResourceClause::Declared {
+                        access: ResourceAccessMode::Own,
+                        name,
+                        ..
+                    }),
+                ]) if name == "marker"
+            )
+    ));
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("preserve_two_markers.c", c_source)],
+        "preserve_two_markers",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained quantity interface should expand");
+    verify_c0_sources(&expanded, &[("preserve_two_markers.c", c_source)])
+        .expect("the normalized quantity interface should independently re-derive");
+}
+
+#[test]
 fn transformed_resource_branch_interface_retains_its_common_descendant() {
     let markdown = include_str!("../../../../mdtests/proof_branch_composite_resource_transform.md");
     let mdtest = crate::cli::parse_mdtest(

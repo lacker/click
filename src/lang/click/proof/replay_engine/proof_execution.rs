@@ -392,12 +392,6 @@ fn advance_checked_open_scope<'a>(
     let Some(branches) = branches else {
         return Ok(None);
     };
-    if ensuring
-        .as_ref()
-        .is_some_and(|assertions| !branches.supports_interface_join(assertions))
-    {
-        return Ok(None);
-    }
     let scope = scope.join_execution_branch(branches, empty, ensuring.clone())?;
     advance_checked_open_scope(scope, continuation, expansion_capture, proof_site)
 }
@@ -945,11 +939,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 } else {
                     None
                 };
-                if let Some(branches) = checked
-                    && ensuring
-                        .as_ref()
-                        .is_none_or(|assertions| branches.supports_interface_join(assertions))
-                {
+                if let Some(branches) = checked {
                     let proof = if let Some(assertions) = ensuring {
                         branches.join_with_interface(assertions.clone())?
                     } else {

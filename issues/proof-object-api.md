@@ -1537,11 +1537,10 @@ performs no surface-certificate replay, expansion independently verifies the
 result, and a 16-through-4096 ambient-fact regression bounds the local join
 work. A two-arm ownership export also crosses the seam when every owned fact
 is already an exact entry in the arms' shared persistent resource snapshot.
-The capability check lowers only the explicit interface, probes the exact
-resource index, and retains that snapshot unchanged; an entailed but
-differently represented quantity remains rejected. Ordinary verification and
-independent expansion cover the source path, while a 16-through-4096
-unrelated-resource curve bounds the exact lookup and join.
+The first capability checkpoint lowered only the explicit interface, probed
+the exact resource index, and retained that snapshot unchanged. Ordinary
+verification and independent expansion cover the source path, while a
+16-through-4096 unrelated-resource curve bounds the exact lookup and join.
 
 Differently edited resource snapshots now expose that output-sensitive join.
 Every `ResourceContext` retains a persistent origin and exact changed-fact
@@ -1564,13 +1563,27 @@ surface-certificate replay, and expansion independently re-verifies the
 retained arm steps. The contextual selector still refuses a C-advancing step
 after an arm reaches the shared continuation, while permitting frontier-local
 resource proof steps there; the existing overshoot rejection remains green.
-Kernel and complete Proof
-curves from 16 through 4096 unrelated resources bound persistent-node
-allocations for the common-descendant work logarithmically. Ownership
-interfaces that are only entailed through a
-different representation or quantity still intentionally remain on the
-legacy structural path until an incremental normalization operation can
-consume that representation explicitly.
+Kernel and complete Proof curves from 16 through 4096 unrelated resources
+bound persistent-node allocations for the common-descendant work
+logarithmically.
+
+Entailed owned quantities now cross this boundary without global resource
+normalization. The join consumes each owned interface fact independently from
+both concrete arms, intersects their exact residual descendants, restores the
+normalized interface once, and normalizes only the affected exact-resource or
+memory-block buckets. This preserves a common quantity-two representation
+across a unit ownership interface without duplicating it, while differently
+represented arm-only excess is forgotten soundly. The kernel operation tries
+direct indexed consumption first and rebuilds only the necessary candidate
+bucket when several entries must be combined. A kernel 16-through-4096 curve
+holds unrelated resources fixed outside that bucket and bounds deterministic
+work and persistent allocation; the corresponding complete Proof curve bounds
+persistent allocation. Rejected larger quantities leave the root unchanged. A
+source regression counts the checked join, observes no ordinary replay, and
+independently verifies expansion. The existing selected-pointer mdtest also
+pins the case where one surface ownership interface lowers to different
+concrete resources in the two arms and to one common resource after branch
+abstraction.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

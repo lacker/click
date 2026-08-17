@@ -193,6 +193,7 @@ impl ResourceContext {
     /// structural Proof join may retain an owned interface without
     /// normalization only when the interface already names an entry in the
     /// common persistent snapshot.
+    #[cfg(test)]
     pub(crate) fn contains_exact_representation(&self, fact: &CResourceFact) -> bool {
         self.storage.index.exact.contains_key(fact)
     }
@@ -1065,6 +1066,133 @@ impl ResourceContext {
             .then_some(self)
     }
 
+    /// Consumes one fact while normalizing only its indexed candidate bucket.
+    ///
+    /// Direct algebraic consumption is the common path. If several retained
+    /// representations must be combined first, this operation rebuilds only
+    /// the exact-resource bucket and then, if equality-aware matching is
+    /// needed, the resource's necessary-shape bucket. Unrelated resources are
+    /// neither scanned nor materialized, and the returned snapshot preserves
+    /// this context's mutation ancestry.
+    pub(crate) fn without_fact_incrementally(
+        mut self,
+        fact: &CResourceFact,
+        assumptions: &PureFactContext,
+    ) -> Option<Self> {
+        if fact
+            .owned_quantity_term()
+            .is_some_and(|quantity| resource_quantity_is_zero(quantity, assumptions))
+        {
+            return Some(self);
+        }
+
+        let exact_resource_entries = self.storage.index.by_resource.get(fact.resource()).cloned();
+        if exact_resource_entries.as_ref().is_some_and(|entries| {
+            self.consume_fact_from_candidates(fact, assumptions, entries.iter().copied())
+        }) {
+            return Some(self);
+        }
+        let shape_entries = self.direct_match_candidate_positions(fact).cloned();
+        for entries in exact_resource_entries.into_iter() {
+            let mut candidates = ResourceContext::new();
+            for entry in entries.iter() {
+                candidates.insert_fact(self.fact(*entry).clone());
+            }
+            candidates = candidates.normalized(assumptions);
+            if !candidates.consume_fact_without_normalizing(fact, assumptions) {
+                continue;
+            }
+            let residual = candidates.iter().cloned().collect::<Vec<_>>();
+            for entry in entries.iter() {
+                self.remove_entry(*entry);
+            }
+            for residual in residual {
+                self.insert_fact(residual);
+            }
+            return Some(self);
+        }
+        if self.consume_fact_without_normalizing(fact, assumptions) {
+            return Some(self);
+        }
+        for entries in shape_entries.into_iter() {
+            let mut candidates = ResourceContext::new();
+            for entry in entries.iter() {
+                candidates.insert_fact(self.fact(*entry).clone());
+            }
+            candidates = candidates.normalized(assumptions);
+            if !candidates.consume_fact_without_normalizing(fact, assumptions) {
+                continue;
+            }
+            let residual = candidates.iter().cloned().collect::<Vec<_>>();
+            for entry in entries.iter() {
+                self.remove_entry(*entry);
+            }
+            for residual in residual {
+                self.insert_fact(residual);
+            }
+            return Some(self);
+        }
+        None
+    }
+
+    /// Normalizes only the resource buckets affected by `seeds`.
+    ///
+    /// Exact token/composite resources use their full resource key, so other
+    /// arguments in the same declared family are not visited. Memory uses its
+    /// block bucket because splitting and recombining one exported range may
+    /// touch adjacent residual ranges in that block.
+    pub(crate) fn normalized_around_facts(
+        mut self,
+        seeds: &[CResourceFact],
+        assumptions: &PureFactContext,
+    ) -> Self {
+        let mut exact_resources = BTreeSet::new();
+        let mut memory_blocks = BTreeSet::new();
+        for fact in seeds {
+            match fact.resource() {
+                CResource::Memory(range) => {
+                    memory_blocks.insert(range.base().block.clone());
+                }
+                resource => {
+                    exact_resources.insert(resource.clone());
+                }
+            }
+        }
+        let mut buckets = Vec::new();
+        for resource in exact_resources {
+            if let Some(entries) = self.storage.index.by_resource.get(&resource) {
+                buckets.push(entries.clone());
+            }
+        }
+        for block in memory_blocks {
+            if let Some(entries) = self.storage.index.memory_by_block.get(&block) {
+                buckets.push(entries.clone());
+            }
+        }
+        for entries in buckets {
+            let original = entries
+                .iter()
+                .map(|entry| self.fact(*entry).clone())
+                .collect::<Vec<_>>();
+            let normalized = ResourceContext::new()
+                .unchecked_with_facts(original.iter().cloned())
+                .normalized(assumptions)
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            if original == normalized {
+                continue;
+            }
+            for entry in entries.iter() {
+                self.remove_entry(*entry);
+            }
+            for fact in normalized {
+                self.insert_fact(fact);
+            }
+        }
+        self
+    }
+
     pub(crate) fn without_exact_representation(mut self, fact: &CResourceFact) -> Option<Self> {
         let entry = *self.storage.index.exact.get(fact)?.iter().next()?;
         self.remove_entry(entry);
@@ -1103,7 +1231,6 @@ impl ResourceContext {
         {
             return true;
         }
-        let algebra = resource_family_algebra(fact.family());
         let mut candidates = self
             .storage
             .index
@@ -1141,6 +1268,16 @@ impl ResourceContext {
                 candidates.extend(remaining);
             }
         }
+        self.consume_fact_from_candidates(fact, assumptions, candidates)
+    }
+
+    fn consume_fact_from_candidates(
+        &mut self,
+        fact: &CResourceFact,
+        assumptions: &PureFactContext,
+        candidates: impl IntoIterator<Item = ResourceEntryId>,
+    ) -> bool {
+        let algebra = resource_family_algebra(fact.family());
         for entry in candidates {
             crate::instrumentation::record_deterministic_work(1);
             // Exact representation is the common path and needs no algebraic
