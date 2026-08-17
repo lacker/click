@@ -1525,11 +1525,14 @@ Top-level and scoped linear branches use this path, ordinary verification does
 not enter surface-certificate replay, and the retained expansion independently
 re-verifies. Rejection leaves the root unchanged, and a deterministic
 16-through-4096 unrelated-fact regression bounds persistent allocation by
-tree height. Proper common-resource deltas from differently edited arm
-snapshots, ownership-exporting interfaces, nested end-of-arm continuations,
-and one-feasible `branch ensuring` intentionally remain on the legacy
-structural path until resource snapshots expose an output-sensitive
-changed-key join and incremental normalization operation.
+tree height. A one-feasible interface now validates directly on the surviving
+arm without abstraction or resource merging, retains that checked state, and
+records a `Branch` with an empty impossible arm; this case can therefore carry
+ownership assertions safely. Proper common-resource deltas from differently
+edited arm snapshots, two-arm ownership-exporting interfaces, and nested
+end-of-arm continuations intentionally remain on the legacy structural path
+until resource snapshots expose an output-sensitive changed-key join and
+incremental normalization operation.
 
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.

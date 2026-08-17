@@ -5442,6 +5442,75 @@ fn branch_interface_retains_its_checked_abstract_join() {
 }
 
 #[test]
+fn decided_branch_interface_retains_the_surviving_checked_state() {
+    let c_source = r#"
+        int32 selected_nonnegative(int32 x) {
+            if (x < 0) {
+                x = 1;
+            } else {
+                x = 2;
+            }
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "selected_nonnegative.c";
+
+        int32 selected_nonnegative(int32 x) {
+            requires x < 0;
+            immutable;
+            ensures result == 1;
+        } by {
+            branch {
+                ensuring {
+                    fact x == 1;
+                }
+                then { step(); }
+                else { step(); }
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("selected_nonnegative.c", c_source)])
+    });
+    let verified = verified.expect("the sole feasible interface arm should stay on Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "selected_nonnegative.contract" && name == "surface certificate replay"
+        )),
+        "decided interface construction must retain its checked state directly: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the decided interface should retain an expansion");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Branch(branch))
+                if branch.ensuring.is_some()
+                    && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                    && branch.else_tactics.is_empty()
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("selected_nonnegative.c", c_source)],
+        "selected_nonnegative",
+        CProofClaim::Grouped,
+    )
+    .expect("the decided interface should expand");
+    verify_c0_sources(&expanded, &[("selected_nonnegative.c", c_source)])
+        .expect("the decided retained interface should independently re-derive");
+}
+
+#[test]
 fn open_scope_retains_its_checked_branch_interface() {
     let c_source = r#"
         int32 scoped_nonnegative(int32 x) {

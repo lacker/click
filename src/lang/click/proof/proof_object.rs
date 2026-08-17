@@ -5186,6 +5186,9 @@ impl<'a> ExecutionProofBranches<'a> {
     /// there too. Identical snapshots share one storage root and are retained
     /// in O(1).
     pub(super) fn supports_interface_join(&self, assertions: &[ProofAssertion]) -> bool {
+        if self.sole_feasible_arm().is_some() {
+            return true;
+        }
         if self.continuation_remaining.is_none() {
             return false;
         }
@@ -5859,10 +5862,13 @@ impl<'a> ExecutionProofBranches<'a> {
         self,
         assertions: Vec<ProofAssertion>,
     ) -> Result<Proof<'a>, ClickError> {
+        if self.sole_feasible_arm().is_some() {
+            return self.finish_decided_with_interface(assertions);
+        }
         let [Some(then_arm), Some(else_arm)] = self.arms else {
-            return Err(self.root.step_error(
-                "checked `branch ensuring` currently requires two feasible continuing arms",
-            ));
+            return Err(self
+                .root
+                .step_error("checked `branch ensuring` found no feasible continuing arm"));
         };
         if branch_interface_exports_ownership(&assertions) {
             return Err(self.root.step_error(
@@ -6175,6 +6181,155 @@ impl<'a> ExecutionProofBranches<'a> {
                 unfolded_predicates: self.root.state.unfolded_predicates.clone(),
                 goal: self.root.state.goal.clone(),
                 complete: false,
+                added_facts: Arc::new(added_facts.clone()),
+                checked_facts: Arc::new(added_facts),
+                execution: Some(execution),
+            }),
+            node: Arc::new(ProofNode {
+                parent: Some(self.root.node.clone()),
+                step: Some(Arc::new(SimpleProofStep::Branch {
+                    ensuring: Some(assertions),
+                    then_proof: Box::new(then_proof),
+                    else_proof: Box::new(else_proof),
+                })),
+                depth: self.root.node.depth + 1,
+            }),
+        })
+    }
+
+    /// Validates an explicit interface on the sole kernel-feasible arm.
+    ///
+    /// No abstraction or resource merge occurs: the surviving checked state
+    /// remains the successor, and the structured `Branch` records an empty
+    /// impossible arm. Consequently ownership assertions are safe here even
+    /// though two-arm ownership normalization has not migrated.
+    fn finish_decided_with_interface(
+        self,
+        assertions: Vec<ProofAssertion>,
+    ) -> Result<Proof<'a>, ClickError> {
+        let take_then = self.sole_feasible_arm().ok_or_else(|| {
+            self.root
+                .step_error("a decided `branch ensuring` requires exactly one kernel-feasible arm")
+        })?;
+        let arm = self.arms[usize::from(!take_then)]
+            .as_ref()
+            .expect("sole feasible interface arm was selected");
+        let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
+            self.root
+                .step_error("execution branch root lost its semantic state")
+        })?;
+        let arm_execution = arm.proof.state.execution.as_ref().ok_or_else(|| {
+            self.root
+                .step_error("decided interface arm lost its execution state")
+        })?;
+        let reached_continuation = arm_execution
+            .replay
+            .completed_branch_regions
+            .contains(&self.statement_index)
+            && arm_execution.replay.frontier.continuations.len() <= self.initial_continuation_depth
+            && arm_execution.replay.frontier.next_statement_index == self.continuation_index;
+        let reached_exit = arm_execution.replay.is_at_function_exit()
+            && arm_execution.replay.frontier.continuations.len() <= self.initial_continuation_depth;
+        if !reached_continuation && !reached_exit {
+            return Err(self.root.step_error(format!(
+                "the sole feasible {} `branch ensuring` arm has not reached its continuation or function exit",
+                if take_then { "then" } else { "else" }
+            )));
+        }
+        if !matches!(
+            implication_body(arm.condition_theorem.proposition()),
+            Proposition::CConditionEvaluates {
+                outcome: CConditionOutcome::Value(actual),
+                ..
+            } if *actual == take_then
+        ) {
+            return Err(self
+                .root
+                .step_error("the decided interface arm retained the wrong condition theorem"));
+        }
+        let replay = &arm_execution.replay;
+        if replay.function_entry_execution_prerequisites.len()
+            != root_execution
+                .replay
+                .function_entry_execution_prerequisites
+                .len()
+                + arm.introduced_function_entry_prerequisites.len()
+            || replay.function_entry_derivations.len()
+                != root_execution.replay.function_entry_derivations.len()
+                    + arm.introduced_function_entry_derivations.len()
+            || replay.frontier_loop_clauses.len()
+                != root_execution.replay.frontier_loop_clauses.len()
+            || replay.frontier_loop_rules.len() != root_execution.replay.frontier_loop_rules.len()
+            || replay.unfolded_predicates.len()
+                != root_execution.replay.unfolded_predicates.len()
+                    + arm.introduced_unfolded_predicates.len()
+            || replay.planned_statement_transitions.len()
+                != root_execution.replay.planned_statement_transitions.len()
+        {
+            return Err(self.root.step_error(
+                "the decided interface arm changed replay metadata that the checked path operation has not migrated",
+            ));
+        }
+
+        let ProofContext::Execution(context) = self.root.context.as_ref() else {
+            unreachable!("execution branch retained a non-execution context")
+        };
+        let target = ProgramPointRef {
+            region: CodeRegionRef::Statement(self.continuation_index),
+            kind: ProgramPointKind::Entry,
+        };
+        let mut execution = arm_execution.clone();
+        let mut state = (*execution.state).clone();
+        let mut facts = arm.proof.state.facts.clone();
+        let facts_before_interface = facts.clone();
+        apply_branch_interface_with_proof_facts(
+            &target,
+            &assertions,
+            context.tactic_index,
+            &mut execution.replay,
+            &mut state,
+            &mut facts,
+            context.parsed_function.parameters(),
+            context.arguments,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.resource_environment,
+            context.claim_label,
+            &BTreeMap::new(),
+            false,
+        )
+        .map_err(|error| add_proof_branch_path(error, &execution.branch_path))?;
+        execution.state = state.into();
+        execution.branch_path = root_execution.branch_path.clone();
+        execution.replay.case_assumptions = root_execution.replay.case_assumptions.clone();
+
+        let mut added_facts = arm.introduced_facts.to_vec();
+        for assertion in &assertions {
+            let ProofAssertion::Fact(surface) = assertion else {
+                continue;
+            };
+            if let Some(fact) = execution.replay.surface_propositions.unique_kernel(surface)
+                && !facts_before_interface.contains_top_level(fact)
+                && !added_facts.contains(fact)
+            {
+                added_facts.push(fact.clone());
+            }
+        }
+        let selected = arm.proof.certificate_since(&self.root_checkpoint)?;
+        let empty = ProofCertificate::from_steps(Vec::new());
+        let (then_proof, else_proof) = if take_then {
+            (selected, empty)
+        } else {
+            (empty, selected)
+        };
+        Ok(Proof {
+            context: self.root.context.clone(),
+            state: Arc::new(ProofState {
+                facts,
+                locals: arm.proof.state.locals.clone(),
+                unfolded_predicates: arm.proof.state.unfolded_predicates.clone(),
+                goal: arm.proof.state.goal.clone(),
+                complete: arm.proof.state.complete,
                 added_facts: Arc::new(added_facts.clone()),
                 checked_facts: Arc::new(added_facts),
                 execution: Some(execution),

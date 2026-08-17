@@ -367,9 +367,10 @@ fn advance_checked_open_scope<'a>(
     };
     let branches = scope.begin_execution_branch()?;
     let feasible_arm = branches.sole_feasible_arm();
-    if ensuring.as_ref().is_some_and(|assertions| {
-        feasible_arm.is_some() || !branches.supports_interface_join(assertions)
-    }) {
+    if ensuring
+        .as_ref()
+        .is_some_and(|assertions| !branches.supports_interface_join(assertions))
+    {
         return Ok(None);
     }
     let empty = then_tactics.is_empty() && else_tactics.is_empty();
@@ -913,9 +914,9 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                 let checkpoint = proof.checkpoint();
                 let branches = proof.begin_execution_branch()?;
                 let feasible_arm = branches.sole_feasible_arm();
-                let checked_interface_supported = ensuring.as_ref().is_none_or(|assertions| {
-                    feasible_arm.is_none() && branches.supports_interface_join(assertions)
-                });
+                let checked_interface_supported = ensuring
+                    .as_ref()
+                    .is_none_or(|assertions| branches.supports_interface_join(assertions));
                 let empty = then_tactics.is_empty() && else_tactics.is_empty();
                 let checked = if checked_interface_supported {
                     (|| {
@@ -956,7 +957,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                         );
                     }
                     for step in certificate.steps() {
-                        if feasible_arm.is_some() {
+                        if feasible_arm.is_some() && ensuring.is_none() {
                             joined_context
                                 .replay
                                 .proof_certificate_builder
