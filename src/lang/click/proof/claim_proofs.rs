@@ -1028,6 +1028,7 @@ pub(super) fn finish_ordered_proof_replay(
                         | PostExecutionTactic::Transport { .. }
                         | PostExecutionTactic::Apply(_)
                         | PostExecutionTactic::ApplyUsing { .. }
+                        | PostExecutionTactic::Have(_)
                 )
             });
     let outcome_substrate = drain_consumes_outcome_goals
@@ -2183,33 +2184,107 @@ pub(super) fn finish_ordered_proof_replay(
                                 // Restricting these facts to hand-written `derive`
                                 // scripts let smart `simp` search succeed and then
                                 // fail when its generated certificate was replayed.
-                                let checked_smart_have =
-                                    if Proof::supports_linear_smart_source(&have.proof) {
-                                        checked_have_with_proof(
-                                            have,
-                                            theorem_environment,
-                                            &proof_label,
-                                            *tactic_index,
-                                            &certificate_available,
-                                            parsed_function.parameters(),
-                                            arguments,
-                                            pre_state,
-                                            post_state,
-                                            Some(result),
-                                            replay
-                                                .proof_certificate_builder
-                                                .last_step_entry
-                                                .as_ref(),
-                                            &replay,
-                                            &outcome_surface_propositions,
-                                            predicate_environment,
-                                            click_function_environment,
-                                            function_block.requires(),
-                                            function_block.requirement_label_indices(),
-                                        )?
-                                    } else {
-                                        None
-                                    };
+                                // The migrated path first: the `have` scope
+                                // opens on this path's evolving outcome
+                                // proof, its body searches through the shared
+                                // scope drivers, and a miss restores the
+                                // untouched evolving proof for the legacy
+                                // checker.
+                                fn script_contains_choose(tactics: &[ProofTactic]) -> bool {
+                                    tactics.iter().any(|tactic| match tactic {
+                                        ProofTactic::Choose(_) => true,
+                                        ProofTactic::Have(nested) => match &nested.proof {
+                                            SourceProof::Script(body) => {
+                                                script_contains_choose(body)
+                                            }
+                                            _ => false,
+                                        },
+                                        _ => false,
+                                    })
+                                }
+                                // `choose` reads the function requirement
+                                // tables, which the outcome view does not
+                                // carry yet; such bodies stay legacy.
+                                let body_supported = match &have.proof {
+                                    SourceProof::Script(tactics) => {
+                                        !script_contains_choose(tactics)
+                                    }
+                                    _ => true,
+                                };
+                                let evolving_have = if let Some(evolving) =
+                                    body_supported.then(|| outcome_proof.take()).flatten()
+                                {
+                                    let attempt = (|| -> Result<
+                                        Option<(Proof<'_>, Proposition, ProofCertificate)>,
+                                        ClickError,
+                                    > {
+                                        let resynced = evolving
+                                            .with_drained_outcome_facts(&certificate_available)?;
+                                        let before = resynced.checkpoint();
+                                        let Ok(scope) =
+                                            resynced.begin_have(have.proposition.clone())
+                                        else {
+                                            return Ok(None);
+                                        };
+                                        let selected = match &have.proof {
+                                            SourceProof::Default
+                                            | SourceProof::Tactic(
+                                                SmartTactic::Auto | SmartTactic::Simp,
+                                            ) => scope.try_simp_closure()?,
+                                            SourceProof::Script(tactics) => {
+                                                scope.try_linear_smart_script(tactics)?
+                                            }
+                                            SourceProof::Tactic(SmartTactic::Frame) => None,
+                                        };
+                                        let Some(closed) = selected else {
+                                            return Ok(None);
+                                        };
+                                        let joined = closed.join()?;
+                                        let [fact] = joined.added_facts() else {
+                                            return Ok(None);
+                                        };
+                                        let fact = fact.clone();
+                                        let certificate = joined.certificate_since(&before)?;
+                                        Ok(Some((joined, fact, certificate)))
+                                    })();
+                                    match attempt? {
+                                        Some((joined, fact, certificate)) => {
+                                            outcome_proof = Some(joined);
+                                            Some((fact, Some(certificate)))
+                                        }
+                                        None => {
+                                            outcome_proof = Some(evolving);
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                };
+                                let checked_smart_have = if evolving_have.is_some() {
+                                    evolving_have
+                                } else if Proof::supports_linear_smart_source(&have.proof) {
+                                    checked_have_with_proof(
+                                        have,
+                                        theorem_environment,
+                                        &proof_label,
+                                        *tactic_index,
+                                        &certificate_available,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        post_state,
+                                        Some(result),
+                                        replay.proof_certificate_builder.last_step_entry.as_ref(),
+                                        &replay,
+                                        &outcome_surface_propositions,
+                                        predicate_environment,
+                                        click_function_environment,
+                                        function_block.requires(),
+                                        function_block.requirement_label_indices(),
+                                    )?
+                                } else {
+                                    None
+                                };
                                 let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
                                 let (surface_have, fact) = if let Some((fact, Some(certificate))) =
                                     checked_smart_have

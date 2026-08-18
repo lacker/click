@@ -2872,6 +2872,29 @@ process lesson is recorded here: bulk-edit application must be verified by
 grep before the claim, because a behavior-preserving fallback makes a
 silently unapplied migration invisible to the gate.
 
+### Progress (2026-08-18: outcome `have` scopes on the evolving proof)
+
+Post-execution `have` is the sixth drained tactic kind on the evolving
+outcome proof. `OutcomeGoal` now keeps its result-aware data behind one
+shared `OutcomePointData`, and a proposition judgment stated at an outcome
+borrows that data by identity — it can read the outcome's result, state,
+and lowerings but can never publish a changed outcome. Refinement rules
+preserve the borrowed data (`refined_proposition`); `begin_have` on an
+outcome-focused proof creates such a body; the scope drivers, theorem
+selection, transport, unfold, and `witness` all resolve the goal-aware view
+from either goal kind; and the drain's `have` site searches the scope on the
+evolving lineage first, restoring the untouched proof on a miss.
+
+Two regressions caught real semantic traps. The expanded owned-string
+certificate failed replay because the outcome lowering arm initially reused
+the recorded-lowering shortcut, letting a newly stated `have` goal borrow a
+same-spelled fact's older snapshot anchoring — the exact historic bug the
+strict-point lowering rule exists for; `lower_surface_goal` now lowers
+outcome-stated judgments strictly, mirroring its point arm. And a grouped
+`have` mdtest exposed that `witness` needed the view (now wired) while
+`choose` needs the function requirement tables the view does not yet carry —
+such bodies stay legacy by an explicit support check rather than an error.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

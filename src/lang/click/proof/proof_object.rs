@@ -896,19 +896,23 @@ struct OutcomeGoal {
     /// Zero-based position among the exit's checked paths, in the checked
     /// execution's deterministic order.
     path_index: usize,
-    /// The path's checked return value.
-    result: Arc<CValue>,
-    /// The post-outcome C state.
-    state: SharedValue<CState>,
-    /// Surface lowerings recorded for this path's judgments. Starts as the
-    /// frontier's map and evolves per goal: a checked operation records the
-    /// lowerings it certifies atomically with its fact successor.
-    surface_propositions: SurfacePropositionMap,
-    /// The path's execution-effect facts, owned once and shared by the
-    /// goal's successors: result-aware checkers consume them as the
-    /// effect-availability context.
-    effect_facts: Arc<Vec<ExecutionPureFact>>,
+    /// The outcome's result-aware point data. Behind one `Arc` so a nested
+    /// proposition judgment stated at this outcome borrows it by identity;
+    /// a checked operation that records new lowerings installs a fresh
+    /// shared value atomically with its fact successor.
+    point: Arc<OutcomePointData>,
     context: GoalContext,
+}
+
+/// The result-aware data one function outcome supplies to point operations:
+/// its checked return value, post-outcome state, recorded surface
+/// lowerings, and effect-availability facts.
+#[derive(Clone)]
+struct OutcomePointData {
+    result: Arc<CValue>,
+    state: SharedValue<CState>,
+    surface_propositions: SurfacePropositionMap,
+    effect_facts: Arc<Vec<ExecutionPureFact>>,
 }
 
 /// The path-local semantic context owned by one goal.
@@ -952,6 +956,11 @@ struct PropositionGoal {
     /// that stated it. A proposition goal can never publish a changed
     /// frontier through this context.
     context: GoalContext,
+    /// Result-aware point data borrowed by identity from the function
+    /// outcome this judgment was stated at, when it was. The judgment can
+    /// read the outcome's result, state, and lowerings; it can never
+    /// publish a changed outcome through this reference.
+    outcome: Option<Arc<OutcomePointData>>,
 }
 
 impl Goal {
@@ -960,6 +969,7 @@ impl Goal {
             kernel: Arc::new(kernel),
             surface: None,
             context,
+            outcome: None,
         })
     }
 
@@ -972,6 +982,23 @@ impl Goal {
             kernel: Arc::new(kernel),
             surface: Some(Arc::new(surface)),
             context,
+            outcome: None,
+        })
+    }
+
+    /// A surface proposition judgment stated at one function outcome,
+    /// borrowing that outcome's result-aware point data by identity.
+    fn surface_proposition_at_outcome(
+        context: GoalContext,
+        outcome: Arc<OutcomePointData>,
+        kernel: Proposition,
+        surface: ClickProposition,
+    ) -> Self {
+        Self::Proposition(PropositionGoal {
+            kernel: Arc::new(kernel),
+            surface: Some(Arc::new(surface)),
+            context,
+            outcome: Some(outcome),
         })
     }
 
@@ -989,6 +1016,7 @@ impl Goal {
                 kernel: goal.kernel.clone(),
                 surface: goal.surface.clone(),
                 context,
+                outcome: goal.outcome.clone(),
             }),
             Self::Frontier(goal) => Self::Frontier(FrontierGoal {
                 selection: goal.selection,
@@ -996,10 +1024,7 @@ impl Goal {
             }),
             Self::FunctionOutcome(goal) => Self::FunctionOutcome(OutcomeGoal {
                 path_index: goal.path_index,
-                result: goal.result.clone(),
-                state: goal.state.clone(),
-                surface_propositions: goal.surface_propositions.clone(),
-                effect_facts: goal.effect_facts.clone(),
+                point: goal.point.clone(),
                 context,
             }),
         }
@@ -1746,6 +1771,29 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Rebuilds the focused proposition judgment with new content under the
+    /// given context, preserving any outcome point data the judgment
+    /// borrowed: a refinement changes what is claimed, never where it was
+    /// stated.
+    fn refined_proposition(
+        &self,
+        context: GoalContext,
+        kernel: Proposition,
+        surface: Option<ClickProposition>,
+    ) -> Goal {
+        let outcome = match self.focused_goal() {
+            Some(Goal::Proposition(goal)) => goal.outcome.clone(),
+            Some(Goal::FunctionOutcome(goal)) => Some(goal.point.clone()),
+            _ => None,
+        };
+        Goal::Proposition(PropositionGoal {
+            kernel: Arc::new(kernel),
+            surface: surface.map(Arc::new),
+            context,
+            outcome,
+        })
+    }
+
     fn execution(&self) -> Option<&ExecutionProofState> {
         self.goal_execution().map(Arc::as_ref)
     }
@@ -1769,7 +1817,7 @@ impl<'a> Proof<'a> {
     #[cfg(test)]
     fn outcome_result(&self) -> Option<&CValue> {
         match self.focused_goal()? {
-            Goal::FunctionOutcome(goal) => Some(goal.result.as_ref()),
+            Goal::FunctionOutcome(goal) => Some(goal.point.result.as_ref()),
             _ => None,
         }
     }
@@ -2644,11 +2692,7 @@ impl<'a> Proof<'a> {
 
             goals: self.state.goals.replace_at(self.focused, {
                 let context = self.refined_context(facts);
-                surface_goal
-                    .map(|surface| {
-                        Goal::surface_proposition_in(context.clone(), goal.clone(), surface)
-                    })
-                    .unwrap_or_else(|| Goal::proposition_in(context, goal))
+                self.refined_proposition(context, goal, surface_goal)
             }),
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
@@ -3005,32 +3049,39 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("`have` follows a completed proof"));
         }
         match (self.focused_goal(), self.context.as_ref()) {
-            (Some(Goal::Proposition(_)), _) => {}
+            (Some(Goal::Proposition(_) | Goal::FunctionOutcome(_)), _) => {}
             (Some(Goal::Frontier(_)), ProofContext::Point(_) | ProofContext::Execution(_)) => {}
             _ => {
                 return Err(self.step_error("`have` requires a proposition or point context"));
             }
         }
         let kernel = self.lower_surface_goal(&proposition, "`have` proposition")?;
+        let body_context = GoalContext {
+            facts: self.facts().clone(),
+            unfolded_predicates: self.focused_goal_unfolds().clone(),
+            execution: self.goal_execution().cloned(),
+        };
+        // An execution `have` borrows the current immutable frontier solely
+        // as its proposition-lowering/theorem context, shared by identity on
+        // the nested goal; a `have` stated at a function outcome borrows that
+        // outcome's result-aware point data the same way. The nested goal
+        // cannot publish a changed frontier or outcome: `join` restores the
+        // exact root state and exposes only the stated proposition.
+        let body_goal = match self.focused_outcome_point() {
+            Some(point) => Goal::surface_proposition_at_outcome(
+                body_context,
+                point.clone(),
+                kernel.clone(),
+                proposition.clone(),
+            ),
+            None => Goal::surface_proposition_in(body_context, kernel.clone(), proposition.clone()),
+        };
         let body = Proof {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
 
-                // An execution `have` borrows the current immutable frontier
-                // solely as its proposition-lowering/theorem context, shared
-                // by identity on the nested goal. The nested goal cannot
-                // publish a changed frontier: `join` restores the exact root
-                // execution state and exposes only the stated proposition.
-                goals: ProofGoals::root(Goal::surface_proposition_in(
-                    GoalContext {
-                        facts: self.facts().clone(),
-                        unfolded_predicates: self.focused_goal_unfolds().clone(),
-                        execution: self.goal_execution().cloned(),
-                    },
-                    kernel.clone(),
-                    proposition.clone(),
-                )),
+                goals: ProofGoals::root(body_goal),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
             }),
@@ -3587,6 +3638,36 @@ impl<'a> Proof<'a> {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })
             }
+            // A judgment carrying outcome point data lowers result-aware:
+            // `result` and outcome-anchored spellings resolve against the
+            // outcome's own state, recorded lowerings, and return value.
+            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
+                let view = self
+                    .outcome_point_view()
+                    .expect("a focused outcome judgment resolves its point view");
+                let surface = self.substitute_point_locals_in_proposition(surface)?;
+                if let Some(recorded) = view
+                    .surface_propositions
+                    .available_kernel_matching(&surface, |kernel| self.facts().contains(kernel))
+                {
+                    return Ok(recorded.clone());
+                }
+                lower_point_proposition_with_assumptions(
+                    &surface,
+                    self.facts().assumptions(),
+                    view.parameters,
+                    view.arguments,
+                    view.pre_state,
+                    view.state,
+                    view.result,
+                    view.program_point_states,
+                    view.predicate_environment,
+                    view.click_function_environment,
+                )
+                .map_err(|message| {
+                    self.step_error(format!("could not lower {description}: {message}"))
+                })
+            }
             ProofContext::Execution(context) => {
                 let execution = self.execution().ok_or_else(|| {
                     self.step_error("execution proposition proof lost its semantic frontier")
@@ -3714,6 +3795,31 @@ impl<'a> Proof<'a> {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })
             }
+            // A judgment stated at a function outcome lowers strictly at
+            // that outcome: like the point arm above, this deliberately
+            // skips the recorded-lowering shortcut so a newly stated goal
+            // cannot borrow a same-spelled fact's older snapshot anchoring.
+            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
+                let view = self
+                    .outcome_point_view()
+                    .expect("a focused outcome judgment resolves its point view");
+                let surface = self.substitute_point_locals_in_proposition(surface)?;
+                lower_point_proposition_with_assumptions(
+                    &surface,
+                    self.facts().assumptions(),
+                    view.parameters,
+                    view.arguments,
+                    view.pre_state,
+                    view.state,
+                    view.result,
+                    view.program_point_states,
+                    view.predicate_environment,
+                    view.click_function_environment,
+                )
+                .map_err(|message| {
+                    self.step_error(format!("could not lower {description}: {message}"))
+                })
+            }
             ProofContext::Execution(_) => self.lower_surface_proposition(surface, description),
         }
     }
@@ -3787,17 +3893,14 @@ impl<'a> Proof<'a> {
             // A function-outcome goal unfolds its own path-local facts and
             // delta only: the borrowed execution snapshot is shared by every
             // sibling outcome and must not absorb one path's unfolding.
-            ProofContext::Execution(context)
-                if matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_))) =>
-            {
-                self.apply_proposition_predicate_unfold(
+            ProofContext::Execution(context) if self.focused_outcome_point().is_some() => self
+                .apply_proposition_predicate_unfold(
                     name,
                     context.predicate_environment,
                     context.click_function_environment,
                     context.claim_label,
                     context.tactic_index,
-                )
-            }
+                ),
             ProofContext::Execution(_) => self.apply_execution_unfold(name),
         }
     }
@@ -3828,24 +3931,22 @@ impl<'a> Proof<'a> {
                     checked.facts.assumptions(),
                 )
                 .map_err(|message| self.step_error(message))?;
-                match &goal.surface {
-                    Some(surface) => {
-                        let surface = unfold_structural_invariant_proposition(
+                let surface = match &goal.surface {
+                    Some(surface) => Some(
+                        unfold_structural_invariant_proposition(
                             predicate_environment,
                             surface,
                             std::slice::from_ref(name),
                         )
-                        .map_err(|message| self.step_error(message))?;
-                        Goal::surface_proposition_in(
-                            self.refined_context(checked.facts.clone()),
-                            kernel,
-                            surface,
-                        )
-                    }
-                    None => {
-                        Goal::proposition_in(self.refined_context(checked.facts.clone()), kernel)
-                    }
-                }
+                        .map_err(|message| self.step_error(message))?,
+                    ),
+                    None => None,
+                };
+                self.refined_proposition(
+                    self.refined_context(checked.facts.clone()),
+                    kernel,
+                    surface,
+                )
             }
             Some(goal @ (Goal::Frontier(_) | Goal::FunctionOutcome(_))) => {
                 let mut unfolded = goal.context().unfolded_predicates.clone();
@@ -5356,10 +5457,12 @@ impl<'a> Proof<'a> {
                     id,
                     Goal::FunctionOutcome(OutcomeGoal {
                         path_index,
-                        result: Arc::new(result),
-                        state: state.into(),
-                        surface_propositions: frontier_surface.clone(),
-                        effect_facts: Arc::new(path.execution_facts()),
+                        point: Arc::new(OutcomePointData {
+                            result: Arc::new(result),
+                            state: state.into(),
+                            surface_propositions: frontier_surface.clone(),
+                            effect_facts: Arc::new(path.execution_facts()),
+                        }),
                         context: GoalContext {
                             facts,
                             unfolded_predicates: frontier_unfolds.clone(),
@@ -5607,7 +5710,7 @@ impl<'a> Proof<'a> {
         candidates: impl IntoIterator<Item = ClickProposition>,
     ) -> Result<Self, ClickError> {
         let result_aware = matches!(self.context.as_ref(), ProofContext::Point(_))
-            || matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_)));
+            || self.focused_outcome_point().is_some();
         if !result_aware {
             return Err(self.step_error(
                 "fact-transport search requires a point proof or a focused outcome goal",
@@ -5837,12 +5940,10 @@ impl<'a> Proof<'a> {
             ProofContext::Point(_) => self.select_point_theorem_application_step(application),
             // A focused function-outcome goal is one result-sensitive point
             // context: selection reads the goal-aware view directly.
-            ProofContext::Execution(_)
-                if matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_))) =>
-            {
+            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
                 let view = self
                     .outcome_point_view_with_effects(OutcomeEffectContext::Replay)
-                    .expect("a focused outcome goal resolves its point view");
+                    .expect("a focused outcome judgment resolves its point view");
                 self.select_theorem_application_step_at_point(
                     application,
                     view.parameters,
@@ -6149,12 +6250,10 @@ impl<'a> Proof<'a> {
             // A focused function-outcome goal applies theorems through the
             // point checker, reading its data from the goal; the effect
             // context is the replay-level set the legacy drain consumed.
-            ProofContext::Execution(_)
-                if matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_))) =>
-            {
+            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
                 let view = self
                     .outcome_point_view_with_effects(OutcomeEffectContext::Replay)
-                    .expect("a focused outcome goal resolves its point view");
+                    .expect("a focused outcome judgment resolves its point view");
                 self.apply_point_theorem_using(&view, application, surface_premises)
             }
             ProofContext::Execution(context) => {
@@ -6429,53 +6528,57 @@ impl<'a> Proof<'a> {
     }
 
     fn apply_point_witness(&self, witness: &ProofWitness) -> Result<ProofState, ClickError> {
-        let ProofContext::Point(context) = self.context.as_ref() else {
-            return Err(self.step_error("`witness` requires a point proposition proof"));
+        let view = match self.context.as_ref() {
+            ProofContext::Point(context) => PointOperationView::from_point(context),
+            // A witness refinement on a judgment stated at a function
+            // outcome reads the outcome's result-aware data.
+            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => self
+                .outcome_point_view()
+                .expect("a focused outcome judgment resolves its point view"),
+            _ => return Err(self.step_error("`witness` requires a point proposition proof")),
         };
         let goal = self
             .proposition_goal("`witness` requires a proposition goal")?
             .clone();
         let unfolded_predicates = self.active_unfolded_predicates();
         let goal = unfold_predicates_in_proposition(
-            context.predicate_environment,
-            context.click_function_environment,
+            view.predicate_environment,
+            view.click_function_environment,
             &unfolded_predicates,
             &goal,
             self.facts().assumptions(),
         )
         .map_err(|message| self.step_error(format!("could not unfold witness goal: {message}")))?;
-        let values = parameter_values(context.parameters, context.arguments)
+        let values = parameter_values(view.parameters, view.arguments)
             .map_err(|error| self.step_error(error.message))?;
-        let array_refs =
-            array_refs_for_parameters(context.parameters, &values, context.state.memory());
-        let (values, array_refs) =
-            contract_environment_at_state(&values, &array_refs, context.state);
+        let array_refs = array_refs_for_parameters(view.parameters, &values, view.state.memory());
+        let (values, array_refs) = contract_environment_at_state(&values, &array_refs, view.state);
         let checked_witness = ProofWitness {
             name: witness.name.clone(),
             value: self.substitute_point_locals_in_expression(&witness.value)?,
         };
         let value = evaluate_witness_tactic_value(
             &checked_witness,
-            context.claim_label,
+            view.claim_label,
             0,
-            context.tactic_index,
+            view.tactic_index,
             &values,
             &array_refs,
-            context.pre_state,
-            context.state,
-            context.result,
+            view.pre_state,
+            view.state,
+            view.result,
             self.facts().assumptions(),
-            context.predicate_environment,
-            context.click_function_environment,
-            context.program_point_states,
+            view.predicate_environment,
+            view.click_function_environment,
+            view.program_point_states,
         )?;
         let goal = apply_witness_tactic(
             &checked_witness,
             value,
             goal,
-            context.claim_label,
+            view.claim_label,
             0,
-            context.tactic_index,
+            view.tactic_index,
         )?;
         let surface_goal = match self.surface_goal() {
             Some(ClickProposition::Exists { name, body, .. }) if name == &witness.name => {
@@ -6495,11 +6598,7 @@ impl<'a> Proof<'a> {
 
             goals: self.state.goals.replace_at(self.focused, {
                 let context = self.refined_context(self.facts().clone());
-                surface_goal
-                    .map(|surface| {
-                        Goal::surface_proposition_in(context.clone(), goal.clone(), surface)
-                    })
-                    .unwrap_or_else(|| Goal::proposition_in(context, goal))
+                self.refined_proposition(context, goal, surface_goal)
             }),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
@@ -6727,11 +6826,7 @@ impl<'a> Proof<'a> {
 
             goals: self.state.goals.replace_at(self.focused, {
                 let context = self.refined_context(self.facts().clone());
-                surface_goal
-                    .map(|surface| {
-                        Goal::surface_proposition_in(context.clone(), rewritten.clone(), surface)
-                    })
-                    .unwrap_or_else(|| Goal::proposition_in(context, rewritten))
+                self.refined_proposition(context, rewritten, surface_goal)
             }),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
@@ -6781,6 +6876,17 @@ impl<'a> Proof<'a> {
         self.outcome_point_view_with_effects(OutcomeEffectContext::Path)
     }
 
+    /// The focused judgment's result-aware point data: a function-outcome
+    /// goal owns its data, and a proposition judgment stated at an outcome
+    /// borrows that outcome's data by identity.
+    fn focused_outcome_point(&self) -> Option<&Arc<OutcomePointData>> {
+        match self.focused_goal()? {
+            Goal::FunctionOutcome(goal) => Some(&goal.point),
+            Goal::Proposition(goal) => goal.outcome.as_ref(),
+            Goal::Frontier(_) => None,
+        }
+    }
+
     /// Resolves the view with the caller's effect-availability context: the
     /// transport checker consumes the path's own execution facts, while the
     /// theorem checker consumes the replay-level effect set, matching the
@@ -6792,24 +6898,23 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return None;
         };
-        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
-            return None;
-        };
-        let execution = goal.context.execution.as_deref()?;
+        let point = self.focused_outcome_point()?;
+        let goal = self.focused_goal()?;
+        let execution = goal.context().execution.as_deref()?;
         Some(PointOperationView {
             claim_label: context.claim_label,
             tactic_index: context.tactic_index,
             effect_facts: match effects {
-                OutcomeEffectContext::Path => goal.effect_facts.as_ref(),
+                OutcomeEffectContext::Path => point.effect_facts.as_ref(),
                 OutcomeEffectContext::Replay => &execution.replay.effect_facts,
             },
             parameters: context.parsed_function.parameters(),
             arguments: context.arguments,
             pre_state: execution.replay.execution_start_state(&execution.state),
-            state: &goal.state,
-            result: Some(goal.result.as_ref()),
+            state: &point.state,
+            result: Some(point.result.as_ref()),
             program_point_states: &execution.replay.program_point_states,
-            surface_propositions: &goal.surface_propositions,
+            surface_propositions: &point.surface_propositions,
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
             theorem_environment: context.theorem_environment,
@@ -6831,12 +6936,10 @@ impl<'a> Proof<'a> {
             ),
             // A focused function-outcome goal transports result-aware facts
             // through the same point checker, reading its data from the goal.
-            ProofContext::Execution(_)
-                if matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_))) =>
-            {
+            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
                 let view = self
                     .outcome_point_view()
-                    .expect("a focused outcome goal resolves its point view");
+                    .expect("a focused outcome judgment resolves its point view");
                 self.apply_point_transport_using(source, target, premises, &view)
             }
             ProofContext::Execution(context) => {
@@ -6886,12 +6989,14 @@ impl<'a> Proof<'a> {
         // has to re-record them into a caller-owned map for this path.
         if let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() {
             let mut updated = goal.clone();
-            updated
+            let mut point = (*updated.point).clone();
+            point
                 .surface_propositions
                 .record_lowering(source, &checked_facts[0])?;
-            updated
+            point
                 .surface_propositions
                 .record_lowering(target, &checked_facts[1])?;
+            updated.point = Arc::new(point);
             updated.context = GoalContext {
                 facts,
                 unfolded_predicates: goal.context.unfolded_predicates.clone(),
