@@ -1657,6 +1657,20 @@ their owning smart tactic's source index, so the continuation driver records
 only distinct source continuations; it never publishes a generated suffix as
 a second, conflicting expansion of its owning branch.
 
+Bare theorem application now stays on a two-arm branch's common successor as
+well. The joined `Proof` performs the same indexed theorem selection used by
+arm and scope search, submits the resulting `ApplyTheoremUsing` to itself, and
+returns the already-checked descendant before the common statement and
+immutable frame. A bounded selection miss discards the candidate branch path
+without changing its root; a selected step rejected by `Proof` remains a loud
+tooling error rather than triggering compatibility replay. The existing
+16-through-4096 nonterminal-join curve now includes a common theorem
+application, return, and frame, and checks a missing theorem manufactures no
+descendant. A source regression uses a real lower-or-upper C choice, abstracts
+the changed local through `branch ensuring`, observes neither ordinary replay
+nor the legacy exact-effect recheck, pins the explicit theorem step, and
+independently verifies expansion.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

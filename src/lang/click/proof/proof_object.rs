@@ -3787,6 +3787,31 @@ impl<'a> Proof<'a> {
         )
     }
 
+    /// Tries one bare theorem application at the current execution frontier.
+    /// Search returns only an explicit `ApplyTheoremUsing`; the conclusion is
+    /// retained solely by submitting that step to this same immutable Proof.
+    /// A selection miss is transactional so a compatibility caller can retry
+    /// the unchanged source operation through its broader legacy search.
+    pub(super) fn try_execution_theorem_application(
+        &self,
+        application: &TheoremApplication,
+    ) -> Result<Option<Self>, ClickError> {
+        if self.is_at_function_exit() {
+            return Ok(None);
+        }
+        let step = match self.select_execution_theorem_application_step(application) {
+            Ok(step) => step,
+            Err(error) if crate::instrumentation::deadline_exceeded() => return Err(error),
+            Err(_) => return Ok(None),
+        };
+        self.apply_step(step).map(Some).map_err(|error| {
+            self.step_error(format!(
+                "theorem search selected a simple candidate that Proof rejected: {}",
+                error.message()
+            ))
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn select_theorem_application_step_at_point(
         &self,
@@ -14496,6 +14521,10 @@ mod tests {
     fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         let click_file = crate::lang::click::parse(
             r#"
+                theorem int32_reflexive(value: int32) {
+                    ensures value == value by { normalize(); }
+                }
+
                 int32 constant(int32 x) {
                     immutable;
                     ensures returns_one: result == 1 by { assumption(); }
@@ -14516,6 +14545,14 @@ mod tests {
         let arguments = vec![CExpression::Value(CValue::Int32(
             Bitvector32Term::Variable(Variable(70_000)),
         ))];
+        let application = TheoremApplication {
+            name: "int32_reflexive".to_string(),
+            arguments: vec![ContractExpression::CFragment(arguments[0].clone())],
+        };
+        let missing_application = TheoremApplication {
+            name: "missing".to_string(),
+            arguments: application.arguments.clone(),
+        };
         let function_environment = CExecutionEnvironment::new();
         let mut allocation_samples = Vec::new();
         let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
@@ -14578,7 +14615,34 @@ mod tests {
                 }] if matches!(then_proof.steps(), [SimpleProofStep::StepUsing(_)])
                     && matches!(else_proof.steps(), [SimpleProofStep::StepUsing(_)])
             ));
-            let completed = joined
+            if size == 16 {
+                assert!(
+                    joined
+                        .try_execution_theorem_application(&missing_application)
+                        .expect("missing theorem search should remain a bounded miss")
+                        .is_none(),
+                    "a missing theorem must not manufacture a descendant"
+                );
+                assert!(matches!(
+                    joined.certificate().steps(),
+                    [SimpleProofStep::Branch { .. }]
+                ));
+            }
+            let applied = joined
+                .try_execution_theorem_application(&application)
+                .expect("common theorem search should run")
+                .expect("the reflexive theorem should produce a checked descendant");
+            assert!(matches!(
+                applied.certificate().steps(),
+                [
+                    SimpleProofStep::Branch { .. },
+                    SimpleProofStep::ApplyTheoremUsing {
+                        application: retained,
+                        premises,
+                    },
+                ] if retained == &application && premises.is_empty()
+            ));
+            let completed = applied
                 .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("the joined continuation should execute its return");
             assert!(
@@ -14603,6 +14667,7 @@ mod tests {
                 framed.certificate().steps(),
                 [
                     SimpleProofStep::Branch { .. },
+                    SimpleProofStep::ApplyTheoremUsing { .. },
                     SimpleProofStep::StepUsing(_),
                     SimpleProofStep::FrameUsing {
                         region: None,
@@ -14616,7 +14681,7 @@ mod tests {
             let allocation_bound = base_allocations + 32 * (height - base_height);
             assert!(
                 allocations <= allocation_bound,
-                "size {size} branch, common return, and frame allocated {allocations} persistent nodes (logarithmic bound {allocation_bound})"
+                "size {size} branch, theorem, common return, and frame allocated {allocations} persistent nodes (logarithmic bound {allocation_bound})"
             );
         }
     }

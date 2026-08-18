@@ -124,7 +124,10 @@ fn internal_proof_contains_frame(node: &InternalProofNode) -> bool {
 
 fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
     linear_execution_simple_step(tactic).is_some()
-        || matches!(tactic, ProofTactic::SmartStep | ProofTactic::SmartFrame(_))
+        || matches!(
+            tactic,
+            ProofTactic::SmartStep | ProofTactic::ApplyTheorem(_) | ProofTactic::SmartFrame(_)
+        )
 }
 
 fn checked_linear_continuation_reaches_frame(node: &InternalProofNode) -> bool {
@@ -201,6 +204,11 @@ fn advance_checked_linear_continuation<'a>(
                 return Ok(None);
             };
             stepped
+        } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
+            let Some(applied) = proof.try_execution_theorem_application(application)? else {
+                return Ok(None);
+            };
+            applied
         } else if let ProofTactic::SmartFrame(region) = &indexed.tactic {
             // The checked empty-frame capability is the audited immutable
             // subset. A mutable smart frame may need path-specific planned

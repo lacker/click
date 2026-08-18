@@ -5838,6 +5838,95 @@ fn branch_arms_retain_bare_theorem_applications_on_proof() {
 }
 
 #[test]
+fn branch_join_retains_a_bare_theorem_application_in_its_continuation() {
+    let c_source = r#"
+        int32 choose_bound(int32 lower, int32 upper, int32 flag) {
+            int32 choice;
+            if (flag != 0) {
+                choice = lower;
+            } else {
+                choice = upper;
+            }
+            return choice;
+        }
+    "#;
+    let click_source = r#"
+        verifying "choose_bound.c";
+
+        int32 choose_bound(int32 lower, int32 upper, int32 flag) {
+            requires lower < upper;
+            immutable;
+            ensures lower <= upper;
+        } by {
+            step();
+            branch {
+                ensuring {
+                    fact lower < upper;
+                }
+                then { step(); }
+                else { step(); }
+            }
+            apply(int32_lt_implies_le(lower, upper));
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("choose_bound.c", c_source)])
+    });
+    let verified =
+        verified.expect("the common theorem application should advance the joined Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "choose_bound.contract"
+                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+        )),
+        "the branch, theorem, return, and frame must retain one checked Proof: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked common theorem application should retain an expansion");
+    assert!(
+        matches!(
+            tactics.as_slice(),
+            [
+                ProofTactic::StepUsing(_),
+                ProofTactic::Branch(branch),
+                ProofTactic::ApplyTheoremUsing { application, premises },
+                ProofTactic::StepUsing(_),
+                ProofTactic::FrameUsing { region: None, premises: frame_premises },
+                ..
+            ] if matches!(
+                    branch.ensuring.as_deref(),
+                    Some([ProofAssertion::Fact(ClickProposition::Comparison {
+                        operator: ComparisonOperator::LessThan,
+                        ..
+                    })])
+                )
+                && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && application.name == "int32_lt_implies_le"
+                && premises.len() == 1
+                && frame_premises.is_empty()
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("choose_bound.c", c_source)],
+        "choose_bound",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained common theorem application should expand");
+    verify_c0_sources(&expanded, &[("choose_bound.c", c_source)])
+        .expect("the explicit common theorem step should independently re-derive");
+}
+
+#[test]
 fn branch_arms_retain_bare_fact_transports_on_proof() {
     let c_source = r#"
         int32 set_choice_return_first(int32 p[2], int32 flag) {
