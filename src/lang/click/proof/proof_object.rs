@@ -940,7 +940,7 @@ impl Goal {
 /// copy every effect clause into every short-lived execution `Proof` root.
 /// The immutable function block remains the indexed clause store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum EffectGoalSelection {
+pub(super) enum EffectGoalSelection {
     None,
     One(usize),
     All,
@@ -1543,6 +1543,44 @@ impl<'a> Proof<'a> {
             }) => EffectGoalSelection::One(*index),
             _ => EffectGoalSelection::None,
         };
+        Self::for_execution_frontier_with_effect_goals(
+            claim_label,
+            tactic_index,
+            execution,
+            effect_goals,
+            function_block,
+            function,
+            parsed_function,
+            arguments,
+            function_environment,
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+        )
+    }
+
+    /// Constructs an execution-frontier proof with an explicit effect-goal
+    /// selection. The ordered outcome drain uses `EffectGoalSelection::None`:
+    /// at the drain boundary the function frame has already been consumed
+    /// into deferred checked authority, so the reconstructed frontier goal no
+    /// longer carries effect obligations.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn for_execution_frontier_with_effect_goals(
+        claim_label: &'a str,
+        tactic_index: usize,
+        execution: ProofReplayContext,
+        effect_goals: EffectGoalSelection,
+        function_block: &'a FunctionBlock,
+        function: &'a CFunction,
+        parsed_function: &'a syntax::C0Function,
+        arguments: &'a [CExpression],
+        function_environment: &'a CExecutionEnvironment,
+        resource_environment: &'a ResourceEnvironment,
+        predicate_environment: &'a PredicateEnvironment,
+        click_function_environment: &'a ClickFunctionEnvironment,
+        theorem_environment: &'a TheoremEnvironment,
+    ) -> Self {
         let ProofReplayContext {
             state,
             pure_facts,
@@ -5081,6 +5119,28 @@ impl<'a> Proof<'a> {
         self.state.goals.open.keys().copied()
     }
 
+    /// The open function-outcome goal derived for one checked path, if this
+    /// proof owns it. Path indices are the checked execution's deterministic
+    /// path order, recorded on each goal at derivation.
+    pub(super) fn outcome_goal_for_path(&self, path_index: usize) -> Option<GoalId> {
+        self.state
+            .goals
+            .open
+            .iter()
+            .find_map(|(id, goal)| match goal {
+                Goal::FunctionOutcome(outcome) if outcome.path_index == path_index => Some(*id),
+                _ => None,
+            })
+    }
+
+    /// Materializes the focused goal's ordered fact context for a legacy
+    /// vector consumer. This is an explicit adapter boundary: the drain
+    /// migration deletes its callers as tactic kinds move onto goal-backed
+    /// proofs.
+    pub(super) fn available_fact_vector(&self) -> Vec<Proposition> {
+        self.facts().to_vec()
+    }
+
     /// Returns a handle addressing another open goal of the same state.
     ///
     /// Focus is a cursor: the returned handle shares this proof's semantic
@@ -5136,8 +5196,12 @@ impl<'a> Proof<'a> {
                     )));
                 }
             };
+            // The goal's pure fact context mirrors the drain's per-path
+            // working set exactly: path-local pure facts only. Effect-region
+            // facts remain tracked by the retained execution snapshot until
+            // effect continuations migrate onto goals.
             let mut facts = self.facts().clone();
-            for fact in path.execution_facts() {
+            for fact in path.facts() {
                 facts = facts.with_fact(fact.proposition().clone());
             }
             let id = GoalId(goals.next_id);

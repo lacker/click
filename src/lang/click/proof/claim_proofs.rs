@@ -1001,17 +1001,46 @@ pub(super) fn finish_ordered_proof_replay(
     certification_cache: &mut Vec<(Vec<Proposition>, CState, bool, CCheckedFunctionExecution)>,
     claim_surface_builders: &mut Vec<(VerifiedClaim, ProofCertificateBuilder)>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let proof_label = if require_explicit_closers {
+        format!("{}.contract", function_block.signature().name())
+    } else {
+        function_claim_label(function_block.signature().name(), &claims[0])
+    };
+    // The drain re-enters the proof-object substrate exactly once: the
+    // terminal execution context becomes an execution-frontier `Proof` whose
+    // typed outcome goals own each returning path's result, state, and fact
+    // context. At this boundary the function frame has already been consumed
+    // into deferred checked authority, so the reconstructed frontier carries
+    // no effect selection. A context that is not at a returning function
+    // exit derives no goals and drains through the legacy path unchanged.
+    let outcome_substrate = Proof::for_execution_frontier_with_effect_goals(
+        &proof_label,
+        0,
+        ProofReplayContext {
+            state: context.state.clone(),
+            pure_facts: context.pure_facts.clone(),
+            replay: context.replay.clone(),
+            branch_path: context.branch_path.clone(),
+        },
+        EffectGoalSelection::None,
+        function_block,
+        function,
+        parsed_function,
+        arguments,
+        function_environment,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    )
+    .focus_function_outcomes()
+    .ok();
     let ProofReplayContext {
         state,
         pure_facts,
         replay,
         branch_path,
     } = context;
-    let proof_label = if require_explicit_closers {
-        format!("{}.contract", function_block.signature().name())
-    } else {
-        function_claim_label(function_block.signature().name(), &claims[0])
-    };
     let pre_state = replay.execution_start_state(&state);
     let frontier_function_block = (!replay.frontier_loop_clauses.is_empty()).then(|| {
         function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses.to_vec())
@@ -1492,6 +1521,30 @@ pub(super) fn finish_ordered_proof_replay(
                                 (outcome, path_requirements)
                             },
                         );
+                    // The parity invariant the drain migration consumes: the
+                    // typed outcome goal's fact context equals this path's
+                    // legacy working set (as a set — the persistent context
+                    // deduplicates exact repeats the vector retains).
+                    #[cfg(debug_assertions)]
+                    if let Some((substrate, _)) = &outcome_substrate
+                        && let Some(goal) = substrate.outcome_goal_for_path(path_index)
+                    {
+                        let focused = substrate
+                            .focus(goal)
+                            .expect("a derived outcome goal is open");
+                        let goal_facts = focused
+                            .available_fact_vector()
+                            .into_iter()
+                            .collect::<std::collections::BTreeSet<_>>();
+                        let legacy_facts = path_requirements
+                            .iter()
+                            .cloned()
+                            .collect::<std::collections::BTreeSet<_>>();
+                        debug_assert!(
+                            goal_facts == legacy_facts,
+                            "`{proof_label}` path {path_index}: outcome goal facts diverged from the drain working set"
+                        );
+                    }
 
                     let _case_routing_timing = crate::instrumentation::OperationTiming::new(
                         function_block.signature().name(),

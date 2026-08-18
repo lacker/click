@@ -2739,6 +2739,25 @@ finding, not an accepted cost. Do not begin slice 2 by adding a second
 requirements representation that survives the migration — the goal's
 persistent facts are the working set, and the vector dies with slice 4.
 
+### Progress (2026-08-18: drain slice 1 — the head derives outcome goals)
+
+The ordered drain now re-enters the proof-object substrate exactly once, at
+its head: the terminal context becomes an execution-frontier `Proof` through
+the explicit-selection constructor (`EffectGoalSelection::None` — the
+function frame is already deferred checked authority at this boundary) and
+derives its typed outcome goal set. A context not at a returning function
+exit derives no goals and drains through the legacy path unchanged; no
+upstream signature changed. A debug parity assertion in the per-path loop
+requires every outcome goal's fact context to equal that path's legacy
+working set, and it fired immediately on its first run: the derivation had
+included effect-region facts that the drain tracks separately, so outcome
+goals now carry exactly the path-local pure facts, with effect facts
+remaining on the retained execution snapshot until effect continuations
+migrate. The full gate now runs with that assertion live on every drained
+path in the corpus. Slice 2 starts consuming the goals: per-outcome
+persistent proofs advancing through the drained tactics, with
+`available_fact_vector` as the explicit legacy adapter boundary.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
