@@ -2951,6 +2951,19 @@ by an explicit existence-candidate check rather than by the removed error,
 and lifting it requires expansion parity for goal-checked existence
 closures.
 
+Root cause, established later by comparing the two expansions on the uint8
+reproduction: both serialize the same top-level tactics and the same
+obligation `have`, but the legacy scope re-records the goal's active
+predicate unfolds at the head of the `have` body — its serialized body is
+self-contained — while the goal-checked scope inherits the unfold delta
+from the outcome goal and therefore omits them. Construction succeeds
+either way; the claim-script replay executes `have` bodies without
+inheriting enclosing unfolds, so only the self-contained form independently
+verifies. The fix is to serialize inherited-unfold context into
+existence-scope bodies (matching the legacy convention and the principle
+that certificates verify independently), not to add unfold inheritance to
+the claim-script executor.
+
 ### Progress (2026-08-18: the drain writes through the outcome goal)
 
 The sync direction flipped: one authoritative import of the prepared
