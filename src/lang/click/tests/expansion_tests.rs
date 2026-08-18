@@ -2471,6 +2471,40 @@ fn post_execution_simp_unfolds_predicate_goal_explicitly() {
 }
 
 #[test]
+fn pure_simp_retains_one_selected_equality_rewrite_before_normalize() {
+    let click_source = r#"
+        theorem predecessor_of_one_is_nonnegative(value: int32) {
+            requires value == 1;
+
+            ensures 0 <= value - 1 by {
+                simp();
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the selected equality rewrite should close on the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "predecessor_of_one_is_nonnegative.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the selected rewrite path must not use construction replay: {events:#?}"
+    );
+
+    let offset = click_source.find("simp()").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("the retained equality-refinement path should expand");
+    assert!(expanded.contains("rewrite(value == 1);"), "{expanded}");
+    assert!(expanded.contains("normalize();"), "{expanded}");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_click_theorems(&expanded).expect("the expanded rewrite path should replay");
+}
+
+#[test]
 fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
     let click_source = r#"
         theorem increment_stays_bounded(value: int32, upper: int32) {

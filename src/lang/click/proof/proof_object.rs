@@ -3128,6 +3128,28 @@ impl<'a> Proof<'a> {
         if let Some(proof) = self.try_direct_logical_closure() {
             return Some(proof);
         }
+        let (goal, derivation, premise_pairs, point_application_closes_goal) =
+            self.selected_simp_derivation()?;
+        self.check_typed_atomic_simp_candidate(
+            &goal,
+            &derivation,
+            &premise_pairs,
+            point_application_closes_goal,
+        )
+        .or_else(|| self.try_single_selected_equality_rewrite_closure(&premise_pairs))
+    }
+
+    /// Retains the kernel decision and the exact replayable Surface spellings
+    /// selected for its context premises. This is a read-only smart query:
+    /// only the later `apply_step` calls may advance the proof.
+    fn selected_simp_derivation(
+        &self,
+    ) -> Option<(
+        Proposition,
+        PropositionDerivation,
+        Vec<(Proposition, ClickProposition)>,
+        bool,
+    )> {
         let (surface_facts, point_application_closes_goal, premise_anchor) =
             match self.context.as_ref() {
                 ProofContext::Pure(context) => {
@@ -3140,9 +3162,9 @@ impl<'a> Proof<'a> {
                 ),
                 ProofContext::Execution(_) => return None,
             };
-        let goal = self.goal()?;
-        let plan = plan_simp_certificate(goal, self.state.facts.assumptions())?;
-        let SimpEvidence::Derivation(derivation) = &plan else {
+        let goal = self.goal()?.clone();
+        let plan = plan_simp_certificate(&goal, self.state.facts.assumptions())?;
+        let SimpEvidence::Derivation(derivation) = plan else {
             return None;
         };
         let replayable_surface = |kernel: &Proposition| {
@@ -3177,9 +3199,50 @@ impl<'a> Proof<'a> {
                     })
             })
             .collect::<Option<Vec<_>>>()?;
-        self.check_typed_atomic_simp_candidate(
+        Some((
             goal,
             derivation,
+            premise_pairs,
+            point_application_closes_goal,
+        ))
+    }
+
+    /// Handles the first bounded equality-refinement search directly on
+    /// `Proof`: each equality explicitly selected by the kernel derivation is
+    /// tried as one transactional rewrite of the root, after which an
+    /// already-audited direct or typed atomic closer must finish it. Chained
+    /// rewrite search remains on the compatibility path.
+    fn try_single_selected_equality_rewrite_closure(
+        &self,
+        premise_pairs: &[(Proposition, ClickProposition)],
+    ) -> Option<Self> {
+        for (kernel, surface) in premise_pairs {
+            if !matches!(
+                kernel,
+                Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
+                    | Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), true)
+            ) {
+                continue;
+            }
+            let Ok(rewritten) = self.apply_step(SimpleProofStep::Rewrite(surface.clone())) else {
+                continue;
+            };
+            if let Some(closed) = rewritten
+                .try_direct_logical_closure()
+                .or_else(|| rewritten.try_typed_atomic_simp_closure())
+            {
+                return Some(closed);
+            }
+        }
+        None
+    }
+
+    fn try_typed_atomic_simp_closure(&self) -> Option<Self> {
+        let (goal, derivation, premise_pairs, point_application_closes_goal) =
+            self.selected_simp_derivation()?;
+        self.check_typed_atomic_simp_candidate(
+            &goal,
+            &derivation,
             &premise_pairs,
             point_application_closes_goal,
         )
@@ -11670,6 +11733,93 @@ mod tests {
                     SimpleProofStep::ApplyTheoremUsing { .. },
                     SimpleProofStep::Assumption
                 ]
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn pure_equality_refinement_simp_applies_one_rewrite_with_logarithmic_local_updates() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let memory = CMemory::new();
+        let value = Bitvector32Term::Variable(Variable(8_174_000));
+        let expression = |term: Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term)))
+        };
+        let equality = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::Equal,
+            right: expression(Bitvector32Term::Constant(1)),
+        };
+        let goal_surface = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(0)),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(Bitvector32Term::Subtract(
+                Box::new(value),
+                Box::new(Bitvector32Term::Constant(1)),
+            )),
+        };
+        let lower = |surface: &ClickProposition| {
+            lower_pure_theorem_proposition(
+                "persistent equality-refinement simp",
+                surface,
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &memory,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the fixed int32 proposition should lower")
+        };
+        let kernel_equality = lower(&equality);
+        let goal = lower(&goal_surface);
+        let mut surface_requirements = SurfacePropositionMap::default();
+        surface_requirements
+            .record_lowering(&equality, &kernel_equality)
+            .expect("the exact equality spelling should be indexed");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut requires = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            requires.push(kernel_equality.clone());
+            let theorem_context = PureTheoremContext {
+                memory: memory.clone(),
+                values: BTreeMap::new(),
+                array_refs: BTreeMap::new(),
+                requires: requires.clone(),
+                surface_requirements: surface_requirements.clone(),
+            };
+            let root = Proof::for_pure_goal(
+                "persistent equality-refinement simp",
+                &requires,
+                goal.clone(),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("one selected equality should refine and close the Proof");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 64 * logarithmic_height + 256;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} equality-refinement simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [SimpleProofStep::Rewrite(_), SimpleProofStep::Normalize]
             ));
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());

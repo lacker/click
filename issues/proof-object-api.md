@@ -1938,6 +1938,26 @@ It retains the nested two-application Proof directly instead of falling back
 to the legacy construct-then-replay path when its exact facts name a local
 that has left scope.
 
+### Progress (2026-08-17: one-step equality refinement search)
+
+Unrestricted pure `simp` can now refine a legacy atomic decision by trying
+each equality from that decision's complete replayable premise set as one
+transactional `Rewrite` step on the immutable `Proof`. The accepted rewrite
+must be followed immediately by an already-audited direct logical closer or
+typed atomic closer; chained equality search remains on the compatibility
+path. Search therefore retains `Rewrite; Normalize` directly for the common
+`value == 1` proof of `0 <= value - 1`, instead of first deriving the semantic
+result and then reconstructing those steps in the surface certificate layer.
+
+The query never scans ambient facts for extra equalities: it visits only the
+kernel derivation's selected, replayable premise spellings, and every candidate
+advances through `Proof::apply_step`. A 16-through-4096 unrelated-fact curve
+pins logarithmic persistent updates, ancestor isolation, and exact retained
+certificate shape. A source regression observes no ordinary construction
+replay and independently reverifies the expanded rewrite path. Outcome
+derivations whose selected historical facts cannot all be respelled, and
+multi-rewrite paths, remain explicit compatibility boundaries.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
