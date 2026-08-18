@@ -595,10 +595,14 @@ fn linear_execute_retains_its_checked_execution_proof() {
             }
         "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("zero.c", c_source)])
+    let ((verified, events), planning_transitions) = count_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &[("zero.c", c_source)]))
     });
     let verified = verified.expect("linear execute should verify through its checked Proof");
+    assert_eq!(
+        planning_transitions, 0,
+        "linear execute must search on checked Proof descendants"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,

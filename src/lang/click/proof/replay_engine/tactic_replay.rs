@@ -648,6 +648,74 @@ fn try_indexed_step_on_proof<'a>(
     }
 }
 
+/// Tries checked linear execute search directly on the owned Proof.
+///
+/// A successful search returns the already-checked descendant and appends its
+/// retained simple steps. A miss unwraps the untouched root, so unsupported
+/// statements keep their established compatibility planner and diagnostics.
+#[allow(clippy::too_many_arguments)]
+fn try_straight_line_execute_on_proof<'a>(
+    state: &mut CState,
+    pure_facts: &mut Vec<Proposition>,
+    replay: &mut TacticReplayState,
+    branch_path: &mut PersistentSequence<String>,
+    function_block: &'a FunctionBlock,
+    function: &'a CFunction,
+    parsed_function: &'a syntax::C0Function,
+    arguments: &'a [CExpression],
+    function_environment: &'a CExecutionEnvironment,
+    resource_environment: &'a ResourceEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    claim_label: &'a str,
+    tactic_index: usize,
+) -> Result<bool, ClickError> {
+    let context = ProofReplayContext {
+        state: std::mem::replace(state, CState::new()),
+        pure_facts: std::mem::take(pure_facts),
+        replay: std::mem::take(replay),
+        branch_path: std::mem::take(branch_path),
+    };
+    let root = Proof::for_execution_frontier(
+        claim_label,
+        tactic_index,
+        context,
+        function_block,
+        function,
+        parsed_function,
+        arguments,
+        function_environment,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    );
+    let selected = root.try_straight_line_execute()?;
+    match selected {
+        Some(proof) => {
+            let certificate = proof.certificate();
+            let context = proof.into_execution_context()?;
+            *state = context.state;
+            *pure_facts = context.pure_facts;
+            *replay = context.replay;
+            *branch_path = context.branch_path;
+            for step in certificate.steps() {
+                replay.proof_certificate_builder.push_step(step.clone());
+            }
+            Ok(true)
+        }
+        None => {
+            let context = root.into_execution_context()?;
+            *state = context.state;
+            *pure_facts = context.pure_facts;
+            *replay = context.replay;
+            *branch_path = context.branch_path;
+            Ok(false)
+        }
+    }
+}
+
 /// Tries smart frame candidate selection and application through the owned
 /// Proof.
 ///
@@ -1439,6 +1507,37 @@ fn replay_linear_tactics_without_frontier_loops(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => {
+                if try_straight_line_execute_on_proof(
+                    &mut state,
+                    &mut requirement_pure_facts,
+                    &mut replay,
+                    &mut branch_path,
+                    function_block,
+                    function,
+                    parsed_function,
+                    arguments,
+                    function_environment,
+                    resource_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    theorem_environment,
+                    claim_label,
+                    tactic_index,
+                )? {
+                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                    let slice = end_tactic_surface_scope(
+                        &mut replay,
+                        scope.take().expect("tactic scope is open"),
+                    );
+                    if capture_this_tactic {
+                        finish_tactic_expansion_capture(
+                            expansion_capture.as_deref_mut(),
+                            &slice,
+                            false,
+                        );
+                    }
+                    continue;
+                }
                 let construction_environments = Some(ConstructionEnvironments {
                     predicate_environment,
                     click_function_environment,

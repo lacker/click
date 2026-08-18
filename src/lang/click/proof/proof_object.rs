@@ -3860,6 +3860,23 @@ impl<'a> Proof<'a> {
             .map(|(proof, _)| proof))
     }
 
+    /// Runs top-level straight-line `execute` without consuming a structural
+    /// C branch. Branch ownership, expansion sites, and outcome joins remain
+    /// with the audited branch driver until that caller itself retains the
+    /// complete checked container.
+    pub(super) fn try_straight_line_execute(&self) -> Result<Option<Self>, ClickError> {
+        let mut proof = self.clone();
+        let mut advanced = false;
+        while !proof.is_at_function_exit() {
+            let Some(next) = proof.try_indexed_statement_step()? else {
+                return Ok(None);
+            };
+            proof = next;
+            advanced = true;
+        }
+        Ok(advanced.then_some(proof))
+    }
+
     /// Searches explicit premise spellings for one point fact transport.
     ///
     /// Every candidate is checked by applying the corresponding simple step

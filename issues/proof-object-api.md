@@ -1886,6 +1886,35 @@ edge. `Proof` checks that selected application directly; reversed premise
 spelling, no ordinary replay, independent expansion, omitted-premise
 transactionality, and the shared 16-through-4096 curve are pinned.
 
+### Progress (2026-08-17: narrow top-level straight-line execution)
+
+Top-level `execute()` and `execute_all_paths()` now first try the immutable
+execution-frontier `Proof` for the already-audited exact-context subset. Each candidate statement
+advances only through `Proof::apply_step(StepUsing(...))`; a successful
+sequence exports its already-checked descendant and retained simple
+certificate. Any inherited unrelated fact, resource, effect, structural C
+branch, or unsupported statement rejects the entire candidate transactionally
+and restores the pointer-sharing root for the compatibility planner. Focused
+regressions require zero mutable planning transitions and no ordinary
+certificate replay for the fact-free `execute` case. Top-level
+`execute_until(...)` remains on the compatibility path: even its small
+multi-statement case needs an explicit bounded representation of facts
+introduced since the search root before it can advance several checked
+descendants without admitting unrelated inherited context.
+
+The repository example gate exposed why this boundary must remain narrow.
+`ring_buffer_pipeline` needs a statement-3 memory fact at its later
+statement-4 `frame`; that obligation is unrelated to the final return
+expression. Selecting facts only by names touched by each current statement
+therefore loses a required transport, while selecting every ambient fact
+would violate the scaling contract. The broader migration must make execution
+search conditional on its next checked obligation (explicit frame premises,
+postconditions, or another Proof-owned continuation) and retain only paths
+whose continuation succeeds. Until that goal-conditioned search advances
+through Proof descendants, memory writes and calls with unrelated facts stay
+on the existing planner rather than receiving another local relevance
+heuristic.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
