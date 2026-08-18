@@ -1485,7 +1485,7 @@ fn selected_branched_post_execution_apply_merges_path_certificates() {
             .expect("branched post-execution apply should produce path certificates");
     assert!(!expanded.contains("apply(retain_one_or_two(result));"));
     assert!(
-        expanded.contains("if at(function.entry, flag) != at(function.entry, 0) {"),
+        expanded.contains("if at(statement(0).entry, flag) != at(statement(0).entry, 0) {"),
         "{expanded}"
     );
     assert_eq!(
@@ -1545,7 +1545,7 @@ fn selected_branched_post_execution_have_merges_path_certificates() {
             .expect("branched post-execution have should produce path certificates");
     assert!(!expanded.contains("have result == 1 or result == 2 by simp"));
     assert!(
-        expanded.contains("if at(function.entry, flag) != at(function.entry, 0) {"),
+        expanded.contains("if at(statement(0).entry, flag) != at(statement(0).entry, 0) {"),
         "{expanded}"
     );
     assert_eq!(
@@ -7099,9 +7099,9 @@ fn explicit_branch_arms_retain_terminal_execute_search() {
             matches!(
                 arm.get(..2),
                 Some([ProofTactic::StepUsing(entry), ProofTactic::StepUsing(ret)])
-                    if entry.is_empty() && ret.len() == 1
+                    if entry.len() == 1 && ret.len() == 1
             ),
-            "each terminal arm should begin with its checked entry and return steps: {arm:#?}"
+            "each terminal arm should begin with checked entry and return steps carrying its path condition: {arm:#?}"
         );
         assert!(
             arm.iter().all(|tactic| !matches!(
@@ -7548,17 +7548,24 @@ fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
             }
         "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("choose.c", c_source)])
+    let ((verified, events), planning_transitions) = count_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| {
+            verify_c0_sources(click_source, &[("choose.c", c_source)])
+        })
     });
     let verified = verified.expect("automatic terminal branch should verify");
+    assert_eq!(
+        planning_transitions, 0,
+        "the automatic terminal branch must search only on checked Proof descendants"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "choose.contract" && name == "surface certificate replay"
+                if claim == "choose.contract"
+                    && name == "smart tactic compatibility replay (tactic 0, source 0)"
         )),
-        "terminal branch construction must retain its checked Proof instead of ordinarily replaying it: {events:#?}"
+        "terminal branch construction must bypass compatibility replay: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -7571,11 +7578,11 @@ fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
         ("else", &proof_if.else_tactics),
     ] {
         assert!(
-            matches!(arm.first(), Some(ProofTactic::StepUsing(premises)) if premises.is_empty()),
-            "{name} arm should retain the explicit C-branch entry step: {arm:#?}"
+            matches!(arm.first(), Some(ProofTactic::StepUsing(premises)) if premises.len() == 1),
+            "{name} arm should retain the explicit C-branch entry condition: {arm:#?}"
         );
         assert!(
-            matches!(arm.get(1), Some(ProofTactic::StepUsing(premises)) if premises.is_empty()),
+            matches!(arm.get(1), Some(ProofTactic::StepUsing(_))),
             "{name} arm should retain its checked return step: {arm:#?}"
         );
         assert!(

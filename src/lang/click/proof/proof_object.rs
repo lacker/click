@@ -2507,6 +2507,11 @@ impl<'a> Proof<'a> {
                 context.tactic_index,
                 "branch",
             )?;
+        if current_state.memory().has_pending_heap_allocation() {
+            return Err(self.step_error(
+                "checked `branch` cannot yet own an unresolved heap-allocation outcome split",
+            ));
+        }
         let CStatement::If {
             condition,
             then_branch,
@@ -4420,6 +4425,13 @@ impl<'a> Proof<'a> {
         if execution.replay.is_at_function_exit() {
             return Ok(false);
         }
+        if execution.state.memory().has_pending_heap_allocation() {
+            // A pending malloc result is an independent execution split. The
+            // current branch container owns one C-condition split, not the
+            // Cartesian product of both; compatibility execution retains
+            // that frontier from the unchanged Proof root.
+            return Ok(false);
+        }
         let statement_index = execution.replay.frontier.next_statement_index;
         let source_region = execution
             .replay
@@ -4581,21 +4593,23 @@ impl<'a> Proof<'a> {
             .map(|(proof, _)| proof))
     }
 
-    /// Runs top-level straight-line `execute` without consuming a structural
-    /// C branch. Branch ownership, expansion sites, and outcome joins remain
-    /// with the audited branch driver until that caller itself retains the
-    /// complete checked container.
-    pub(super) fn try_straight_line_execute(&self) -> Result<Option<Self>, ClickError> {
-        let mut proof = self.clone();
-        let mut advanced = false;
-        while !proof.is_at_function_exit() {
-            let Some(next) = proof.try_indexed_statement_step()? else {
-                return Ok(None);
-            };
-            proof = next;
-            advanced = true;
+    /// Runs top-level `execute` from an exact execution root. With no ambient
+    /// proof facts, resources, or effect facts to transport, the existing
+    /// checked branch container may own structural C forks as well as linear
+    /// statements without guessing what a later continuation will need.
+    pub(super) fn try_exact_execute_to_exit(&self) -> Result<Option<Self>, ClickError> {
+        let Some(execution) = self.state.execution.as_ref() else {
+            return Ok(None);
+        };
+        if !self.state.facts.ordered.is_empty()
+            || self.state.facts.prioritized.is_some()
+            || !execution.state.resources().facts().is_empty()
+            || !execution.replay.effect_facts.is_empty()
+            || !execution.replay.case_assumptions.is_empty()
+        {
+            return Ok(None);
         }
-        Ok(advanced.then_some(proof))
+        self.try_linear_execute()
     }
 
     /// Searches explicit premise spellings for one point fact transport.
@@ -7018,16 +7032,25 @@ impl<'a> ExecutionProofBranches<'a> {
         validate_arm("then", true, &then_arm)?;
         validate_arm("else", false, &else_arm)?;
 
-        let terminal_certificate = |arm: &ExecutionProofArm<'a>, empty_source_arm: bool| {
-            let body = arm.proof.certificate_since(&self.root_checkpoint)?;
-            let entry_steps = 1 + usize::from(empty_source_arm);
-            let mut steps = Vec::with_capacity(entry_steps + body.steps().len());
-            steps.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
-            steps.extend_from_slice(body.steps());
-            Ok::<_, ClickError>(ProofCertificate::from_steps(steps))
-        };
-        let then_proof = terminal_certificate(&then_arm, empty_source_arms[0])?;
-        let else_proof = terminal_certificate(&else_arm, empty_source_arms[1])?;
+        let terminal_certificate =
+            |arm: &ExecutionProofArm<'a>,
+             empty_source_arm: bool,
+             path_condition: ClickProposition| {
+                let body = arm.proof.certificate_since(&self.root_checkpoint)?;
+                let entry_steps = 1 + usize::from(empty_source_arm);
+                let mut steps = Vec::with_capacity(entry_steps + body.steps().len());
+                steps.push(SimpleProofStep::StepUsing(vec![path_condition]));
+                steps.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
+                steps.extend_from_slice(body.steps());
+                Ok::<_, ClickError>(ProofCertificate::from_steps(steps))
+            };
+        let then_proof =
+            terminal_certificate(&then_arm, empty_source_arms[0], surface_condition.clone())?;
+        let else_proof = terminal_certificate(
+            &else_arm,
+            empty_source_arms[1],
+            negate_click_proposition(&surface_condition),
+        )?;
         let then_execution = then_arm
             .proof
             .state
@@ -17252,17 +17275,19 @@ mod tests {
             assert!(matches!(
                 joined.certificate().steps(),
                 [SimpleProofStep::If {
+                    condition,
                     then_proof,
                     else_proof,
-                    ..
                 }] if matches!(
                     then_proof.steps(),
                     [SimpleProofStep::StepUsing(entry), SimpleProofStep::StepUsing(body)]
-                        if entry.is_empty() && body.is_empty()
+                        if entry == std::slice::from_ref(condition) && body.is_empty()
                 ) && matches!(
                     else_proof.steps(),
                     [SimpleProofStep::StepUsing(entry), SimpleProofStep::StepUsing(body)]
-                        if entry.is_empty() && body.is_empty()
+                        if matches!(entry.as_slice(), [fact]
+                            if *fact == negate_click_proposition(condition))
+                            && body.is_empty()
                 )
             ));
             assert!(root.certificate().steps().is_empty());

@@ -653,13 +653,14 @@ fn try_smart_step_on_proof<'a>(
     }
 }
 
-/// Tries checked linear execute search directly on the owned Proof.
+/// Tries exact-root execute search directly on the owned Proof.
 ///
 /// A successful search returns the already-checked descendant and appends its
-/// retained simple steps. A miss unwraps the untouched root, so unsupported
-/// statements keep their established compatibility planner and diagnostics.
+/// retained simple or structured steps. A miss unwraps the untouched root, so
+/// ambient contexts and unsupported statements keep their established
+/// compatibility planner and diagnostics.
 #[allow(clippy::too_many_arguments)]
-fn try_straight_line_execute_on_proof<'a>(
+fn try_exact_execute_on_proof<'a>(
     state: &mut CState,
     pure_facts: &mut Vec<Proposition>,
     replay: &mut TacticReplayState,
@@ -696,7 +697,7 @@ fn try_straight_line_execute_on_proof<'a>(
         click_function_environment,
         theorem_environment,
     );
-    let selected = root.try_straight_line_execute()?;
+    let selected = root.try_exact_execute_to_exit()?;
     match selected {
         Some(proof) => {
             let certificate = proof.certificate();
@@ -1590,7 +1591,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => {
-                if try_straight_line_execute_on_proof(
+                if try_exact_execute_on_proof(
                     &mut state,
                     &mut requirement_pure_facts,
                     &mut replay,

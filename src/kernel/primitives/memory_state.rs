@@ -344,7 +344,10 @@ impl CMemory {
         self
     }
 
-    pub(in crate::kernel) fn has_pending_heap_allocation(&self) -> bool {
+    /// Whether execution still owns the unresolved success/failure choice of
+    /// a fresh heap allocation. Proof-frontier branch selection uses this
+    /// read-only query to avoid duplicating that independent path split.
+    pub(crate) fn has_pending_heap_allocation(&self) -> bool {
         !self.heap.pending_allocations.is_empty()
     }
 

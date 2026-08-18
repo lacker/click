@@ -1889,10 +1889,24 @@ transactionality, and the shared 16-through-4096 curve are pinned.
 ### Progress (2026-08-17: narrow top-level straight-line execution)
 
 Top-level `execute()` and `execute_all_paths()` now first try the immutable
-execution-frontier `Proof` for the already-audited exact-context subset. Each candidate statement
-advances only through `Proof::apply_step(StepUsing(...))`; a successful
-sequence exports its already-checked descendant and retained simple
-certificate. The first slice rejected any inherited unrelated fact, resource,
+execution-frontier `Proof` for the already-audited exact-context subset. Each
+candidate statement advances only through `Proof::apply_step(StepUsing(...))`;
+a structural C `if` opens the audited execution branch container, checks both
+terminal arms, and joins their exact retained certificates. A successful
+sequence exports its already-checked descendant and retained structured
+certificate. The obsolete straight-line-only production query has been
+deleted. Terminal joins now put the exact positive or negative C path
+condition in each arm's entry `StepUsing`, matching decided branches instead
+of relying on an enclosing logical `if` as execution authority.
+
+A pending `malloc` success/failure choice is a separate execution split that
+the current branch container cannot yet compose with the C-condition split.
+Both its capability query and the structural operation itself now reject that
+frontier: smart `execute` discards its descendant and resumes compatibility
+execution from the unchanged root, while direct misuse cannot duplicate the
+Cartesian product of outcomes. The fresh-allocation mdtest pins agreement
+between replay and independent kernel certification. The first slice rejected
+any inherited unrelated fact, resource,
 effect, structural C branch, or unsupported statement transactionally and
 restored the pointer-sharing root for the compatibility planner. Standalone
 `step()` now also uses the broader checked selector when
@@ -1901,7 +1915,9 @@ while only exact definedness and current-local dependencies enter the retained
 `StepUsing`. Resource contexts still decline this path because their
 planner-selected evidence is not represented here. Focused regressions require
 zero mutable planning transitions and no ordinary certificate replay for both
-the fact-free `execute` case and a scalar-root-fact `step`. Top-level
+the fact-free linear and branched `execute` cases and a scalar-root-fact
+`step`. The existing 16-through-4096 execution-branch curve covers the same
+fork, arm execution, join, and certificate extraction operations. Top-level
 `execute_until(...)` now uses the same exact-root boundary. Its first statement
 must not depend on unrelated inherited context; after that accepted step, each
 descendant exposes an output-sized `added_facts` delta that the next checked
