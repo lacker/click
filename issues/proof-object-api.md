@@ -3032,6 +3032,22 @@ refusal. The container migration path is now concrete: consumers move one
 at a time onto split/focus/join, and `ProofBranches` retires when its last
 consumer does.
 
+### Progress (2026-08-18: the script driver branches through in-`Proof` splits)
+
+`split_focused_if` joins its `cases` sibling, sharing one audited join that
+partitions by recorded attribution, and the linear smart-script driver's
+`if`/`cases` recursion now runs entirely on in-`Proof` splits: each arm is
+one `focus`ed run of the same driver (smart bodies search, already-simple
+bodies check their exact certificate) on one lineage, with no container.
+Sibling goals forced a real conceptual refinement the container had hidden:
+the driver's success condition is the *focused obligation's* discharge, not
+whole-proof completion — inside a split the sibling legitimately remains
+open, and the two notions coincide only on single-goal proofs.
+`focused_discharged` now names that distinction. The last production
+`ProofBranches` consumer is the explicit certificate checker; it migrates
+next, and the container then survives only in tests until they move to the
+split regressions.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

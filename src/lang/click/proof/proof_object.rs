@@ -1779,6 +1779,14 @@ impl<'a> Proof<'a> {
         self.state.goals.get(self.focused)
     }
 
+    /// Whether the obligation this handle addresses has been discharged. On
+    /// a single-goal proof this coincides with completion; inside a sibling
+    /// split, only the focused obligation's discharge is an arm's success —
+    /// the sibling legitimately remains open.
+    pub(super) fn focused_discharged(&self) -> bool {
+        self.state.goals.get(self.focused).is_none()
+    }
+
     /// The focused goal's path-local execution context, shared by identity
     /// with the frontier that created it.
     fn goal_execution(&self) -> Option<&Arc<ExecutionProofState>> {
@@ -2961,6 +2969,77 @@ impl<'a> Proof<'a> {
         ))
     }
 
+    /// Splits the focused proposition goal under a condition and its exact
+    /// surface negation inside this same proof state: the in-`Proof` form of
+    /// proof `if`. Unlike `cases`, the condition need not be an available
+    /// fact beforehand.
+    pub(super) fn split_focused_if(
+        &self,
+        condition: ClickProposition,
+    ) -> Result<(Self, SplitId, [GoalId; 2]), ClickError> {
+        if self.state.goals.is_discharged() {
+            return Err(self.step_error("`if` follows a completed proof"));
+        }
+        let Some(Goal::Proposition(goal)) = self.focused_goal() else {
+            return Err(self.step_error("proof `if` requires a proposition goal"));
+        };
+        let then_fact = self.lower_surface_proposition(&condition, "proof `if` condition")?;
+        let else_surface = ClickProposition::Not(Box::new(condition.clone()));
+        let else_fact = self.lower_surface_proposition(&else_surface, "proof `if` negation")?;
+        let arm = |fact: Proposition| {
+            Goal::Proposition(PropositionGoal {
+                kernel: goal.kernel.clone(),
+                surface: goal.surface.clone(),
+                context: GoalContext {
+                    facts: goal.context.facts.with_fact(fact),
+                    unfolded_predicates: goal.context.unfolded_predicates.clone(),
+                    execution: goal.context.execution.clone(),
+                },
+                outcome: goal.outcome.clone(),
+            })
+        };
+        let (split, ids, goals) = self
+            .state
+            .goals
+            .split_at(self.focused, [arm(then_fact), arm(else_fact)]);
+        Ok((
+            Self {
+                context: self.context.clone(),
+                state: Arc::new(ProofState {
+                    locals: self.state.locals.clone(),
+                    goals,
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                }),
+                node: Arc::new(ProofNode {
+                    parent: Some(self.node.clone()),
+                    step: None,
+                    focused: self.focused,
+                    depth: self.node.depth,
+                }),
+                focused: ids[0],
+            },
+            split,
+            ids,
+        ))
+    }
+
+    /// Joins a completed in-`Proof` `if` split with one structured `If`
+    /// step, under the same rules as [`Self::join_focused_cases`].
+    pub(super) fn join_focused_if(
+        &self,
+        marker: &ProofCheckpoint<'a>,
+        split: SplitId,
+        ids: [GoalId; 2],
+        condition: ClickProposition,
+    ) -> Result<Self, ClickError> {
+        self.join_focused_branch(marker, split, ids, |left, right| SimpleProofStep::If {
+            condition,
+            then_proof: Box::new(left),
+            else_proof: Box::new(right),
+        })
+    }
+
     /// Joins a completed in-`Proof` case split: both recorded sibling goals
     /// must be discharged, the derivation must pass through the split's
     /// exact marker, and the retained certificate embeds each arm's steps
@@ -2972,6 +3051,20 @@ impl<'a> Proof<'a> {
         split: SplitId,
         ids: [GoalId; 2],
         disjunction: ClickProposition,
+    ) -> Result<Self, ClickError> {
+        self.join_focused_branch(marker, split, ids, |left, right| SimpleProofStep::Cases {
+            disjunction,
+            left_proof: Box::new(left),
+            right_proof: Box::new(right),
+        })
+    }
+
+    fn join_focused_branch(
+        &self,
+        marker: &ProofCheckpoint<'a>,
+        split: SplitId,
+        ids: [GoalId; 2],
+        step: impl FnOnce(ProofCertificate, ProofCertificate) -> SimpleProofStep,
     ) -> Result<Self, ClickError> {
         for (name, id) in [("left", ids[0]), ("right", ids[1])] {
             if self.state.goals.get(id).is_some() {
@@ -3020,11 +3113,10 @@ impl<'a> Proof<'a> {
             }),
             node: Arc::new(ProofNode {
                 parent: Some(parent.clone()),
-                step: Some(Arc::new(SimpleProofStep::Cases {
-                    disjunction,
-                    left_proof: Box::new(ProofCertificate::from_steps(left_steps)),
-                    right_proof: Box::new(ProofCertificate::from_steps(right_steps)),
-                })),
+                step: Some(Arc::new(step(
+                    ProofCertificate::from_steps(left_steps),
+                    ProofCertificate::from_steps(right_steps),
+                ))),
                 focused: marker.node.focused,
                 depth: parent.depth + 1,
             }),
@@ -5197,6 +5289,20 @@ impl<'a> Proof<'a> {
     /// through `apply_step`. Explicit simple tactics in the same script use
     /// that identical path, so a successful search already owns its complete
     /// expandable derivation rather than reconstructing one afterward.
+    /// Runs one branch arm of the linear script driver on the focused
+    /// sibling goal: smart bodies search through the shared drivers and
+    /// already-simple bodies check their exact certificate.
+    fn try_focused_script_arm(&self, tactics: &[ProofTactic]) -> Result<Option<Self>, ClickError> {
+        if script_contains_linear_search(tactics) {
+            self.try_linear_smart_script(tactics)
+        } else {
+            let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics) else {
+                return Ok(None);
+            };
+            Ok(self.check_certificate(&certificate).ok())
+        }
+    }
+
     pub(super) fn try_linear_smart_script(
         &self,
         tactics: &[ProofTactic],
@@ -5214,7 +5320,7 @@ impl<'a> Proof<'a> {
 
         let mut proof = self.clone();
         for tactic in tactics {
-            if proof.is_complete() {
+            if proof.focused_discharged() {
                 // A final `simp` after an exact theorem conclusion is a
                 // harmless search no-op and emits no redundant certificate
                 // step, matching direct smart closure behavior.
@@ -5264,74 +5370,50 @@ impl<'a> Proof<'a> {
                     proof = selected.join()?;
                 }
                 ProofTactic::If(proof_if) => {
-                    let branches = proof.begin_if(proof_if.condition.clone())?;
-                    let selected = if script_contains_linear_search(&proof_if.then_tactics) {
-                        branches.try_linear_smart_script(ProofArm::Left, &proof_if.then_tactics)?
-                    } else {
-                        let Ok(certificate) =
-                            ProofCertificate::from_proof_tactics(&proof_if.then_tactics)
-                        else {
-                            return Ok(None);
-                        };
-                        branches
-                            .check_certificate(ProofArm::Left, &certificate)
-                            .ok()
-                    };
-                    let Some(branches) = selected else {
+                    let (split_proof, split, ids) =
+                        proof.split_focused_if(proof_if.condition.clone())?;
+                    let marker = split_proof.checkpoint();
+                    let Some(then_done) = split_proof
+                        .focus(ids[0])?
+                        .try_focused_script_arm(&proof_if.then_tactics)?
+                    else {
                         return Ok(None);
                     };
-                    let selected = if script_contains_linear_search(&proof_if.else_tactics) {
-                        branches.try_linear_smart_script(ProofArm::Right, &proof_if.else_tactics)?
-                    } else {
-                        let Ok(certificate) =
-                            ProofCertificate::from_proof_tactics(&proof_if.else_tactics)
-                        else {
-                            return Ok(None);
-                        };
-                        branches
-                            .check_certificate(ProofArm::Right, &certificate)
-                            .ok()
-                    };
-                    let Some(branches) = selected else {
+                    let Some(both_done) = then_done
+                        .focus(ids[1])?
+                        .try_focused_script_arm(&proof_if.else_tactics)?
+                    else {
                         return Ok(None);
                     };
-                    proof = branches.join()?;
+                    proof = both_done.join_focused_if(
+                        &marker,
+                        split,
+                        ids,
+                        proof_if.condition.clone(),
+                    )?;
                 }
                 ProofTactic::Cases(proof_cases) => {
-                    let branches = proof.begin_cases(proof_cases.disjunction.clone())?;
-                    let selected = if script_contains_linear_search(&proof_cases.left_tactics) {
-                        branches
-                            .try_linear_smart_script(ProofArm::Left, &proof_cases.left_tactics)?
-                    } else {
-                        let Ok(certificate) =
-                            ProofCertificate::from_proof_tactics(&proof_cases.left_tactics)
-                        else {
-                            return Ok(None);
-                        };
-                        branches
-                            .check_certificate(ProofArm::Left, &certificate)
-                            .ok()
-                    };
-                    let Some(branches) = selected else {
+                    let (split_proof, split, ids) =
+                        proof.split_focused_cases(proof_cases.disjunction.clone())?;
+                    let marker = split_proof.checkpoint();
+                    let Some(left_done) = split_proof
+                        .focus(ids[0])?
+                        .try_focused_script_arm(&proof_cases.left_tactics)?
+                    else {
                         return Ok(None);
                     };
-                    let selected = if script_contains_linear_search(&proof_cases.right_tactics) {
-                        branches
-                            .try_linear_smart_script(ProofArm::Right, &proof_cases.right_tactics)?
-                    } else {
-                        let Ok(certificate) =
-                            ProofCertificate::from_proof_tactics(&proof_cases.right_tactics)
-                        else {
-                            return Ok(None);
-                        };
-                        branches
-                            .check_certificate(ProofArm::Right, &certificate)
-                            .ok()
-                    };
-                    let Some(branches) = selected else {
+                    let Some(both_done) = left_done
+                        .focus(ids[1])?
+                        .try_focused_script_arm(&proof_cases.right_tactics)?
+                    else {
                         return Ok(None);
                     };
-                    proof = branches.join()?;
+                    proof = both_done.join_focused_cases(
+                        &marker,
+                        split,
+                        ids,
+                        proof_cases.disjunction.clone(),
+                    )?;
                 }
                 tactic => {
                     let step = explicit_linear_step(tactic)
@@ -5341,7 +5423,7 @@ impl<'a> Proof<'a> {
             }
         }
 
-        Ok(proof.is_complete().then_some(proof))
+        Ok(proof.focused_discharged().then_some(proof))
     }
 
     /// Whether this source proof is a smart script wholly represented by the
