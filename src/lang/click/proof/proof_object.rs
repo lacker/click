@@ -913,6 +913,9 @@ struct OutcomePointData {
     state: SharedValue<CState>,
     surface_propositions: SurfacePropositionMap,
     effect_facts: Arc<Vec<ExecutionPureFact>>,
+    /// The statement-entry anchor for premises naming a C local after it
+    /// left scope, captured from the frontier at derivation.
+    premise_anchor: Option<ProgramPointRef>,
 }
 
 /// The path-local semantic context owned by one goal.
@@ -1944,15 +1947,42 @@ impl<'a> Proof<'a> {
         &self,
         goals: &[ClickProposition],
     ) -> Result<ProofCertificate, ClickError> {
+        self.complete_point_obligations_inner(None, goals)
+    }
+
+    /// Completes the obligations with a certificate relative to `since`.
+    ///
+    /// An evolving outcome proof carries every earlier drained tactic in its
+    /// lineage; those steps are recorded by their own tactics, so the grouped
+    /// closure exports only the scope and closer work performed after the
+    /// caller's checkpoint. A fresh grouped root passes its own root
+    /// checkpoint and the two forms agree.
+    pub(super) fn complete_point_obligations_since(
+        &self,
+        since: &ProofCheckpoint<'a>,
+        goals: &[ClickProposition],
+    ) -> Result<ProofCertificate, ClickError> {
+        self.complete_point_obligations_inner(Some(since), goals)
+    }
+
+    fn complete_point_obligations_inner(
+        &self,
+        since: Option<&ProofCheckpoint<'a>>,
+        goals: &[ClickProposition],
+    ) -> Result<ProofCertificate, ClickError> {
         if goals.is_empty() {
             return Err(self.step_error("point obligation completion requires at least one goal"));
         }
-        if !matches!(self.context.as_ref(), ProofContext::Point(_))
-            || !matches!(self.focused_goal(), Some(Goal::Frontier(_)))
-        {
+        let point_frontier = matches!(self.context.as_ref(), ProofContext::Point(_))
+            && matches!(self.focused_goal(), Some(Goal::Frontier(_)));
+        let outcome_frontier = matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_)));
+        if !point_frontier && !outcome_frontier {
             return Err(self.step_error("point obligations require an open point frontier"));
         }
-        let mut steps = self.certificate().steps().to_vec();
+        let mut steps = match since {
+            Some(since) => self.certificate_since(since)?.steps().to_vec(),
+            None => self.certificate().steps().to_vec(),
+        };
         for goal in goals {
             let closer = self
                 .focus_point_surface_goal(goal)?
@@ -4396,7 +4426,18 @@ impl<'a> Proof<'a> {
                     true,
                     context.premise_anchor.as_ref(),
                 ),
-                ProofContext::Execution(_) => return None,
+                // A judgment stated at a function outcome supplies the
+                // outcome's recorded lowerings and statement-entry anchor.
+                ProofContext::Execution(_) => {
+                    let Some(point) = self.focused_outcome_point() else {
+                        return None;
+                    };
+                    (
+                        &point.surface_propositions,
+                        true,
+                        point.premise_anchor.as_ref(),
+                    )
+                }
             };
         let goal = self.goal()?.clone();
         let plan = plan_simp_certificate(&goal, self.facts().assumptions())?;
@@ -5449,6 +5490,13 @@ impl<'a> Proof<'a> {
             .as_ref()
             .map(|execution| execution.replay.surface_propositions.clone())
             .unwrap_or_default();
+        let frontier_anchor = frontier_snapshot.as_ref().and_then(|execution| {
+            execution
+                .replay
+                .proof_certificate_builder
+                .last_step_entry
+                .clone()
+        });
         let mut goals = self.state.goals.discharge_at(self.focused);
         let mut outcome_ids = Vec::new();
         for (path_index, path) in checked.paths().iter().enumerate() {
@@ -5481,6 +5529,7 @@ impl<'a> Proof<'a> {
                             state: state.into(),
                             surface_propositions: frontier_surface.clone(),
                             effect_facts: Arc::new(path.execution_facts()),
+                            premise_anchor: frontier_anchor.clone(),
                         }),
                         context: GoalContext {
                             facts,

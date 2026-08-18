@@ -2912,6 +2912,23 @@ use point-level replay availability. The derivation gate admits the three
 claim operations; `simp`, the existence tactics, and the resource/frame
 kinds remain.
 
+### Progress (2026-08-18: grouped `simp` runs on the outcome goal)
+
+Grouped and ungrouped exit `simp` is the seventh drained kind on the
+evolving outcome proof: the grouped obligation root comes from the resynced
+evolving proof, whose `OutcomePointData` now carries the statement-entry
+premise anchor captured at derivation, and the atomic `simp` derivation
+recognizes outcome-stated judgments — supplying the outcome's recorded
+lowerings and anchor where it previously refused execution contexts.
+`complete_point_obligations` gained an explicitly checkpoint-relative form:
+an evolving root carries every earlier drained tactic in its lineage, and
+those steps are recorded by their own tactics, so the grouped closure
+exports only the scope and closer work after the caller's checkpoint — the
+whole-lineage form remains for fresh grouped roots, and a unit regression
+distinguishes the two. The obligation-completion guard accepts outcome
+frontiers. Remaining drained kinds: the existence tactics, `fold`, and the
+frame family; then case routing and the deletion slice.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

@@ -1032,6 +1032,7 @@ pub(super) fn finish_ordered_proof_replay(
                         | PostExecutionTactic::Rewrite(_)
                         | PostExecutionTactic::Assumption
                         | PostExecutionTactic::Normalize
+                        | PostExecutionTactic::Simp
                 )
             });
     let outcome_substrate = drain_consumes_outcome_goals
@@ -3641,8 +3642,14 @@ pub(super) fn finish_ordered_proof_replay(
                                     };
                                     if direct_supported && !direct_claims.is_empty() {
                                         let transition_facts = path.execution_facts();
-                                        let mut direct_proof =
-                                            Proof::for_point_frontier_with_premise_anchor(
+                                        // The evolving outcome proof supplies
+                                        // the grouped obligation root when the
+                                        // path derived a goal; its point data
+                                        // carries the statement-entry anchor.
+                                        let mut direct_proof = match outcome_proof.as_ref() {
+                                            Some(evolving) => evolving
+                                                .with_drained_outcome_facts(&path_requirements)?,
+                                            None => Proof::for_point_frontier_with_premise_anchor(
                                                 &proof_label,
                                                 *tactic_index,
                                                 &path_requirements,
@@ -3662,7 +3669,13 @@ pub(super) fn finish_ordered_proof_replay(
                                                 theorem_environment,
                                                 &unfolded_predicates,
                                                 &transition_facts,
-                                            );
+                                            ),
+                                        };
+                                        // The grouped closure exports only
+                                        // work after this checkpoint; earlier
+                                        // drained tactics on an evolving root
+                                        // are recorded by their own tactics.
+                                        let direct_base = direct_proof.checkpoint();
                                         let mut direct_available = path_requirements.clone();
                                         let mut selected = true;
                                         for (_, surface_goal) in &direct_claims {
@@ -3758,7 +3771,10 @@ pub(super) fn finish_ordered_proof_replay(
                                                 .map(|(_, goal)| goal.clone())
                                                 .collect::<Vec<_>>();
                                             let certificate = direct_proof
-                                                .complete_point_obligations(&surface_goals)?;
+                                                .complete_point_obligations_since(
+                                                    &direct_base,
+                                                    &surface_goals,
+                                                )?;
                                             if replay.grouped_contract {
                                                 for (claim_index, _) in direct_claims {
                                                     closures[claim_index] =
