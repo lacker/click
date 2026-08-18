@@ -2851,6 +2851,17 @@ certificate comes from a checkpoint. An unfocused function-exit proof still
 returns no candidate, preserving the ordered-finalization seam for paths
 that derived no goals.
 
+### Progress (2026-08-18: smart transport searches on the outcome goal)
+
+Bare post-execution `transport` is the fifth drained tactic kind on the
+evolving outcome proof. Candidate gathering stays drain-side — it reads the
+legacy working set and replay indexes — but every candidate now advances the
+outcome-focused proof through the same transactional search used by point
+proofs, whose accepted step records its lowerings on the goal atomically.
+The search guard recognizes a focused outcome goal as result-aware; the
+derivation gate admits all transports. Every post-execution transport and
+theorem application in the corpus now runs on typed outcome goals.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

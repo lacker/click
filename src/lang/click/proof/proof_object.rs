@@ -5606,8 +5606,12 @@ impl<'a> Proof<'a> {
         target: &ClickProposition,
         candidates: impl IntoIterator<Item = ClickProposition>,
     ) -> Result<Self, ClickError> {
-        if !matches!(self.context.as_ref(), ProofContext::Point(_)) {
-            return Err(self.step_error("fact-transport search requires a point proof"));
+        let result_aware = matches!(self.context.as_ref(), ProofContext::Point(_))
+            || matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_)));
+        if !result_aware {
+            return Err(self.step_error(
+                "fact-transport search requires a point proof or a focused outcome goal",
+            ));
         }
         self.search_fact_transport_from_candidates(
             source,
