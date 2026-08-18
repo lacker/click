@@ -54,8 +54,16 @@ pub(super) struct ProofCheckpoint<'a> {
 #[derive(Clone)]
 pub(super) struct ProofBranches<'a> {
     root: Proof<'a>,
-    root_checkpoint: ProofCheckpoint<'a>,
     structure: ProofBranchStructure,
+    /// The recorded split: allocated with the labeled child goal ids below
+    /// when the branches were created, in rule order.
+    split: SplitId,
+    /// Each arm's recorded child goal id, then-arm before else-arm.
+    child_goals: [GoalId; 2],
+    /// Each arm's unique entry provenance marker. The join accepts only
+    /// descendants that pass through their own arm's exact marker, so an arm
+    /// checked under another split of the same root cannot be spliced in.
+    entries: [ProofCheckpoint<'a>; 2],
     arms: [Proof<'a>; 2],
 }
 
@@ -569,6 +577,16 @@ struct ProofState {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct GoalId(u64);
 
+/// Identity of one audited split within a proof lineage.
+///
+/// A split allocates this id and its labeled child goal ids together, in rule
+/// order, from the same lineage counter as ordinary goals. The recorded split
+/// structure — not id magnitude — is what joins verify: each arm additionally
+/// receives a unique entry provenance marker, so a checked descendant of one
+/// split instance cannot be joined by another.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct SplitId(u64);
+
 /// The persistent typed goal collection owned by one `ProofState`, paired
 /// with its lineage-local id allocator.
 ///
@@ -628,6 +646,28 @@ impl ProofGoals {
             open: self.open.without_key(&id),
             next_id: self.next_id,
         }
+    }
+
+    /// Allocates the labeled child goal collections of an audited split in
+    /// rule order (for a branch: then before else).
+    ///
+    /// Each child owns the parent obligation's content under a fresh recorded
+    /// id. The parent proof's own goal collection is untouched: its id is
+    /// retired only when the join commits, so dropping the split leaves the
+    /// root the unchanged authority. Divergent splits of one root allocate
+    /// numerically colliding ids — identity across splits is carried by each
+    /// arm's entry provenance marker, never by id magnitude (identity rule 3).
+    fn branch_children<const ARMS: usize>(&self) -> (SplitId, [GoalId; ARMS], [Self; ARMS]) {
+        let Some((_, goal)) = self.sole() else {
+            unreachable!("an audited split requires an open goal");
+        };
+        let split = SplitId(self.next_id);
+        let ids: [GoalId; ARMS] = std::array::from_fn(|arm| GoalId(self.next_id + 1 + arm as u64));
+        let children: [Self; ARMS] = std::array::from_fn(|arm| Self {
+            open: PersistentMap::default().with_inserted(ids[arm], goal.clone()),
+            next_id: self.next_id + 1 + ARMS as u64,
+        });
+        (split, ids, children)
     }
 
     /// Discharges the focused goal when `complete` holds; otherwise the open
@@ -1354,7 +1394,9 @@ impl<'a> Proof<'a> {
         self.state.goals.sole().map(|(_, goal)| goal)
     }
 
-    #[cfg(test)]
+    /// The identity of the unique open goal, if one remains. Joins compare
+    /// this against their recorded child goal ids; comparisons are only
+    /// meaningful within one lineage or recorded split (identity rule 3).
     fn sole_goal_id(&self) -> Option<GoalId> {
         self.state.goals.sole().map(|(id, _)| id)
     }
@@ -2353,12 +2395,19 @@ impl<'a> Proof<'a> {
         let Proposition::Or(left, right) = kernel else {
             return Err(self.step_error(format!("`cases` requires a disjunction, got {kernel:?}")));
         };
-        let root_checkpoint = self.checkpoint();
+        let (split, child_goals, [left_goals, right_goals]) =
+            self.state.goals.branch_children::<2>();
+        let arms = [
+            self.branch_arm(*left, left_goals),
+            self.branch_arm(*right, right_goals),
+        ];
         Ok(ProofBranches {
             root: self.clone(),
-            root_checkpoint,
             structure: ProofBranchStructure::Cases { disjunction },
-            arms: [self.with_branch_fact(*left), self.with_branch_fact(*right)],
+            split,
+            child_goals,
+            entries: [arms[0].checkpoint(), arms[1].checkpoint()],
+            arms,
         })
     }
 
@@ -2376,15 +2425,19 @@ impl<'a> Proof<'a> {
         let then_fact = self.lower_surface_proposition(&condition, "proof `if` condition")?;
         let else_surface = ClickProposition::Not(Box::new(condition.clone()));
         let else_fact = self.lower_surface_proposition(&else_surface, "proof `if` negation")?;
-        let root_checkpoint = self.checkpoint();
+        let (split, child_goals, [then_goals, else_goals]) =
+            self.state.goals.branch_children::<2>();
+        let arms = [
+            self.branch_arm(then_fact, then_goals),
+            self.branch_arm(else_fact, else_goals),
+        ];
         Ok(ProofBranches {
             root: self.clone(),
-            root_checkpoint,
             structure: ProofBranchStructure::If { condition },
-            arms: [
-                self.with_branch_fact(then_fact),
-                self.with_branch_fact(else_fact),
-            ],
+            split,
+            child_goals,
+            entries: [arms[0].checkpoint(), arms[1].checkpoint()],
+            arms,
         })
     }
 
@@ -3030,7 +3083,12 @@ impl<'a> Proof<'a> {
         Ok(ProofCertificate::from_steps(steps))
     }
 
-    fn with_branch_fact(&self, fact: Proposition) -> Self {
+    /// Creates one labeled arm of an audited split: the arm receives its
+    /// branch-local fact, its recorded child goal collection, and a fresh
+    /// entry marker in provenance. The marker carries no step — arm
+    /// certificates still contain only their checked body — but its exact
+    /// `Arc` identity records which split instance owns the arm.
+    fn branch_arm(&self, fact: Proposition, goals: ProofGoals) -> Self {
         let mut facts = self.state.facts.clone();
         facts = facts.with_fact(fact.clone());
         Self {
@@ -3039,14 +3097,17 @@ impl<'a> Proof<'a> {
                 facts,
                 locals: self.state.locals.clone(),
                 unfolded_predicates: self.state.unfolded_predicates.clone(),
-                goals: self.state.goals.clone(),
+                goals,
                 added_facts: Arc::new(vec![fact.clone()]),
                 checked_facts: Arc::new(vec![fact]),
                 execution: None,
             }),
-            // The structural step is retained once at join. Arm certificates
-            // begin after the shared root and contain only their checked body.
-            node: self.node.clone(),
+            // The structural step is retained once at join.
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: None,
+                depth: self.node.depth,
+            }),
         }
     }
 
@@ -6438,15 +6499,44 @@ impl<'a> ProofBranches<'a> {
     /// Joins two completed arms and records their retained bodies as one
     /// structured simple step on the shared root.
     pub(super) fn join(self) -> Result<Proof<'a>, ClickError> {
-        for (name, arm) in [("left", &self.arms[0]), ("right", &self.arms[1])] {
+        for (index, (name, arm)) in [("left", &self.arms[0]), ("right", &self.arms[1])]
+            .into_iter()
+            .enumerate()
+        {
             if !arm.is_complete() {
                 return Err(self
                     .root
                     .step_error(format!("cannot join `cases`: {name} arm is incomplete")));
             }
+            // A still-open foreign arm is already rejected as incomplete; a
+            // completed arm must additionally descend through this arm's own
+            // recorded entry marker, so a proof checked under another split
+            // of the same root cannot be spliced into this join.
+            if let Some(open) = arm.sole_goal_id()
+                && open != self.child_goals[index]
+            {
+                return Err(self.root.step_error(format!(
+                    "cannot join `cases`: {name} arm owns goal {open:?}, not the goal recorded by split {:?}",
+                    self.split
+                )));
+            }
         }
-        let left_proof = self.arms[0].certificate_since(&self.root_checkpoint)?;
-        let right_proof = self.arms[1].certificate_since(&self.root_checkpoint)?;
+        let left_proof = self.arms[0]
+            .certificate_since(&self.entries[0])
+            .map_err(|error| {
+                self.root.step_error(format!(
+                    "cannot join `cases`: left arm did not derive from split {:?} ({error:?})",
+                    self.split
+                ))
+            })?;
+        let right_proof = self.arms[1]
+            .certificate_since(&self.entries[1])
+            .map_err(|error| {
+                self.root.step_error(format!(
+                    "cannot join `cases`: right arm did not derive from split {:?} ({error:?})",
+                    self.split
+                ))
+            })?;
         let step = match self.structure {
             ProofBranchStructure::Cases { disjunction } => SimpleProofStep::Cases {
                 disjunction,
@@ -9862,6 +9952,95 @@ mod tests {
             sequence.certificate().steps(),
             &[SimpleProofStep::Intro, SimpleProofStep::Assumption]
         );
+    }
+
+    #[test]
+    fn branch_split_records_children_and_rejects_a_foreign_arm() {
+        let equality = |value| ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(value))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(value))),
+        };
+        let disjunction = ClickProposition::Or(Box::new(equality(0)), Box::new(equality(1)));
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let theorem_context = pure_identity_fixture();
+        let kernel_disjunction = lower_pure_theorem_proposition(
+            "split identity",
+            &disjunction,
+            &theorem_context.values,
+            &theorem_context.array_refs,
+            &theorem_context.memory,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("constant disjunction should lower");
+        let root = Proof::for_pure_goal(
+            "split identity",
+            std::slice::from_ref(&kernel_disjunction),
+            kernel_disjunction.clone(),
+            &theorem_context,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        );
+
+        // The split allocates its id and both labeled child goal ids in rule
+        // order, deterministically, without touching the root's collection.
+        let root_next = root.state.goals.next_id;
+        let root_goal_id = root.sole_goal_id().expect("the root owns its goal");
+        let branches = root
+            .begin_cases(disjunction.clone())
+            .expect("the exact disjunction is available");
+        assert_eq!(branches.split, SplitId(root_next));
+        assert_eq!(
+            branches.child_goals,
+            [GoalId(root_next + 1), GoalId(root_next + 2)]
+        );
+        assert_eq!(root.sole_goal_id(), Some(root_goal_id));
+        assert_eq!(root.state.goals.next_id, root_next);
+        for (arm, expected) in branches.arms.iter().zip(branches.child_goals) {
+            assert_eq!(arm.sole_goal_id(), Some(expected));
+        }
+
+        // A second split of the same root is a divergent allocation: its
+        // numeric ids collide, but its entry markers are distinct. An arm
+        // checked under the second split must be rejected by the first
+        // split's join even after both of the first split's own arms would
+        // have joined successfully.
+        let foreign = root
+            .begin_cases(disjunction)
+            .expect("the same disjunction splits again");
+        assert_eq!(foreign.child_goals, branches.child_goals);
+        fn close_arm<'a>(arm: &Proof<'a>) -> Proof<'a> {
+            arm.try_direct_logical_closure()
+                .expect("arm closure must not hit a deadline")
+                .expect("each disjunct arm closes its goal directly")
+        }
+        let mut spliced = branches.clone();
+        spliced.arms[0] = close_arm(&foreign.arms[0]);
+        spliced.arms[1] = close_arm(&branches.arms[1]);
+        let error = spliced
+            .join()
+            .err()
+            .expect("a foreign arm must not satisfy this split's join");
+        assert!(
+            error.message().contains("did not derive from split"),
+            "{error:?}"
+        );
+        assert!(root.certificate().steps().is_empty());
+
+        // The legitimate arms still join, retaining only the accepted path.
+        let mut branches = branches;
+        branches.arms[0] = close_arm(&branches.arms[0]);
+        branches.arms[1] = close_arm(&branches.arms[1]);
+        let joined = branches.join().expect("both recorded arms are complete");
+        assert!(joined.is_complete());
+        assert!(matches!(
+            joined.certificate().steps(),
+            [SimpleProofStep::Cases { .. }]
+        ));
     }
 
     #[test]

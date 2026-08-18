@@ -2587,6 +2587,21 @@ accepted path retained; budget exhaustion attempts exactly the admitted
 candidates; and the same rejected candidate is a miss without a deadline but
 a loud abort with one exceeded.
 
+### Progress (2026-08-18: recorded split identity for proposition branches)
+
+`begin_cases` and proof `if` now allocate a `SplitId` and their labeled child
+goal ids together, in rule order, from the root's lineage counter, and each
+arm receives its recorded child goal under a fresh entry provenance marker.
+The root proof's own collection is untouched until the join commits, so a
+dropped split leaves the root the unchanged authority. `join` extracts each
+arm's certificate through that arm's exact entry marker: an arm checked under
+a different split of the same root — whose numeric ids collide by identity
+rule 3 — is rejected transactionally instead of being spliced into the
+structured step. A regression pins deterministic rule-order allocation, root
+isolation, foreign-arm rejection, and the legitimate join's retained
+certificate. The execution branch containers still join through the shared
+root checkpoint and migrate onto recorded split identity next.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
