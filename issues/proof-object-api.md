@@ -1459,6 +1459,12 @@ Premise-free smart `frame()` now inspects the typed goal, selects an empty
 `FrameUsing`, and submits that candidate directly to this operation. This
 covers immutable effects and mutable footprints that check exactly from their
 declared shape without any pure fact. For a single unpartitioned execution
+context, explicitly qualified `frame(function)` now takes the same path. A
+failed checked candidate restores the untouched execution frontier before
+falling back, so unsupported qualified regions retain their prior diagnostics.
+The source regression observes neither ordinary certificate replay nor the
+legacy exact-effect recheck and independently verifies the expanded
+`FrameUsing` step. For a single unpartitioned execution
 context, mutable smart frames that need facts reuse contextual footprint
 planning only to select a simple candidate, then apply its explicit `Have`
 and `FrameUsing` steps once through the owned Proof. Branch-shaped candidates

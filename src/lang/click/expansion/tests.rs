@@ -1867,10 +1867,20 @@ fn expands_qualified_frame_tactic() {
 int32 set_cell(int32 p[], int32 value) {
     owns p[0..1] by auto;
     mutable p[0..1] by { execute(); frame(function); }
-}
+    }
 "#;
     let sources = [("set_cell.c", c_source)];
-    verify_c0_sources(click_source, &sources).expect("qualified frame baseline should verify");
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("qualified frame baseline should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+        )),
+        "the qualified smart frame must apply its selected simple step once through Proof: {events:#?}"
+    );
     let selected_offset = click_source
         .find("frame(function)")
         .expect("qualified frame should exist");
