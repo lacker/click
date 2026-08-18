@@ -1993,27 +1993,42 @@ pub(super) fn finish_ordered_proof_replay(
                                     )));
                                 };
                                 let requirements_before = path_requirements.clone();
-                                let proof = Proof::for_point_frontier(
-                                    &proof_label,
-                                    *tactic_index,
-                                    &path_requirements,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    post_state,
-                                    Some(result),
-                                    &replay.program_point_states,
-                                    &outcome_surface_propositions,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    theorem_environment,
-                                    &unfolded_predicates,
-                                    &replay.effect_facts,
-                                );
-                                let proof = proof.apply_theorem_application(application)?;
-                                let added_facts = proof.added_facts().to_vec();
-                                let certificate = proof.certificate();
-                                drop(proof);
+                                let (added_facts, certificate) =
+                                    if let Some(evolving) = outcome_proof.take() {
+                                        // The migrated smart case: selection reads
+                                        // the goal-aware view and the accepted
+                                        // application advances this path's
+                                        // evolving outcome proof.
+                                        let resynced = evolving
+                                            .with_drained_outcome_facts(&path_requirements)?;
+                                        let before = resynced.checkpoint();
+                                        let applied =
+                                            resynced.apply_theorem_application(application)?;
+                                        let added_facts = applied.added_facts().to_vec();
+                                        let certificate = applied.certificate_since(&before)?;
+                                        outcome_proof = Some(applied);
+                                        (added_facts, certificate)
+                                    } else {
+                                        let proof = Proof::for_point_frontier(
+                                            &proof_label,
+                                            *tactic_index,
+                                            &path_requirements,
+                                            parsed_function.parameters(),
+                                            arguments,
+                                            pre_state,
+                                            post_state,
+                                            Some(result),
+                                            &replay.program_point_states,
+                                            &outcome_surface_propositions,
+                                            predicate_environment,
+                                            click_function_environment,
+                                            theorem_environment,
+                                            &unfolded_predicates,
+                                            &replay.effect_facts,
+                                        );
+                                        let proof = proof.apply_theorem_application(application)?;
+                                        (proof.added_facts().to_vec(), proof.certificate())
+                                    };
                                 for fact in added_facts {
                                     if !path_requirements.contains(&fact) {
                                         path_requirements.push(fact);

@@ -2838,6 +2838,19 @@ flattening the two. Smart `apply` (the selection query) remains legacy until
 `select_theorem_application_step_at_point` reads the view; the derivation
 gate admits explicit applications.
 
+### Progress (2026-08-18: smart apply selects on the outcome goal)
+
+The theorem-selection seam that previously refused function-exit execution
+proofs — "until outcome proposition goals themselves migrate into Proof" —
+now recognizes a focused function-outcome goal as exactly one
+result-sensitive point context and runs the shared indexed selection against
+the goal-aware view. Bare post-execution `apply` is the fourth drained
+tactic kind on the evolving outcome proof: selection reads the view, the
+accepted application advances the path's lineage, and the per-tactic
+certificate comes from a checkpoint. An unfocused function-exit proof still
+returns no candidate, preserving the ordered-finalization seam for paths
+that derived no goals.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

@@ -5831,12 +5831,34 @@ impl<'a> Proof<'a> {
         match self.context.as_ref() {
             ProofContext::Pure(_) => self.select_pure_theorem_application_step(application),
             ProofContext::Point(_) => self.select_point_theorem_application_step(application),
+            // A focused function-outcome goal is one result-sensitive point
+            // context: selection reads the goal-aware view directly.
+            ProofContext::Execution(_)
+                if matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_))) =>
+            {
+                let view = self
+                    .outcome_point_view_with_effects(OutcomeEffectContext::Replay)
+                    .expect("a focused outcome goal resolves its point view");
+                self.select_theorem_application_step_at_point(
+                    application,
+                    view.parameters,
+                    view.arguments,
+                    view.pre_state,
+                    view.state,
+                    view.result,
+                    view.program_point_states,
+                    view.surface_propositions,
+                    view.predicate_environment,
+                    view.click_function_environment,
+                    view.theorem_environment,
+                )
+            }
             ProofContext::Execution(_) if !self.is_at_function_exit() => {
                 self.select_execution_theorem_application_step(application)
             }
-            // A function-exit execution Proof owns several result-sensitive
-            // point contexts. Ordered finalization keeps that distinct seam
-            // until outcome proposition goals themselves migrate into Proof.
+            // A function-exit execution Proof not focused on one outcome
+            // still owns several result-sensitive point contexts; ordered
+            // finalization keeps that seam until its paths derive goals.
             ProofContext::Execution(_) => return Ok(None),
         }
         .map(Some)
