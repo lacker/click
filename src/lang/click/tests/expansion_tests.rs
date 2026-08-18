@@ -6428,6 +6428,87 @@ fn incremented_strict_lower_bound_retains_its_theorem_path() {
 }
 
 #[test]
+fn post_execution_have_anchors_strict_increment_theorem_premises() {
+    let c_source = r#"
+        int32 select_and_increment_positive_have(int32 flag) {
+            int32 selected;
+            if (flag != 0) {
+                selected = 1;
+            } else {
+                selected = 2;
+            }
+            selected = selected + 1;
+            return selected;
+        }
+    "#;
+    let click_source = r#"
+        verifying "select_and_increment_positive_have.c";
+
+        int32 select_and_increment_positive_have(int32 flag) {
+            immutable;
+            ensures result > 0;
+        } by {
+            step();
+            branch {
+                ensuring {
+                    fact selected > 0;
+                    fact selected < 2147483647;
+                }
+                then { step(); }
+                else { step(); }
+            }
+            execute();
+            frame();
+            have result > 0 by simp;
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(
+            click_source,
+            &[("select_and_increment_positive_have.c", c_source)],
+        )
+    });
+    verified.expect("the post-execution have should retain its composed Proof path");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "select_and_increment_positive_have.contract"
+                    && name == "surface certificate replay"
+        )),
+        "the smart have must not reconstruct and replay its theorem path: {events:#?}"
+    );
+
+    let have_offset = click_source
+        .find("have result > 0")
+        .expect("proof should contain the selected have");
+    let position = expansion::position_at_offset(click_source, have_offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("select_and_increment_positive_have.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the retained strict-positive have should expand");
+    assert!(!expanded.contains("have result > 0 by simp"), "{expanded}");
+    assert!(
+        expanded.contains("apply(int32_lt_implies_le("),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("apply(int32_increment_strict_greater_lower_bound("),
+        "{expanded}"
+    );
+    verify_c0_sources(
+        &expanded,
+        &[("select_and_increment_positive_have.c", c_source)],
+    )
+    .expect("the expanded strict-positive have should independently reverify");
+}
+
+#[test]
 fn branch_arms_retain_bare_fact_transports_on_proof() {
     let c_source = r#"
         int32 set_choice_return_first(int32 p[2], int32 flag) {

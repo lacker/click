@@ -475,6 +475,10 @@ the Surface index remembers its old kernel meaning. This lookup remains
 output-sensitive in the selected fact's spelling bucket rather than scanning
 ambient facts.
 
+The same anchored selection is shared by a post-execution smart `have`, not
+only the final claim closer. Its two applications advance the nested Proof
+directly, and expansion independently checks the retained `have` certificate.
+
 The shared point and restricted-pure regression holds this two-application
 path fixed across 16, 64, 256, 1024, and 4096 unrelated facts. It pins
 logarithmic persistent allocation, ancestor isolation, and transactional

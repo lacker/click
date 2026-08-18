@@ -2066,6 +2066,10 @@ pub(super) fn finish_ordered_proof_replay(
                                             pre_state,
                                             post_state,
                                             Some(result),
+                                            replay
+                                                .proof_certificate_builder
+                                                .last_step_entry
+                                                .as_ref(),
                                             &replay,
                                             &outcome_surface_propositions,
                                             predicate_environment,

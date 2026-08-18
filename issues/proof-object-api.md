@@ -1933,6 +1933,11 @@ small spelling bucket, and the expanded `at(...)` applications independently
 reverify. A 16-through-4096 unrelated-fact curve covers the same two-step
 path for point and restricted-pure Proofs.
 
+Post-execution smart `have` now receives that same selected premise anchor.
+It retains the nested two-application Proof directly instead of falling back
+to the legacy construct-then-replay path when its exact facts name a local
+that has left scope.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
