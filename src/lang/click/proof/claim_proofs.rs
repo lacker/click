@@ -1057,7 +1057,13 @@ pub(super) fn finish_ordered_proof_replay(
                 click_function_environment,
                 theorem_environment,
             )
-            .focus_function_outcomes()
+            .focus_function_outcomes(Arc::new(
+                context.pure_facts[..function_block
+                    .requires()
+                    .len()
+                    .min(context.pure_facts.len())]
+                    .to_vec(),
+            ))
             .ok()
         })
         .flatten();
@@ -2194,30 +2200,7 @@ pub(super) fn finish_ordered_proof_replay(
                                 // scope drivers, and a miss restores the
                                 // untouched evolving proof for the legacy
                                 // checker.
-                                fn script_contains_choose(tactics: &[ProofTactic]) -> bool {
-                                    tactics.iter().any(|tactic| match tactic {
-                                        ProofTactic::Choose(_) => true,
-                                        ProofTactic::Have(nested) => match &nested.proof {
-                                            SourceProof::Script(body) => {
-                                                script_contains_choose(body)
-                                            }
-                                            _ => false,
-                                        },
-                                        _ => false,
-                                    })
-                                }
-                                // `choose` reads the function requirement
-                                // tables, which the outcome view does not
-                                // carry yet; such bodies stay legacy.
-                                let body_supported = match &have.proof {
-                                    SourceProof::Script(tactics) => {
-                                        !script_contains_choose(tactics)
-                                    }
-                                    _ => true,
-                                };
-                                let evolving_have = if let Some(evolving) =
-                                    body_supported.then(|| outcome_proof.take()).flatten()
-                                {
+                                let evolving_have = if let Some(evolving) = outcome_proof.take() {
                                     let attempt = (|| -> Result<
                                         Option<(Proof<'_>, Proposition, ProofCertificate)>,
                                         ClickError,
@@ -3646,10 +3629,19 @@ pub(super) fn finish_ordered_proof_replay(
                                         // the grouped obligation root when the
                                         // path derived a goal; its point data
                                         // carries the statement-entry anchor.
-                                        let mut direct_proof = match outcome_proof.as_ref() {
-                                            Some(evolving) => evolving
+                                        // Existence closures stay on the
+                                        // legacy root: the goal-aware
+                                        // `choose` checker exists, but the
+                                        // expanded-certificate replay of
+                                        // such closures still diverges (see
+                                        // the uint8 expansion regression).
+                                        let mut direct_proof = match (
+                                            existence_candidate.is_none(),
+                                            outcome_proof.as_ref(),
+                                        ) {
+                                            (true, Some(evolving)) => evolving
                                                 .with_drained_outcome_facts(&path_requirements)?,
-                                            None => Proof::for_point_frontier_with_premise_anchor(
+                                            _ => Proof::for_point_frontier_with_premise_anchor(
                                                 &proof_label,
                                                 *tactic_index,
                                                 &path_requirements,

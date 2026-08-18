@@ -2929,6 +2929,28 @@ distinguishes the two. The obligation-completion guard accepts outcome
 frontiers. Remaining drained kinds: the existence tactics, `fold`, and the
 frame family; then case routing and the deletion slice.
 
+### Progress (2026-08-18: `choose` reads the outcome view)
+
+The goal-aware point view now carries the function requirement sources:
+declared requirements and label indices resolve from the execution context's
+function block, and the lowered requirement facts travel as a raw indexed
+prefix on `OutcomePointData` — `choose` selects its source by requirement
+index, which persistent deduplication would misalign, and path preparation
+unfolds requirement entries in place, so the resync adapter refreshes the
+prefix from the live working set. `choose` and `witness` both run through
+the view, and `have` bodies containing them advance the evolving outcome
+proof like any other body.
+
+One boundary holds: the top-level existence-closure flow (grouped `simp`
+applying a `choose`/`witness` candidate certificate inside obligation
+scopes) stays on the legacy root. Before this chunk it fell back gracefully
+because `choose` rejected outcome contexts; with the view it proceeds, and
+its expanded certificate then diverges under the claim-script replay — the
+uint8 expansion regression is the exact reproduction. The flow is contained
+by an explicit existence-candidate check rather than by the removed error,
+and lifting it requires expansion parity for goal-checked existence
+closures.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

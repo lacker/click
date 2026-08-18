@@ -862,6 +862,9 @@ struct PointOperationView<'p> {
     predicate_environment: &'p PredicateEnvironment,
     click_function_environment: &'p ClickFunctionEnvironment,
     theorem_environment: &'p TheoremEnvironment,
+    original_requirements: &'p [Requirement],
+    requirement_label_indices: Option<&'p BTreeMap<String, usize>>,
+    requirement_facts: &'p [Proposition],
 }
 
 impl<'p> PointOperationView<'p> {
@@ -880,6 +883,9 @@ impl<'p> PointOperationView<'p> {
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
             theorem_environment: context.theorem_environment,
+            original_requirements: context.original_requirements,
+            requirement_label_indices: context.requirement_label_indices,
+            requirement_facts: context.requirement_facts,
         }
     }
 }
@@ -916,6 +922,11 @@ struct OutcomePointData {
     /// The statement-entry anchor for premises naming a C local after it
     /// left scope, captured from the frontier at derivation.
     premise_anchor: Option<ProgramPointRef>,
+    /// The lowered function-requirement facts in declaration order, captured
+    /// as the raw prefix of the drain's working set at derivation: `choose`
+    /// selects its source by requirement index, which persistent
+    /// deduplication would misalign.
+    requirement_facts: Arc<Vec<Proposition>>,
 }
 
 /// The path-local semantic context owned by one goal.
@@ -5428,10 +5439,25 @@ impl<'a> Proof<'a> {
         &self,
         facts: &[Proposition],
     ) -> Result<Self, ClickError> {
-        let Some(Goal::FunctionOutcome(_)) = self.focused_goal() else {
+        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
             return Err(self.step_error("the drain adapter requires a focused outcome goal"));
         };
+        // The requirement-fact prefix must track the drain's live working
+        // set: path preparation unfolds predicate requirements in place, so
+        // an index-selected `choose` source reflects the current unfolding,
+        // exactly as the legacy per-tactic roots saw it.
+        let requires = match self.context.as_ref() {
+            ProofContext::Execution(context) => context.function_block.requires().len(),
+            _ => 0,
+        };
+        let mut point = (*goal.point).clone();
+        point.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
+        let mut updated = goal.clone();
+        updated.point = Arc::new(point);
         let mut state = (*self.state).clone();
+        state.goals = state
+            .goals
+            .replace_at(self.focused, Goal::FunctionOutcome(updated));
         state.goals = state
             .goals
             .with_facts_at(self.focused, ProofFacts::from_ordered(facts));
@@ -5469,7 +5495,10 @@ impl<'a> Proof<'a> {
     /// returned handle addresses the first outcome goal; `focus` reaches its
     /// siblings. Result and effect continuations consume these goals
     /// directly rather than converting through the legacy replay adapter.
-    pub(super) fn focus_function_outcomes(&self) -> Result<(Self, Vec<GoalId>), ClickError> {
+    pub(super) fn focus_function_outcomes(
+        &self,
+        requirement_facts: Arc<Vec<Proposition>>,
+    ) -> Result<(Self, Vec<GoalId>), ClickError> {
         let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
             return Err(self.step_error("outcome goals require an open execution frontier"));
         };
@@ -5530,6 +5559,7 @@ impl<'a> Proof<'a> {
                             surface_propositions: frontier_surface.clone(),
                             effect_facts: Arc::new(path.execution_facts()),
                             premise_anchor: frontier_anchor.clone(),
+                            requirement_facts: requirement_facts.clone(),
                         }),
                         context: GoalContext {
                             facts,
@@ -6519,12 +6549,18 @@ impl<'a> Proof<'a> {
     }
 
     fn apply_point_choose(&self, choice: &ProofChoice) -> Result<ProofState, ClickError> {
-        let ProofContext::Point(context) = self.context.as_ref() else {
-            return Err(self.step_error("`choose` requires a point proposition proof"));
+        let view = match self.context.as_ref() {
+            ProofContext::Point(context) => PointOperationView::from_point(context),
+            // A choice on a judgment stated at a function outcome selects
+            // its requirement source through the outcome view.
+            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => self
+                .outcome_point_view()
+                .expect("a focused outcome judgment resolves its point view"),
+            _ => return Err(self.step_error("`choose` requires a point proposition proof")),
         };
         self.proposition_goal("`choose` requires a proposition goal")?;
         if choice.name == "result"
-            || context.state.locals().contains_name(&choice.name)
+            || view.state.locals().contains_name(&choice.name)
             || self.state.locals.values.contains_key(&choice.name)
         {
             return Err(self.step_error(format!("`{}` is already in scope", choice.name)));
@@ -6532,21 +6568,21 @@ impl<'a> Proof<'a> {
 
         let source_index = match &choice.source {
             ProofFactSource::Requirement(index) => {
-                if *index >= context.original_requirements.len() {
+                if *index >= view.original_requirements.len() {
                     return Err(self.step_error(format!(
                         "requirement {index} is out of range; function has {} requirement(s)",
-                        context.original_requirements.len()
+                        view.original_requirements.len()
                     )));
                 }
                 *index
             }
-            ProofFactSource::RequirementLabel(label) => context
+            ProofFactSource::RequirementLabel(label) => view
                 .requirement_label_indices
                 .and_then(|indices| indices.get(label))
                 .copied()
                 .ok_or_else(|| self.step_error(format!("unknown requirement label `{label}`")))?,
         };
-        let mut source = context
+        let mut source = view
             .requirement_facts
             .get(source_index)
             .cloned()
@@ -6556,8 +6592,8 @@ impl<'a> Proof<'a> {
         let unfolded_predicates = self.active_unfolded_predicates();
         if !matches!(source, Proposition::Exists { .. }) && !unfolded_predicates.is_empty() {
             source = unfold_predicates_in_proposition(
-                context.predicate_environment,
-                context.click_function_environment,
+                view.predicate_environment,
+                view.click_function_environment,
                 &unfolded_predicates,
                 &source,
                 self.facts().assumptions(),
@@ -6986,6 +7022,9 @@ impl<'a> Proof<'a> {
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
             theorem_environment: context.theorem_environment,
+            original_requirements: context.function_block.requires(),
+            requirement_label_indices: Some(context.function_block.requirement_label_indices()),
+            requirement_facts: point.requirement_facts.as_ref(),
         })
     }
 
@@ -13673,7 +13712,7 @@ mod tests {
             // snapshot by identity. The ancestor keeps its single frontier.
             let before_outcomes = fact_node_allocations();
             let (outcomes, outcome_ids) = framed
-                .focus_function_outcomes()
+                .focus_function_outcomes(Arc::new(Vec::new()))
                 .expect("the framed terminal execution should expose typed outcome goals");
             outcome_samples.push((
                 size,
@@ -13706,7 +13745,9 @@ mod tests {
                 ));
             }
             assert!(
-                outcomes.focus_function_outcomes().is_err(),
+                outcomes
+                    .focus_function_outcomes(Arc::new(Vec::new()))
+                    .is_err(),
                 "an outcome goal is not a frontier and cannot derive again"
             );
         }
