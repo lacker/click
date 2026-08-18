@@ -680,6 +680,35 @@ impl ProofGoals {
         (split, ids, children)
     }
 
+    /// Replaces the addressed goal with labeled sibling goals in this same
+    /// collection, in rule order: the parent id is retired by the split and
+    /// each arm owns its recorded fresh id (identity rule 1). Unlike
+    /// [`Self::branch_children`], the siblings coexist in one state.
+    fn split_at<const ARMS: usize>(
+        &self,
+        at: GoalId,
+        arms: [Goal; ARMS],
+    ) -> (SplitId, [GoalId; ARMS], Self) {
+        debug_assert!(
+            self.open.contains_key(&at),
+            "an audited split requires the addressed open goal"
+        );
+        let split = SplitId(self.next_id);
+        let ids: [GoalId; ARMS] = std::array::from_fn(|arm| GoalId(self.next_id + 1 + arm as u64));
+        let mut open = self.open.without_key(&at);
+        for (id, goal) in ids.iter().zip(arms) {
+            open = open.with_inserted(*id, goal);
+        }
+        (
+            split,
+            ids,
+            Self {
+                open,
+                next_id: self.next_id + 1 + ARMS as u64,
+            },
+        )
+    }
+
     /// Retains the addressed goal under an updated path-local context,
     /// preserving identity, kind, and selection/content. This is the
     /// successor shape of a fact-adding or snapshot-updating rule.
@@ -2864,6 +2893,145 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Splits the focused proposition goal into two labeled sibling case
+    /// goals inside this same proof state.
+    ///
+    /// This is the in-`Proof` form of `cases`: the parent obligation's id is
+    /// retired by the split, each arm owns the same claim under its exact
+    /// disjunct in its own path-local context, and both siblings coexist in
+    /// one goal collection — arms are proven by focusing each recorded id in
+    /// turn on one lineage. The split marker node records this split
+    /// instance; the join accepts only derivations that pass through it.
+    pub(super) fn split_focused_cases(
+        &self,
+        disjunction: ClickProposition,
+    ) -> Result<(Self, SplitId, [GoalId; 2]), ClickError> {
+        if self.state.goals.is_discharged() {
+            return Err(self.step_error("`cases` follows a completed proof"));
+        }
+        let Some(Goal::Proposition(goal)) = self.focused_goal() else {
+            return Err(self.step_error("`cases` requires a proposition goal"));
+        };
+        let kernel = self.lower_surface_proposition(&disjunction, "`cases` disjunction")?;
+        if !self.facts().contains(&kernel) {
+            return Err(self.step_error(format!(
+                "`cases` requires its exact disjunction as an available fact: {kernel:?}"
+            )));
+        }
+        let Proposition::Or(left, right) = kernel else {
+            return Err(self.step_error(format!("`cases` requires a disjunction, got {kernel:?}")));
+        };
+        let arm = |disjunct: Proposition| {
+            Goal::Proposition(PropositionGoal {
+                kernel: goal.kernel.clone(),
+                surface: goal.surface.clone(),
+                context: GoalContext {
+                    facts: goal.context.facts.with_fact(disjunct),
+                    unfolded_predicates: goal.context.unfolded_predicates.clone(),
+                    execution: goal.context.execution.clone(),
+                },
+                outcome: goal.outcome.clone(),
+            })
+        };
+        let (split, ids, goals) = self
+            .state
+            .goals
+            .split_at(self.focused, [arm(*left), arm(*right)]);
+        Ok((
+            Self {
+                context: self.context.clone(),
+                state: Arc::new(ProofState {
+                    locals: self.state.locals.clone(),
+                    goals,
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                }),
+                // The marker records the split instance in provenance; its
+                // identity is what the join verifies (identity rule 3).
+                node: Arc::new(ProofNode {
+                    parent: Some(self.node.clone()),
+                    step: None,
+                    focused: self.focused,
+                    depth: self.node.depth,
+                }),
+                focused: ids[0],
+            },
+            split,
+            ids,
+        ))
+    }
+
+    /// Joins a completed in-`Proof` case split: both recorded sibling goals
+    /// must be discharged, the derivation must pass through the split's
+    /// exact marker, and the retained certificate embeds each arm's steps
+    /// partitioned by the per-step goal attribution recorded when they were
+    /// applied — never inferred from final states.
+    pub(super) fn join_focused_cases(
+        &self,
+        marker: &ProofCheckpoint<'a>,
+        split: SplitId,
+        ids: [GoalId; 2],
+        disjunction: ClickProposition,
+    ) -> Result<Self, ClickError> {
+        for (name, id) in [("left", ids[0]), ("right", ids[1])] {
+            if self.state.goals.get(id).is_some() {
+                return Err(
+                    self.step_error(format!("cannot join `cases`: {name} arm is incomplete"))
+                );
+            }
+        }
+        let mut left_steps = Vec::new();
+        let mut right_steps = Vec::new();
+        let mut node = Some(self.node.clone());
+        loop {
+            let Some(current) = node else {
+                return Err(self.step_error(format!(
+                    "cannot join `cases`: the derivation did not pass through split {split:?}"
+                )));
+            };
+            if Arc::ptr_eq(&current, &marker.node) {
+                break;
+            }
+            if let Some(step) = &current.step {
+                if current.focused == ids[0] {
+                    left_steps.push(step.as_ref().clone());
+                } else if current.focused == ids[1] {
+                    right_steps.push(step.as_ref().clone());
+                } else {
+                    return Err(self.step_error(format!(
+                        "cannot join `cases`: a step was attributed outside split {split:?}"
+                    )));
+                }
+            }
+            node = current.parent.clone();
+        }
+        left_steps.reverse();
+        right_steps.reverse();
+        let parent = marker.node.parent.clone().ok_or_else(|| {
+            self.step_error("cannot join `cases`: the split marker lost its root")
+        })?;
+        Ok(Self {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                locals: self.state.locals.clone(),
+                goals: self.state.goals.clone(),
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+            }),
+            node: Arc::new(ProofNode {
+                parent: Some(parent.clone()),
+                step: Some(Arc::new(SimpleProofStep::Cases {
+                    disjunction,
+                    left_proof: Box::new(ProofCertificate::from_steps(left_steps)),
+                    right_proof: Box::new(ProofCertificate::from_steps(right_steps)),
+                })),
+                focused: marker.node.focused,
+                depth: parent.depth + 1,
+            }),
+            focused: marker.node.focused,
+        })
+    }
+
     /// Opens an exact disjunction into two immutable proof branches.
     ///
     /// This is a structural kernel operation, not a smart tactic: it accepts
@@ -4645,15 +4813,24 @@ impl<'a> Proof<'a> {
             let ClickProposition::Or(surface_left, surface_right) = surface else {
                 continue;
             };
-            let Ok(mut branches) = self.begin_cases(surface.clone()) else {
+            // The in-`Proof` split: both case goals coexist in one state,
+            // each arm is proven by focusing its recorded id on this one
+            // lineage, and the join partitions the retained steps by the
+            // per-step goal attribution recorded when they were applied.
+            let Ok((split_proof, split, ids)) = self.split_focused_cases(surface.clone()) else {
                 continue;
             };
+            let marker = split_proof.checkpoint();
             let branch_surfaces = [surface_left.as_ref(), surface_right.as_ref()];
+            let mut proof = split_proof;
             let mut complete = true;
-            for (index, assumed_surface) in branch_surfaces.into_iter().enumerate() {
-                let branch = &branches.arms[index];
-                let selected = branch.try_simp_closure().ok().flatten().or_else(|| {
-                    let rewritten = branch
+            for (id, assumed_surface) in ids.into_iter().zip(branch_surfaces) {
+                let Ok(focused) = proof.focus(id) else {
+                    complete = false;
+                    break;
+                };
+                let selected = focused.try_simp_closure().ok().flatten().or_else(|| {
+                    let rewritten = focused
                         .apply_step(SimpleProofStep::Rewrite(assumed_surface.clone()))
                         .ok()?;
                     rewritten
@@ -4666,9 +4843,11 @@ impl<'a> Proof<'a> {
                     complete = false;
                     break;
                 };
-                branches.arms[index] = selected;
+                proof = selected;
             }
-            if complete && let Ok(joined) = branches.join() {
+            if complete
+                && let Ok(joined) = proof.join_focused_cases(&marker, split, ids, surface.clone())
+            {
                 return Some(joined);
             }
         }
@@ -11120,6 +11299,108 @@ mod tests {
             joined.certificate().steps(),
             [SimpleProofStep::Cases { .. }]
         ));
+    }
+
+    #[test]
+    fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
+        let equality = |value| ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(value))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(value))),
+        };
+        let disjunction = ClickProposition::Or(Box::new(equality(0)), Box::new(equality(1)));
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let theorem_context = pure_identity_fixture();
+        let kernel_disjunction = lower_pure_theorem_proposition(
+            "focused cases",
+            &disjunction,
+            &theorem_context.values,
+            &theorem_context.array_refs,
+            &theorem_context.memory,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("constant disjunction should lower");
+        let root = Proof::for_pure_goal(
+            "focused cases",
+            std::slice::from_ref(&kernel_disjunction),
+            kernel_disjunction.clone(),
+            &theorem_context,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        );
+
+        // The split retires the parent id and opens both sibling goals in
+        // one state, each carrying its own disjunct in its own context.
+        let root_goal = root.sole_goal_id().expect("the root owns its goal");
+        let (split_proof, split, ids) = root
+            .split_focused_cases(disjunction.clone())
+            .expect("the exact disjunction splits in-proof");
+        assert_eq!(split_proof.goals().collect::<Vec<_>>(), ids);
+        assert!(split_proof.state.goals.get(root_goal).is_none());
+        let marker = split_proof.checkpoint();
+
+        // Arms are proven by focusing each recorded id on one lineage; the
+        // interleaved steps carry their goal attribution.
+        let left_closed = split_proof
+            .focus(ids[0])
+            .expect("the left sibling is open")
+            .apply_step(SimpleProofStep::Assumption)
+            .expect("the shared disjunction fact closes the left claim");
+        assert!(left_closed.state.goals.get(ids[1]).is_some());
+        let both_closed = left_closed
+            .focus(ids[1])
+            .expect("the right sibling is still open")
+            .apply_step(SimpleProofStep::Assumption)
+            .expect("the shared disjunction fact closes the right claim");
+        assert!(both_closed.is_complete());
+
+        // A foreign marker from a second split of the same root is rejected.
+        let (foreign_proof, foreign_split, foreign_ids) = root
+            .split_focused_cases(disjunction.clone())
+            .expect("the same disjunction splits again");
+        assert_eq!(foreign_ids, ids, "divergent splits collide numerically");
+        let foreign_marker = foreign_proof.checkpoint();
+        assert!(
+            both_closed
+                .join_focused_cases(
+                    &foreign_marker,
+                    foreign_split,
+                    foreign_ids,
+                    disjunction.clone()
+                )
+                .is_err(),
+            "a derivation cannot join through another split's marker"
+        );
+
+        // The legitimate join partitions by recorded attribution and retains
+        // one structured step whose parent is the pre-split provenance.
+        let joined = both_closed
+            .join_focused_cases(&marker, split, ids, disjunction.clone())
+            .expect("both recorded arms are discharged");
+        assert!(joined.is_complete());
+        assert!(matches!(
+            joined.certificate().steps(),
+            [SimpleProofStep::Cases {
+                left_proof,
+                right_proof,
+                ..
+            }] if left_proof.steps() == [SimpleProofStep::Assumption]
+                && right_proof.steps() == [SimpleProofStep::Assumption]
+        ));
+        assert!(root.certificate().steps().is_empty());
+        assert_eq!(root.sole_goal_id(), Some(root_goal));
+
+        // An incomplete sibling refuses the join transactionally.
+        assert!(
+            left_closed
+                .join_focused_cases(&marker, split, ids, disjunction)
+                .is_err(),
+            "an open sibling goal must refuse the join"
+        );
     }
 
     #[test]

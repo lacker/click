@@ -3010,6 +3010,28 @@ with it every result-aware drained tactic kind now runs on typed outcome
 goals; the drain's remaining legacy arms are the resource projections, the
 region-frame certifier, and the no-goal fallbacks.
 
+### Progress (2026-08-18: the first in-`Proof` sibling split)
+
+`Proof::split_focused_cases` is the in-`Proof` form of `cases`: the parent
+obligation's id is retired by the split, both sibling case goals coexist in
+one goal collection — each carrying the same claim under its exact disjunct
+in its own path-local context — and arms are proven by focusing each
+recorded id in turn on one lineage. `join_focused_cases` requires both
+recorded ids discharged, requires the derivation to pass through the
+split's exact marker (a foreign split of the same root, whose numeric ids
+collide, is rejected), and assembles the structured `Cases` step by
+partitioning the interleaved steps by the per-step goal attribution
+recorded when each was applied — the partition the focus cursor's
+provenance field was built for. Post-execution disjunction elimination is
+the first production consumer: `try_selected_disjunction_cases` runs on the
+split instead of the `ProofBranches` container, covered by the existing
+disjunction mdtest, expansion checks, and 16-through-4096 curve, plus a new
+regression pinning sibling coexistence, attribution partitioning,
+foreign-marker rejection, ancestor isolation, and incomplete-sibling
+refusal. The container migration path is now concrete: consumers move one
+at a time onto split/focus/join, and `ProofBranches` retires when its last
+consumer does.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
