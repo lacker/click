@@ -2125,8 +2125,21 @@ loop-bound regression requires the qualified frame not to enter that gateway,
 requires its retained `FrameUsing { region: Loop(0) }` node, expands the proof,
 and independently verifies the expansion. Label resolution and the missing
 loop-effect diagnostic remain covered by their existing regressions. Qualified
-frames with explicit `using` premises remain on the compatibility surface;
-the smart syntax migrated here constructs the exact premise-free simple step.
+frames with explicit `using` premises were initially left on the compatibility
+surface; the smart syntax migrated here constructed the exact premise-free
+simple step.
+
+Top-level premise-bearing qualified frames now cross the same boundary. The
+source `FrameUsing { region: Loop(_), premises }` is submitted directly to
+`Proof::apply_step_at`, which lowers every named premise, requires exact
+availability across the retained effects, records the simple node, and gives
+ordered finalization only checked region-frame authority. This also fixes a
+soundness hole in the former deferred adapter: at ordered function exit it
+lowered explicit qualified-frame premises but skipped their availability
+check, so a contradictory premise could be silently ignored. The regression
+requires the available form to retain and independently replay its exact
+premise-bearing step, and the unavailable form to fail at the simple Proof
+transition.
 
 ### Progress (2026-08-18: one theorem-application seam)
 

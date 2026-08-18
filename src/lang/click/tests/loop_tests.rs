@@ -1473,6 +1473,103 @@ fn frame_loop_region_uses_frontier_loop_effect_summary_for_ensures() {
 }
 
 #[test]
+fn qualified_frame_with_explicit_premise_advances_through_proof() {
+    let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 100;
+                requires loadable(p[0..n + 1]);
+                consumes p[0..n + 1];
+                ensures preserved: p[n] == old(p[n]);
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= n;
+                    mutable p[0..n] by frame;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                frame(loop(0)) using {
+                    n >= 0;
+                }
+                simp();
+            }
+        "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        crate::instrumentation::with_deadline(std::time::Duration::from_secs(3), || {
+            verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+        })
+    });
+    let verified = verified.expect("an explicit qualified frame premise should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "fill_n.contract"
+                    && name == "smart tactic compatibility replay (tactic 4, source 6)"
+        )),
+        "the premise-bearing qualified frame must bypass compatibility replay: {events:#?}"
+    );
+    assert!(
+        verified[0]
+            .expanded_proof_tactics()
+            .expect("the qualified frame should retain a surface certificate")
+            .iter()
+            .any(|tactic| matches!(
+                tactic,
+                ProofTactic::FrameUsing {
+                    region: Some(CodeRegionRef::Loop(0)),
+                    premises,
+                } if premises.len() == 1
+            )),
+        "the Proof-owned region frame must retain its explicit premise"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("fill_n.c", c_source)],
+        "fill_n",
+        CProofClaim::Grouped,
+    )
+    .expect("the premise-bearing qualified frame should expand");
+    verify_c0_sources(&expanded, &[("fill_n.c", c_source)])
+        .expect("the retained premise-bearing frame should independently reverify");
+
+    let unavailable =
+        click_source.replace("n >= 0;\n                }", "n < 0;\n                }");
+    let error = verify_c0_sources(&unavailable, &[("fill_n.c", c_source)])
+        .expect_err("a qualified frame must check its explicit premise");
+    assert!(
+        error
+            .message()
+            .contains("requires an exact available premise"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn frame_label_region_resolves_a_frontier_loop_label() {
     // A `loop as <label>` tactic declares the only labeled code region the
     // surface syntax can express; `frame(<label>)` must resolve it.

@@ -1524,7 +1524,7 @@ impl<'a> Proof<'a> {
             return Ok(false);
         };
         if !matches!(region, None | Some(CodeRegionRef::Function)) {
-            return Ok(premises.is_empty());
+            return Ok(true);
         }
         if !premises.is_empty() {
             return Ok(true);
@@ -1558,62 +1558,6 @@ impl<'a> Proof<'a> {
         if !execution.replay.is_at_function_exit() {
             return Err(self.step_error("`frame using` requires function exit"));
         }
-        if let Some(region) = region {
-            // Loop effect clauses are declared by frontier-local `loop`
-            // tactics. Bind the exact clauses already checked on this replay
-            // before resolving labels or validating the qualified frame.
-            let frame_function_block =
-                (!execution.replay.frontier_loop_clauses.is_empty()).then(|| {
-                    context.function_block.with_bound_frontier_loop_clauses(
-                        &execution.replay.frontier_loop_clauses.to_vec(),
-                    )
-                });
-            let frame_function_block = frame_function_block
-                .as_ref()
-                .unwrap_or(context.function_block);
-            let resolved = resolve_code_region_ref(
-                frame_function_block,
-                region,
-                context.claim_label,
-                context.tactic_index,
-            )?;
-            if !matches!(resolved, CodeRegion::Function) {
-                if !premises.is_empty() {
-                    return Err(self.step_error(
-                        "checked qualified `frame using` does not support explicit premises",
-                    ));
-                }
-                validate_qualified_frame_code_region(
-                    frame_function_block,
-                    context.parsed_function,
-                    resolved,
-                    context.claim_label,
-                    origin.map_or(context.tactic_index, |origin| origin.tactic_index),
-                )?;
-                let origin = origin.unwrap_or(ProofStepOrigin {
-                    tactic_index: context.tactic_index,
-                    source_index: context.tactic_index,
-                });
-                execution.replay.defer_checked_post_execution(
-                    origin.tactic_index,
-                    origin.source_index,
-                    PostExecutionTactic::FrameRegion(region.clone()),
-                );
-                execution.last_step_delta = ExecutionProofStepDelta::default();
-                return Ok(ProofState {
-                    facts: self.state.facts.clone(),
-                    locals: self.state.locals.clone(),
-                    unfolded_predicates: self.state.unfolded_predicates.clone(),
-                    goal: self.state.goal.clone(),
-                    complete: false,
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                    execution: Some(execution),
-                });
-            }
-        }
-
-        let effect_indices = self.selected_effect_indices(context)?;
 
         let mut frame_facts = Vec::with_capacity(premises.len());
         for surface in premises {
@@ -1647,6 +1591,57 @@ impl<'a> Proof<'a> {
                 frame_facts.push(fact);
             }
         }
+        if let Some(region) = region {
+            // Loop effect clauses are declared by frontier-local `loop`
+            // tactics. Bind the exact clauses already checked on this replay
+            // before resolving labels or validating the qualified frame.
+            let frame_function_block =
+                (!execution.replay.frontier_loop_clauses.is_empty()).then(|| {
+                    context.function_block.with_bound_frontier_loop_clauses(
+                        &execution.replay.frontier_loop_clauses.to_vec(),
+                    )
+                });
+            let frame_function_block = frame_function_block
+                .as_ref()
+                .unwrap_or(context.function_block);
+            let resolved = resolve_code_region_ref(
+                frame_function_block,
+                region,
+                context.claim_label,
+                context.tactic_index,
+            )?;
+            if !matches!(resolved, CodeRegion::Function) {
+                validate_qualified_frame_code_region(
+                    frame_function_block,
+                    context.parsed_function,
+                    resolved,
+                    context.claim_label,
+                    origin.map_or(context.tactic_index, |origin| origin.tactic_index),
+                )?;
+                let origin = origin.unwrap_or(ProofStepOrigin {
+                    tactic_index: context.tactic_index,
+                    source_index: context.tactic_index,
+                });
+                execution.replay.defer_checked_post_execution(
+                    origin.tactic_index,
+                    origin.source_index,
+                    PostExecutionTactic::FrameRegion(region.clone()),
+                );
+                execution.last_step_delta = ExecutionProofStepDelta::default();
+                return Ok(ProofState {
+                    facts: self.state.facts.clone(),
+                    locals: self.state.locals.clone(),
+                    unfolded_predicates: self.state.unfolded_predicates.clone(),
+                    goal: self.state.goal.clone(),
+                    complete: false,
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                    execution: Some(execution),
+                });
+            }
+        }
+
+        let effect_indices = self.selected_effect_indices(context)?;
 
         let checked_execution = execution.replay.execution().ok_or_else(|| {
             self.step_error("function-exit proof has no checked execution outcomes")
