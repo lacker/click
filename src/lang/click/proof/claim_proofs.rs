@@ -1029,6 +1029,9 @@ pub(super) fn finish_ordered_proof_replay(
                         | PostExecutionTactic::Apply(_)
                         | PostExecutionTactic::ApplyUsing { .. }
                         | PostExecutionTactic::Have(_)
+                        | PostExecutionTactic::Rewrite(_)
+                        | PostExecutionTactic::Assumption
+                        | PostExecutionTactic::Normalize
                 )
             });
     let outcome_substrate = drain_consumes_outcome_goals
@@ -2879,11 +2882,20 @@ pub(super) fn finish_ordered_proof_replay(
                             PostExecutionTactic::Assumption => {
                                 let mut closed_any = false;
                                 let transition_facts = path.execution_facts();
-                                let point_root = match &outcome {
-                                    CFunctionOutcome::Return {
-                                        value: result,
-                                        state: post_state,
-                                    } => Some(Proof::for_point_frontier(
+                                // Claim closers focus fresh obligation roots;
+                                // the evolving outcome proof supplies them
+                                // when this path derived a goal.
+                                let point_root = match (outcome_proof.as_ref(), &outcome) {
+                                    (Some(evolving), _) => Some(
+                                        evolving.with_drained_outcome_facts(&path_requirements)?,
+                                    ),
+                                    (
+                                        None,
+                                        CFunctionOutcome::Return {
+                                            value: result,
+                                            state: post_state,
+                                        },
+                                    ) => Some(Proof::for_point_frontier(
                                         &proof_label,
                                         *tactic_index,
                                         &path_requirements,
@@ -2900,9 +2912,12 @@ pub(super) fn finish_ordered_proof_replay(
                                         &unfolded_predicates,
                                         &transition_facts,
                                     )),
-                                    CFunctionOutcome::VerificationDiverges
-                                    | CFunctionOutcome::UndefinedBehavior(_)
-                                    | CFunctionOutcome::RuntimeError(_) => None,
+                                    (
+                                        None,
+                                        CFunctionOutcome::VerificationDiverges
+                                        | CFunctionOutcome::UndefinedBehavior(_)
+                                        | CFunctionOutcome::RuntimeError(_),
+                                    ) => None,
                                 };
                                 let mut retained_certificate = None;
                                 for (claim_index, claim) in claims.iter().enumerate() {
@@ -3007,11 +3022,20 @@ pub(super) fn finish_ordered_proof_replay(
                             PostExecutionTactic::Normalize => {
                                 let mut closed_any = false;
                                 let transition_facts = path.execution_facts();
-                                let point_root = match &outcome {
-                                    CFunctionOutcome::Return {
-                                        value: result,
-                                        state: post_state,
-                                    } => Some(Proof::for_point_frontier(
+                                // Claim closers focus fresh obligation roots;
+                                // the evolving outcome proof supplies them
+                                // when this path derived a goal.
+                                let point_root = match (outcome_proof.as_ref(), &outcome) {
+                                    (Some(evolving), _) => Some(
+                                        evolving.with_drained_outcome_facts(&path_requirements)?,
+                                    ),
+                                    (
+                                        None,
+                                        CFunctionOutcome::Return {
+                                            value: result,
+                                            state: post_state,
+                                        },
+                                    ) => Some(Proof::for_point_frontier(
                                         &proof_label,
                                         *tactic_index,
                                         &path_requirements,
@@ -3028,9 +3052,12 @@ pub(super) fn finish_ordered_proof_replay(
                                         &unfolded_predicates,
                                         &transition_facts,
                                     )),
-                                    CFunctionOutcome::VerificationDiverges
-                                    | CFunctionOutcome::UndefinedBehavior(_)
-                                    | CFunctionOutcome::RuntimeError(_) => None,
+                                    (
+                                        None,
+                                        CFunctionOutcome::VerificationDiverges
+                                        | CFunctionOutcome::UndefinedBehavior(_)
+                                        | CFunctionOutcome::RuntimeError(_),
+                                    ) => None,
                                 };
                                 let mut retained_certificate = None;
                                 for (claim_index, claim) in claims.iter().enumerate() {
@@ -3121,23 +3148,32 @@ pub(super) fn finish_ordered_proof_replay(
                                     )));
                                 };
                                 let transition_facts = path.execution_facts();
-                                let point_root = Proof::for_point_frontier(
-                                    &proof_label,
-                                    *tactic_index,
-                                    &path_requirements,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    post_state,
-                                    Some(result),
-                                    &replay.program_point_states,
-                                    &outcome_surface_propositions,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    theorem_environment,
-                                    &unfolded_predicates,
-                                    &transition_facts,
-                                );
+                                // Claim-goal rewrites focus fresh obligation
+                                // roots; the evolving outcome proof supplies
+                                // them when this path derived a goal, and the
+                                // path lineage itself is not advanced.
+                                let point_root = match outcome_proof.as_ref() {
+                                    Some(evolving) => {
+                                        evolving.with_drained_outcome_facts(&path_requirements)?
+                                    }
+                                    None => Proof::for_point_frontier(
+                                        &proof_label,
+                                        *tactic_index,
+                                        &path_requirements,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        post_state,
+                                        Some(result),
+                                        &replay.program_point_states,
+                                        &outcome_surface_propositions,
+                                        predicate_environment,
+                                        click_function_environment,
+                                        theorem_environment,
+                                        &unfolded_predicates,
+                                        &transition_facts,
+                                    ),
+                                };
                                 let mut rewrote_any = false;
                                 let mut first_error = None;
                                 let mut retained_certificate = None;

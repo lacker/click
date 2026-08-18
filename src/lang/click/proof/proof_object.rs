@@ -1873,9 +1873,16 @@ impl<'a> Proof<'a> {
         goal: Proposition,
         surface_goal: Option<ClickProposition>,
     ) -> Result<Self, ClickError> {
-        if !matches!(self.context.as_ref(), ProofContext::Point(_))
-            || !matches!(self.focused_goal(), Some(Goal::Frontier(_)))
-        {
+        let point_frontier = matches!(self.context.as_ref(), ProofContext::Point(_))
+            && matches!(self.focused_goal(), Some(Goal::Frontier(_)));
+        // A function-outcome goal is itself a result-aware point frontier:
+        // an externally owned obligation focused from it borrows the
+        // outcome's point data by identity, exactly like a nested `have`.
+        let outcome = match self.focused_goal() {
+            Some(Goal::FunctionOutcome(outcome_goal)) => Some(outcome_goal.point.clone()),
+            _ => None,
+        };
+        if !point_frontier && outcome.is_none() {
             return Err(
                 self.step_error("a proposition goal can be focused only from a point frontier")
             );
@@ -1888,14 +1895,21 @@ impl<'a> Proof<'a> {
                 goals: ProofGoals::root({
                     let context = GoalContext {
                         facts: self.facts().clone(),
-                        unfolded_predicates: PersistentOrderedSet::default(),
-                        execution: None,
+                        unfolded_predicates: match &outcome {
+                            Some(_) => self.focused_goal_unfolds().clone(),
+                            None => PersistentOrderedSet::default(),
+                        },
+                        execution: match &outcome {
+                            Some(_) => self.goal_execution().cloned(),
+                            None => None,
+                        },
                     };
-                    surface_goal
-                        .map(|surface| {
-                            Goal::surface_proposition_in(context.clone(), goal.clone(), surface)
-                        })
-                        .unwrap_or_else(|| Goal::proposition_in(context, goal))
+                    Goal::Proposition(PropositionGoal {
+                        kernel: Arc::new(goal),
+                        surface: surface_goal.map(Arc::new),
+                        context,
+                        outcome,
+                    })
                 }),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
@@ -2637,6 +2651,11 @@ impl<'a> Proof<'a> {
         let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
         let available = match self.context.as_ref() {
             ProofContext::Point(_) => self.facts().pure_replay_available(goal),
+            // A judgment stated at a function outcome closes with the same
+            // point-level replay availability its legacy point root used.
+            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
+                self.facts().pure_replay_available(goal)
+            }
             ProofContext::Pure(_) | ProofContext::Execution(_) => self.facts().contains(goal),
         };
         if !available {

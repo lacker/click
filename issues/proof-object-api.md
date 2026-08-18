@@ -2895,6 +2895,23 @@ outcome-stated judgments strictly, mirroring its point arm. And a grouped
 `choose` needs the function requirement tables the view does not yet carry —
 such bodies stay legacy by an explicit support check rather than an error.
 
+### Progress (2026-08-18: claim closers focus the outcome goal)
+
+The grouped claim operations — `rewrite` over ensure goals and the
+`assumption`/`normalize` closers — now focus their per-claim obligation
+roots from the evolving outcome proof when the path derived a goal.
+`focus_point_goal` recognizes a focused function-outcome goal as a
+result-aware point frontier: the focused root borrows the outcome's point
+data and unfold delta by identity, exactly like a nested `have`, and the
+path lineage itself is not advanced by claim-goal work. The
+`loop_sorted_range_invariant` mdtest caught the availability regression this
+exposed: `assumption` gave point contexts the replay-availability bridge but
+execution contexts exact-only matching, so outcome-focused roots could not
+close goals their legacy point roots closed — outcome-stated judgments now
+use point-level replay availability. The derivation gate admits the three
+claim operations; `simp`, the existence tactics, and the resource/frame
+kinds remain.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
