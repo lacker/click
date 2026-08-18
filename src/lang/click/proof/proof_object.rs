@@ -3128,15 +3128,29 @@ impl<'a> Proof<'a> {
         if let Some(proof) = self.try_direct_logical_closure() {
             return Some(proof);
         }
-        let (goal, derivation, premise_pairs, point_application_closes_goal) =
-            self.selected_simp_derivation()?;
-        self.check_typed_atomic_simp_candidate(
-            &goal,
-            &derivation,
-            &premise_pairs,
+        let (
+            goal,
+            derivation,
+            premise_pairs,
+            all_premises_replayable,
             point_application_closes_goal,
-        )
-        .or_else(|| self.try_single_selected_equality_rewrite_closure(&premise_pairs))
+        ) = self.selected_simp_derivation()?;
+        all_premises_replayable
+            .then(|| {
+                self.check_typed_atomic_simp_candidate(
+                    &goal,
+                    &derivation,
+                    &premise_pairs,
+                    point_application_closes_goal,
+                )
+            })
+            .flatten()
+            .or_else(|| {
+                all_premises_replayable
+                    .then(|| self.try_single_selected_equality_rewrite_closure(&premise_pairs))
+                    .flatten()
+            })
+            .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
     }
 
     /// Retains the kernel decision and the exact replayable Surface spellings
@@ -3148,6 +3162,7 @@ impl<'a> Proof<'a> {
         Proposition,
         PropositionDerivation,
         Vec<(Proposition, ClickProposition)>,
+        bool,
         bool,
     )> {
         let (surface_facts, point_application_closes_goal, premise_anchor) =
@@ -3184,25 +3199,31 @@ impl<'a> Proof<'a> {
                 matches_kernel(&anchored).map(|()| anchored)
             })
         };
-        let premise_pairs = derivation
-            .context_premises()
+        let context_premises = derivation.context_premises();
+        let mut all_premises_replayable = true;
+        let premise_pairs = context_premises
             .iter()
-            .map(|premise| {
+            .filter_map(|premise| {
                 if let Some(surface) = replayable_surface(premise) {
                     return Some((premise.clone(), surface));
                 }
-                condition_polarity_spellings(premise)
+                let pair = condition_polarity_spellings(premise)
                     .into_iter()
                     .find_map(|spelling| {
                         let surface = replayable_surface(&spelling);
                         surface.map(|surface| (spelling, surface))
-                    })
+                    });
+                if pair.is_none() {
+                    all_premises_replayable = false;
+                }
+                pair
             })
-            .collect::<Option<Vec<_>>>()?;
+            .collect::<Vec<_>>();
         Some((
             goal,
             derivation,
             premise_pairs,
+            all_premises_replayable,
             point_application_closes_goal,
         ))
     }
@@ -3237,9 +3258,111 @@ impl<'a> Proof<'a> {
         None
     }
 
+    /// Searches the structured predecessor proof already expressible through
+    /// the checked API. The goal itself fixes the value and upper bound, so
+    /// this visits only selected equalities connected to that value and one
+    /// exact upper-bound premise; it never tries every partially spellable
+    /// context fact as a candidate step.
+    fn try_selected_predecessor_upper_bound(
+        &self,
+        goal: &Proposition,
+        premise_pairs: &[(Proposition, ClickProposition)],
+    ) -> Option<Self> {
+        if !matches!(self.context.as_ref(), ProofContext::Point(_)) {
+            return None;
+        }
+        let Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(predecessor, goal_upper),
+            true,
+        ) = goal
+        else {
+            return None;
+        };
+        let Bitvector32Term::Subtract(value, amount) = predecessor.as_ref() else {
+            return None;
+        };
+        if amount.as_ref() != &Bitvector32Term::Constant(1) {
+            return None;
+        }
+        let upper_kernel = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(value.clone(), goal_upper.clone()),
+            true,
+        );
+        let (_, upper_surface) = premise_pairs
+            .iter()
+            .find(|(kernel, _)| kernel == &upper_kernel)?;
+        let (surface_value, surface_upper) = surface_nonstrict_parts(upper_surface)?;
+        let nonnegative_surface = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            operator: ComparisonOperator::LessEqual,
+            right: surface_value.clone(),
+        };
+        for (kernel, surface) in premise_pairs {
+            let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+                kernel
+            else {
+                continue;
+            };
+            let selected_constant = if left.as_ref() == value.as_ref() {
+                right.as_ref()
+            } else if right.as_ref() == value.as_ref() {
+                left.as_ref()
+            } else {
+                continue;
+            };
+            let Bitvector32Term::Constant(bits) = selected_constant else {
+                continue;
+            };
+            if (*bits as i32) < 0 {
+                continue;
+            }
+            let mut orientations = vec![surface.clone()];
+            if let Some(reverse) = reverse_surface_equality(surface)
+                && reverse != *surface
+            {
+                orientations.push(reverse);
+            }
+            for equality in orientations {
+                let scope = self.begin_have(nonnegative_surface.clone()).ok()?;
+                let Ok(scope) = scope.apply_step(SimpleProofStep::Rewrite(equality)) else {
+                    continue;
+                };
+                let Some(scope) = scope.try_direct_logical_closure() else {
+                    continue;
+                };
+                let joined = scope.join().ok()?;
+                let theorem = SimpleProofStep::ApplyTheoremUsing {
+                    application: TheoremApplication {
+                        name: "int32_nonnegative_predecessor_upper_bound".to_string(),
+                        arguments: vec![surface_value.clone(), surface_upper.clone()],
+                    },
+                    premises: vec![nonnegative_surface.clone(), upper_surface.clone()],
+                };
+                let Ok(applied) = joined.apply_step(theorem) else {
+                    continue;
+                };
+                if applied.is_complete() {
+                    return Some(applied);
+                }
+                if let Some(closed) = applied.try_direct_logical_closure() {
+                    return Some(closed);
+                }
+            }
+        }
+        None
+    }
+
     fn try_typed_atomic_simp_closure(&self) -> Option<Self> {
-        let (goal, derivation, premise_pairs, point_application_closes_goal) =
-            self.selected_simp_derivation()?;
+        let (
+            goal,
+            derivation,
+            premise_pairs,
+            all_premises_replayable,
+            point_application_closes_goal,
+        ) = self.selected_simp_derivation()?;
+        if !all_premises_replayable {
+            return None;
+        }
         self.check_typed_atomic_simp_candidate(
             &goal,
             &derivation,
@@ -11820,6 +11943,115 @@ mod tests {
             assert!(matches!(
                 closed.certificate().steps(),
                 [SimpleProofStep::Rewrite(_), SimpleProofStep::Normalize]
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn point_predecessor_simp_builds_checked_scope_with_logarithmic_local_updates() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test C function should parse");
+        let state = CState::new();
+        let arguments = Vec::new();
+        let program_point_states = ProgramPointStates::new();
+        let value = Bitvector32Term::Variable(Variable(8_174_100));
+        let upper = Bitvector32Term::Variable(Variable(8_174_101));
+        let expression = |term: Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term)))
+        };
+        let equality = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::Equal,
+            right: expression(Bitvector32Term::Constant(1)),
+        };
+        let upper_bound = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(upper.clone()),
+        };
+        let goal_surface = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Subtract(
+                Box::new(value),
+                Box::new(Bitvector32Term::Constant(1)),
+            )),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(upper),
+        };
+        let lower = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the fixed point proposition should lower")
+        };
+        let kernel_equality = lower(&equality);
+        let kernel_upper_bound = lower(&upper_bound);
+        let goal = lower(&goal_surface);
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
+            .record_lowering(&equality, &kernel_equality)
+            .expect("the exact equality spelling should be indexed");
+        surface_propositions
+            .record_lowering(&upper_bound, &kernel_upper_bound)
+            .expect("the exact upper-bound spelling should be indexed");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.push(kernel_equality.clone());
+            facts.push(kernel_upper_bound.clone());
+            let root = Proof::for_point_goal(
+                "persistent point predecessor simp",
+                0,
+                &facts,
+                goal.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("the predecessor search should retain one structured descendant");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 128 * logarithmic_height + 512;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} point predecessor simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [
+                    SimpleProofStep::Have { .. },
+                    SimpleProofStep::ApplyTheoremUsing { .. }
+                ]
             ));
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());

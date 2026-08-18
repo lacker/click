@@ -3413,7 +3413,13 @@ pub(super) fn finish_ordered_proof_replay(
                                                     selected = false;
                                                     break;
                                                 };
-                                                match lower_outcome_simp_proof(
+                                                let compatibility_timing =
+                                                    crate::instrumentation::OperationTiming::new(
+                                                        function_block.signature().name(),
+                                                        &proof_label,
+                                                        "outcome simp compatibility construction",
+                                                    );
+                                                let compatibility = lower_outcome_simp_proof(
                                                     &replay,
                                                     surface_goal,
                                                     &goal,
@@ -3425,7 +3431,9 @@ pub(super) fn finish_ordered_proof_replay(
                                                     result,
                                                     predicate_environment,
                                                     click_function_environment,
-                                                ) {
+                                                );
+                                                drop(compatibility_timing);
+                                                match compatibility {
                                                     Ok(SourceProof::Script(tactics)) => {
                                                         match ProofCertificate::from_proof_tactics(
                                                             &tactics,

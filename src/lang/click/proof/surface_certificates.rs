@@ -3406,7 +3406,7 @@ fn signed_strict_parts(proposition: &Proposition) -> Option<(&Bitvector32Term, &
     }
 }
 
-fn signed_nonstrict_parts(
+pub(super) fn signed_nonstrict_parts(
     proposition: &Proposition,
 ) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
     match proposition {
@@ -4449,7 +4449,7 @@ fn surface_strict_parts(
     }
 }
 
-fn surface_nonstrict_parts(
+pub(super) fn surface_nonstrict_parts(
     proposition: &ClickProposition,
 ) -> Option<(ContractExpression, ContractExpression)> {
     if let ClickProposition::At {

@@ -1958,6 +1958,20 @@ replay and independently reverifies the expanded rewrite path. Outcome
 derivations whose selected historical facts cannot all be respelled, and
 multi-rewrite paths, remain explicit compatibility boundaries.
 
+The first structured historical-snapshot case now crosses that boundary too.
+For a predecessor upper-bound goal, search keys directly from the goal's
+`value - 1` and upper operands, selects only the matching replayable upper
+bound and nonnegative-constant equality, and opens a checked nested `have` for
+`0 <= value`. The child `Proof` applies the selected equality rewrite and
+normalization, its audited join publishes that exact fact, and the successor
+applies `int32_nonnegative_predecessor_upper_bound`. The existing `drop_one`
+source regression now forbids entry into the explicitly instrumented outcome
+compatibility constructor; its expansion independently reverifies the nested
+scope and theorem application. A separate 16-through-4096 unrelated-fact
+curve pins the point-Proof structure, logarithmic persistent updates, and
+ancestor isolation. General historical equality search remains a compatibility
+boundary rather than being approximated by an ambient scan.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

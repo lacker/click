@@ -2287,12 +2287,23 @@ fn outcome_predecessor_upper_bound_spells_a_rewritten_nonnegative_leg() {
         }
     "#;
 
-    verify_c0_sources(click_source, &[("drop_one.c", c_source)]).unwrap_or_else(|error| {
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("drop_one.c", c_source)])
+    });
+    verified.unwrap_or_else(|error| {
         panic!(
             "the outcome conjunction should split and close its predecessor bound: {}",
             error.message()
         )
     });
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp compatibility construction"
+        )),
+        "the predecessor derivation must build its structured successor directly on Proof: {events:#?}"
+    );
 }
 
 #[test]
