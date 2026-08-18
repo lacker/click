@@ -330,6 +330,452 @@ pub(in crate::lang::click) fn substitute_click_proposition(
     }
 }
 
+/// Applies one exact Surface equality as an untrusted spelling transform.
+///
+/// The checked kernel rewrite remains authoritative. Callers must lower the
+/// returned candidate and compare it with the kernel successor before
+/// retaining it as a goal view. This helper only preserves source structure
+/// for later certificate search; it never establishes a proposition.
+pub(in crate::lang::click) fn rewrite_click_proposition_by_surface_equality(
+    proposition: &ClickProposition,
+    equality: &ClickProposition,
+) -> Option<ClickProposition> {
+    let ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::Equal,
+        right,
+    } = equality
+    else {
+        return None;
+    };
+    let (rewritten, changed) = rewrite_click_proposition_expression(proposition, left, right);
+    changed.then_some(rewritten)
+}
+
+fn rewrite_click_proposition_expression(
+    proposition: &ClickProposition,
+    source: &ContractExpression,
+    target: &ContractExpression,
+) -> (ClickProposition, bool) {
+    let expression =
+        |value: &ContractExpression| rewrite_contract_expression_exact(value, source, target);
+    let rewrite_proposition =
+        |value: &ClickProposition| rewrite_click_proposition_expression(value, source, target);
+    match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => {
+            let (left, left_changed) = expression(left);
+            let (right, right_changed) = expression(right);
+            (
+                ClickProposition::Comparison {
+                    left,
+                    operator: *operator,
+                    right,
+                },
+                left_changed || right_changed,
+            )
+        }
+        ClickProposition::Separate { left, right } => {
+            let (left, left_changed) = rewrite_resource_subject_exact(left, source, target);
+            let (right, right_changed) = rewrite_resource_subject_exact(right, source, target);
+            (
+                ClickProposition::Separate { left, right },
+                left_changed || right_changed,
+            )
+        }
+        ClickProposition::Contains { parent, child } => {
+            let (parent, parent_changed) = rewrite_resource_subject_exact(parent, source, target);
+            let (child, child_changed) = rewrite_resource_subject_exact(child, source, target);
+            (
+                ClickProposition::Contains { parent, child },
+                parent_changed || child_changed,
+            )
+        }
+        ClickProposition::Loadable { segment } => (
+            ClickProposition::Loadable {
+                segment: segment.clone(),
+            },
+            false,
+        ),
+        ClickProposition::Defined { expression: value } => {
+            let (value, changed) = expression(value);
+            (ClickProposition::Defined { expression: value }, changed)
+        }
+        ClickProposition::At {
+            selector,
+            proposition: body,
+        } => {
+            let (body, changed) = rewrite_proposition(body);
+            (
+                ClickProposition::At {
+                    selector: selector.clone(),
+                    proposition: Box::new(body),
+                },
+                changed,
+            )
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            let (left, left_changed) = rewrite_proposition(left);
+            let (right, right_changed) = rewrite_proposition(right);
+            let rewritten = match proposition {
+                ClickProposition::And(_, _) => {
+                    ClickProposition::And(Box::new(left), Box::new(right))
+                }
+                ClickProposition::Or(_, _) => ClickProposition::Or(Box::new(left), Box::new(right)),
+                ClickProposition::Implies(_, _) => {
+                    ClickProposition::Implies(Box::new(left), Box::new(right))
+                }
+                _ => unreachable!(),
+            };
+            (rewritten, left_changed || right_changed)
+        }
+        ClickProposition::Not(body) => {
+            let (body, changed) = rewrite_proposition(body);
+            (ClickProposition::Not(Box::new(body)), changed)
+        }
+        ClickProposition::ForAll { c_type, name, body }
+        | ClickProposition::Exists { c_type, name, body } => {
+            let (body, changed) = rewrite_proposition(body);
+            let rewritten = match proposition {
+                ClickProposition::ForAll { .. } => ClickProposition::ForAll {
+                    c_type: *c_type,
+                    name: name.clone(),
+                    body: Box::new(body),
+                },
+                ClickProposition::Exists { .. } => ClickProposition::Exists {
+                    c_type: *c_type,
+                    name: name.clone(),
+                    body: Box::new(body),
+                },
+                _ => unreachable!(),
+            };
+            (rewritten, changed)
+        }
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+        }
+        | ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body,
+        } => {
+            let (start, start_changed) = expression(start);
+            let (end, end_changed) = expression(end);
+            let (body, body_changed) = rewrite_proposition(body);
+            let rewritten = match proposition {
+                ClickProposition::RangeAll { .. } => ClickProposition::RangeAll {
+                    start,
+                    end,
+                    item: item.clone(),
+                    body: Box::new(body),
+                },
+                ClickProposition::RangeAny { .. } => ClickProposition::RangeAny {
+                    start,
+                    end,
+                    item: item.clone(),
+                    body: Box::new(body),
+                },
+                _ => unreachable!(),
+            };
+            (rewritten, start_changed || end_changed || body_changed)
+        }
+        ClickProposition::PredicateCall { name, arguments } => {
+            let mut changed = false;
+            let arguments = arguments
+                .iter()
+                .map(|argument| {
+                    let (argument, argument_changed) = expression(argument);
+                    changed |= argument_changed;
+                    argument
+                })
+                .collect();
+            (
+                ClickProposition::PredicateCall {
+                    name: name.clone(),
+                    arguments,
+                },
+                changed,
+            )
+        }
+    }
+}
+
+fn rewrite_resource_subject_exact(
+    subject: &ResourceSubject,
+    source: &ContractExpression,
+    target: &ContractExpression,
+) -> (ResourceSubject, bool) {
+    match subject {
+        ResourceSubject::Memory(segment) => (ResourceSubject::Memory(segment.clone()), false),
+        ResourceSubject::Declared {
+            kind,
+            name,
+            arguments,
+            parameter_types,
+        } => {
+            let mut changed = false;
+            let arguments = arguments
+                .iter()
+                .map(|argument| {
+                    let (argument, argument_changed) =
+                        rewrite_contract_expression_exact(argument, source, target);
+                    changed |= argument_changed;
+                    argument
+                })
+                .collect();
+            (
+                ResourceSubject::Declared {
+                    kind: *kind,
+                    name: name.clone(),
+                    arguments,
+                    parameter_types: parameter_types.clone(),
+                },
+                changed,
+            )
+        }
+    }
+}
+
+fn rewrite_resource_clause_exact(
+    resource: &ResourceClause,
+    source: &ContractExpression,
+    target: &ContractExpression,
+) -> (ResourceClause, bool) {
+    match resource {
+        ResourceClause::Read(segment) => (ResourceClause::Read(segment.clone()), false),
+        ResourceClause::Write(segment) => (ResourceClause::Write(segment.clone()), false),
+        ResourceClause::Quantified { quantity, resource } => {
+            let (quantity, quantity_changed) =
+                rewrite_contract_expression_exact(quantity, source, target);
+            let (resource, resource_changed) =
+                rewrite_resource_clause_exact(resource, source, target);
+            (
+                ResourceClause::Quantified {
+                    quantity,
+                    resource: Box::new(resource),
+                },
+                quantity_changed || resource_changed,
+            )
+        }
+        ResourceClause::Declared {
+            access,
+            kind,
+            name,
+            arguments,
+            parameter_types,
+        } => {
+            let mut changed = false;
+            let arguments = arguments
+                .iter()
+                .map(|argument| {
+                    let (argument, argument_changed) =
+                        rewrite_contract_expression_exact(argument, source, target);
+                    changed |= argument_changed;
+                    argument
+                })
+                .collect();
+            (
+                ResourceClause::Declared {
+                    access: *access,
+                    kind: *kind,
+                    name: name.clone(),
+                    arguments,
+                    parameter_types: parameter_types.clone(),
+                },
+                changed,
+            )
+        }
+    }
+}
+
+fn rewrite_contract_expression_exact(
+    expression: &ContractExpression,
+    source: &ContractExpression,
+    target: &ContractExpression,
+) -> (ContractExpression, bool) {
+    if expression == source {
+        return (target.clone(), true);
+    }
+    let unary =
+        |value: &ContractExpression| rewrite_contract_expression_exact(value, source, target);
+    let binary = |left: &ContractExpression, right: &ContractExpression| {
+        let (left, left_changed) = unary(left);
+        let (right, right_changed) = unary(right);
+        (left, right, left_changed || right_changed)
+    };
+    match expression {
+        ContractExpression::CFragment(_)
+        | ContractExpression::Field { .. }
+        | ContractExpression::CBinding(_)
+        | ContractExpression::ResourceWildcard => (expression.clone(), false),
+        ContractExpression::ResourceCount(resource) => {
+            let (resource, changed) = rewrite_resource_clause_exact(resource, source, target);
+            (
+                ContractExpression::ResourceCount(Box::new(resource)),
+                changed,
+            )
+        }
+        ContractExpression::Old(value) => {
+            let (value, changed) = unary(value);
+            (ContractExpression::Old(Box::new(value)), changed)
+        }
+        ContractExpression::At {
+            selector,
+            expression,
+        } => {
+            let (expression, changed) = unary(expression);
+            (
+                ContractExpression::At {
+                    selector: selector.clone(),
+                    expression: Box::new(expression),
+                },
+                changed,
+            )
+        }
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
+        | ContractExpression::Index(left, right) => {
+            let (left, right, changed) = binary(left, right);
+            let rewritten = match expression {
+                ContractExpression::Add(_, _) => {
+                    ContractExpression::Add(Box::new(left), Box::new(right))
+                }
+                ContractExpression::Subtract(_, _) => {
+                    ContractExpression::Subtract(Box::new(left), Box::new(right))
+                }
+                ContractExpression::Multiply(_, _) => {
+                    ContractExpression::Multiply(Box::new(left), Box::new(right))
+                }
+                ContractExpression::Divide(_, _) => {
+                    ContractExpression::Divide(Box::new(left), Box::new(right))
+                }
+                ContractExpression::Remainder(_, _) => {
+                    ContractExpression::Remainder(Box::new(left), Box::new(right))
+                }
+                ContractExpression::ShiftLeft(_, _) => {
+                    ContractExpression::ShiftLeft(Box::new(left), Box::new(right))
+                }
+                ContractExpression::ShiftRight(_, _) => {
+                    ContractExpression::ShiftRight(Box::new(left), Box::new(right))
+                }
+                ContractExpression::BitwiseAnd(_, _) => {
+                    ContractExpression::BitwiseAnd(Box::new(left), Box::new(right))
+                }
+                ContractExpression::BitwiseOr(_, _) => {
+                    ContractExpression::BitwiseOr(Box::new(left), Box::new(right))
+                }
+                ContractExpression::BitwiseXor(_, _) => {
+                    ContractExpression::BitwiseXor(Box::new(left), Box::new(right))
+                }
+                ContractExpression::Index(_, _) => {
+                    ContractExpression::Index(Box::new(left), Box::new(right))
+                }
+                _ => unreachable!(),
+            };
+            (rewritten, changed)
+        }
+        ContractExpression::BitwiseNot(value) => {
+            let (value, changed) = unary(value);
+            (ContractExpression::BitwiseNot(Box::new(value)), changed)
+        }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let (condition, condition_changed) =
+                rewrite_click_proposition_expression(condition, source, target);
+            let (then_branch, then_changed) = unary(then_branch);
+            let (else_branch, else_changed) = unary(else_branch);
+            (
+                ContractExpression::If {
+                    condition: Box::new(condition),
+                    then_branch: Box::new(then_branch),
+                    else_branch: Box::new(else_branch),
+                },
+                condition_changed || then_changed || else_changed,
+            )
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            let (start, start_changed) = unary(start);
+            let (end, end_changed) = unary(end);
+            let (initial, initial_changed) = unary(initial);
+            let (body, body_changed) = unary(body);
+            (
+                ContractExpression::RangeFold {
+                    start: Box::new(start),
+                    end: Box::new(end),
+                    initial: Box::new(initial),
+                    accumulator: accumulator.clone(),
+                    item: item.clone(),
+                    body: Box::new(body),
+                },
+                start_changed || end_changed || initial_changed || body_changed,
+            )
+        }
+        ContractExpression::Let {
+            name,
+            c_type,
+            value,
+            body,
+        } => {
+            let (value, value_changed) = unary(value);
+            let (body, body_changed) = unary(body);
+            (
+                ContractExpression::Let {
+                    name: name.clone(),
+                    c_type: *c_type,
+                    value: Box::new(value),
+                    body: Box::new(body),
+                },
+                value_changed || body_changed,
+            )
+        }
+        ContractExpression::Call { name, arguments } => {
+            let mut changed = false;
+            let arguments = arguments
+                .iter()
+                .map(|argument| {
+                    let (argument, argument_changed) = unary(argument);
+                    changed |= argument_changed;
+                    argument
+                })
+                .collect();
+            (
+                ContractExpression::Call {
+                    name: name.clone(),
+                    arguments,
+                },
+                changed,
+            )
+        }
+    }
+}
+
 fn substitute_contract_segment(
     segment: &ContractSegment,
     substitutions: &BTreeMap<String, ContractExpression>,

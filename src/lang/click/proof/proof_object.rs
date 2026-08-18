@@ -5514,7 +5514,7 @@ impl<'a> Proof<'a> {
         );
         let equality =
             Box::new(self.lower_surface_proposition(surface_equality, "`rewrite` equality")?);
-        self.finish_rewrite(goal, equality)
+        self.finish_rewrite(goal, equality, surface_equality)
     }
 
     #[inline(never)]
@@ -5583,7 +5583,7 @@ impl<'a> Proof<'a> {
                 self.step_error(format!("could not unfold `rewrite` equality: {message}"))
             })?,
         );
-        self.finish_rewrite(goal, equality)
+        self.finish_rewrite(goal, equality, surface_equality)
     }
 
     #[inline(never)]
@@ -5591,6 +5591,7 @@ impl<'a> Proof<'a> {
         &self,
         goal: Box<Proposition>,
         equality: Box<Proposition>,
+        surface_equality: &ClickProposition,
     ) -> Result<ProofState, ClickError> {
         let admitted = self.state.facts.materialization_available(&equality)
             || reverse_kernel_equality(equality.as_ref().clone())
@@ -5603,11 +5604,21 @@ impl<'a> Proof<'a> {
         };
         let rewritten = rewrite_proposition_by_exact_equality(&goal, &equality, available)
             .map_err(|message| self.step_error(message))?;
+        let surface_goal = self.surface_goal().and_then(|surface_goal| {
+            let candidate =
+                rewrite_click_proposition_by_surface_equality(surface_goal, surface_equality)?;
+            self.lower_surface_proposition_direct(&candidate, "rewritten Surface goal")
+                .ok()
+                .filter(|lowered| lowered == &rewritten)
+                .map(|_| candidate)
+        });
         Ok(ProofState {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: Goal::proposition(rewritten),
+            goal: surface_goal
+                .map(|surface| Goal::surface_proposition(rewritten.clone(), surface))
+                .unwrap_or_else(|| Goal::proposition(rewritten)),
             complete: false,
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
@@ -10705,7 +10716,6 @@ mod tests {
             &click_function_environment,
         )
         .expect("constant equality should lower");
-
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut requires = (0..size).map(indexed_fact).collect::<Vec<_>>();
             requires.push(kernel_equality.clone());
@@ -10713,10 +10723,11 @@ mod tests {
                 requires: requires.clone(),
                 ..base_context.clone()
             };
-            let root = Proof::for_pure_goal(
+            let root = Proof::for_pure_surface_goal(
                 "persistent rewrite",
                 &requires,
                 kernel_equality.clone(),
+                equality.clone(),
                 &theorem_context,
                 &predicate_environment,
                 &click_function_environment,
@@ -10745,6 +10756,10 @@ mod tests {
                 "size {size} rewrite should not alter the persistent fact index"
             );
             assert_eq!(rewritten.certificate().steps(), &[step.clone()]);
+            assert!(
+                rewritten.surface_goal().is_none(),
+                "a Surface spelling that lowers through extra normalization must not be paired with the unnormalized kernel successor"
+            );
             assert!(rewritten.added_facts().is_empty());
             assert!(!rewritten.is_complete());
             let complete = rewritten
@@ -10759,6 +10774,154 @@ mod tests {
                 .apply_step(step)
                 .expect("the ancestor should remain usable for another descendant");
             assert_eq!(alternative.certificate(), rewritten.certificate());
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn surface_rewrite_retains_structural_successor_and_scales() {
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let variable =
+            |name: &str| ContractExpression::CFragment(CExpression::Variable(name.to_string()));
+        let zero = ContractExpression::CFragment(CExpression::Value(int32(0)));
+        let comparison =
+            |left: ContractExpression, operator: ComparisonOperator, right: ContractExpression| {
+                ClickProposition::Comparison {
+                    left,
+                    operator,
+                    right,
+                }
+            };
+        let equality = comparison(variable("x"), ComparisonOperator::Equal, variable("y"));
+        let y_zero = comparison(variable("y"), ComparisonOperator::Equal, zero.clone());
+        let z_zero = comparison(variable("z"), ComparisonOperator::Equal, zero.clone());
+        let goal_surface = ClickProposition::And(
+            Box::new(comparison(
+                variable("x"),
+                ComparisonOperator::LessEqual,
+                zero.clone(),
+            )),
+            Box::new(comparison(
+                variable("z"),
+                ComparisonOperator::LessEqual,
+                zero.clone(),
+            )),
+        );
+        let rewritten_surface = ClickProposition::And(
+            Box::new(comparison(
+                variable("y"),
+                ComparisonOperator::LessEqual,
+                zero.clone(),
+            )),
+            Box::new(comparison(
+                variable("z"),
+                ComparisonOperator::LessEqual,
+                zero,
+            )),
+        );
+        let values = BTreeMap::from([
+            (
+                "x".to_string(),
+                CValue::Int32(Bitvector32Term::Variable(Variable(9_101_000))),
+            ),
+            (
+                "y".to_string(),
+                CValue::Int32(Bitvector32Term::Variable(Variable(9_101_001))),
+            ),
+            (
+                "z".to_string(),
+                CValue::Int32(Bitvector32Term::Variable(Variable(9_101_002))),
+            ),
+        ]);
+        let base_context = PureTheoremContext {
+            memory: CMemory::new(),
+            values,
+            array_refs: BTreeMap::new(),
+            requires: Vec::new(),
+            surface_requirements: SurfacePropositionMap::default(),
+        };
+        let lower = |surface: &ClickProposition| {
+            lower_pure_theorem_proposition(
+                "persistent structural rewrite",
+                surface,
+                &base_context.values,
+                &base_context.array_refs,
+                &base_context.memory,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("test proposition should lower")
+        };
+        let kernel_equality = lower(&equality);
+        let kernel_y_zero = lower(&y_zero);
+        let kernel_z_zero = lower(&z_zero);
+        let kernel_goal = lower(&goal_surface);
+        let rewritten_kernel_goal = lower(&rewritten_surface);
+        let mut surface_requirements = SurfacePropositionMap::default();
+        for (surface, kernel) in [
+            (&equality, &kernel_equality),
+            (&y_zero, &kernel_y_zero),
+            (&z_zero, &kernel_z_zero),
+        ] {
+            surface_requirements
+                .record_lowering(surface, kernel)
+                .expect("selected rewrite premise should have an exact spelling");
+        }
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut requires = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            requires.extend([
+                kernel_equality.clone(),
+                kernel_y_zero.clone(),
+                kernel_z_zero.clone(),
+            ]);
+            let theorem_context = PureTheoremContext {
+                requires: requires.clone(),
+                surface_requirements: surface_requirements.clone(),
+                ..base_context.clone()
+            };
+            let root = Proof::for_pure_surface_goal(
+                "persistent structural rewrite",
+                &requires,
+                kernel_goal.clone(),
+                goal_surface.clone(),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let rewritten = root
+                .apply_step(SimpleProofStep::Rewrite(equality.clone()))
+                .expect("the exact equality should produce a checked rewrite successor");
+            let closed = rewritten
+                .try_simp_closure()
+                .expect("the rewritten Surface conjunction should retain both child proofs");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 96 * logarithmic_height + 384;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} structural rewrite allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert_eq!(rewritten.goal(), Some(&rewritten_kernel_goal));
+            assert_eq!(rewritten.surface_goal(), Some(&rewritten_surface));
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [
+                    SimpleProofStep::Rewrite(root_equality),
+                    SimpleProofStep::Have { proof: left, .. },
+                    SimpleProofStep::Have { proof: right, .. },
+                    SimpleProofStep::Split,
+                ] if root_equality == &equality
+                    && matches!(left.steps(), [SimpleProofStep::Rewrite(_), SimpleProofStep::Normalize])
+                    && matches!(right.steps(), [SimpleProofStep::Rewrite(_), SimpleProofStep::Normalize])
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());
         }
     }

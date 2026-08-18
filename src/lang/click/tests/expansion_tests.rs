@@ -1828,6 +1828,45 @@ fn restricted_simp_expands_to_explicit_equality_rewrites() {
 }
 
 #[test]
+fn pure_rewrite_retains_a_structural_surface_successor_for_simp() {
+    let click_source = r#"
+        theorem rewrite_pair(x: int32, y: int32, z: int32) {
+            requires x == y;
+            requires y == 0;
+            requires z == 0;
+            ensures x <= 0 and z <= 0 by {
+                rewrite(x == y);
+                simp();
+            }
+        }
+    "#;
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("rewrite followed by structural simp should remain on Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "rewrite_pair.ensures_0" && name == "surface certificate replay"
+        )),
+        "the rewrite successor must not reconstruct and replay a second proof: {events:#?}"
+    );
+
+    let simp_offset = click_source
+        .find("simp();")
+        .expect("source should contain the structural smart step");
+    let position = expansion::position_at_offset(click_source, simp_offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("the retained rewrite successor should expand");
+    assert_eq!(expanded.matches("rewrite(").count(), 3, "{expanded}");
+    assert!(expanded.contains("split();"), "{expanded}");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_click_theorems(&expanded)
+        .expect("the expanded rewrite and structural child proofs should verify independently");
+}
+
+#[test]
 fn restricted_simp_after_unfold_expands_explicit_conjunction_extraction() {
     let click_source = r#"
             predicate equality_chain(x: int32, y: int32, z: int32) {

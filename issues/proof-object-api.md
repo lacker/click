@@ -2075,6 +2075,16 @@ witness curve still requires zero persistent-fact allocation and now checks
 the exact Surface body; a source regression expands and independently checks
 the retained `witness`, child proofs, and `split` without compatibility work.
 
+Checked proposition `Rewrite` now keeps the kernel rewrite as its sole
+authority and treats Surface substitution only as an untrusted spelling
+candidate. The candidate is retained when direct lowering at the current
+semantic point equals the checked kernel successor exactly; normalized,
+historical, or otherwise mismatched spellings are discarded. A 16-through-
+4096 conjunction regression requires the accepted rewrite, both recursively
+checked child proofs, and `split` to remain one persistent proof lineage. A
+pure source regression forbids construction replay and independently verifies
+the three retained rewrites and structural join.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
