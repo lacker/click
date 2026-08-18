@@ -129,6 +129,7 @@ fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
             ProofTactic::SmartStep
                 | ProofTactic::ApplyTheorem(_)
                 | ProofTactic::Transport { .. }
+                | ProofTactic::Have(_)
                 | ProofTactic::SmartFrame(_)
         )
 }
@@ -194,6 +195,18 @@ fn advance_checked_linear_continuation<'a>(
         return Ok(None);
     };
     for (offset, indexed) in tactics.iter().enumerate() {
+        let terminal_frame = matches!(
+            indexed.tactic,
+            ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
+        );
+        // Once the common execution has returned, proposition and resource
+        // operations are interpreted once per concrete outcome. In
+        // particular, `result` has no single value on this joined Proof.
+        // A function frame is the one audited exception: it checks the typed
+        // effect goal across every owned outcome before ordered finalization.
+        if proof.is_at_function_exit() && !terminal_frame {
+            return Ok(Some((proof, tactics[offset..].to_vec())));
+        }
         let checkpoint = proof.checkpoint();
         let next = if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
             if let SimpleProofStep::FrameUsing { region, premises } = &step
@@ -217,6 +230,12 @@ fn advance_checked_linear_continuation<'a>(
                 return Ok(None);
             };
             transported
+        } else if let ProofTactic::Have(have) = &indexed.tactic {
+            let nested = proof.begin_have(have.proposition.clone())?;
+            let Some(selected) = solve_nested_have(nested, have)? else {
+                return Ok(None);
+            };
+            selected.join()?
         } else if let ProofTactic::SmartFrame(region) = &indexed.tactic {
             // The checked empty-frame capability is the audited immutable
             // subset. A mutable smart frame may need path-specific planned
@@ -250,6 +269,15 @@ fn advance_checked_linear_continuation<'a>(
             );
         }
         proof = next;
+        // A checked function frame closes the execution-frontier portion of
+        // this continuation. Later tactics are ordered outcome operations:
+        // in particular, a `have` may name the path-local `result`, which has
+        // no single lowering on the joined execution Proof. Return that suffix
+        // to the post-execution driver instead of treating it as another
+        // execution-frontier transition.
+        if terminal_frame {
+            return Ok(Some((proof, tactics[offset + 1..].to_vec())));
+        }
     }
     Ok(Some((proof, Vec::new())))
 }

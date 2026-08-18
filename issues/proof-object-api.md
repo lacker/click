@@ -1684,6 +1684,25 @@ lower-or-upper choice, transports the preserved ordering fact from `old` to
 the current snapshot, observes neither ordinary replay nor the legacy exact
 effect recheck, and independently verifies the retained explicit certificate.
 
+Nested proposition proof now composes on the common successor too. The
+continuation driver opens `Proof::begin_have`, runs the same bounded nested
+script search used by branch arms and resource scopes, and publishes the
+result only through the scope's checked `join`. The retained `Have` therefore
+contains the exact selected theorem application and precedes the common return
+and immutable frame on one descendant. The nonterminal-join scaling curve now
+includes this nested scope without changing its logarithmic bound. A real-C
+source regression proves a selected positive value nonnegative in a common
+`have`, checks the retained nested certificate, and independently verifies
+expansion. That regression also exposed and fixed the execution/finalization
+boundary in independent certificate checking: once the joined Proof reaches
+function exit, the continuation driver returns later tactics to the ordered
+outcome driver. The checked function frame is the one exception because its
+typed effect goal intentionally ranges over every owned outcome; after that
+frame, the suffix is outcome-local too. The driver must not try to lower a
+later `have result ...` as one proposition on the joined execution Proof,
+because `result` is path-local and is intentionally interpreted by each
+result-aware point Proof.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

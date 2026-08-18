@@ -3529,7 +3529,7 @@ impl<'a> Proof<'a> {
     ///
     /// This is a read-only smart-tactic query: it exposes no replay state and
     /// grants no authority to advance the proof.
-    fn is_at_function_exit(&self) -> bool {
+    pub(super) fn is_at_function_exit(&self) -> bool {
         self.state
             .execution
             .as_ref()
@@ -14549,6 +14549,11 @@ mod tests {
             name: "int32_reflexive".to_string(),
             arguments: vec![ContractExpression::CFragment(arguments[0].clone())],
         };
+        let reflexive = ClickProposition::Comparison {
+            left: application.arguments[0].clone(),
+            operator: ComparisonOperator::Equal,
+            right: application.arguments[0].clone(),
+        };
         let missing_application = TheoremApplication {
             name: "missing".to_string(),
             arguments: application.arguments.clone(),
@@ -14642,7 +14647,26 @@ mod tests {
                     },
                 ] if retained == &application && premises.is_empty()
             ));
-            let completed = applied
+            let refined = applied
+                .begin_have(reflexive.clone())
+                .expect("the joined proof should open a common nested proposition")
+                .apply_step(SimpleProofStep::Assumption)
+                .expect("the theorem conclusion should close the nested proposition")
+                .join()
+                .expect("the completed nested proposition should rejoin its root Proof");
+            assert!(matches!(
+                refined.certificate().steps(),
+                [
+                    SimpleProofStep::Branch { .. },
+                    SimpleProofStep::ApplyTheoremUsing { .. },
+                    SimpleProofStep::Have {
+                        proposition,
+                        proof,
+                    },
+                ] if proposition == &reflexive
+                    && proof.steps() == [SimpleProofStep::Assumption]
+            ));
+            let completed = refined
                 .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("the joined continuation should execute its return");
             assert!(
@@ -14668,6 +14692,7 @@ mod tests {
                 [
                     SimpleProofStep::Branch { .. },
                     SimpleProofStep::ApplyTheoremUsing { .. },
+                    SimpleProofStep::Have { .. },
                     SimpleProofStep::StepUsing(_),
                     SimpleProofStep::FrameUsing {
                         region: None,
@@ -14681,7 +14706,7 @@ mod tests {
             let allocation_bound = base_allocations + 32 * (height - base_height);
             assert!(
                 allocations <= allocation_bound,
-                "size {size} branch, theorem, common return, and frame allocated {allocations} persistent nodes (logarithmic bound {allocation_bound})"
+                "size {size} branch, theorem, have, common return, and frame allocated {allocations} persistent nodes (logarithmic bound {allocation_bound})"
             );
         }
     }

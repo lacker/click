@@ -6014,6 +6014,102 @@ fn branch_join_retains_a_bare_fact_transport_in_its_continuation() {
 }
 
 #[test]
+fn branch_join_retains_a_nested_have_in_its_continuation() {
+    let c_source = r#"
+        int32 select_positive(int32 flag) {
+            int32 selected;
+            if (flag != 0) {
+                selected = 1;
+            } else {
+                selected = 2;
+            }
+            return selected;
+        }
+    "#;
+    let click_source = r#"
+        verifying "select_positive.c";
+
+        int32 select_positive(int32 flag) {
+            immutable;
+            ensures result >= 0;
+        } by {
+            step();
+            branch {
+                ensuring {
+                    fact selected > 0;
+                }
+                then { step(); }
+                else { step(); }
+            }
+            have selected >= 0 by {
+                apply(int32_strictly_positive_is_nonnegative(selected));
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("select_positive.c", c_source)])
+    });
+    let verified = verified.expect("the common nested have should advance the joined Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "select_positive.contract"
+                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+        )),
+        "the branch, nested have, return, and frame must retain one checked Proof: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked common nested have should retain an expansion");
+    assert!(
+        matches!(
+            tactics.as_slice(),
+            [
+                ProofTactic::StepUsing(_),
+                ProofTactic::Branch(branch),
+                ProofTactic::Have(ProofHave {
+                    proof: SourceProof::Script(body),
+                    ..
+                }),
+                ProofTactic::StepUsing(_),
+                ProofTactic::FrameUsing { region: None, premises },
+                ..
+            ] if matches!(
+                    branch.ensuring.as_deref(),
+                    Some([ProofAssertion::Fact(ClickProposition::Comparison {
+                        operator: ComparisonOperator::GreaterThan,
+                        ..
+                    })])
+                )
+                && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && matches!(
+                    body.as_slice(),
+                    [ProofTactic::ApplyTheoremUsing { application, premises }]
+                        if application.name == "int32_strictly_positive_is_nonnegative"
+                            && premises.len() == 1
+                )
+                && premises.is_empty()
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("select_positive.c", c_source)],
+        "select_positive",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained common nested have should expand");
+    verify_c0_sources(&expanded, &[("select_positive.c", c_source)])
+        .expect("the explicit common nested proof should independently re-derive");
+}
+
+#[test]
 fn branch_arms_retain_bare_fact_transports_on_proof() {
     let c_source = r#"
         int32 set_choice_return_first(int32 p[2], int32 flag) {
