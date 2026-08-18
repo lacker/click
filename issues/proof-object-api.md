@@ -2998,6 +2998,18 @@ deleted. This is the deletion slice's pattern in miniature: the goal-backed
 step output is the authority, and the machinery that re-derived it from
 vector comparisons goes away rather than surviving as a fallback.
 
+### Progress (2026-08-18: existence closures lift onto the outcome goal)
+
+The existence-closure boundary is gone: the fix the root-cause analysis
+prescribed — re-record the active predicate unfolds inside the obligation
+scope, as ordinary checked steps, before applying the `choose`/`witness`
+candidate — makes the retained body verify independently of the enclosing
+goal's inherited unfold delta, exactly matching the legacy serialization
+convention. The uint8 expansion reproduction passes on the goal path, and
+with it every result-aware drained tactic kind now runs on typed outcome
+goals; the drain's remaining legacy arms are the resource projections, the
+region-frame certifier, and the no-goal fallbacks.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

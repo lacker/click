@@ -3716,16 +3716,8 @@ pub(super) fn finish_ordered_proof_replay(
                                         // the grouped obligation root when the
                                         // path derived a goal; its point data
                                         // carries the statement-entry anchor.
-                                        // Existence closures stay on the
-                                        // legacy root: the goal-aware
-                                        // `choose` checker exists, but the
-                                        // expanded-certificate replay of
-                                        // such closures still diverges (see
-                                        // the uint8 expansion regression).
-                                        let mut direct_proof = match (
-                                            existence_candidate.is_none(),
-                                            outcome_proof.as_ref(),
-                                        ) {
+                                        let mut direct_proof = match (true, outcome_proof.as_ref())
+                                        {
                                             (true, Some(evolving)) => {
                                                 #[cfg(debug_assertions)]
                                                 assert_outcome_sync(
@@ -3775,6 +3767,25 @@ pub(super) fn finish_ordered_proof_replay(
                                             };
                                             let scope =
                                                 if let Some(candidate) = &existence_candidate {
+                                                    // Re-record the active
+                                                    // unfolds inside the scope:
+                                                    // the retained body must
+                                                    // verify independently of
+                                                    // the enclosing goal's
+                                                    // inherited unfold delta.
+                                                    let mut scope = scope;
+                                                    for name in &unfolded_predicates {
+                                                        match scope.apply_step(
+                                                            SimpleProofStep::UnfoldPredicate(
+                                                                name.clone(),
+                                                            ),
+                                                        ) {
+                                                            Ok(next) => scope = next,
+                                                            Err(_) => {
+                                                                check_verification_deadline()?;
+                                                            }
+                                                        }
+                                                    }
                                                     let Ok(scope) = scope
                                                         .apply_candidate_certificate(candidate)
                                                     else {
