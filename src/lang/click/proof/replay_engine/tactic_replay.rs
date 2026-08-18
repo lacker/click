@@ -1214,8 +1214,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 click_function_environment,
                 theorem_environment,
             );
-            let step = proof.select_execution_theorem_application_step(application)?;
-            let proof = proof.apply_step(step)?;
+            let proof = proof.apply_theorem_application(application)?;
             let certificate = proof.certificate();
             let result = proof.into_execution_context()?;
             state = result.state;

@@ -2128,6 +2128,26 @@ loop-effect diagnostic remain covered by their existing regressions. Qualified
 frames with explicit `using` premises remain on the compatibility surface;
 the smart syntax migrated here constructs the exact premise-free simple step.
 
+### Progress (2026-08-18: one theorem-application seam)
+
+Bare theorem application now has one transactional operation on `Proof`
+across pure, point, and live execution-frontier contexts. Context-specific
+selection may inspect only the immutable proof and returns one concrete
+`ApplyTheoremUsing`; the shared seam submits that candidate to `apply_step`
+on the same root and returns only the already-checked descendant. Linear
+proposition scripts, execution continuations, C branch arms, and resource
+scopes delegate to that operation instead of separately pairing a selector
+with a state transition. A missing candidate leaves the ancestor unchanged,
+while a selected candidate rejected by `apply_step` remains a loud tooling
+error rather than permission to retry through compatibility semantics.
+
+The existing 16-through-4096 pure, point, execution, branch, and scope curves
+continue to bound selection and persistent updates logarithmically; they now
+also exercise transactional misses through the common seam. Function-exit
+execution proofs remain an explicit boundary: one such proof may own several
+result-sensitive outcomes, so ordered finalization still creates one point
+proof per outcome until typed outcome proposition goals migrate into `Proof`.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

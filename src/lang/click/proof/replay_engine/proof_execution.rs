@@ -224,7 +224,7 @@ fn advance_checked_linear_continuation<'a>(
             };
             stepped
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
-            let Some(applied) = proof.try_execution_theorem_application(application)? else {
+            let Some(applied) = proof.try_theorem_application(application)? else {
                 return Ok(None);
             };
             applied

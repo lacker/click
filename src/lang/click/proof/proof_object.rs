@@ -4101,19 +4101,10 @@ impl<'a> Proof<'a> {
             }
             match tactic {
                 ProofTactic::ApplyTheorem(application) => {
-                    let step = match proof.context.as_ref() {
-                        ProofContext::Pure(_) => {
-                            proof.select_pure_theorem_application_step(application)?
-                        }
-                        ProofContext::Point(_) => {
-                            proof.select_point_theorem_application_step(application)?
-                        }
-                        ProofContext::Execution(_) if proof.goal().is_some() => {
-                            proof.select_execution_theorem_application_step(application)?
-                        }
-                        ProofContext::Execution(_) => return Ok(None),
+                    let Some(applied) = proof.try_theorem_application(application)? else {
+                        return Ok(None);
                     };
-                    proof = proof.apply_step(step)?;
+                    proof = applied;
                 }
                 ProofTactic::Simp => {
                     let Some(closed) = proof.try_simp_closure() else {
@@ -4806,24 +4797,66 @@ impl<'a> Proof<'a> {
         )
     }
 
-    /// Tries one bare theorem application at the current execution frontier.
-    /// Search returns only an explicit `ApplyTheoremUsing`; the conclusion is
-    /// retained solely by submitting that step to this same immutable Proof.
-    /// A selection miss is transactional so a compatibility caller can retry
-    /// the unchanged source operation through its broader legacy search.
-    pub(super) fn try_execution_theorem_application(
+    /// Tries one bare theorem application against this immutable Proof.
+    ///
+    /// Selection is context-specific, but every context returns the same
+    /// explicit `ApplyTheoremUsing` candidate and submits it to `apply_step`
+    /// on this exact root. A selection miss is transactional; once selection
+    /// succeeds, rejection by the checker is a loud implementation error
+    /// rather than permission to retry through a second semantic path.
+    pub(super) fn try_theorem_application(
         &self,
         application: &TheoremApplication,
     ) -> Result<Option<Self>, ClickError> {
-        if self.is_at_function_exit() {
-            return Ok(None);
-        }
-        let step = match self.select_execution_theorem_application_step(application) {
-            Ok(step) => step,
+        let selected = self.select_theorem_application_step(application);
+        let step = match selected {
+            Ok(Some(step)) => step,
+            Ok(None) => return Ok(None),
             Err(error) if crate::instrumentation::deadline_exceeded() => return Err(error),
             Err(_) => return Ok(None),
         };
-        self.apply_step(step).map(Some).map_err(|error| {
+        self.apply_selected_theorem_application(step).map(Some)
+    }
+
+    /// Applies one bare theorem application without treating an unavailable
+    /// candidate as a smart-search miss. Source adapters that have already
+    /// committed to `apply(...)` use this strict form and retain the original
+    /// selector diagnostic, while still sharing the sole checked transition.
+    pub(super) fn apply_theorem_application(
+        &self,
+        application: &TheoremApplication,
+    ) -> Result<Self, ClickError> {
+        let Some(step) = self.select_theorem_application_step(application)? else {
+            return Err(self.step_error(
+                "theorem application requires a result-sensitive point proof after function exit",
+            ));
+        };
+        self.apply_selected_theorem_application(step)
+    }
+
+    fn select_theorem_application_step(
+        &self,
+        application: &TheoremApplication,
+    ) -> Result<Option<SimpleProofStep>, ClickError> {
+        match self.context.as_ref() {
+            ProofContext::Pure(_) => self.select_pure_theorem_application_step(application),
+            ProofContext::Point(_) => self.select_point_theorem_application_step(application),
+            ProofContext::Execution(_) if !self.is_at_function_exit() => {
+                self.select_execution_theorem_application_step(application)
+            }
+            // A function-exit execution Proof owns several result-sensitive
+            // point contexts. Ordered finalization keeps that distinct seam
+            // until outcome proposition goals themselves migrate into Proof.
+            ProofContext::Execution(_) => return Ok(None),
+        }
+        .map(Some)
+    }
+
+    fn apply_selected_theorem_application(
+        &self,
+        step: SimpleProofStep,
+    ) -> Result<Self, ClickError> {
+        self.apply_step(step).map_err(|error| {
             self.step_error(format!(
                 "theorem search selected a simple candidate that Proof rejected: {}",
                 error.message()
@@ -6793,10 +6826,27 @@ impl<'a> ExecutionProofBranches<'a> {
             // distinct operation until outcome goals migrate into Proof.
             return Ok(None);
         }
-        let step = arm
+        let Some(successor) = arm.proof.try_theorem_application(application)? else {
+            return Ok(None);
+        };
+        let prior_effect_count = arm
             .proof
-            .select_execution_theorem_application_step(application)?;
-        Ok(Some(self.clone().apply_step(take_then, step)?))
+            .state
+            .execution
+            .as_ref()
+            .ok_or_else(|| {
+                self.root
+                    .step_error("execution branch arm lost its semantic state")
+            })?
+            .replay
+            .effect_facts
+            .len();
+        let mut next = self.clone();
+        let next_arm = next.arms[arm_index]
+            .as_mut()
+            .expect("the cloned feasible arm is retained");
+        Self::retain_arm_successor(next_arm, successor, prior_effect_count);
+        Ok(Some(next))
     }
 
     /// Runs bare fact-transport search against the selected arm's immutable
@@ -8492,10 +8542,19 @@ impl<'a> ProofScope<'a> {
         if self.body.is_at_function_exit() {
             return Ok(None);
         }
-        let step = self
-            .body
-            .select_execution_theorem_application_step(application)?;
-        Ok(Some(self.apply_step(step)?))
+        let Some(body) = self.body.try_theorem_application(application)? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        if matches!(self.structure.as_ref(), ProofScopeStructure::Open { .. }) {
+            for fact in body.added_facts() {
+                if !next.introduced_facts.contains(fact) {
+                    next.introduced_facts.push(fact.clone());
+                }
+            }
+        }
+        next.body = body;
+        Ok(Some(next))
     }
 
     /// Runs bare fact-transport search on the scope's current checked body.
@@ -9688,11 +9747,13 @@ mod tests {
             let scope = root
                 .begin_have(proposition.clone())
                 .expect("have should open a nested proof");
-            let missing = match scope.try_linear_smart_script(&missing_body) {
-                Err(error) => error,
-                Ok(_) => panic!("an unknown theorem must reject nested search"),
-            };
-            assert!(missing.message().contains("unknown theorem"), "{missing:?}");
+            assert!(
+                scope
+                    .try_linear_smart_script(&missing_body)
+                    .expect("an unknown theorem should be a bounded smart-search miss")
+                    .is_none(),
+                "an unknown theorem must not manufacture a nested descendant"
+            );
             assert!(scope.body().certificate().steps().is_empty());
 
             let before = fact_node_allocations();
@@ -11427,6 +11488,10 @@ mod tests {
                 ContractExpression::CFragment(CExpression::Value(right)),
             ],
         };
+        let missing_application = TheoremApplication {
+            name: "int32_lt_implies_le".to_string(),
+            arguments: application.arguments.iter().cloned().rev().collect(),
+        };
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
             pure_facts.push(kernel_premise.clone());
@@ -11455,6 +11520,12 @@ mod tests {
                 &theorem_environment,
             );
             let retained_root = root.clone();
+            assert!(
+                root.try_theorem_application(&missing_application)
+                    .expect("missing execution theorem search should be a bounded miss")
+                    .is_none(),
+                "an unavailable execution theorem premise must not manufacture a descendant"
+            );
             let before_query = fact_node_allocations();
             let selected = root
                 .select_execution_theorem_application_step(&application)
@@ -11663,13 +11734,12 @@ mod tests {
                 .expect("the symbolic condition should expose two theorem-search arms");
             let nested_branches = branches.clone();
             let execute_branches = branches.clone();
-            let missing = branches
-                .try_theorem_application(true, &missing_application)
-                .err()
-                .expect("an unavailable exact theorem premise must reject the arm search");
             assert!(
-                missing.message().contains("unavailable exact premise"),
-                "{missing:?}"
+                branches
+                    .try_theorem_application(true, &missing_application)
+                    .expect("an unavailable exact theorem premise should be a bounded miss")
+                    .is_none(),
+                "an unavailable theorem premise must not manufacture an arm descendant"
             );
             assert!(
                 branches
@@ -11932,6 +12002,10 @@ mod tests {
                 ContractExpression::CFragment(CExpression::Value(right)),
             ],
         };
+        let missing_application = TheoremApplication {
+            name: "int32_lt_implies_le".to_string(),
+            arguments: application.arguments.iter().cloned().rev().collect(),
+        };
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(&premise, &kernel_premise)
@@ -11968,6 +12042,13 @@ mod tests {
             let extracted = root
                 .apply_step(SimpleProofStep::Extract(premise.clone()))
                 .expect("a checked predecessor should promote the indexed conjunct");
+            assert!(
+                extracted
+                    .try_theorem_application(&missing_application)
+                    .expect("missing point theorem search should be a bounded miss")
+                    .is_none(),
+                "an unavailable point theorem premise must not manufacture a descendant"
+            );
             let before_query = fact_node_allocations();
             let step = extracted
                 .select_point_theorem_application_step(&application)
@@ -14908,6 +14989,12 @@ mod tests {
                 &theorem_environment,
             );
             let retained_root = root.clone();
+            assert!(
+                root.try_theorem_application(&missing_application)
+                    .expect("missing pure theorem search should be a bounded miss")
+                    .is_none(),
+                "an unavailable pure theorem premise must not manufacture a descendant"
+            );
             let missing = root
                 .select_pure_theorem_application_step(&missing_application)
                 .err()
@@ -16441,7 +16528,7 @@ mod tests {
             if size == 16 {
                 assert!(
                     joined
-                        .try_execution_theorem_application(&missing_application)
+                        .try_theorem_application(&missing_application)
                         .expect("missing theorem search should remain a bounded miss")
                         .is_none(),
                     "a missing theorem must not manufacture a descendant"
@@ -16452,7 +16539,7 @@ mod tests {
                 ));
             }
             let applied = joined
-                .try_execution_theorem_application(&application)
+                .try_theorem_application(&application)
                 .expect("common theorem search should run")
                 .expect("the reflexive theorem should produce a checked descendant");
             assert!(matches!(

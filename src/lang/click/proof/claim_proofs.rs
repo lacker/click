@@ -1908,9 +1908,7 @@ pub(super) fn finish_ordered_proof_replay(
                                     &unfolded_predicates,
                                     &replay.effect_facts,
                                 );
-                                let step =
-                                    proof.select_point_theorem_application_step(application)?;
-                                let proof = proof.apply_step(step)?;
+                                let proof = proof.apply_theorem_application(application)?;
                                 let added_facts = proof.added_facts().to_vec();
                                 let certificate = proof.certificate();
                                 drop(proof);
