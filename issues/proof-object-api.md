@@ -2808,6 +2808,22 @@ tactic kinds (transport, theorem application, `have`, rewrite, `simp`
 closures), whose point views need the goal to own its evolving surface maps
 first.
 
+### Progress (2026-08-18: the goal-aware point view; transport consumes it)
+
+`PointOperationView` is the goal-aware point view the slice-2 plan called
+for: the point-operation data a result-aware checker consumes, resolved
+either from a point proof's borrowed context or from a focused
+function-outcome goal — which now owns its surface-lowering map and its
+path's effect facts alongside result, state, facts, and unfold delta.
+Explicit post-execution `transport using` is the second tactic kind on the
+evolving outcome proof: the shared point checker runs against the view, and
+the outcome successor records the checker-owned source and target lowerings
+on the goal's own map atomically with its fact update — the drain still
+records into its caller-owned map only for the benefit of unmigrated
+tactics. Smart (premise-searching) transport stays on the legacy path until
+its candidate gathering reads the view. The derivation gate now also admits
+explicit transports.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

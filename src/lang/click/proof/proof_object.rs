@@ -837,6 +837,43 @@ enum Goal {
     FunctionOutcome(OutcomeGoal),
 }
 
+/// The point-operation data a result-aware checker consumes, resolved from
+/// either a point proof's borrowed context or a focused function-outcome
+/// goal (see [`Proof::outcome_point_view`]).
+struct PointOperationView<'p> {
+    claim_label: &'p str,
+    tactic_index: usize,
+    effect_facts: &'p [ExecutionPureFact],
+    parameters: &'p [syntax::C0Parameter],
+    arguments: &'p [CExpression],
+    pre_state: &'p CState,
+    state: &'p CState,
+    result: Option<&'p CValue>,
+    program_point_states: &'p ProgramPointStates,
+    surface_propositions: &'p SurfacePropositionMap,
+    predicate_environment: &'p PredicateEnvironment,
+    click_function_environment: &'p ClickFunctionEnvironment,
+}
+
+impl<'p> PointOperationView<'p> {
+    fn from_point(context: &'p PointProofContext<'_>) -> Self {
+        Self {
+            claim_label: context.claim_label,
+            tactic_index: context.tactic_index,
+            effect_facts: context.effect_facts,
+            parameters: context.parameters,
+            arguments: context.arguments,
+            pre_state: context.pre_state,
+            state: context.state,
+            result: context.result,
+            program_point_states: context.program_point_states,
+            surface_propositions: context.surface_propositions,
+            predicate_environment: context.predicate_environment,
+            click_function_environment: context.click_function_environment,
+        }
+    }
+}
+
 /// One path-local function-outcome judgment: the checked return outcome of
 /// one execution path awaiting its result-dependent continuations.
 ///
@@ -853,6 +890,14 @@ struct OutcomeGoal {
     result: Arc<CValue>,
     /// The post-outcome C state.
     state: SharedValue<CState>,
+    /// Surface lowerings recorded for this path's judgments. Starts as the
+    /// frontier's map and evolves per goal: a checked operation records the
+    /// lowerings it certifies atomically with its fact successor.
+    surface_propositions: SurfacePropositionMap,
+    /// The path's execution-effect facts, owned once and shared by the
+    /// goal's successors: result-aware checkers consume them as the
+    /// effect-availability context.
+    effect_facts: Arc<Vec<ExecutionPureFact>>,
     context: GoalContext,
 }
 
@@ -943,6 +988,8 @@ impl Goal {
                 path_index: goal.path_index,
                 result: goal.result.clone(),
                 state: goal.state.clone(),
+                surface_propositions: goal.surface_propositions.clone(),
+                effect_facts: goal.effect_facts.clone(),
                 context,
             }),
         }
@@ -5268,6 +5315,10 @@ impl<'a> Proof<'a> {
         })?;
         let frontier_snapshot = frontier.context.execution.clone();
         let frontier_unfolds = frontier.context.unfolded_predicates.clone();
+        let frontier_surface = frontier_snapshot
+            .as_ref()
+            .map(|execution| execution.replay.surface_propositions.clone())
+            .unwrap_or_default();
         let mut goals = self.state.goals.discharge_at(self.focused);
         let mut outcome_ids = Vec::new();
         for (path_index, path) in checked.paths().iter().enumerate() {
@@ -5297,6 +5348,8 @@ impl<'a> Proof<'a> {
                         path_index,
                         result: Arc::new(result),
                         state: state.into(),
+                        surface_propositions: frontier_surface.clone(),
+                        effect_facts: Arc::new(path.execution_facts()),
                         context: GoalContext {
                             facts,
                             unfolded_predicates: frontier_unfolds.clone(),
@@ -6669,6 +6722,36 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// The point-operation data a result-aware checker consumes, resolved
+    /// either from a point proof's borrowed context or from a focused
+    /// function-outcome goal on an execution proof. This is the goal-aware
+    /// point view: outcome goals own their result, post-state, surface
+    /// lowerings, and effect facts, and borrow the frontier snapshot for the
+    /// remaining program-point data.
+    fn outcome_point_view(&self) -> Option<PointOperationView<'_>> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return None;
+        };
+        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
+            return None;
+        };
+        let execution = goal.context.execution.as_deref()?;
+        Some(PointOperationView {
+            claim_label: context.claim_label,
+            tactic_index: context.tactic_index,
+            effect_facts: goal.effect_facts.as_ref(),
+            parameters: context.parsed_function.parameters(),
+            arguments: context.arguments,
+            pre_state: execution.replay.execution_start_state(&execution.state),
+            state: &goal.state,
+            result: Some(goal.result.as_ref()),
+            program_point_states: &execution.replay.program_point_states,
+            surface_propositions: &goal.surface_propositions,
+            predicate_environment: context.predicate_environment,
+            click_function_environment: context.click_function_environment,
+        })
+    }
+
     fn apply_transport_using(
         &self,
         source: &ClickProposition,
@@ -6676,8 +6759,21 @@ impl<'a> Proof<'a> {
         premises: &[ClickProposition],
     ) -> Result<ProofState, ClickError> {
         match self.context.as_ref() {
-            ProofContext::Point(context) => {
-                self.apply_point_transport_using(source, target, premises, context)
+            ProofContext::Point(context) => self.apply_point_transport_using(
+                source,
+                target,
+                premises,
+                &PointOperationView::from_point(context),
+            ),
+            // A focused function-outcome goal transports result-aware facts
+            // through the same point checker, reading its data from the goal.
+            ProofContext::Execution(_)
+                if matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_))) =>
+            {
+                let view = self
+                    .outcome_point_view()
+                    .expect("a focused outcome goal resolves its point view");
+                self.apply_point_transport_using(source, target, premises, &view)
             }
             ProofContext::Execution(context) => {
                 self.apply_execution_transport_using(source, target, premises, context)
@@ -6693,25 +6789,25 @@ impl<'a> Proof<'a> {
         source: &ClickProposition,
         target: &ClickProposition,
         premises: &[ClickProposition],
-        context: &PointProofContext<'a>,
+        view: &PointOperationView<'_>,
     ) -> Result<ProofState, ClickError> {
         let checked = check_point_fact_transport_using_facts(
             source,
             target,
             premises,
-            context.claim_label,
-            context.tactic_index,
+            view.claim_label,
+            view.tactic_index,
             &self.facts(),
-            context.effect_facts,
-            context.parameters,
-            context.arguments,
-            context.pre_state,
-            context.state,
-            context.result,
-            context.program_point_states,
-            context.surface_propositions,
-            context.predicate_environment,
-            context.click_function_environment,
+            view.effect_facts,
+            view.parameters,
+            view.arguments,
+            view.pre_state,
+            view.state,
+            view.result,
+            view.program_point_states,
+            view.surface_propositions,
+            view.predicate_environment,
+            view.click_function_environment,
         )?;
         let mut facts = self.facts().clone();
         let added_facts = if facts.contains(&checked.target) {
@@ -6721,6 +6817,32 @@ impl<'a> Proof<'a> {
         };
         let checked_facts = vec![checked.source, checked.target.clone()];
         facts = facts.with_fact(checked.target);
+        // A focused outcome goal records the checker-owned source and target
+        // lowerings atomically with its fact successor; the drain no longer
+        // has to re-record them into a caller-owned map for this path.
+        if let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() {
+            let mut updated = goal.clone();
+            updated
+                .surface_propositions
+                .record_lowering(source, &checked_facts[0])?;
+            updated
+                .surface_propositions
+                .record_lowering(target, &checked_facts[1])?;
+            updated.context = GoalContext {
+                facts,
+                unfolded_predicates: goal.context.unfolded_predicates.clone(),
+                execution: goal.context.execution.clone(),
+            };
+            return Ok(ProofState {
+                locals: self.state.locals.clone(),
+                goals: self
+                    .state
+                    .goals
+                    .replace_at(self.focused, Goal::FunctionOutcome(updated)),
+                added_facts: Arc::new(added_facts),
+                checked_facts: Arc::new(checked_facts),
+            });
+        }
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
             locals: self.state.locals.clone(),

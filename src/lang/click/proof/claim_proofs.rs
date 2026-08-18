@@ -1016,11 +1016,21 @@ pub(super) fn finish_ordered_proof_replay(
     // Derivation is gated on a deferred tactic kind that actually consumes
     // outcome goals, so drains with nothing to consume pay nothing; the gate
     // widens as tactic kinds migrate and disappears with the final slice.
-    let drain_consumes_outcome_goals = context
-        .replay
-        .post_execution_tactics
-        .iter()
-        .any(|deferred| matches!(&deferred.tactic, PostExecutionTactic::UnfoldPredicate(_)));
+    let drain_consumes_outcome_goals =
+        context
+            .replay
+            .post_execution_tactics
+            .iter()
+            .any(|deferred| {
+                matches!(
+                    &deferred.tactic,
+                    PostExecutionTactic::UnfoldPredicate(_)
+                        | PostExecutionTactic::Transport {
+                            premises: Some(_),
+                            ..
+                        }
+                )
+            });
     let outcome_substrate = drain_consumes_outcome_goals
         .then(|| {
             Proof::for_execution_frontier_with_effect_goals(
@@ -2633,40 +2643,67 @@ pub(super) fn finish_ordered_proof_replay(
                                 } else {
                                     None
                                 };
-                                let proof = Proof::for_point_frontier(
-                                    &proof_label,
-                                    *tactic_index,
-                                    &transport_available,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    post_state,
-                                    Some(result),
-                                    &replay.program_point_states,
-                                    &outcome_surface_propositions,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    theorem_environment,
-                                    &unfolded_predicates,
-                                    &transition_facts,
-                                );
-                                let proof = if let Some(premises) = premises {
-                                    proof.apply_step(SimpleProofStep::TransportUsing {
-                                        source: source.clone(),
-                                        target: target.clone(),
-                                        premises: premises.clone(),
-                                    })?
-                                } else {
-                                    proof.search_point_fact_transport(
-                                        source,
-                                        target,
-                                        candidates.expect("smart transport gathered candidates"),
-                                    )?
-                                };
-                                let added_facts = proof.added_facts().to_vec();
-                                let checked_facts = proof.checked_facts().to_vec();
-                                let certificate = proof.certificate();
-                                drop(proof);
+                                let (added_facts, checked_facts, certificate) =
+                                    if let (Some(premises), Some(evolving)) =
+                                        (premises.as_ref(), outcome_proof.take())
+                                    {
+                                        // The migrated explicit case: the checked
+                                        // transport advances this path's evolving
+                                        // outcome proof and records its lowerings
+                                        // on the goal atomically.
+                                        let resynced = evolving
+                                            .with_drained_outcome_facts(&transport_available)?;
+                                        let before = resynced.checkpoint();
+                                        let transported = resynced.apply_step(
+                                            SimpleProofStep::TransportUsing {
+                                                source: source.clone(),
+                                                target: target.clone(),
+                                                premises: premises.clone(),
+                                            },
+                                        )?;
+                                        let added_facts = transported.added_facts().to_vec();
+                                        let checked_facts = transported.checked_facts().to_vec();
+                                        let certificate = transported.certificate_since(&before)?;
+                                        outcome_proof = Some(transported);
+                                        (added_facts, checked_facts, certificate)
+                                    } else {
+                                        let proof = Proof::for_point_frontier(
+                                            &proof_label,
+                                            *tactic_index,
+                                            &transport_available,
+                                            parsed_function.parameters(),
+                                            arguments,
+                                            pre_state,
+                                            post_state,
+                                            Some(result),
+                                            &replay.program_point_states,
+                                            &outcome_surface_propositions,
+                                            predicate_environment,
+                                            click_function_environment,
+                                            theorem_environment,
+                                            &unfolded_predicates,
+                                            &transition_facts,
+                                        );
+                                        let proof = if let Some(premises) = premises {
+                                            proof.apply_step(SimpleProofStep::TransportUsing {
+                                                source: source.clone(),
+                                                target: target.clone(),
+                                                premises: premises.clone(),
+                                            })?
+                                        } else {
+                                            proof.search_point_fact_transport(
+                                                source,
+                                                target,
+                                                candidates
+                                                    .expect("smart transport gathered candidates"),
+                                            )?
+                                        };
+                                        (
+                                            proof.added_facts().to_vec(),
+                                            proof.checked_facts().to_vec(),
+                                            proof.certificate(),
+                                        )
+                                    };
                                 let [checked_source, checked_target] = checked_facts.as_slice()
                                 else {
                                     return Err(ClickError::new(format!(
