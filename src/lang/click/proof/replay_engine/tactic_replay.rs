@@ -10,18 +10,6 @@ use crate::kernel::prove_pure_proposition_from_context;
 /// therefore in scope when the closer replays; withholding them from
 /// generation only makes generation plan against strictly less than the
 /// replay judgment accepts.
-pub(in crate::lang::click::proof) fn record_certificate_facts_from_replay(
-    before: &[Proposition],
-    after: &[Proposition],
-    surface_certificate_facts: &mut Vec<Proposition>,
-) {
-    for fact in after {
-        if !before.contains(fact) && !surface_certificate_facts.contains(fact) {
-            surface_certificate_facts.push(fact.clone());
-        }
-    }
-}
-
 fn tactic_is_deferred_post_execution(tactic: &ProofTactic) -> bool {
     matches!(
         tactic,

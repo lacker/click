@@ -1971,7 +1971,7 @@ pub(super) fn finish_ordered_proof_replay(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: predicate unfolding requires a return outcome"
                                     )));
                                 };
-                                let requirements_before = path_requirements.clone();
+
                                 let (added_facts, certificate) =
                                     if let Some(evolving) = outcome_proof.take() {
                                         // The migrated path: the tactic advances
@@ -2022,14 +2022,12 @@ pub(super) fn finish_ordered_proof_replay(
                                 }
                                 for fact in added_facts {
                                     if !path_requirements.contains(&fact) {
-                                        path_requirements.push(fact);
+                                        path_requirements.push(fact.clone());
+                                        if !surface_certificate_facts.contains(&fact) {
+                                            surface_certificate_facts.push(fact);
+                                        }
                                     }
                                 }
-                                record_certificate_facts_from_replay(
-                                    &requirements_before,
-                                    &path_requirements,
-                                    &mut surface_certificate_facts,
-                                );
                                 for tactic in certificate.to_proof_tactics() {
                                     record_post_execution_surface_tactic(
                                         deferred.surface_recorded,
@@ -2052,7 +2050,7 @@ pub(super) fn finish_ordered_proof_replay(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: theorem application requires a return outcome"
                                     )));
                                 };
-                                let requirements_before = path_requirements.clone();
+
                                 let (added_facts, certificate) =
                                     if let Some(evolving) = outcome_proof.take() {
                                         // The migrated smart case: selection reads
@@ -2095,19 +2093,17 @@ pub(super) fn finish_ordered_proof_replay(
                                         let proof = proof.apply_theorem_application(application)?;
                                         (proof.added_facts().to_vec(), proof.certificate())
                                     };
-                                for fact in added_facts {
-                                    if !path_requirements.contains(&fact) {
-                                        path_requirements.push(fact);
-                                    }
-                                }
                                 // The retained `apply using` step is prefixed to every
                                 // claim certificate, so independent replay holds the
                                 // same checked conclusions when the closer runs.
-                                record_certificate_facts_from_replay(
-                                    &requirements_before,
-                                    &path_requirements,
-                                    &mut surface_certificate_facts,
-                                );
+                                for fact in added_facts {
+                                    if !path_requirements.contains(&fact) {
+                                        path_requirements.push(fact.clone());
+                                        if !surface_certificate_facts.contains(&fact) {
+                                            surface_certificate_facts.push(fact);
+                                        }
+                                    }
+                                }
                                 for tactic in certificate.to_proof_tactics() {
                                     record_post_execution_surface_tactic(
                                         deferred.surface_recorded,
@@ -2133,7 +2129,7 @@ pub(super) fn finish_ordered_proof_replay(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: theorem application requires a return outcome"
                                     )));
                                 };
-                                let requirements_before = path_requirements.clone();
+
                                 let added_facts = if let Some(evolving) = outcome_proof.take() {
                                     // The migrated explicit case: the checked
                                     // application advances this path's
@@ -2182,14 +2178,12 @@ pub(super) fn finish_ordered_proof_replay(
                                 };
                                 for fact in added_facts {
                                     if !path_requirements.contains(&fact) {
-                                        path_requirements.push(fact);
+                                        path_requirements.push(fact.clone());
+                                        if !surface_certificate_facts.contains(&fact) {
+                                            surface_certificate_facts.push(fact);
+                                        }
                                     }
                                 }
-                                record_certificate_facts_from_replay(
-                                    &requirements_before,
-                                    &path_requirements,
-                                    &mut surface_certificate_facts,
-                                );
                                 record_post_execution_surface_tactic(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
@@ -2770,7 +2764,7 @@ pub(super) fn finish_ordered_proof_replay(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: `transport` requires a return outcome"
                                     )));
                                 };
-                                let requirements_before = path_requirements.clone();
+
                                 let transition_facts = path.execution_facts();
                                 let mut transport_available = path_requirements.clone();
                                 for equation in
@@ -2885,14 +2879,12 @@ pub(super) fn finish_ordered_proof_replay(
                                     .record_lowering(target, checked_target)?;
                                 for fact in added_facts {
                                     if !path_requirements.contains(&fact) {
-                                        path_requirements.push(fact);
+                                        path_requirements.push(fact.clone());
+                                        if !surface_certificate_facts.contains(&fact) {
+                                            surface_certificate_facts.push(fact);
+                                        }
                                     }
                                 }
-                                record_certificate_facts_from_replay(
-                                    &requirements_before,
-                                    &path_requirements,
-                                    &mut surface_certificate_facts,
-                                );
                                 for tactic in certificate.to_proof_tactics() {
                                     record_post_execution_surface_tactic(
                                         deferred.surface_recorded,

@@ -2972,6 +2972,19 @@ outcome goal's facts contain the legacy working set between mutations. The
 outcome goal is now the richer context; the vector is maintenance for the
 shrinking legacy set, which is exactly the posture the deletion slice needs.
 
+### Progress (2026-08-18: the deletion slice begins)
+
+First deletion: the drain's diff-based certificate-fact bookkeeping is gone.
+Every migrated tactic site cloned the whole working set before its step and
+re-diffed it afterward (`record_certificate_facts_from_replay`, an
+O(before × after) scan per tactic) to recover exactly the facts its own
+checked step had already reported as `added_facts`. The sites now collect
+surface-certificate facts inline from the push they were already doing, the
+four per-tactic whole-vector clones are removed, and the dead collector is
+deleted. This is the deletion slice's pattern in miniature: the goal-backed
+step output is the authority, and the machinery that re-derived it from
+vector comparisons goes away rather than surviving as a fallback.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
