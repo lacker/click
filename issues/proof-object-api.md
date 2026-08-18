@@ -184,7 +184,10 @@ The continuation substrate must not introduce:
 - ordinary replay of a successful candidate for validation;
 - conversion to `ProofReplayContext` between execution and result/effect
   goals;
-- one special transaction driver per smart tactic or goal kind; or
+- one special transaction driver per smart tactic or goal kind;
+- a multi-goal `apply_step` variant, or any join, scope close, or
+  finalization that accepts a caller-assembled goal set rather than the goal
+  set recorded by its audited split, open, or root construction; or
 - eager cloning of every outcome state, fact set, history, or certificate
   prefix.
 
@@ -200,6 +203,15 @@ than additional tactic-specific adapters:
 1. Specify and implement stable goal identity plus a persistent typed goal
    collection inside `Proof`. Adapt the existing proposition, point, and
    execution-frontier states without changing their checked semantics.
+   Because goals are the only cross-operation currency, `GoalRef` and
+   `SplitId` identity across fork and join is load-bearing for three
+   consumers at once — join legality, memoization keys, and deterministic
+   certificate ordering — so write the precise identity rules down before
+   any code, including which operations preserve an identifier and which
+   retire it. This step also fixes the two-part operation contract: focused
+   `apply_step` may read the whole proof but replaces only its selected
+   goal, while goal-set arity exists only in structure-keyed `split`/`join`
+   operations (see the intended API shape below).
 2. Add shared bounded attempt/continuation combinators over immutable `Proof`
    descendants. Regressions must show that a locally successful prefix whose
    continuation fails returns the unchanged ancestor and publishes no partial
@@ -330,6 +342,24 @@ impl Proof {
         step: SimpleProofStep,
     ) -> Result<Proof, StepError>;
 
+    // Structural split: replaces one goal with labeled child goals and
+    // records the split node. `SplitKind` names the audited operation:
+    // cases on an available disjunction, a C branch, a scope open, etc.
+    pub fn split(
+        &self,
+        goal: GoalRef,
+        kind: SplitKind,
+    ) -> Result<(Proof, SplitId), StepError>;
+
+    // Audited join: consumes exactly the recorded split's children. Legal
+    // only when every child goal is discharged or at the declared
+    // interface; records one structured certificate node.
+    pub fn join(
+        &self,
+        split: SplitId,
+        interface: JoinInterface,
+    ) -> Result<Proof, JoinError>;
+
     pub fn is_complete(&self) -> bool;
 
     pub fn certificate(&self) -> ProofCertificate;
@@ -349,13 +379,41 @@ transition that lets search bypass `apply_step`.
 
 `apply_step` atomically:
 
-1. checks the supplied step against the selected goal and current context;
-2. creates the successor semantic state and any successor goals; and
+1. checks the supplied step against the selected goal and the current proof
+   state, including read-only inspection of other open goals where the step's
+   rule requires it;
+2. creates the successor semantic state and any successor goals, replacing
+   only the selected goal; and
 3. appends that exact step and its structural outcome to the persistent
    derivation.
 
 There is no successful state transition without matching certificate
 provenance and no accepted certificate step that was not checked.
+
+### Focused steps read the whole proof; goal sets come from structure
+
+`apply_step` replaces only its focused goal, but its checker may read the
+entire current proof state, including other open goals, as validation input.
+This is how inherently multi-goal obligations stay on the ordinary focused
+signature: the obligation is reified as a goal in the collection, and the
+step focuses that goal. The terminal function frame is the canonical case —
+the typed effect goal is a real member of `open_goals`, `FrameUsing` is
+applied to it, and its checker ranges read-only over every owned
+function-outcome goal before closing only the effect goal. The outcome goals
+are untouched and still owe their own result continuations. The already-landed
+`FrameUsing` seam behaves exactly this way; this contract codifies it.
+
+Operations that genuinely consume several goals at once — joins, scope
+closes, and terminal finalization — are the inverses of splits, and their
+goal-set arity is keyed by recorded structure only. `join` takes a `SplitId`,
+never a caller-assembled `Vec<GoalRef>`: the member goals and their count
+were fixed when the audited `split` recorded them, so a smart tactic cannot
+assemble an arbitrary goal set and ask for it to be merged, and a goal from
+the wrong lineage cannot be spliced into a join. Terminal finalization is the
+root-level instance of the same rule: it consumes the root's required goal
+set as recorded at proof construction, not a list supplied by the caller.
+There is deliberately no multi-goal `apply_step` variant; caller-chosen goal
+sets would be exactly the escape hatch this API exists to close.
 
 ## Completion and goals
 
@@ -463,6 +521,10 @@ construction:
   project size;
 - applying one step costs `O((q + d) polylog N)` amortized, where `q` is its
   explicit input and `d` its semantic/certificate delta;
+- a step whose check ranges over several goals it names as input — such as a
+  function frame over every owned outcome goal, or a join over its recorded
+  child goals — counts those named goals in `q`; it must not visit open
+  goals it does not name;
 - facts, resources, goals, environments, C states, snapshots, and certificate
   prefixes use persistent structural sharing rather than complete clones;
 - appending a linear proof node is constant or logarithmic apart from the
