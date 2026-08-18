@@ -1892,11 +1892,16 @@ Top-level `execute()` and `execute_all_paths()` now first try the immutable
 execution-frontier `Proof` for the already-audited exact-context subset. Each candidate statement
 advances only through `Proof::apply_step(StepUsing(...))`; a successful
 sequence exports its already-checked descendant and retained simple
-certificate. Any inherited unrelated fact, resource, effect, structural C
-branch, or unsupported statement rejects the entire candidate transactionally
-and restores the pointer-sharing root for the compatibility planner. Focused
-regressions require zero mutable planning transitions and no ordinary
-certificate replay for the fact-free `execute` case. Top-level
+certificate. The first slice rejected any inherited unrelated fact, resource,
+effect, structural C branch, or unsupported statement transactionally and
+restored the pointer-sharing root for the compatibility planner. Standalone
+`step()` now also uses the broader checked selector when
+the root has unrelated scalar facts: those facts remain structurally shared,
+while only exact definedness and current-local dependencies enter the retained
+`StepUsing`. Resource contexts still decline this path because their
+planner-selected evidence is not represented here. Focused regressions require
+zero mutable planning transitions and no ordinary certificate replay for both
+the fact-free `execute` case and a scalar-root-fact `step`. Top-level
 `execute_until(...)` now uses the same exact-root boundary. Its first statement
 must not depend on unrelated inherited context; after that accepted step, each
 descendant exposes an output-sized `added_facts` delta that the next checked

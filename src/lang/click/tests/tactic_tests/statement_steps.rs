@@ -416,6 +416,59 @@ fn no_premise_smart_step_searches_directly_on_proof() {
 }
 
 #[test]
+fn scalar_root_facts_do_not_force_smart_step_planning() {
+    let c_source = r#"
+            int32 zero(int32 x) {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "zero.c";
+
+            int32 zero(int32 x) {
+                requires x >= 0;
+                ensures result == 0;
+            } by {
+                step();
+                normalize();
+            }
+        "#;
+
+    let ((verified, events), planning_transitions) = count_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &[("zero.c", c_source)]))
+    });
+    let verified = verified.expect("the unrelated scalar fact should remain shared by Proof");
+    assert_eq!(
+        planning_transitions, 0,
+        "an unrelated scalar root fact must not force mutable step planning"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "zero.contract"
+                    && name == "smart tactic compatibility replay (tactic 0, source 0)"
+        )),
+        "the accepted checked step must bypass compatibility replay: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked smart step should retain its expansion");
+    assert_eq!(expanded[0], ProofTactic::StepUsing(Vec::new()));
+    assert_eq!(expanded[1], ProofTactic::Normalize);
+
+    let expanded_source = expand_c0_claim_source(
+        click_source,
+        &[("zero.c", c_source)],
+        "zero",
+        CProofClaim::Grouped,
+    )
+    .expect("the checked smart step should expand");
+    verify_c0_sources(&expanded_source, &[("zero.c", c_source)])
+        .expect("the retained step should independently reverify");
+}
+
+#[test]
 fn fact_free_linear_smart_steps_search_directly_on_proof() {
     let c_source = r#"
             int32 set_one(int32 x) {
