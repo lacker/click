@@ -2824,6 +2824,20 @@ tactics. Smart (premise-searching) transport stays on the legacy path until
 its candidate gathering reads the view. The derivation gate now also admits
 explicit transports.
 
+### Progress (2026-08-18: explicit theorem application consumes the view)
+
+Explicit post-execution `apply using` is the third tactic kind on the
+evolving outcome proof. The point theorem checker now runs against
+`PointOperationView` for point proofs and outcome goals alike, and the view
+carries the theorem environment. Parity exposed a per-operation distinction
+the legacy drain made silently: the transport checker consumes the path's
+own execution facts while the theorem checker consumes the replay-level
+effect set, so the outcome view resolves its effect-availability context
+per operation (`OutcomeEffectContext::Path` versus `::Replay`) instead of
+flattening the two. Smart `apply` (the selection query) remains legacy until
+`select_theorem_application_step_at_point` reads the view; the derivation
+gate admits explicit applications.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

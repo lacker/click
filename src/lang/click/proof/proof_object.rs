@@ -840,6 +840,14 @@ enum Goal {
 /// The point-operation data a result-aware checker consumes, resolved from
 /// either a point proof's borrowed context or a focused function-outcome
 /// goal (see [`Proof::outcome_point_view`]).
+/// Which effect-availability context an outcome-goal point operation
+/// consumes; each migrated tactic matches its legacy drain input exactly.
+#[derive(Clone, Copy)]
+enum OutcomeEffectContext {
+    Path,
+    Replay,
+}
+
 struct PointOperationView<'p> {
     claim_label: &'p str,
     tactic_index: usize,
@@ -853,6 +861,7 @@ struct PointOperationView<'p> {
     surface_propositions: &'p SurfacePropositionMap,
     predicate_environment: &'p PredicateEnvironment,
     click_function_environment: &'p ClickFunctionEnvironment,
+    theorem_environment: &'p TheoremEnvironment,
 }
 
 impl<'p> PointOperationView<'p> {
@@ -870,6 +879,7 @@ impl<'p> PointOperationView<'p> {
             surface_propositions: context.surface_propositions,
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
+            theorem_environment: context.theorem_environment,
         }
     }
 }
@@ -6105,8 +6115,21 @@ impl<'a> Proof<'a> {
             ProofContext::Pure(context) => {
                 self.apply_pure_theorem_using(context, application, surface_premises)
             }
-            ProofContext::Point(context) => {
-                self.apply_point_theorem_using(context, application, surface_premises)
+            ProofContext::Point(context) => self.apply_point_theorem_using(
+                &PointOperationView::from_point(context),
+                application,
+                surface_premises,
+            ),
+            // A focused function-outcome goal applies theorems through the
+            // point checker, reading its data from the goal; the effect
+            // context is the replay-level set the legacy drain consumed.
+            ProofContext::Execution(_)
+                if matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_))) =>
+            {
+                let view = self
+                    .outcome_point_view_with_effects(OutcomeEffectContext::Replay)
+                    .expect("a focused outcome goal resolves its point view");
+                self.apply_point_theorem_using(&view, application, surface_premises)
             }
             ProofContext::Execution(context) => {
                 self.apply_execution_theorem_using(context, application, surface_premises)
@@ -6178,29 +6201,29 @@ impl<'a> Proof<'a> {
 
     fn apply_point_theorem_using(
         &self,
-        context: &PointProofContext<'_>,
+        view: &PointOperationView<'_>,
         application: &TheoremApplication,
         surface_premises: &[ClickProposition],
     ) -> Result<ProofState, ClickError> {
         let unfolded_predicates = self.active_unfolded_predicates();
         let checked = check_point_theorem_application_using_facts(
-            context.theorem_environment,
+            view.theorem_environment,
             application,
             surface_premises,
-            context.claim_label,
-            context.tactic_index,
+            view.claim_label,
+            view.tactic_index,
             &self.facts(),
-            context.parameters,
-            context.arguments,
-            context.pre_state,
-            context.state,
-            context.result,
-            context.program_point_states,
-            context.surface_propositions,
+            view.parameters,
+            view.arguments,
+            view.pre_state,
+            view.state,
+            view.result,
+            view.program_point_states,
+            view.surface_propositions,
             &unfolded_predicates,
-            context.effect_facts,
-            context.predicate_environment,
-            context.click_function_environment,
+            view.effect_facts,
+            view.predicate_environment,
+            view.click_function_environment,
             false,
         )?;
         let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
@@ -6729,6 +6752,17 @@ impl<'a> Proof<'a> {
     /// lowerings, and effect facts, and borrow the frontier snapshot for the
     /// remaining program-point data.
     fn outcome_point_view(&self) -> Option<PointOperationView<'_>> {
+        self.outcome_point_view_with_effects(OutcomeEffectContext::Path)
+    }
+
+    /// Resolves the view with the caller's effect-availability context: the
+    /// transport checker consumes the path's own execution facts, while the
+    /// theorem checker consumes the replay-level effect set, matching the
+    /// legacy drain inputs exactly.
+    fn outcome_point_view_with_effects(
+        &self,
+        effects: OutcomeEffectContext,
+    ) -> Option<PointOperationView<'_>> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return None;
         };
@@ -6739,7 +6773,10 @@ impl<'a> Proof<'a> {
         Some(PointOperationView {
             claim_label: context.claim_label,
             tactic_index: context.tactic_index,
-            effect_facts: goal.effect_facts.as_ref(),
+            effect_facts: match effects {
+                OutcomeEffectContext::Path => goal.effect_facts.as_ref(),
+                OutcomeEffectContext::Replay => &execution.replay.effect_facts,
+            },
             parameters: context.parsed_function.parameters(),
             arguments: context.arguments,
             pre_state: execution.replay.execution_start_state(&execution.state),
@@ -6749,6 +6786,7 @@ impl<'a> Proof<'a> {
             surface_propositions: &goal.surface_propositions,
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
+            theorem_environment: context.theorem_environment,
         })
     }
 

@@ -2053,30 +2053,46 @@ pub(super) fn finish_ordered_proof_replay(
                                     )));
                                 };
                                 let requirements_before = path_requirements.clone();
-                                let proof = Proof::for_point_frontier(
-                                    &proof_label,
-                                    *tactic_index,
-                                    &path_requirements,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    post_state,
-                                    Some(result),
-                                    &replay.program_point_states,
-                                    &outcome_surface_propositions,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    theorem_environment,
-                                    &unfolded_predicates,
-                                    &replay.effect_facts,
-                                );
-                                let proof =
-                                    proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
-                                        application: application.clone(),
-                                        premises: premises.clone(),
-                                    })?;
-                                let added_facts = proof.added_facts().to_vec();
-                                drop(proof);
+                                let added_facts = if let Some(evolving) = outcome_proof.take() {
+                                    // The migrated explicit case: the checked
+                                    // application advances this path's
+                                    // evolving outcome proof directly.
+                                    let resynced =
+                                        evolving.with_drained_outcome_facts(&path_requirements)?;
+                                    let applied = resynced.apply_step(
+                                        SimpleProofStep::ApplyTheoremUsing {
+                                            application: application.clone(),
+                                            premises: premises.clone(),
+                                        },
+                                    )?;
+                                    let added_facts = applied.added_facts().to_vec();
+                                    outcome_proof = Some(applied);
+                                    added_facts
+                                } else {
+                                    let proof = Proof::for_point_frontier(
+                                        &proof_label,
+                                        *tactic_index,
+                                        &path_requirements,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        post_state,
+                                        Some(result),
+                                        &replay.program_point_states,
+                                        &outcome_surface_propositions,
+                                        predicate_environment,
+                                        click_function_environment,
+                                        theorem_environment,
+                                        &unfolded_predicates,
+                                        &replay.effect_facts,
+                                    );
+                                    let proof =
+                                        proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
+                                            application: application.clone(),
+                                            premises: premises.clone(),
+                                        })?;
+                                    proof.added_facts().to_vec()
+                                };
                                 for fact in added_facts {
                                     if !path_requirements.contains(&fact) {
                                         path_requirements.push(fact);
