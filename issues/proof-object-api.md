@@ -2725,6 +2725,17 @@ makes them load-bearing. Stage it as independently green slices:
    advances the outcome-focused proof, and `path_requirements` for
    still-legacy tactic kinds is materialized from the goal's facts at an
    explicit adapter boundary rather than maintained as parallel state.
+   Scouting (2026-08-18) found two prerequisites inside this slice: the
+   drain's per-path `outcome_surface_propositions` and `unfolded_predicates`
+   evolve tactic-by-tactic alongside the requirements vector, so the outcome
+   goal's context must own its surface-lowering map and unfold history (both
+   already persistent structures) before any tactic consumes the goal; and
+   the point operations read result, pre/post state, premise anchor, and
+   surface maps from `PointProofContext`, so they need one goal-aware point
+   view that resolves those from a `FunctionOutcome` goal on an execution
+   proof. Migrate the view first, then `UnfoldPredicate` as the first
+   consuming tactic, with the slice-1 parity assertion extended to hold
+   after every consumed tactic, not only at path entry.
 3. **Case routing on goals.** Proof-level `if` case assumptions select and
    refine outcome goals through the recorded split structure instead of
    re-deriving membership per path from the requirements vector.
