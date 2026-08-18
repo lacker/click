@@ -7430,7 +7430,7 @@ fn open_scope_retains_its_checked_execution_branch() {
                         if branch.ensuring.is_none()
                             && branch.then_tactics.is_empty()
                             && branch.else_tactics.is_empty()
-                            && premises.len() == 1
+                            && premises.is_empty()
                 )
         ),
         "{tactics:#?}"

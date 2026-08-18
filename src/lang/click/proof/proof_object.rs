@@ -4244,18 +4244,19 @@ impl<'a> Proof<'a> {
     /// the broader checked selector. Both paths return only an accepted
     /// `StepUsing` descendant, never planning aftermath.
     pub(super) fn try_smart_step(&self) -> Result<Option<Self>, ClickError> {
-        if let Some(proof) = self.try_indexed_statement_step()? {
-            return Ok(Some(proof));
-        }
         let Some(execution) = self.state.execution.as_ref() else {
             return Ok(None);
         };
-        // `execute` may traverse a retained resource without spelling it as a
-        // statement premise. A source `step()` inside that scope instead owns
-        // the planner-selected resource evidence, so it must stay on the
-        // scoped path until that selection is represented by Proof directly.
+        // A standalone `step()` cannot yet decide which resource-backed facts
+        // a later tactic will need. Preserve the transactional compatibility
+        // boundary until its continuation is searched on this Proof too. An
+        // explicit resource scope has an owned continuation contract and uses
+        // the broader selector through `ProofScope::try_smart_step` below.
         if !execution.state.resources().facts().is_empty() {
             return Ok(None);
+        }
+        if let Some(proof) = self.try_indexed_statement_step()? {
+            return Ok(Some(proof));
         }
         self.try_indexed_execute_step()
     }
@@ -4323,7 +4324,12 @@ impl<'a> Proof<'a> {
                 .assumptions()
                 .derive_atomic_proposition(&fact)
             else {
-                return Ok(None);
+                // Definedness may be discharged directly by the Proof-owned
+                // resource context rather than by a pure proposition. Probe
+                // the explicit empty candidate through the simple checker;
+                // it either returns the checked descendant or leaves this
+                // root untouched.
+                return self.try_statement_step_using(Vec::new());
             };
             for premise in derivation.context_premises() {
                 if !selected.contains(&premise) {
@@ -4378,10 +4384,20 @@ impl<'a> Proof<'a> {
                 })
                 .or_else(|| execution.replay.surface_propositions.surfaces(&fact).next());
             let Some(surface) = surface.cloned() else {
-                return Ok(None);
+                // A resource-local justification need not have a standalone
+                // Surface proposition spelling. The empty simple candidate
+                // remains the only sound fallback and is checked normally.
+                return self.try_statement_step_using(Vec::new());
             };
             premises.push(surface);
         }
+        self.try_statement_step_using(premises)
+    }
+
+    fn try_statement_step_using(
+        &self,
+        premises: Vec<ClickProposition>,
+    ) -> Result<Option<Self>, ClickError> {
         match self.apply_step(SimpleProofStep::StepUsing(premises)) {
             Ok(proof) => Ok(Some(proof)),
             Err(_) => {
@@ -8519,7 +8535,7 @@ impl<'a> ProofScope<'a> {
     /// child Proof. The accepted descendant, including its exact `StepUsing`
     /// certificate and fact delta, becomes the next scope body directly.
     pub(super) fn try_smart_step(&self) -> Result<Option<Self>, ClickError> {
-        let Some(body) = self.body.try_indexed_statement_step()? else {
+        let Some(body) = self.body.try_indexed_execute_step()? else {
             return Ok(None);
         };
         let mut next = self.clone();
@@ -15540,6 +15556,11 @@ mod tests {
             operator: ComparisonOperator::Equal,
             right: ContractExpression::CBinding("x".to_string()),
         };
+        let exposed_reflexive = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+        };
 
         for size in [16_u32, 64, 256, 1024, 4096] {
             let root = Proof::for_execution_frontier(
@@ -15583,8 +15604,9 @@ mod tests {
                 .join_nested(nested)
                 .expect("the checked have should advance the open scope");
             let scope = scope
-                .apply_step(SimpleProofStep::Step)
-                .expect("the open body should advance one statement");
+                .try_smart_step()
+                .expect("the open body's bounded smart-step query should run")
+                .expect("the owned resource scope should retain its checked statement step");
             let closed = scope.join().expect("the marker body should close");
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -15604,7 +15626,7 @@ mod tests {
                                 SimpleProofStep::Assumption,
                             ])),
                         },
-                        SimpleProofStep::Step,
+                        SimpleProofStep::StepUsing(vec![exposed_reflexive.clone()]),
                     ])),
                 }]
             );

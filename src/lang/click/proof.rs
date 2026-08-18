@@ -34,6 +34,12 @@ pub(in crate::lang::click) fn count_planning_statement_transitions<R>(
 ) -> (R, usize) {
     cursor_execution::count_planning_statement_transitions(operation)
 }
+#[cfg(test)]
+pub(in crate::lang::click) fn collect_planning_statement_transitions<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, Vec<(String, usize, String)>) {
+    cursor_execution::collect_planning_statement_transitions(operation)
+}
 use execution_planning::*;
 pub(super) use execution_planning::{
     StatementFactTransportPolicy, StatementPrerequisitePolicy, certified_statement_transitions,

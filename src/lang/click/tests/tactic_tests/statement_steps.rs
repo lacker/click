@@ -749,8 +749,28 @@ fn execute_step_omits_materialization_only_transport() {
             }
         "#;
 
-    let verified = verify_c0_sources(click_source, &[("transport.c", c_source)])
-        .expect("automatic snapshot transport should verify");
+    let ((verified, events), planning_transitions) = collect_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| {
+            verify_c0_sources(click_source, &[("transport.c", c_source)])
+        })
+    });
+    let verified = verified.expect("automatic snapshot transport should verify");
+    assert!(
+        planning_transitions.iter().all(|(claim, _, tactic)| claim
+            != "set_second_return_first.contract"
+            || tactic != "step"),
+        "resource-sensitive smart steps must search only on checked Proof descendants: \
+         {planning_transitions:#?}"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "set_second_return_first.contract"
+                    && name.starts_with("smart tactic compatibility replay")
+        )),
+        "resource-sensitive smart steps must not enter compatibility replay: {events:#?}"
+    );
     let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
         panic!(
             "atomic transport should have a surface expansion: {:?}",

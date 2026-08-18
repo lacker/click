@@ -2148,6 +2148,33 @@ execution proofs remain an explicit boundary: one such proof may own several
 result-sensitive outcomes, so ordered finalization still creates one point
 proof per outcome until typed outcome proposition goals migrate into `Proof`.
 
+### Progress (2026-08-18: resource-scoped smart statement steps)
+
+A bare `step()` inside a checked composite-resource scope now selects and
+applies its concrete `StepUsing` on that scope's owned `Proof`. Definedness
+that follows directly from the resource context no longer needs a fabricated
+standalone Surface proposition: the selector probes the explicit empty
+candidate through `apply_step`, and a rejection leaves the scope root
+unchanged. The checked open-scope driver retains the accepted descendant and
+its exact premise list, so ordinary verification neither runs a mutable
+planning transition for that source `step()` nor enters compatibility replay.
+
+The existing 16-through-4096 open-scope curve now exercises this smart
+selection with unrelated ambient facts and pins the retained `StepUsing`
+inside the scope certificate. The snapshot-transport source regression also
+attributes planning transitions by claim and tactic, independently verifies
+the expansion, and rejects any compatibility replay for its resource-scoped
+steps.
+
+This slice deliberately does not broaden standalone top-level `step()` across
+an arbitrary resource context. A broader attempt exposed the existing
+continuation boundary in `clone_cursor`: a locally valid store can discard a
+source-memory fact needed by a later `simp`. The full scope driver searches
+its checked continuation transactionally, but a top-level step does not yet
+own that suffix. Such a miss therefore continues from the unchanged root on
+the compatibility path until continuation-conditioned search is represented
+by `Proof`; it is not approximated by harvesting ambient resource facts.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

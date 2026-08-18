@@ -1252,17 +1252,28 @@ pub(super) fn statement_expression_definedness(
 
 #[cfg(test)]
 thread_local! {
-    static PLANNING_STATEMENT_TRANSITIONS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
+    static PLANNING_STATEMENT_TRANSITIONS: std::cell::RefCell<Vec<(String, usize, String)>> = const {
+        std::cell::RefCell::new(Vec::new())
     };
 }
 
 #[cfg(test)]
 pub(super) fn count_planning_statement_transitions<R>(operation: impl FnOnce() -> R) -> (R, usize) {
-    let before = PLANNING_STATEMENT_TRANSITIONS.with(std::cell::Cell::get);
+    let before = PLANNING_STATEMENT_TRANSITIONS.with(|transitions| transitions.borrow().len());
     let result = operation();
-    let after = PLANNING_STATEMENT_TRANSITIONS.with(std::cell::Cell::get);
+    let after = PLANNING_STATEMENT_TRANSITIONS.with(|transitions| transitions.borrow().len());
     (result, after - before)
+}
+
+#[cfg(test)]
+pub(super) fn collect_planning_statement_transitions<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, Vec<(String, usize, String)>) {
+    let before = PLANNING_STATEMENT_TRANSITIONS.with(|transitions| transitions.borrow().len());
+    let result = operation();
+    let transitions =
+        PLANNING_STATEMENT_TRANSITIONS.with(|transitions| transitions.borrow()[before..].to_vec());
+    (result, transitions)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1286,7 +1297,13 @@ pub(super) fn execute_step_from_execution_point(
 ) -> Result<Vec<Proposition>, ClickError> {
     #[cfg(test)]
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        PLANNING_STATEMENT_TRANSITIONS.with(|count| count.set(count.get() + 1));
+        PLANNING_STATEMENT_TRANSITIONS.with(|transitions| {
+            transitions.borrow_mut().push((
+                claim_label.to_owned(),
+                tactic_index,
+                tactic_name.to_owned(),
+            ));
+        });
     }
     replay.completed_branch_regions.clear();
     let statement_index = replay.frontier.next_statement_index;
