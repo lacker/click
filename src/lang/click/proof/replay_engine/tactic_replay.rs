@@ -648,18 +648,19 @@ fn try_indexed_step_on_proof<'a>(
     }
 }
 
-/// Tries an explicitly qualified smart frame through the owned Proof.
+/// Tries smart frame candidate selection and application through the owned
+/// Proof.
 ///
 /// A miss restores the exact legacy execution context so unsupported region
 /// kinds and frame candidates retain their existing compatibility path.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
-fn try_qualified_smart_frame_on_proof<'a>(
+fn try_smart_frame_on_proof<'a>(
     state: &mut CState,
     pure_facts: &mut Vec<Proposition>,
     replay: &mut TacticReplayState,
     branch_path: &mut PersistentSequence<String>,
-    region: &'a CodeRegionRef,
+    region: Option<&'a CodeRegionRef>,
     function_block: &'a FunctionBlock,
     function: &'a CFunction,
     parsed_function: &'a syntax::C0Function,
@@ -679,6 +680,9 @@ fn try_qualified_smart_frame_on_proof<'a>(
         replay: std::mem::take(replay),
         branch_path: std::mem::take(branch_path),
     };
+    let ordered_deferred = context.replay.ordered_finalization
+        && context.replay.is_at_function_exit()
+        && context.replay.open_scopes == 0;
     let root = Proof::for_execution_frontier(
         claim_label,
         tactic_index,
@@ -693,16 +697,39 @@ fn try_qualified_smart_frame_on_proof<'a>(
         click_function_environment,
         theorem_environment,
     );
-    match root.try_smart_frame_at(Some(region), tactic_index, source_index)? {
+    match root.try_smart_frame_at(region, tactic_index, source_index)? {
         Some(proof) => {
             let certificate = proof.certificate();
-            let context = proof.into_execution_context()?;
+            let mut context = proof.into_execution_context()?;
+            if ordered_deferred {
+                let mut deferred = context
+                    .replay
+                    .post_execution_tactics
+                    .pop()
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: Proof-owned frame retained no ordered deferral"
+                        ))
+                    })?;
+                if !matches!(
+                    deferred.tactic,
+                    PostExecutionTactic::CheckedFrameUsing { .. }
+                ) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: Proof-owned frame retained the wrong ordered operation"
+                    )));
+                }
+                deferred.surface_recorded = false;
+                context.replay.post_execution_tactics.push(deferred);
+            }
             *state = context.state;
             *pure_facts = context.pure_facts;
             *replay = context.replay;
             *branch_path = context.branch_path;
-            for step in certificate.steps() {
-                replay.proof_certificate_builder.push_step(step.clone());
+            if !ordered_deferred {
+                for step in certificate.steps() {
+                    replay.proof_certificate_builder.push_step(step.clone());
+                }
             }
             Ok(true)
         }
@@ -814,11 +841,18 @@ fn replay_linear_tactics_without_frontier_loops(
             && replay.is_at_function_exit()
             && replay.open_scopes == 0
             && tactic_is_deferred_post_execution(tactic);
+        let proof_owned_smart_frame_deferred = replay.ordered_finalization
+            && replay.is_at_function_exit()
+            && replay.open_scopes == 0
+            && matches!(
+                tactic,
+                ProofTactic::SmartFrame(None | Some(CodeRegionRef::Function))
+            );
         let deferred_region_simp = replay.region_proof && matches!(tactic, ProofTactic::Simp);
         let mut scope = Some(begin_tactic_surface_scope(&mut replay));
         let capture_this_tactic =
             begin_tactic_expansion_capture(expansion_capture.as_deref_mut(), source_index, &replay);
-        if capture_this_tactic && deferred_post_execution {
+        if capture_this_tactic && (deferred_post_execution || proof_owned_smart_frame_deferred) {
             replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                 tactic_index,
                 source_index,
@@ -1684,40 +1718,40 @@ fn replay_linear_tactics_without_frontier_loops(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::SmartFrame(region_ref) => {
-                if let Some(region) = region_ref {
-                    if try_qualified_smart_frame_on_proof(
-                        &mut state,
-                        &mut requirement_pure_facts,
+                if try_smart_frame_on_proof(
+                    &mut state,
+                    &mut requirement_pure_facts,
+                    &mut replay,
+                    &mut branch_path,
+                    region_ref.as_ref(),
+                    function_block,
+                    function,
+                    parsed_function,
+                    arguments,
+                    function_environment,
+                    resource_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    theorem_environment,
+                    claim_label,
+                    tactic_index,
+                    source_index,
+                )? {
+                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                    let slice = end_tactic_surface_scope(
                         &mut replay,
-                        &mut branch_path,
-                        region,
-                        function_block,
-                        function,
-                        parsed_function,
-                        arguments,
-                        function_environment,
-                        resource_environment,
-                        predicate_environment,
-                        click_function_environment,
-                        theorem_environment,
-                        claim_label,
-                        tactic_index,
-                        source_index,
-                    )? {
-                        assumptions = assumptions_from_propositions(&requirement_pure_facts);
-                        let slice = end_tactic_surface_scope(
-                            &mut replay,
-                            scope.take().expect("tactic scope is open"),
+                        scope.take().expect("tactic scope is open"),
+                    );
+                    if capture_this_tactic && !proof_owned_smart_frame_deferred {
+                        finish_tactic_expansion_capture(
+                            expansion_capture.as_deref_mut(),
+                            &slice,
+                            false,
                         );
-                        if capture_this_tactic {
-                            finish_tactic_expansion_capture(
-                                expansion_capture.as_deref_mut(),
-                                &slice,
-                                false,
-                            );
-                        }
-                        continue;
                     }
+                    continue;
+                }
+                if region_ref.is_some() {
                     let proof = ProofCertificate::from_proof_tactics(&[ProofTactic::FrameUsing {
                         region: region_ref.clone(),
                         premises: Vec::new(),

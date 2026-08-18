@@ -1405,6 +1405,10 @@ pub(super) enum PostExecutionTactic {
         authority: CheckedFrameAuthority,
         region: Option<CodeRegionRef>,
         premises: Vec<ClickProposition>,
+        /// The exact simple certificate already checked by `Proof`. Ordered
+        /// finalization may retain it at the deferred source position without
+        /// re-running its semantic transitions.
+        surface_certificate: Option<ProofCertificate>,
     },
     Simp,
 }

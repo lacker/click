@@ -1464,7 +1464,18 @@ failed checked candidate restores the untouched execution frontier before
 falling back, so unsupported qualified regions retain their prior diagnostics.
 The source regression observes neither ordinary certificate replay nor the
 legacy exact-effect recheck and independently verifies the expanded
-`FrameUsing` step. For a single unpartitioned execution
+`FrameUsing` step. Top-level unqualified `frame()` now also searches for and
+applies its empty or contextual candidate through this operation before the
+compatibility path. Its mutable source regression retains explicit selected
+premises, observes neither ordinary replay nor exact-effect rechecking, and
+independently verifies expansion. Checked deferred frames carry their retained
+certificate to ordered finalization, so an earlier deferred `fold` remains
+before the frame without replaying either operation; a source-order regression
+independently verifies that expansion. Snapshot-qualified arithmetic theorem
+derivations remain on the compatibility path because their recorded lowering
+can make theorem application close the live Proof while fresh source still
+needs the trailing `assumption`; the existing resource-branch expansion
+regression guards that boundary. For a single unpartitioned execution
 context, mutable smart frames that need facts reuse contextual footprint
 planning only to select a simple candidate, then apply its explicit `Have`
 and `FrameUsing` steps once through the owned Proof. Branch-shaped candidates

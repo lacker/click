@@ -4942,6 +4942,152 @@ fn contextual_mutable_frame_inside_open_applies_explicit_candidate_on_proof() {
 }
 
 #[test]
+fn top_level_contextual_frame_applies_explicit_candidate_on_proof() {
+    let c_source = r#"
+        int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+            p[i] = 9;
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "write_in_bounds.c";
+
+        int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+            requires n >= 0;
+            requires n <= 2147483647;
+            requires i >= 0;
+            requires i < n;
+            consumes p[0..n];
+            mutable p[0..n];
+            ensures result == 0;
+        } by {
+            execute();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
+    });
+    let verified = verified.expect("top-level contextual frame should advance through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "write_in_bounds.contract"
+                    && name == "surface certificate replay"
+        )),
+        "the top-level contextual candidate must not use ordinary surface replay: {events:#?}"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                    if claim == "write_in_bounds.contract" && name == "frame exact effect check"
+            ))
+            .count(),
+        1,
+        "only the whole-certificate gate may recheck the retained frame: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the top-level contextual frame should retain its simple candidate");
+    assert!(matches!(
+        tactics.iter().find(|tactic| matches!(tactic, ProofTactic::FrameUsing { .. })),
+        Some(ProofTactic::FrameUsing { region: None, premises }) if !premises.is_empty()
+    ));
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("write_in_bounds.c", c_source)],
+        "write_in_bounds",
+        CProofClaim::Grouped,
+    )
+    .expect("the top-level contextual frame should expand");
+    verify_c0_sources(&expanded, &[("write_in_bounds.c", c_source)])
+        .expect("the retained top-level contextual frame should independently replay");
+
+    let frame_offset = click_source
+        .find("frame();")
+        .expect("proof should contain the selected frame");
+    let line = click_source[..frame_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = frame_offset
+        - click_source[..frame_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let selected = expand_c0_tactic_source_at(
+        click_source,
+        &[("write_in_bounds.c", c_source)],
+        line,
+        column,
+    )
+    .expect("the deferred Proof-owned frame should expand by itself");
+    verify_c0_sources(&selected, &[("write_in_bounds.c", c_source)])
+        .expect("the selected deferred frame certificate should independently replay");
+}
+
+#[test]
+fn top_level_proof_owned_frame_retains_deferred_source_order() {
+    let c_source = r#"
+        int32 preserve_storage(int32 p[]) {
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        resource storage(p: int32*) {
+            owns p[0..1];
+        }
+
+        verifying "preserve_storage.c";
+
+        int32 preserve_storage(int32 p[]) {
+            consumes p[0..1];
+            produces storage(p);
+            immutable;
+            ensures result == 0;
+        } by {
+            execute();
+            fold(storage(p));
+            frame();
+            simp();
+        }
+    "#;
+
+    let verified = verify_c0_sources(click_source, &[("preserve_storage.c", c_source)])
+        .expect("Proof-owned frame should remain after the deferred fold");
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked grouped proof should retain its expansion");
+    let fold_index = tactics
+        .iter()
+        .position(|tactic| matches!(tactic, ProofTactic::FoldResource(_)))
+        .expect("the expansion should retain the fold");
+    let frame_index = tactics
+        .iter()
+        .position(|tactic| matches!(tactic, ProofTactic::FrameUsing { .. }))
+        .expect("the expansion should retain the frame");
+    assert!(fold_index < frame_index, "{tactics:#?}");
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("preserve_storage.c", c_source)],
+        "preserve_storage",
+        CProofClaim::Grouped,
+    )
+    .expect("the ordered Proof-owned frame should expand");
+    verify_c0_sources(&expanded, &[("preserve_storage.c", c_source)])
+        .expect("the retained deferred order should independently replay");
+}
+
+#[test]
 fn smart_execute_crosses_terminal_c_branch_before_checked_frame() {
     let c_source = r#"
         int32 write_selected(int32 p[2], int32 flag) {

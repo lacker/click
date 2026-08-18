@@ -283,6 +283,52 @@ fn flatten_path_independent_frame_candidate(candidate: ProofCertificate) -> Proo
     }
 }
 
+fn frame_candidate_needs_snapshot_legacy(certificate: &ProofCertificate) -> bool {
+    certificate.steps().iter().any(|step| match step {
+        SimpleProofStep::Have { proof, .. } => {
+            let ambiguous_snapshot_theorem_suffix = matches!(
+                proof.steps(),
+                [
+                    ..,
+                    SimpleProofStep::ApplyTheoremUsing { application, .. },
+                    SimpleProofStep::Assumption
+                ] if application.arguments.iter().any(contains_at_expression)
+                    && !matches!(
+                        application.name.as_str(),
+                        "int32_ge_implies_reversed_le" | "int32_le_implies_reversed_ge"
+                    )
+            );
+            ambiguous_snapshot_theorem_suffix || frame_candidate_needs_snapshot_legacy(proof)
+        }
+        SimpleProofStep::Open { proof, .. } => frame_candidate_needs_snapshot_legacy(proof),
+        SimpleProofStep::If {
+            then_proof,
+            else_proof,
+            ..
+        } => {
+            frame_candidate_needs_snapshot_legacy(then_proof)
+                || frame_candidate_needs_snapshot_legacy(else_proof)
+        }
+        SimpleProofStep::Cases {
+            left_proof,
+            right_proof,
+            ..
+        } => {
+            frame_candidate_needs_snapshot_legacy(left_proof)
+                || frame_candidate_needs_snapshot_legacy(right_proof)
+        }
+        SimpleProofStep::Branch {
+            then_proof,
+            else_proof,
+            ..
+        } => {
+            frame_candidate_needs_snapshot_legacy(then_proof)
+                || frame_candidate_needs_snapshot_legacy(else_proof)
+        }
+        _ => false,
+    })
+}
+
 fn reverse_surface_comparison(proposition: &ClickProposition) -> Option<ClickProposition> {
     match proposition {
         ClickProposition::Comparison {
@@ -1228,6 +1274,12 @@ impl<'a> Proof<'a> {
                 authority: CheckedFrameAuthority::new(effect_indices),
                 region: region.cloned(),
                 premises: premises.to_vec(),
+                surface_certificate: Some(ProofCertificate::from_steps(vec![
+                    SimpleProofStep::FrameUsing {
+                        region: region.cloned(),
+                        premises: premises.to_vec(),
+                    },
+                ])),
             },
         );
         execution.last_step_delta = ExecutionProofStepDelta::default();
@@ -1260,12 +1312,88 @@ impl<'a> Proof<'a> {
             },
         ] = certificate.steps()
         else {
-            return self.check_certificate_with_origin(certificate, origin);
+            let checkpoint = self.checkpoint();
+            let checked = self.check_flat_contextual_frame_candidate(certificate, origin)?;
+            let retained = checked.certificate_since(&checkpoint)?;
+            return checked.with_deferred_frame_surface_certificate(retained);
         };
         let branches = self.begin_execution_outcome_if(condition.clone())?;
         let branches = branches.check_arm_certificate(0, then_proof, origin)?;
         let branches = branches.check_arm_certificate(1, else_proof, origin)?;
         branches.join()
+    }
+
+    /// Checks one flat planner candidate while letting the owned nested Proof
+    /// decide whether a theorem application already closed a generated
+    /// `have`. Surface lowering historically appends `assumption` because a
+    /// point theorem may merely add an equivalent snapshot fact; when it adds
+    /// the exact goal, that suffix would instead follow a completed proof.
+    fn check_flat_contextual_frame_candidate(
+        &self,
+        certificate: &ProofCertificate,
+        origin: Option<ProofStepOrigin>,
+    ) -> Result<Self, ClickError> {
+        let mut checked = self.clone();
+        for step in certificate.steps() {
+            let SimpleProofStep::Have { proposition, proof } = step else {
+                checked = checked.apply_step_with_origin(step.clone(), origin)?;
+                continue;
+            };
+            let body_steps = proof.steps();
+            let theorem_assumption_suffix = matches!(
+                body_steps,
+                [
+                    ..,
+                    SimpleProofStep::ApplyTheoremUsing { .. },
+                    SimpleProofStep::Assumption
+                ]
+            );
+            let mut scope = checked.begin_have(proposition.clone())?;
+            if theorem_assumption_suffix {
+                for body_step in &body_steps[..body_steps.len() - 1] {
+                    scope = scope.apply_step(body_step.clone())?;
+                }
+                if !scope.body.is_complete() {
+                    scope = scope.apply_step(SimpleProofStep::Assumption)?;
+                }
+            } else {
+                scope.body = scope.body.check_certificate_with_origin(proof, origin)?;
+            }
+            checked = scope.join()?;
+        }
+        Ok(checked)
+    }
+
+    /// Associates a flat candidate's complete checked certificate with its
+    /// terminal frame deferral. This preserves the source ordering of earlier
+    /// deferred steps while allowing the drain to retain the certificate
+    /// without semantically replaying it.
+    fn with_deferred_frame_surface_certificate(
+        mut self,
+        certificate: ProofCertificate,
+    ) -> Result<Self, ClickError> {
+        let mut state = (*self.state).clone();
+        let execution = state.execution.as_mut().ok_or_else(|| {
+            self.step_error("checked frame certificate lost its execution frontier")
+        })?;
+        let mut deferred = execution
+            .replay
+            .post_execution_tactics
+            .pop()
+            .ok_or_else(|| self.step_error("checked frame retained no terminal deferral"))?;
+        let PostExecutionTactic::CheckedFrameUsing {
+            surface_certificate,
+            ..
+        } = &mut deferred.tactic
+        else {
+            return Err(
+                self.step_error("checked frame certificate did not end in checked frame authority")
+            );
+        };
+        *surface_certificate = Some(certificate);
+        execution.replay.post_execution_tactics.push(deferred);
+        self.state = Arc::new(state);
+        Ok(self)
     }
 
     /// Uses the existing contextual footprint planner only to select Surface
@@ -1290,6 +1418,15 @@ impl<'a> Proof<'a> {
         let execution = execution_state.replay.execution().ok_or_else(|| {
             self.step_error("function-exit proof has no checked execution outcomes")
         })?;
+        if self.node.depth == 0
+            && (execution.paths().len() > 1 || execution_state.replay.has_structured_branch_history)
+        {
+            // A compatibility adapter created after a legacy branch owns the
+            // outcomes but not the branch Proof that partitions them. Leave
+            // that context to the legacy frame path; a joined Proof retains
+            // its `If` certificate and can check each candidate arm itself.
+            return Ok(None);
+        }
         let available = self.state.facts.to_vec();
         let pre_state = execution_state
             .replay
@@ -1450,36 +1587,61 @@ impl<'a> Proof<'a> {
         tactic_index: usize,
         source_index: usize,
     ) -> Result<Option<Self>, ClickError> {
+        if matches!(self.state.goal, Goal::Frontier(EffectGoalSelection::None)) {
+            return Ok(None);
+        }
         if !matches!(region, None | Some(CodeRegionRef::Function)) {
             return Ok(None);
         }
-        let step = SimpleProofStep::FrameUsing {
-            region: region.cloned(),
-            premises: Vec::new(),
-        };
-        match self.apply_step_at(step, tactic_index, source_index) {
-            Ok(framed) => return Ok(Some(framed)),
-            Err(error) if crate::instrumentation::deadline_exceeded() => return Err(error),
-            Err(_) => {}
+        if let Some(region) = region {
+            let step = SimpleProofStep::FrameUsing {
+                region: Some(region.clone()),
+                premises: Vec::new(),
+            };
+            return match self.apply_step_at(step, tactic_index, source_index) {
+                Ok(framed) => Ok(Some(framed)),
+                Err(error) if crate::instrumentation::deadline_exceeded() => Err(error),
+                Err(_) => Ok(None),
+            };
         }
-        if region.is_some() {
-            return Ok(None);
+        if self.node.depth > 0 {
+            let step = SimpleProofStep::FrameUsing {
+                region: None,
+                premises: Vec::new(),
+            };
+            match self.apply_step_at(step, tactic_index, source_index) {
+                Ok(framed) => return Ok(Some(framed)),
+                Err(error) if crate::instrumentation::deadline_exceeded() => return Err(error),
+                Err(_) => {}
+            }
         }
+        // An unqualified `frame()` is a smart operation, even when an empty
+        // `FrameUsing` happens to prove the selected effect. A compatibility
+        // root has no retained Proof history for earlier deferred source
+        // steps, so its contextual candidate must preserve the explicit
+        // resource facts those steps need. Native Proof descendants already
+        // own their history and keep the cheap exact candidate as the first
+        // choice.
         let Some(candidate) = self.select_contextual_frame_candidate()? else {
             return Ok(None);
         };
+        if frame_candidate_needs_snapshot_legacy(&candidate) {
+            // Snapshot-qualified theorem spellings can add a kernel fact that
+            // is exact in this recorded lowering context but still require a
+            // trailing `assumption` when replayed from fresh source. Until
+            // Proof owns that stable surface identity, leave this candidate
+            // to the compatibility path rather than retain an ambiguous node.
+            return Ok(None);
+        }
         let origin = Some(ProofStepOrigin {
             tactic_index,
             source_index,
         });
-        self.apply_contextual_frame_candidate_certificate(&candidate, origin)
-            .map(Some)
-            .map_err(|error| {
-                self.step_error(format!(
-                    "smart frame selected a simple candidate that Proof rejected: {}",
-                    error.message()
-                ))
-            })
+        match self.apply_contextual_frame_candidate_certificate(&candidate, origin) {
+            Ok(checked) => Ok(Some(checked)),
+            Err(error) if crate::instrumentation::deadline_exceeded() => Err(error),
+            Err(_) => Ok(None),
+        }
     }
 
     #[inline(never)]
@@ -5295,6 +5457,7 @@ impl<'a> ExecutionOutcomeProofBranches<'a> {
                 // spellings. This deferral is semantic authority only.
                 region: None,
                 premises: Vec::new(),
+                surface_certificate: None,
             },
         );
         execution.last_step_delta = ExecutionProofStepDelta::default();
