@@ -3727,6 +3727,20 @@ impl<'a> Proof<'a> {
                 context.claim_label,
                 context.tactic_index,
             ),
+            // A function-outcome goal unfolds its own path-local facts and
+            // delta only: the borrowed execution snapshot is shared by every
+            // sibling outcome and must not absorb one path's unfolding.
+            ProofContext::Execution(context)
+                if matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_))) =>
+            {
+                self.apply_proposition_predicate_unfold(
+                    name,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                    context.claim_label,
+                    context.tactic_index,
+                )
+            }
             ProofContext::Execution(_) => self.apply_execution_unfold(name),
         }
     }
@@ -5182,6 +5196,33 @@ impl<'a> Proof<'a> {
     /// proofs.
     pub(super) fn available_fact_vector(&self) -> Vec<Proposition> {
         self.facts().to_vec()
+    }
+
+    /// Resynchronizes the focused outcome goal's fact context from the
+    /// drain's legacy working set.
+    ///
+    /// This is the interim adapter for the tactic-by-tactic drain migration:
+    /// tactic kinds that have not yet moved onto the goal still mutate the
+    /// legacy vector, so a migrated tactic re-imports the current set before
+    /// its checked step. Every resync disappears as the remaining kinds
+    /// migrate, and the adapter dies with the drain migration's final slice.
+    pub(super) fn with_drained_outcome_facts(
+        &self,
+        facts: &[Proposition],
+    ) -> Result<Self, ClickError> {
+        let Some(Goal::FunctionOutcome(_)) = self.focused_goal() else {
+            return Err(self.step_error("the drain adapter requires a focused outcome goal"));
+        };
+        let mut state = (*self.state).clone();
+        state.goals = state
+            .goals
+            .with_facts_at(self.focused, ProofFacts::from_ordered(facts));
+        Ok(Self {
+            context: self.context.clone(),
+            state: Arc::new(state),
+            node: self.node.clone(),
+            focused: self.focused,
+        })
     }
 
     /// Returns a handle addressing another open goal of the same state.

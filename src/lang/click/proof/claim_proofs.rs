@@ -1013,28 +1013,40 @@ pub(super) fn finish_ordered_proof_replay(
     // into deferred checked authority, so the reconstructed frontier carries
     // no effect selection. A context that is not at a returning function
     // exit derives no goals and drains through the legacy path unchanged.
-    let outcome_substrate = Proof::for_execution_frontier_with_effect_goals(
-        &proof_label,
-        0,
-        ProofReplayContext {
-            state: context.state.clone(),
-            pure_facts: context.pure_facts.clone(),
-            replay: context.replay.clone(),
-            branch_path: context.branch_path.clone(),
-        },
-        EffectGoalSelection::None,
-        function_block,
-        function,
-        parsed_function,
-        arguments,
-        function_environment,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-    )
-    .focus_function_outcomes()
-    .ok();
+    // Derivation is gated on a deferred tactic kind that actually consumes
+    // outcome goals, so drains with nothing to consume pay nothing; the gate
+    // widens as tactic kinds migrate and disappears with the final slice.
+    let drain_consumes_outcome_goals = context
+        .replay
+        .post_execution_tactics
+        .iter()
+        .any(|deferred| matches!(&deferred.tactic, PostExecutionTactic::UnfoldPredicate(_)));
+    let outcome_substrate = drain_consumes_outcome_goals
+        .then(|| {
+            Proof::for_execution_frontier_with_effect_goals(
+                &proof_label,
+                0,
+                ProofReplayContext {
+                    state: context.state.clone(),
+                    pure_facts: context.pure_facts.clone(),
+                    replay: context.replay.clone(),
+                    branch_path: context.branch_path.clone(),
+                },
+                EffectGoalSelection::None,
+                function_block,
+                function,
+                parsed_function,
+                arguments,
+                function_environment,
+                resource_environment,
+                predicate_environment,
+                click_function_environment,
+                theorem_environment,
+            )
+            .focus_function_outcomes()
+            .ok()
+        })
+        .flatten();
     let ProofReplayContext {
         state,
         pure_facts,
@@ -1748,6 +1760,17 @@ pub(super) fn finish_ordered_proof_replay(
                     // exact lowering without accidentally selecting the same surface
                     // spelling from an earlier program point.
                     let mut current_outcome_surface_propositions = SurfacePropositionMap::default();
+                    // This path's evolving result-aware proof: tactic kinds
+                    // that have migrated onto the outcome goal advance this
+                    // one lineage and retain their checked steps directly.
+                    // The interim resync adapter re-imports the legacy
+                    // working set before each migrated tactic until the
+                    // remaining kinds stop mutating the vector.
+                    let mut outcome_proof =
+                        outcome_substrate.as_ref().and_then(|(substrate, _)| {
+                            let goal = substrate.outcome_goal_for_path(path_index)?;
+                            substrate.focus(goal).ok()
+                        });
                     drop(_path_preparation_timing);
                     let _post_execution_timing = crate::instrumentation::OperationTiming::new(
                         function_block.signature().name(),
@@ -1885,29 +1908,45 @@ pub(super) fn finish_ordered_proof_replay(
                                     )));
                                 };
                                 let requirements_before = path_requirements.clone();
-                                let transition_facts = path.execution_facts();
-                                let proof = Proof::for_point_frontier(
-                                    &proof_label,
-                                    *tactic_index,
-                                    &path_requirements,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    post_state,
-                                    Some(result),
-                                    &replay.program_point_states,
-                                    &outcome_surface_propositions,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    theorem_environment,
-                                    &unfolded_predicates,
-                                    &transition_facts,
-                                );
-                                let proof = proof
-                                    .apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
-                                let added_facts = proof.added_facts().to_vec();
-                                let certificate = proof.certificate();
-                                drop(proof);
+                                let (added_facts, certificate) =
+                                    if let Some(evolving) = outcome_proof.take() {
+                                        // The migrated path: the tactic advances
+                                        // this path's one evolving outcome proof
+                                        // and retains its checked step directly.
+                                        let resynced = evolving
+                                            .with_drained_outcome_facts(&path_requirements)?;
+                                        let before = resynced.checkpoint();
+                                        let unfolded = resynced.apply_step(
+                                            SimpleProofStep::UnfoldPredicate(name.clone()),
+                                        )?;
+                                        let added_facts = unfolded.added_facts().to_vec();
+                                        let certificate = unfolded.certificate_since(&before)?;
+                                        outcome_proof = Some(unfolded);
+                                        (added_facts, certificate)
+                                    } else {
+                                        let transition_facts = path.execution_facts();
+                                        let proof = Proof::for_point_frontier(
+                                            &proof_label,
+                                            *tactic_index,
+                                            &path_requirements,
+                                            parsed_function.parameters(),
+                                            arguments,
+                                            pre_state,
+                                            post_state,
+                                            Some(result),
+                                            &replay.program_point_states,
+                                            &outcome_surface_propositions,
+                                            predicate_environment,
+                                            click_function_environment,
+                                            theorem_environment,
+                                            &unfolded_predicates,
+                                            &transition_facts,
+                                        );
+                                        let proof = proof.apply_step(
+                                            SimpleProofStep::UnfoldPredicate(name.clone()),
+                                        )?;
+                                        (proof.added_facts().to_vec(), proof.certificate())
+                                    };
                                 if !unfolded_predicates.contains(name) {
                                     unfolded_predicates.push(name.clone());
                                 }

@@ -2782,6 +2782,32 @@ root goal's context through one frontier-checked context update; nested
 frontier's at derivation. `ProofState` now carries only locals, the goal
 collection, and the per-step output deltas.
 
+### Progress (2026-08-18: drain slice 2 begins — unfold consumes its goal)
+
+Post-execution predicate unfolding is the first drained tactic kind to
+consume a typed outcome goal in production. The dispatch routes an
+outcome-focused proof to the facts-only unfold path — the borrowed execution
+snapshot is shared by every sibling outcome and must not absorb one path's
+unfolding — and the drain now threads one evolving result-aware proof per
+path: the unfold advances that lineage, retains its checked step, and its
+per-tactic certificate comes from a checkpoint rather than a fresh root's
+whole derivation. The `for_point_frontier` construction at the unfold site
+survives only as the fallback for contexts that derived no outcome goals.
+The interim resync adapter (`with_drained_outcome_facts`) re-imports the
+legacy working set before each migrated tactic while unmigrated kinds still
+mutate the vector; each future tactic migration removes its resync, and the
+adapter dies with the final drain slice. Head derivation is gated on a
+deferred tactic kind that actually consumes outcome goals, so drains with
+nothing to consume pay nothing; the gate widens with each migrated kind and
+disappears with the final slice. (One `vector-push` gate failure during this
+slice was diagnosed per the load-contention rule — the examples suite took
+twice its isolated time in the failing run, the isolated re-run and a full
+gate re-run both passed on the identical tree — but it prompted the gating,
+which is correct regardless.) Remaining for slice 2: the other result-aware
+tactic kinds (transport, theorem application, `have`, rewrite, `simp`
+closures), whose point views need the goal to own its evolving surface maps
+first.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
