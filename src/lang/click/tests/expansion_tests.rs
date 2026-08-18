@@ -1680,6 +1680,69 @@ fn source_expander_lowers_smart_simp_inside_have() {
 }
 
 #[test]
+fn pure_structural_simp_builds_recursive_conjunction_on_proof() {
+    let click_source = r#"
+        theorem nonnegative_pair_direct(x: int32, y: int32) {
+            requires 1 <= x;
+            requires 1 <= y;
+            ensures 0 <= x and 0 <= y by simp;
+        }
+
+        theorem nonnegative_pair_script(x: int32, y: int32) {
+            requires 1 <= x;
+            requires 1 <= y;
+            ensures 0 <= x and 0 <= y by {
+                simp();
+            }
+        }
+    "#;
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("pure structural simp should retain both recursively checked child proofs");
+    for claim in [
+        "nonnegative_pair_direct.ensures_0",
+        "nonnegative_pair_script.ensures_0",
+    ] {
+        assert!(
+            events.iter().all(|event| !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished {
+                    claim: event_claim,
+                    name,
+                    ..
+                } if event_claim == claim && name == "surface certificate replay"
+            )),
+            "{claim} must retain its structural Proof descendant: {events:#?}"
+        );
+    }
+
+    for offset in [
+        click_source
+            .find("simp;")
+            .expect("the direct theorem should contain smart simp"),
+        click_source
+            .rfind("simp();")
+            .expect("the script theorem should contain smart simp"),
+    ] {
+        let position = expansion::position_at_offset(click_source, offset);
+        let expanded =
+            expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+                .expect("the retained pure conjunction should expand");
+        assert_eq!(
+            expanded
+                .matches("apply(int32_positive_is_nonnegative(")
+                .count(),
+            2,
+            "{expanded}"
+        );
+        assert!(expanded.contains("split();"), "{expanded}");
+        verify_click_theorems(&expanded)
+            .expect("the retained pure conjunction should verify independently");
+    }
+}
+
+#[test]
 fn restricted_simp_expands_to_explicit_equality_rewrites() {
     let click_source = r#"
             theorem equality_transitive(x: int32, y: int32, z: int32) {

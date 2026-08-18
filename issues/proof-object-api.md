@@ -2024,6 +2024,16 @@ post-execution conjunction prove its historical predecessor leg directly on
 `Proof`, and the existing `drop_one` regression now genuinely observes no
 outcome compatibility construction.
 
+Pure theorem goals now retain their exact Surface `ensures` proposition when
+they enter direct Proof search. Both `ensures ... by simp` and the one-tactic
+`ensures ... by { simp(); }` form can therefore use the same recursive
+implication/conjunction/disjunction closure as point proofs. The conjunction
+regression observes no surface-certificate construction replay, expands both
+source forms to the same checked child theorem applications and `Split`, and
+independently verifies each expansion. The underlying structural search
+continues to use the shared 16-through-4096 persistent-fact scaling
+regression.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

@@ -463,6 +463,7 @@ fn verify_theorem_ensure(
             checked_certificate = check_direct_pure_goal_with_proof(
                 claim_label,
                 context,
+                surface_goal,
                 &goal,
                 predicate_environment,
                 click_function_environment,
@@ -489,6 +490,7 @@ fn verify_theorem_ensure(
             checked_certificate = check_direct_pure_goal_with_proof(
                 claim_label,
                 context,
+                surface_goal,
                 &goal,
                 predicate_environment,
                 click_function_environment,
@@ -528,6 +530,7 @@ fn verify_theorem_ensure(
                 check_pure_script_with_proof(
                     claim_label,
                     context,
+                    surface_goal,
                     &goal,
                     &tactics,
                     predicate_environment,
@@ -656,6 +659,7 @@ fn verify_theorem_ensure(
 fn check_direct_pure_goal_with_proof(
     claim_label: &str,
     context: &PureTheoremContext,
+    surface_goal: &ClickProposition,
     goal: &Proposition,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -670,7 +674,7 @@ fn check_direct_pure_goal_with_proof(
         click_function_environment,
         theorem_environment,
     );
-    let proof = root.try_simp_closure()?;
+    let proof = root.try_simp_closure_for_surface_goal(surface_goal)?;
     debug_assert!(proof.is_complete());
     Some(proof.certificate())
 }
@@ -921,6 +925,7 @@ fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
 fn check_pure_script_with_proof(
     claim_label: &str,
     context: &PureTheoremContext,
+    surface_goal: &ClickProposition,
     goal: &Proposition,
     tactics: &[ProofTactic],
     predicate_environment: &PredicateEnvironment,
@@ -939,6 +944,12 @@ fn check_pure_script_with_proof(
 
     if let [ProofTactic::SimpUsing(simp)] = tactics
         && let Some(proof) = root.try_restricted_simp_closure(&simp.premises)
+    {
+        return Ok(Some(proof.certificate()));
+    }
+
+    if matches!(tactics, [ProofTactic::Simp])
+        && let Some(proof) = root.try_simp_closure_for_surface_goal(surface_goal)
     {
         return Ok(Some(proof.certificate()));
     }
