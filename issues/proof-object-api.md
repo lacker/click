@@ -2640,6 +2640,24 @@ This removes
 the last shared-state obstacle to a `Proof` owning several simultaneous
 path-local judgments; splits producing sibling in-`Proof` goals come next.
 
+### Progress (2026-08-18: goals own their complete path-local context)
+
+`ProofState` no longer owns a fact context either: each goal carries a
+`GoalContext` pairing its persistent `ProofFacts` with any borrowed or owned
+execution snapshot, so the complete path-local semantics of one judgment now
+live on that judgment. Successor helpers preserve goal identity while
+installing updated facts (`with_sole_facts`), an updated snapshot, or both;
+conditional closers fold their fact successor into the discharge decision;
+roots and split arms construct their goals with an explicit context. Fact
+queries read through the focused goal, and discharge drops the judgment's
+context with it — completed proofs expose only their retained certificate and
+output deltas, which is what every production caller already consumed.
+`ProofState` retains only lineage-wide data (locals, unfold history, step
+deltas, the goal collection). With identity, facts, and execution state all
+goal-owned, a split can now produce sibling goals inside one `Proof` without
+any shared-state aliasing; migrating the branch containers onto in-`Proof`
+sibling goals is the next slice.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
