@@ -2677,6 +2677,26 @@ handle addresses that recorded goal id, not the root's. The identity
 regression now also pins per-step goal attribution. This is the last
 precondition for `Proof::split` producing sibling goals in one state.
 
+### Progress (2026-08-18: typed function-outcome goals exist)
+
+`Goal::FunctionOutcome` is now a real variant, and
+`Proof::focus_function_outcomes` is the audited derivation that retires a
+function-exit frontier goal (with its effect obligations already closed) and
+opens one outcome goal per checked returning path — the first genuinely
+multi-goal `Proof`. Each outcome goal owns its path's result value,
+post-outcome C state, and fact context (the frontier's facts extended by only
+that path's facts), and borrows the frontier snapshot by identity for
+lowering; a path proved non-returning contributes no goal. `Proof::goals`
+iterates the open set in stable id order and `Proof::focus` moves the cursor
+between siblings. The two-arm terminal regression now derives the outcome
+set after its checked frame, pins distinct path-local results, snapshot
+sharing by pointer identity, sibling isolation, ancestor immutability,
+rejection of re-derivation, and a 16-through-4096 allocation curve for the
+derivation itself. The next slice migrates the ordered outcome drain to
+consume these goals — evolving one persistent result-aware proof per outcome
+through its tactics — instead of constructing a fresh point root per outcome
+per tactic.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

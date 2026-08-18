@@ -824,6 +824,26 @@ struct ExecutionProofStepDelta {
 enum Goal {
     Proposition(PropositionGoal),
     Frontier(FrontierGoal),
+    FunctionOutcome(OutcomeGoal),
+}
+
+/// One path-local function-outcome judgment: the checked return outcome of
+/// one execution path awaiting its result-dependent continuations.
+///
+/// The goal owns the path's result value, post-outcome C state, and fact
+/// context, and borrows the function-exit frontier's snapshot by identity
+/// for lowering. Result and effect operations will consume these goals
+/// directly instead of converting through the legacy replay adapter.
+#[derive(Clone)]
+struct OutcomeGoal {
+    /// Zero-based position among the exit's checked paths, in the checked
+    /// execution's deterministic order.
+    path_index: usize,
+    /// The path's checked return value.
+    result: Arc<CValue>,
+    /// The post-outcome C state.
+    state: SharedValue<CState>,
+    context: GoalContext,
 }
 
 /// The path-local semantic context owned by one goal.
@@ -889,6 +909,7 @@ impl Goal {
         match self {
             Self::Proposition(goal) => &goal.context,
             Self::Frontier(goal) => &goal.context,
+            Self::FunctionOutcome(goal) => &goal.context,
         }
     }
 
@@ -901,6 +922,12 @@ impl Goal {
             }),
             Self::Frontier(goal) => Self::Frontier(FrontierGoal {
                 selection: goal.selection,
+                context,
+            }),
+            Self::FunctionOutcome(goal) => Self::FunctionOutcome(OutcomeGoal {
+                path_index: goal.path_index,
+                result: goal.result.clone(),
+                state: goal.state.clone(),
                 context,
             }),
         }
@@ -1614,6 +1641,14 @@ impl<'a> Proof<'a> {
     #[cfg(test)]
     fn goals_next_id(&self) -> u64 {
         self.state.goals.next_id
+    }
+
+    #[cfg(test)]
+    fn outcome_result(&self) -> Option<&CValue> {
+        match self.focused_goal()? {
+            Goal::FunctionOutcome(goal) => Some(goal.result.as_ref()),
+            _ => None,
+        }
     }
 
     pub(super) fn goal(&self) -> Option<&Proposition> {
@@ -3672,13 +3707,12 @@ impl<'a> Proof<'a> {
                     }
                 }
             }
-            Some(Goal::Frontier(frontier)) => Goal::Frontier(FrontierGoal {
-                selection: frontier.selection,
-                context: GoalContext {
+            Some(goal @ (Goal::Frontier(_) | Goal::FunctionOutcome(_))) => {
+                goal.with_context(GoalContext {
                     facts: checked.facts.clone(),
-                    execution: frontier.context.execution.clone(),
-                },
-            }),
+                    execution: goal.context().execution.clone(),
+                })
+            }
             None => return Err(self.step_error("`unfold` requires an open goal")),
         };
         let mut unfolded_predicates = self.state.unfolded_predicates.clone();
@@ -5040,6 +5074,114 @@ impl<'a> Proof<'a> {
     pub(super) fn is_at_function_exit(&self) -> bool {
         self.execution()
             .is_some_and(|execution| execution.replay.is_at_function_exit())
+    }
+
+    /// Every open goal in this proof, in stable id order.
+    pub(super) fn goals(&self) -> impl Iterator<Item = GoalId> + '_ {
+        self.state.goals.open.keys().copied()
+    }
+
+    /// Returns a handle addressing another open goal of the same state.
+    ///
+    /// Focus is a cursor: the returned handle shares this proof's semantic
+    /// state and provenance, and checked operations through it advance
+    /// exactly the addressed goal.
+    pub(super) fn focus(&self, goal: GoalId) -> Result<Self, ClickError> {
+        if self.state.goals.get(goal).is_none() {
+            return Err(self.step_error(format!("goal {goal:?} is not open in this proof")));
+        }
+        let mut focused = self.clone();
+        focused.focused = goal;
+        Ok(focused)
+    }
+
+    /// Derives the typed function-outcome goal set from a function-exit
+    /// frontier: the successor retires the focused frontier goal and opens
+    /// one outcome goal per checked returning path, in the checked
+    /// execution's deterministic path order.
+    ///
+    /// Each outcome goal owns its path's result value, post-outcome C state,
+    /// and fact context (the frontier's facts extended by only that path's
+    /// own facts), and borrows the frontier's snapshot by identity for
+    /// lowering. A path proved non-returning contributes no goal. The
+    /// returned handle addresses the first outcome goal; `focus` reaches its
+    /// siblings. Result and effect continuations consume these goals
+    /// directly rather than converting through the legacy replay adapter.
+    pub(super) fn focus_function_outcomes(&self) -> Result<(Self, Vec<GoalId>), ClickError> {
+        let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
+            return Err(self.step_error("outcome goals require an open execution frontier"));
+        };
+        if !matches!(frontier.selection, EffectGoalSelection::None) {
+            return Err(self.step_error(
+                "outcome goals require the frontier's effect obligations to be closed or unselected",
+            ));
+        }
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
+        let checked = execution.replay.execution().ok_or_else(|| {
+            self.step_error("outcome goals require execution to have reached function exit")
+        })?;
+        let frontier_snapshot = frontier.context.execution.clone();
+        let mut goals = self.state.goals.discharge_at(self.focused);
+        let mut outcome_ids = Vec::new();
+        for (path_index, path) in checked.paths().iter().enumerate() {
+            let (result, state) = match path.outcome() {
+                CFunctionOutcome::Return { value, state } => (value.clone(), state.clone()),
+                // A path proved non-returning owes no outcome judgment.
+                CFunctionOutcome::VerificationDiverges => continue,
+                CFunctionOutcome::UndefinedBehavior(_) | CFunctionOutcome::RuntimeError(_) => {
+                    return Err(self.step_error(format!(
+                        "outcome goals require a verifying execution, but path {path_index} failed"
+                    )));
+                }
+            };
+            let mut facts = self.facts().clone();
+            for fact in path.execution_facts() {
+                facts = facts.with_fact(fact.proposition().clone());
+            }
+            let id = GoalId(goals.next_id);
+            goals = ProofGoals {
+                open: goals.open.with_inserted(
+                    id,
+                    Goal::FunctionOutcome(OutcomeGoal {
+                        path_index,
+                        result: Arc::new(result),
+                        state: state.into(),
+                        context: GoalContext {
+                            facts,
+                            execution: frontier_snapshot.clone(),
+                        },
+                    }),
+                ),
+                next_id: goals.next_id + 1,
+            };
+            outcome_ids.push(id);
+        }
+        if outcome_ids.is_empty() {
+            return Err(self.step_error("outcome goals require at least one returning path"));
+        }
+        let successor = Self {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                locals: self.state.locals.clone(),
+                unfolded_predicates: self.state.unfolded_predicates.clone(),
+                goals,
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+            }),
+            // A structural marker records the derivation; the certificate
+            // step vocabulary for consuming outcome goals arrives with the
+            // drain migration.
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: None,
+                focused: self.focused,
+                depth: self.node.depth,
+            }),
+            focused: outcome_ids[0],
+        };
+        Ok((successor, outcome_ids))
     }
 
     /// Whether the checked execution frontier is a structural C `if`.
@@ -12796,6 +12938,7 @@ mod tests {
         let mut samples = Vec::new();
         let mut nested_samples = Vec::new();
         let mut execute_samples = Vec::new();
+        let mut outcome_samples = Vec::new();
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
             pure_facts.push(kernel_premise.clone());
@@ -13010,6 +13153,49 @@ mod tests {
                 ] if premises.is_empty()
             ));
             assert!(root.certificate().steps().is_empty());
+
+            // The framed function exit derives its typed outcome goal set:
+            // one sibling goal per returning path in one proof, each owning
+            // its path-local result and facts while borrowing the frontier
+            // snapshot by identity. The ancestor keeps its single frontier.
+            let before_outcomes = fact_node_allocations();
+            let (outcomes, outcome_ids) = framed
+                .focus_function_outcomes()
+                .expect("the framed terminal execution should expose typed outcome goals");
+            outcome_samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                fact_node_allocations() - before_outcomes,
+            ));
+            assert_eq!(outcome_ids.len(), 2);
+            assert_eq!(outcomes.goals().collect::<Vec<_>>(), outcome_ids);
+            assert!(!outcomes.is_complete());
+            assert_eq!(framed.goals().count(), 1);
+            let then_outcome = outcomes
+                .focus(outcome_ids[0])
+                .expect("the first outcome goal is open");
+            let else_outcome = outcomes
+                .focus(outcome_ids[1])
+                .expect("the second outcome goal is open");
+            assert_ne!(
+                then_outcome.outcome_result(),
+                else_outcome.outcome_result(),
+                "distinct return paths own distinct path-local results"
+            );
+            for outcome in [&then_outcome, &else_outcome] {
+                assert!(Arc::ptr_eq(
+                    outcome
+                        .goal_execution()
+                        .expect("each outcome borrows the frontier snapshot"),
+                    framed
+                        .goal_execution()
+                        .expect("the framed frontier owns its snapshot"),
+                ));
+            }
+            assert!(
+                outcomes.focus_function_outcomes().is_err(),
+                "an outcome goal is not a frontier and cannot derive again"
+            );
         }
         let (_, base_height, base_allocations) = samples[0];
         for (size, height, allocations) in samples {
@@ -13033,6 +13219,14 @@ mod tests {
             assert!(
                 allocations <= bound,
                 "size {size} two-arm terminal execution and frame allocated {allocations} persistent nodes (bound {bound})"
+            );
+        }
+        let (_, base_height, base_allocations) = outcome_samples[0];
+        for (size, height, allocations) in outcome_samples {
+            let bound = base_allocations + 64 * (height - base_height);
+            assert!(
+                allocations <= bound,
+                "size {size} outcome-goal derivation allocated {allocations} persistent nodes (bound {bound})"
             );
         }
     }
