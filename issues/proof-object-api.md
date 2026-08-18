@@ -2658,6 +2658,25 @@ goal-owned, a split can now produce sibling goals inside one `Proof` without
 any shared-state aliasing; migrating the branch containers onto in-`Proof`
 sibling goals is the next slice.
 
+### Progress (2026-08-18: the focus cursor addresses one goal per handle)
+
+A `Proof` handle now carries a `focused: GoalId` cursor naming the open goal
+it addresses, and every provenance node records which goal its step advanced.
+Focus is a cursor, not semantic state: two handles over one persistent state
+may address different judgments, checked operations advance exactly the
+focused goal, and certificate extraction will partition an interleaved
+multi-goal derivation by the recorded per-step attribution rather than
+inferring ownership from final states. The `ProofGoals` successors now take
+an explicit goal id (`replace_at`, `discharge_at`, `with_facts_at`,
+`replace_frontier_at`, and friends), removing the sole-goal assumption from
+the collection layer entirely; the single-goal reading survives only in the
+`focused_goal` accessor. Two cursor propagation cases were caught by existing
+regressions: a decided branch join and an `open` scope close both derive
+their successor state from an arm or body whose cursor moved, so the returned
+handle addresses that recorded goal id, not the root's. The identity
+regression now also pins per-step goal attribution. This is the last
+precondition for `Proof::split` producing sibling goals in one state.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
