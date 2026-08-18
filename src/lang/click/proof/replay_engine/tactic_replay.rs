@@ -558,7 +558,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
             }
         }
         Plan::DirectSmart => {
-            let Some(closed) = proof.try_direct_logical_closure() else {
+            let Some(closed) = proof.try_simp_closure() else {
                 return Ok(None);
             };
             (closed, true)

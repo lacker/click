@@ -1488,6 +1488,17 @@ arm. The legacy empty-premise source spelling still conflates an explicit
 empty set with ambient-fact selection and must not be imported into the
 simple checker.
 
+Atomic point `have ... by simp` now asks its nested proposition `Proof` for
+the same typed simp closure already used by pure claims and smart scripts,
+instead of limiting the owned path to assumption/normalization closure and
+then constructing and replaying theorem-backed certificates in the legacy
+caller. The selected theorem applications advance only through `apply_step`;
+unsupported smart derivations still leave the original replay context
+untouched and retain their existing diagnostics. A signed-order regression
+requires a composed theorem path, observes no ordinary certificate replay,
+pins the expanded `have` as explicit simple steps, and independently verifies
+that expansion.
+
 The path-specific regression keeps the original dynamic store
 `p[index] = 1` under `index == 0` and the constant store `p[0] = 2` in the
 other C arm. Contextual frame construction retains each equality and derived

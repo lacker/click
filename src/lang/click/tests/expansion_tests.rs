@@ -7136,6 +7136,53 @@ fn point_smart_have_retains_a_checked_simple_closer() {
 }
 
 #[test]
+fn point_smart_have_retains_a_checked_theorem_application() {
+    let c_source = r#"
+            int32 first(int32 x, int32 y, int32 z) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "first.c";
+
+            int32 first(int32 x, int32 y, int32 z) {
+                requires x <= y;
+                requires y < z;
+                ensures result < z;
+            } by {
+                have x < z by simp;
+                execute();
+                simp();
+            }
+        "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("first.c", c_source)])
+    });
+    verified.expect("checked point smart have should apply signed-order transitivity");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "first.contract" && name == "surface certificate replay"
+        )),
+        "the migrated theorem-backed have must not ordinarily replay its certificate: {events:#?}"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("first.c", c_source)],
+        "first",
+        CProofClaim::Grouped,
+    )
+    .expect("the theorem-backed have should expand into simple steps");
+    assert!(!expanded.contains("have x < z by simp"), "{expanded}");
+    assert!(expanded.contains("have x < z by {"), "{expanded}");
+    assert!(expanded.contains("apply"), "{expanded}");
+    verify_c0_sources(&expanded, &[("first.c", c_source)])
+        .expect("the retained theorem-backed have should independently reverify");
+}
+
+#[test]
 fn explicit_linear_point_have_uses_the_checked_proof_path() {
     let c_source = r#"
             int32 identity(int32 value) {
