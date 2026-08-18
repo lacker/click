@@ -19,6 +19,217 @@ This is the next architectural priority. Do not repair individual smart-tactic
 certificate failures by adding another planner record, evidence wrapper,
 lowering pass, or independent replay. Migrate them onto this API.
 
+## Current strategy: continuations and multiple outcome goals
+
+The first migration slices established that `Proof::apply_step` is the right
+boundary for a local deterministic transition. They also exposed the next
+architectural boundary: a smart tactic often cannot safely select and publish
+one locally valid descendant unless the remainder of its candidate proof also
+succeeds.
+
+For example, a statement step may be locally valid but discard a fact needed
+by a later result proof. An execution branch may admit valid steps in both arms
+but fail to establish the interface required by their common continuation. An
+opened resource may admit a valid body prefix but fail to close. Execution may
+reach several function exits whose path-local `result`, facts, resources, and
+effect obligations must all satisfy the remaining script. In each case, the
+smart tactic's success condition is a checked continuation, not merely one
+checked edge.
+
+Recent migrations have implemented that condition separately at several
+sites: resource-scope continuation drivers, branch preflight and join logic,
+and complete `execute(); frame();` effect-script transactions. A proposed
+execution-prefix/result-suffix bridge for `execute(); simp();` would add
+another instance. These slices are useful evidence, but continuing to add
+special adapters would reproduce the same missing composition model and keep
+returning checked descendants to legacy replay at exactly the boundary that
+`Proof` should own.
+
+Pause tactic-family-by-tactic-family migration here. The next implementation
+phase is the shared continuation and multi-outcome substrate described below.
+Do not add another result-suffix, branch-continuation, or scope-continuation
+adapter merely to increase the number of tactics that partially use `Proof`.
+
+### Transactional continuation is untrusted orchestration
+
+The needed transaction is not a new kernel rule, a compound
+`SimpleProofStep`, or a second proof representation. `Proof` is immutable, so
+speculation is already naturally transactional:
+
+1. retain the unchanged root;
+2. apply ordinary checked steps and structural operations to candidate
+   descendants;
+3. run the candidate's continuation from those descendants; and
+4. return a descendant only if the tactic's complete success condition holds.
+
+On failure, dropping the descendants leaves the root unchanged. A partial
+descendant is still a sound partial proof, but the smart tactic must not
+publish it as that tactic's selected result. "Publish" here means returning a
+candidate to the enclosing proof driver and exposing its retained certificate
+as the tactic expansion; it does not mean committing a mutable kernel state.
+
+The shared API should make this discipline difficult to get wrong. Its exact
+Rust spelling is open, but the semantic shape is a bounded smart-layer
+combinator such as:
+
+```rust
+attempt(root, |candidate| {
+    let candidate = candidate.apply_step(goal, selected_step)?;
+    solve_continuation(candidate)
+})
+```
+
+The combinator may provide `first_success`, `try_sequence`, `solve_each`, and
+bounded DFS/BFS facilities. It owns no semantic mutation authority. Every
+successor passed through it must already have been produced by
+`Proof::apply_step` or a named audited structural operation, and its result is
+the resulting `Proof` itself. Diagnostics may retain descriptions of failed
+candidates, but a diagnostic record must never become proof authority.
+
+Consequently, no rollback log, mutable transaction context, or independently
+checked "candidate certificate" is required. The retained `Proof` lineage is
+the certificate. Extracting it after success must perform traversal and
+serialization only; it must not rerun the continuation or rediscover any
+step.
+
+### `Proof` must own a persistent typed goal collection
+
+Transactional orchestration alone is insufficient while execution exits and
+branches are exported as legacy `ProofReplayContext` values. `Proof` must be
+able to represent every unfinished judgment created by an accepted
+transition, including several simultaneous path-local judgments.
+
+The intended conceptual shape is:
+
+```rust
+Proof {
+    open_goals: PersistentMap<GoalId, Goal>,
+    provenance: ProofNodeId,
+}
+
+enum Goal {
+    Proposition(PropositionGoal),
+    ExecutionFrontier(ExecutionGoal),
+    FunctionOutcome(OutcomeGoal),
+    Effect(EffectGoal),
+    // Additional explicit goal kinds as the audited semantics require.
+}
+```
+
+This sketch is a capability model, not a mandate for these exact fields or
+variants. Goal identifiers must be stable within a proof lineage, and smart
+tactics may inspect goal views but not construct, replace, or close goals
+directly. Applying one simple step to a focused goal atomically replaces it
+with zero, one, or several checked successor goals and records the matching
+certificate node. The goal collection and all path-local semantic data use
+persistent structural sharing so candidate forks remain cheap.
+
+An execution step can therefore have these audited outcomes:
+
+- one successor execution-frontier goal for a linear statement;
+- several labeled frontier goals for a C branch;
+- one or more function-outcome goals when paths return; or
+- no successor for a proved non-returning path.
+
+A function-outcome goal owns its path-local result expression, facts, state,
+resources, snapshots, and remaining postcondition/effect obligations. A later
+`simp`, `have`, `frame`, or explicit simple step focuses those goals directly.
+It must not first convert them into mutable replay contexts or re-lower the
+semantic aftermath into a new certificate.
+
+The representation must distinguish a valid partial proof from a complete
+proof. Completion means that the root's required goal set has been discharged
+through checked operations, not merely that one execution cursor reached a C
+return statement. Only an audited finalization operation may export the
+verified theorem or contract claim.
+
+### Branches, scopes, joins, and continuations compose through goals
+
+Structural operations should transform the same goal collection rather than
+running private mini-verifiers that later merge final contexts:
+
+- a split replaces one goal with labeled child goals sharing their prefix;
+- a resource open creates a scoped body goal whose checked closure publishes
+  only its specified interface;
+- a branch continuation is applied to the checked descendant goals selected
+  by the branch, not independently replayed after an adapter merge;
+- a join checks the explicit branch or scope interface, retains both child
+  derivations, and produces the successor goals for the common continuation;
+  and
+- a function with several return paths retains all outcome goals until the
+  required result and effect continuations have succeeded for every relevant
+  path.
+
+Some joins are genuine trusted semantic operations, especially where C states
+are abstracted or resource interfaces are reconciled. They remain named and
+audited proof-object operations. The smart choice to try a join, the order in
+which child goals are searched, and backtracking among candidates remain
+untrusted orchestration.
+
+The certificate DAG should mirror these operations when they happen. It must
+not infer branch ownership, scope boundaries, or continuation order later
+from a collection of final states. Common prefixes and continuations should be
+shared structurally rather than copied once per outcome.
+
+### What this phase must not become
+
+The continuation substrate must not introduce:
+
+- a `RunContinuation` or other opaque compound simple step;
+- a trusted callback whose internal state changes are accepted without
+  individual proof nodes;
+- a second mutable `ProofTransaction` representation that is lowered into
+  `Proof` after success;
+- certificate construction from final semantic deltas;
+- ordinary replay of a successful candidate for validation;
+- conversion to `ProofReplayContext` between execution and result/effect
+  goals;
+- one special transaction driver per smart tactic or goal kind; or
+- eager cloning of every outcome state, fact set, history, or certificate
+  prefix.
+
+If a continuation needs a semantic transition that the current simple or
+structural vocabulary cannot express, add the missing explicit checked
+operation. Do not grant the continuation an escape hatch around `apply_step`.
+
+### Substrate-first implementation order
+
+The next phase should proceed in independently green substrate slices rather
+than additional tactic-specific adapters:
+
+1. Specify and implement stable goal identity plus a persistent typed goal
+   collection inside `Proof`. Adapt the existing proposition, point, and
+   execution-frontier states without changing their checked semantics.
+2. Add shared bounded attempt/continuation combinators over immutable `Proof`
+   descendants. Regressions must show that a locally successful prefix whose
+   continuation fails returns the unchanged ancestor and publishes no partial
+   expansion.
+3. Make one execution transition replace its focused goal with its complete
+   checked successor goal set, including structural branches. Retain the split
+   and any audited join in the proof DAG when they occur.
+4. Represent function exits as path-local typed outcome goals. Result and
+   effect operations must consume those goals without conversion through the
+   legacy replay adapter.
+5. Compose branch, resource-scope, and common-continuation search through the
+   same goal and attempt interfaces. Add deterministic scaling regressions for
+   forks, multiple outcomes, joins, failure discard, and certificate
+   extraction.
+6. Use complete `execute(); simp();` and `execute(); frame();` scripts,
+   including multi-return and resource-sensitive examples, as vertical
+   acceptance cases. They must retain one structured checked proof, perform no
+   compatibility replay during ordinary verification, and expand into an
+   independently verifiable Surface certificate.
+7. Migrate the remaining smart-tactic families in groups over this substrate,
+   then delete the corresponding planning, reconstruction, and compatibility
+   paths. Do not count a family as migrated while its successful path converts
+   back to legacy replay before satisfying its continuation.
+
+This order deliberately front-loads the compositional structure even though
+it may temporarily move fewer individual tactics. The expected payoff is that
+general execution, branches, resources, and function-exit reasoning migrate
+together afterward, making the headline acceptance criteria—and deletion of
+compatibility replay—realistic.
+
 ## Violated invariant
 
 The intended invariant is:
@@ -269,8 +480,11 @@ architecture to support real smart search.
 
 ## Migration plan
 
-Implement this in independently green vertical slices; do not replace the
-entire verifier in one change.
+The entries below record the independently green vertical slices completed
+before the continuation/multi-outcome boundary became clear. They are useful
+implementation evidence, not the current priority queue. New work follows
+the substrate-first order above; do not resume case-by-case adapters simply
+at the end of this chronology.
 
 The first implementation checkpoint provides a persistent pure-goal `Proof`
 with checked `ApplyTheoremUsing`, `Assumption`, and `Normalize` steps. Pure
