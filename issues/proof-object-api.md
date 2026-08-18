@@ -1994,6 +1994,36 @@ structure, and verifies ancestor isolation. Outcome vocabulary not yet
 handled by `Proof::try_simp_closure` remains on the explicit compatibility
 fallback.
 
+### Progress (2026-08-17: recursive logical closure on Proof)
+
+Structural `simp` closure now keeps the exact Surface spelling of its current
+goal alongside the lowered kernel goal, so implication, conjunction, and
+disjunction search can construct their children through the existing audited
+`Proof` operations. Implication applies `Intro` and continues on the checked
+descendant. Conjunction opens checked `have` scopes for both operands and
+then applies `Split`. Disjunction tries each operand transactionally in a
+checked `have` scope before applying `Left` or `Right`. Nested scopes receive
+their own Surface goal, so these operations compose recursively rather than
+returning a detached planner certificate.
+
+Direct post-execution `have ... by simp` and final grouped outcome `simp` now
+use this structural search before their compatibility constructors. Source
+regressions require the conjunction case to avoid ordinary reconstruction or
+replay, expand to the retained named theorem applications and `split`, and
+verify independently. A deterministic 16-through-4096 unrelated-fact curve
+covers all three connectives, bounds persistent allocation logarithmically,
+requires exact certificate structure, and confirms that rejected or selected
+descendants cannot mutate their ancestor.
+
+Equality-refinement search no longer discards a replayable selected equality
+merely because a different premise in the kernel's semantic derivation lacks
+a Surface spelling. It still visits only equality premises selected by that
+derivation and advances only by a checked `Rewrite`; it does not trust the
+partial derivation or scan ambient equalities. This lets an unfolded
+post-execution conjunction prove its historical predecessor leg directly on
+`Proof`, and the existing `drop_one` regression now genuinely observes no
+outcome compatibility construction.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

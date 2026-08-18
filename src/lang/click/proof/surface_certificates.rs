@@ -7035,6 +7035,11 @@ fn certify_outcome_simp_have(
         if let Some(surface_tactic) = checked_surface_tactic {
             (surface_tactic, true)
         } else {
+            let compatibility_timing = crate::instrumentation::OperationTiming::new(
+                claim_label,
+                claim_label,
+                "outcome simp compatibility construction",
+            );
             let proof = lower_outcome_simp_proof(
                 replay,
                 surface_goal,
@@ -7048,6 +7053,7 @@ fn certify_outcome_simp_have(
                 predicate_environment,
                 click_function_environment,
             )?;
+            drop(compatibility_timing);
             (
                 ProofTactic::Have(ProofHave {
                     proposition: certificate_surface_goal,

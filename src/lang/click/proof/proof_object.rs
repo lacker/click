@@ -3145,13 +3145,55 @@ impl<'a> Proof<'a> {
                 )
             })
             .flatten()
-            .or_else(|| {
-                all_premises_replayable
-                    .then(|| self.try_single_selected_equality_rewrite_closure(&premise_pairs))
-                    .flatten()
-            })
+            .or_else(|| self.try_single_selected_equality_rewrite_closure(&premise_pairs))
             .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
             .or_else(|| self.try_selected_disjunction_cases(&premise_pairs))
+    }
+
+    /// Runs smart closure with the exact Surface spelling of the current
+    /// goal available to structural search. Child goals are opened through
+    /// audited `have` scopes (or `intro`) and each accepted descendant is
+    /// retained before the enclosing connective is closed. This is search
+    /// over ordinary Proof operations, not a parallel certificate planner.
+    pub(super) fn try_simp_closure_for_surface_goal(
+        &self,
+        surface_goal: &ClickProposition,
+    ) -> Option<Self> {
+        if let Some(closed) = self.try_simp_closure() {
+            return Some(closed);
+        }
+        let goal = self.goal()?;
+        match (surface_goal, goal) {
+            (ClickProposition::Implies(_, surface_consequent), Proposition::Implies(_, _)) => self
+                .apply_step(SimpleProofStep::Intro)
+                .ok()?
+                .try_simp_closure_for_surface_goal(surface_consequent),
+            (ClickProposition::And(surface_left, surface_right), Proposition::And(_, _)) => {
+                let left = self.begin_have(surface_left.as_ref().clone()).ok()?;
+                let left = left.try_simp_closure()?;
+                let proof = left.join().ok()?;
+                let right = proof.begin_have(surface_right.as_ref().clone()).ok()?;
+                let right = right.try_simp_closure()?;
+                right.join().ok()?.apply_step(SimpleProofStep::Split).ok()
+            }
+            (ClickProposition::Or(surface_left, surface_right), Proposition::Or(_, _)) => {
+                for (surface, closer) in [
+                    (surface_left.as_ref(), SimpleProofStep::Left),
+                    (surface_right.as_ref(), SimpleProofStep::Right),
+                ] {
+                    let selected = (|| {
+                        let scope = self.begin_have(surface.clone()).ok()?;
+                        let scope = scope.try_simp_closure()?;
+                        scope.join().ok()?.apply_step(closer.clone()).ok()
+                    })();
+                    if selected.is_some() {
+                        return selected;
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Retains the kernel decision and the exact replayable Surface spellings
@@ -8173,7 +8215,12 @@ impl<'a> ProofScope<'a> {
     /// the accepted descendant directly.
     pub(super) fn try_simp_closure(&self) -> Option<Self> {
         let mut next = self.clone();
-        next.body = self.body.try_simp_closure()?;
+        next.body = match self.structure.as_ref() {
+            ProofScopeStructure::Have { proposition, .. } => {
+                self.body.try_simp_closure_for_surface_goal(proposition)?
+            }
+            ProofScopeStructure::Open { .. } => self.body.try_simp_closure()?,
+        };
         Some(next)
     }
 
@@ -13793,6 +13840,186 @@ mod tests {
             ));
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn surface_structural_simp_retains_recursive_child_proofs_and_scales() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("the standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test C function should parse");
+        let state = CState::new();
+        let arguments = Vec::new();
+        let program_point_states = ProgramPointStates::new();
+        let left_value = Bitvector32Term::Variable(Variable(8_178_910));
+        let right_value = Bitvector32Term::Variable(Variable(8_178_911));
+        let expression = |term: Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term)))
+        };
+        let left_positive = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(1)),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(left_value.clone()),
+        };
+        let right_positive = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(1)),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(right_value.clone()),
+        };
+        let left_nonnegative = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(0)),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(left_value.clone()),
+        };
+        let right_nonnegative = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(0)),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(right_value),
+        };
+        let negative = ClickProposition::Comparison {
+            left: expression(left_value.clone()),
+            operator: ComparisonOperator::LessThan,
+            right: expression(Bitvector32Term::Constant(0)),
+        };
+        let reflexive = ClickProposition::Comparison {
+            left: expression(left_value.clone()),
+            operator: ComparisonOperator::Equal,
+            right: expression(left_value),
+        };
+        let conjunction = ClickProposition::And(
+            Box::new(left_nonnegative.clone()),
+            Box::new(right_nonnegative),
+        );
+        let disjunction =
+            ClickProposition::Or(Box::new(left_nonnegative.clone()), Box::new(negative));
+        let implication =
+            ClickProposition::Implies(Box::new(reflexive), Box::new(left_positive.clone()));
+        let lower = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the fixed structural proposition should lower")
+        };
+        let kernel_left_positive = lower(&left_positive);
+        let kernel_right_positive = lower(&right_positive);
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
+            .record_lowering(&left_positive, &kernel_left_positive)
+            .expect("the recursive left premise should be indexed");
+        surface_propositions
+            .record_lowering(&right_positive, &kernel_right_positive)
+            .expect("the recursive right premise should be indexed");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let unrelated = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 256 * logarithmic_height + 1024;
+            for (label, surface_goal, selected_facts) in [
+                (
+                    "conjunction",
+                    &conjunction,
+                    &[kernel_left_positive.clone(), kernel_right_positive.clone()][..],
+                ),
+                (
+                    "disjunction",
+                    &disjunction,
+                    std::slice::from_ref(&kernel_left_positive),
+                ),
+                (
+                    "implication",
+                    &implication,
+                    std::slice::from_ref(&kernel_left_positive),
+                ),
+            ] {
+                let mut facts = unrelated.clone();
+                facts.extend_from_slice(selected_facts);
+                let root = Proof::for_point_goal(
+                    "persistent surface structural simp",
+                    0,
+                    &facts,
+                    lower(surface_goal),
+                    parsed_function.parameters(),
+                    &arguments,
+                    &state,
+                    &state,
+                    &program_point_states,
+                    &surface_propositions,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &theorem_environment,
+                    &[],
+                    &[],
+                );
+                let retained_root = root.clone();
+                let before = fact_node_allocations();
+                let closed = root
+                    .try_simp_closure_for_surface_goal(surface_goal)
+                    .unwrap_or_else(|| panic!("the {label} should retain its recursive proof"));
+                let allocations = fact_node_allocations() - before;
+                assert!(
+                    allocations <= allocation_bound,
+                    "size {size} {label} simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+                );
+                assert!(closed.is_complete());
+                let retained_steps = closed.certificate();
+                match label {
+                    "conjunction" => assert!(
+                        matches!(
+                            retained_steps.steps(),
+                            [
+                                SimpleProofStep::Have { proof: left, .. },
+                                SimpleProofStep::Have { proof: right, .. },
+                                SimpleProofStep::Split,
+                            ] if matches!(
+                                left.steps(),
+                                [SimpleProofStep::ApplyTheoremUsing { .. }]
+                            ) && matches!(
+                                right.steps(),
+                                [SimpleProofStep::ApplyTheoremUsing { .. }]
+                            )
+                        ),
+                        "{retained_steps:#?}"
+                    ),
+                    "disjunction" => assert!(
+                        matches!(
+                            retained_steps.steps(),
+                            [
+                                SimpleProofStep::Have { proof, .. },
+                                SimpleProofStep::Left,
+                            ] if matches!(
+                                proof.steps(),
+                                [SimpleProofStep::ApplyTheoremUsing { .. }]
+                            )
+                        ),
+                        "{retained_steps:#?}"
+                    ),
+                    "implication" => assert!(
+                        matches!(
+                            retained_steps.steps(),
+                            [SimpleProofStep::Intro, SimpleProofStep::Assumption,]
+                        ),
+                        "{retained_steps:#?}"
+                    ),
+                    _ => unreachable!(),
+                }
+                assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+                assert!(root.certificate().steps().is_empty());
+            }
         }
     }
 

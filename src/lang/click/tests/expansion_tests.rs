@@ -687,6 +687,130 @@ fn post_execution_simp_builds_disjunction_cases_on_proof() {
 }
 
 #[test]
+fn post_execution_simp_builds_recursive_conjunction_on_proof() {
+    let c_source = r#"
+        int32 first(int32 x, int32 y) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "first.c";
+
+        int32 first(int32 x, int32 y) {
+            requires 1 <= x;
+            requires 1 <= y;
+            ensures 0 <= x and 0 <= y;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("first.c", c_source)])
+    });
+    verified.expect("the conjunction should retain both recursively checked child proofs");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp compatibility construction"
+        )),
+        "recursive conjunction closure must bypass compatibility construction: {events:#?}"
+    );
+
+    let simp_offset = click_source
+        .find("simp();")
+        .expect("proof should contain the selected grouped simp");
+    let position = expansion::position_at_offset(click_source, simp_offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("first.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the retained conjunction should expand");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    assert_eq!(
+        expanded
+            .matches("apply(int32_positive_is_nonnegative(")
+            .count(),
+        2,
+        "{expanded}"
+    );
+    assert!(expanded.contains("split();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("first.c", c_source)])
+        .expect("the retained conjunction should verify independently");
+}
+
+#[test]
+fn post_execution_smart_have_builds_recursive_conjunction_on_proof() {
+    let c_source = r#"
+        int32 first(int32 x, int32 y) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "first.c";
+
+        int32 first(int32 x, int32 y) {
+            requires 1 <= x;
+            requires 1 <= y;
+            ensures 0 <= x and 0 <= y;
+        } by {
+            execute();
+            have 0 <= x and 0 <= y by simp;
+            assumption();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("first.c", c_source)])
+    });
+    verified.expect("the smart have should retain its recursively checked conjunction");
+    let source_verification_events = events.iter().take_while(|event| {
+        !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "whole-contract certificate construction"
+        )
+    });
+    assert!(
+        source_verification_events
+            .into_iter()
+            .all(|event| !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name.starts_with("post-execution simple have replay")
+            )),
+        "the checked smart have must not replay a reconstructed body: {events:#?}"
+    );
+
+    let have_offset = click_source
+        .find("have 0 <= x and 0 <= y")
+        .expect("proof should contain the selected smart have");
+    let position = expansion::position_at_offset(click_source, have_offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("first.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the retained smart have should expand");
+    assert!(!expanded.contains("by simp"), "{expanded}");
+    assert_eq!(
+        expanded
+            .matches("apply(int32_positive_is_nonnegative(")
+            .count(),
+        2,
+        "{expanded}"
+    );
+    assert!(expanded.contains("split();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("first.c", c_source)])
+        .expect("the retained smart have should verify independently");
+}
+
+#[test]
 fn post_execution_existential_simp_retains_its_checked_scope() {
     let c_source = r#"
         int32 identity(int32 x) {
