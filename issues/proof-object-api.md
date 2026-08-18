@@ -2618,6 +2618,28 @@ different split of the same root — with identical replay metadata and
 colliding numeric ids — fails transactionally. The regression pins that
 rejection and that the genuine arms still join afterward.
 
+### Progress (2026-08-18: path-local execution state lives on the goal)
+
+`ProofState` no longer owns an `execution` field. The C execution snapshot —
+frontier, replay metadata, branch provenance, and per-step delta — lives on
+the goal that needs it: a `FrontierGoal` pairs the effect selection with its
+`Arc`-shared snapshot, and a proposition goal stated at an execution point
+borrows the same snapshot by identity as its lowering/theorem context,
+without any authority to republish a frontier. Ordinary execution successors
+go through `replace_sole_frontier`/`replace_sole_execution`, which preserve
+the goal's identity and selection while installing the checked snapshot;
+discharge drops the goal and its context together. Split arms install their
+arm snapshot under their recorded child goal ids. A regression pins the
+`have`-body sharing by pointer identity, and one allocation regression now
+permits the single goal-map node an execution successor writes. The mdtest
+gate caught the one non-mechanical case: predicate unfold and fact transport
+are deliberately legal on a nested proposition proof stated at a frontier, so
+their successors preserve the goal's kind rather than assuming a frontier
+goal; the guarded C-advancing operations keep the strict frontier successor.
+This removes
+the last shared-state obstacle to a `Proof` owning several simultaneous
+path-local judgments; splits producing sibling in-`Proof` goals come next.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

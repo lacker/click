@@ -575,7 +575,6 @@ struct ProofState {
     goals: ProofGoals,
     added_facts: Arc<Vec<Proposition>>,
     checked_facts: Arc<Vec<Proposition>>,
-    execution: Option<ExecutionProofState>,
 }
 
 /// Identity of one open obligation within a proof lineage.
@@ -691,6 +690,61 @@ impl ProofGoals {
         }
     }
 
+    /// Replaces the focused frontier goal's semantic snapshot while
+    /// preserving its identity and effect selection: the successor shape of
+    /// an ordinary checked execution transition.
+    fn replace_sole_frontier(&self, execution: ExecutionProofState) -> Self {
+        let Some((id, Goal::Frontier(goal))) = self.sole() else {
+            unreachable!("a frontier transition requires an open frontier goal");
+        };
+        Self {
+            open: self.open.with_inserted(
+                id,
+                Goal::Frontier(FrontierGoal {
+                    selection: goal.selection,
+                    execution: Some(Arc::new(execution)),
+                }),
+            ),
+            next_id: self.next_id,
+        }
+    }
+
+    /// Retains the focused goal under an updated execution snapshot,
+    /// preserving identity, kind, and selection/content. This is the
+    /// successor shape of a fact-adding rule on a proof that owns an
+    /// execution context.
+    fn replace_sole_execution(&self, execution: ExecutionProofState) -> Self {
+        let Some((id, goal)) = self.sole() else {
+            unreachable!("an execution successor requires an open goal");
+        };
+        let execution = Some(Arc::new(execution));
+        let updated = match goal {
+            Goal::Frontier(frontier) => Goal::Frontier(FrontierGoal {
+                selection: frontier.selection,
+                execution,
+            }),
+            Goal::Proposition(goal) => Goal::Proposition(PropositionGoal {
+                kernel: goal.kernel.clone(),
+                surface: goal.surface.clone(),
+                execution,
+            }),
+        };
+        Self {
+            open: self.open.with_inserted(id, updated),
+            next_id: self.next_id,
+        }
+    }
+
+    /// Discharges the goal when its proposition was established; otherwise
+    /// retains it under the updated execution snapshot.
+    fn discharged_if_or_execution(&self, complete: bool, execution: ExecutionProofState) -> Self {
+        if complete {
+            self.discharge_sole()
+        } else {
+            self.replace_sole_execution(execution)
+        }
+    }
+
     fn is_discharged(&self) -> bool {
         self.open.is_empty()
     }
@@ -740,7 +794,19 @@ struct ExecutionProofStepDelta {
 #[derive(Clone)]
 enum Goal {
     Proposition(PropositionGoal),
-    Frontier(EffectGoalSelection),
+    Frontier(FrontierGoal),
+}
+
+/// One open C frontier judgment and its path-local semantic context.
+///
+/// The execution state lives on the goal, not on the shared proof state, so
+/// several simultaneous path-local judgments can coexist in one `Proof` once
+/// splits produce them. The `Arc` makes forks and goal-preserving fact
+/// refinements share the unchanged snapshot by identity.
+#[derive(Clone)]
+struct FrontierGoal {
+    selection: EffectGoalSelection,
+    execution: Option<Arc<ExecutionProofState>>,
 }
 
 /// One proposition judgment keeps its checked kernel meaning and, when the
@@ -751,20 +817,39 @@ enum Goal {
 struct PropositionGoal {
     kernel: Arc<Proposition>,
     surface: Option<Arc<ClickProposition>>,
+    /// Borrowed lowering/theorem context: the immutable execution snapshot
+    /// at the point where this judgment was stated, shared by identity with
+    /// the frontier that stated it. A proposition goal can never publish a
+    /// changed frontier through this reference.
+    execution: Option<Arc<ExecutionProofState>>,
 }
 
 impl Goal {
     fn proposition(kernel: Proposition) -> Self {
-        Self::Proposition(PropositionGoal {
-            kernel: Arc::new(kernel),
-            surface: None,
-        })
+        Self::proposition_in(None, kernel)
     }
 
     fn surface_proposition(kernel: Proposition, surface: ClickProposition) -> Self {
+        Self::surface_proposition_in(None, kernel, surface)
+    }
+
+    fn proposition_in(execution: Option<Arc<ExecutionProofState>>, kernel: Proposition) -> Self {
+        Self::Proposition(PropositionGoal {
+            kernel: Arc::new(kernel),
+            surface: None,
+            execution,
+        })
+    }
+
+    fn surface_proposition_in(
+        execution: Option<Arc<ExecutionProofState>>,
+        kernel: Proposition,
+        surface: ClickProposition,
+    ) -> Self {
         Self::Proposition(PropositionGoal {
             kernel: Arc::new(kernel),
             surface: Some(Arc::new(surface)),
+            execution,
         })
     }
 }
@@ -949,7 +1034,6 @@ impl<'a> Proof<'a> {
                 ),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
-                execution: None,
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -1202,7 +1286,10 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
             available,
-            Goal::Frontier(EffectGoalSelection::None),
+            Goal::Frontier(FrontierGoal {
+                selection: EffectGoalSelection::None,
+                execution: None,
+            }),
             parameters,
             arguments,
             pre_state,
@@ -1244,7 +1331,10 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
             available,
-            Goal::Frontier(EffectGoalSelection::None),
+            Goal::Frontier(FrontierGoal {
+                selection: EffectGoalSelection::None,
+                execution: None,
+            }),
             parameters,
             arguments,
             pre_state,
@@ -1317,7 +1407,6 @@ impl<'a> Proof<'a> {
                 goals: ProofGoals::root(goal),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
-                execution: None,
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -1379,15 +1468,17 @@ impl<'a> Proof<'a> {
                 facts: ProofFacts::from_ordered(&pure_facts),
                 locals: ProofLocals::default(),
                 unfolded_predicates: PersistentOrderedSet::default(),
-                goals: ProofGoals::root(Goal::Frontier(effect_goals)),
+                goals: ProofGoals::root(Goal::Frontier(FrontierGoal {
+                    selection: effect_goals,
+                    execution: Some(Arc::new(ExecutionProofState {
+                        state: state.into(),
+                        replay,
+                        branch_path,
+                        last_step_delta: ExecutionProofStepDelta::default(),
+                    })),
+                })),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
-                execution: Some(ExecutionProofState {
-                    state: state.into(),
-                    replay,
-                    branch_path,
-                    last_step_delta: ExecutionProofStepDelta::default(),
-                }),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -1402,6 +1493,19 @@ impl<'a> Proof<'a> {
     /// single-goal assumption stays in one place until splits arrive.
     fn sole_goal(&self) -> Option<&Goal> {
         self.state.goals.sole().map(|(_, goal)| goal)
+    }
+
+    /// The focused goal's path-local execution context, shared by identity
+    /// with the frontier that created it.
+    fn goal_execution(&self) -> Option<&Arc<ExecutionProofState>> {
+        match self.sole_goal()? {
+            Goal::Proposition(goal) => goal.execution.as_ref(),
+            Goal::Frontier(goal) => goal.execution.as_ref(),
+        }
+    }
+
+    fn execution(&self) -> Option<&ExecutionProofState> {
+        self.goal_execution().map(Arc::as_ref)
     }
 
     /// The identity of the unique open goal, if one remains. Joins compare
@@ -1434,13 +1538,13 @@ impl<'a> Proof<'a> {
     /// frontier without materializing their clauses.
     #[cfg(test)]
     fn effect_goal_count(&self) -> usize {
-        let Some(&Goal::Frontier(selection)) = self.sole_goal() else {
+        let Some(Goal::Frontier(FrontierGoal { selection, .. })) = self.sole_goal() else {
             return 0;
         };
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return 0;
         };
-        match selection {
+        match *selection {
             EffectGoalSelection::None => 0,
             EffectGoalSelection::One(index) => {
                 usize::from(index < context.function_block.effects().len())
@@ -1487,7 +1591,6 @@ impl<'a> Proof<'a> {
                 ),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
-                execution: None,
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -1544,9 +1647,7 @@ impl<'a> Proof<'a> {
             ProofContext::Pure(_) => &[][..],
             ProofContext::Point(context) => context.unfolded_predicates,
             ProofContext::Execution(_) => self
-                .state
-                .execution
-                .as_ref()
+                .execution()
                 .map(|execution| execution.replay.unfolded_predicates.as_slice())
                 .unwrap_or(&[]),
         };
@@ -1645,11 +1746,11 @@ impl<'a> Proof<'a> {
         &self,
         context: &ExecutionProofContext<'_>,
     ) -> Result<Vec<usize>, ClickError> {
-        let Some(&Goal::Frontier(selection)) = self.sole_goal() else {
+        let Some(Goal::Frontier(FrontierGoal { selection, .. })) = self.sole_goal() else {
             return Err(self.step_error("`frame using` requires an execution effect goal"));
         };
         let effect_count = context.function_block.effects().len();
-        let indices = match selection {
+        let indices = match *selection {
             EffectGoalSelection::None => Vec::new(),
             EffectGoalSelection::One(index) if index < effect_count => vec![index],
             EffectGoalSelection::One(index) => {
@@ -1705,10 +1806,10 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("`frame using` requires an execution proof"));
         };
         self.require_execution_frontier("`frame using`")?;
-        let mut execution =
-            self.state.execution.clone().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         if !execution.replay.is_at_function_exit() {
             return Err(self.step_error("`frame using` requires function exit"));
         }
@@ -1786,10 +1887,9 @@ impl<'a> Proof<'a> {
                     facts: self.state.facts.clone(),
                     locals: self.state.locals.clone(),
                     unfolded_predicates: self.state.unfolded_predicates.clone(),
-                    goals: self.state.goals.clone(),
+                    goals: self.state.goals.replace_sole_frontier(execution),
                     added_facts: Arc::new(Vec::new()),
                     checked_facts: Arc::new(Vec::new()),
-                    execution: Some(execution),
                 });
             }
         }
@@ -1844,13 +1944,12 @@ impl<'a> Proof<'a> {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goals: self
-                .state
-                .goals
-                .replace_sole(Goal::Frontier(EffectGoalSelection::None)),
+            goals: self.state.goals.replace_sole(Goal::Frontier(FrontierGoal {
+                selection: EffectGoalSelection::None,
+                execution: Some(Arc::new(execution)),
+            })),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
-            execution: Some(execution),
         })
     }
 
@@ -1931,8 +2030,7 @@ impl<'a> Proof<'a> {
         mut self,
         certificate: ProofCertificate,
     ) -> Result<Self, ClickError> {
-        let mut state = (*self.state).clone();
-        let execution = state.execution.as_mut().ok_or_else(|| {
+        let mut execution = self.execution().cloned().ok_or_else(|| {
             self.step_error("checked frame certificate lost its execution frontier")
         })?;
         let mut deferred = execution
@@ -1951,6 +2049,8 @@ impl<'a> Proof<'a> {
         };
         *surface_certificate = Some(certificate);
         execution.replay.post_execution_tactics.push(deferred);
+        let mut state = (*self.state).clone();
+        state.goals = state.goals.replace_sole_frontier(execution);
         self.state = Arc::new(state);
         Ok(self)
     }
@@ -1963,10 +2063,9 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Ok(None);
         };
-        let execution_state =
-            self.state.execution.as_ref().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let execution_state = self
+            .execution()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         if !execution_state.replay.is_at_function_exit()
             || !execution_state.replay.case_assumptions.is_empty()
         {
@@ -2164,7 +2263,10 @@ impl<'a> Proof<'a> {
         }
         if matches!(
             self.sole_goal(),
-            Some(Goal::Frontier(EffectGoalSelection::None))
+            Some(Goal::Frontier(FrontierGoal {
+                selection: EffectGoalSelection::None,
+                ..
+            }))
         ) {
             return Ok(None);
         }
@@ -2274,7 +2376,6 @@ impl<'a> Proof<'a> {
             ),
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
-            execution: None,
         })
     }
 
@@ -2465,10 +2566,9 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("execution outcome `if` requires an execution proof"));
         };
         self.require_execution_frontier("execution outcome `if`")?;
-        let root_execution =
-            self.state.execution.as_ref().ok_or_else(|| {
-                self.step_error("execution outcome `if` lost its semantic frontier")
-            })?;
+        let root_execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("execution outcome `if` lost its semantic frontier"))?;
         if !root_execution.replay.is_at_function_exit() {
             return Err(self.step_error("execution outcome `if` requires function exit"));
         }
@@ -2575,10 +2675,9 @@ impl<'a> Proof<'a> {
                     facts,
                     locals: self.state.locals.clone(),
                     unfolded_predicates: self.state.unfolded_predicates.clone(),
-                    goals: children_goals[arm_index].clone(),
+                    goals: children_goals[arm_index].replace_sole_frontier(execution),
                     added_facts: Arc::new(added_facts.clone()),
                     checked_facts: Arc::new(added_facts),
-                    execution: Some(execution),
                 }),
                 // The entry marker records this split instance; the join
                 // accepts only descendants that pass through it.
@@ -2637,18 +2736,18 @@ impl<'a> Proof<'a> {
                 facts: self.state.facts.clone(),
                 locals: self.state.locals.clone(),
                 unfolded_predicates: self.state.unfolded_predicates.clone(),
-                goals: ProofGoals::root(Goal::surface_proposition(
+                // An execution `have` borrows the current immutable frontier
+                // solely as its proposition-lowering/theorem context, shared
+                // by identity on the nested goal. The nested goal cannot
+                // publish a changed frontier: `join` restores the exact root
+                // execution state and exposes only the stated proposition.
+                goals: ProofGoals::root(Goal::surface_proposition_in(
+                    self.goal_execution().cloned(),
                     kernel.clone(),
                     proposition.clone(),
                 )),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
-                // An execution `have` borrows the current immutable frontier
-                // solely as its proposition-lowering/theorem context. The
-                // nested goal cannot publish a changed frontier: `join`
-                // restores the exact root execution state and exposes only
-                // the stated proposition.
-                execution: self.state.execution.clone(),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -2680,10 +2779,10 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("`open` requires an execution-frontier proof"));
         };
         self.require_execution_frontier("`open`")?;
-        let mut execution =
-            self.state.execution.clone().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         if execution.replay.is_at_function_exit() {
             return Err(self.step_error("`open` must begin before execution reaches function exit"));
         }
@@ -2710,10 +2809,9 @@ impl<'a> Proof<'a> {
                 facts: checked.facts,
                 locals: self.state.locals.clone(),
                 unfolded_predicates: self.state.unfolded_predicates.clone(),
-                goals: self.state.goals.clone(),
+                goals: self.state.goals.replace_sole_frontier(execution),
                 added_facts: Arc::new(checked.added_facts.clone()),
                 checked_facts: Arc::new(checked.added_facts),
-                execution: Some(execution),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -2748,10 +2846,9 @@ impl<'a> Proof<'a> {
         {
             return Err(self.step_error("`branch` requires an open execution frontier"));
         }
-        let execution =
-            self.state.execution.as_ref().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let statement_index = execution.replay.frontier.next_statement_index;
         let source_region = execution
             .replay
@@ -2922,10 +3019,9 @@ impl<'a> Proof<'a> {
                     facts: transition.pure_facts,
                     locals: self.state.locals.clone(),
                     unfolded_predicates: self.state.unfolded_predicates.clone(),
-                    goals: children_goals[arm_index].clone(),
+                    goals: children_goals[arm_index].replace_sole_frontier(arm_execution),
                     added_facts: Arc::new(transition.path_facts.clone()),
                     checked_facts: Arc::new(transition.path_facts.clone()),
-                    execution: Some(arm_execution),
                 }),
                 // The structural certificate is owned by the container and
                 // installed atomically by the checked join. The entry marker
@@ -3131,7 +3227,6 @@ impl<'a> Proof<'a> {
                 goals,
                 added_facts: Arc::new(vec![fact.clone()]),
                 checked_facts: Arc::new(vec![fact]),
-                execution: None,
             }),
             // The structural step is retained once at join.
             node: Arc::new(ProofNode {
@@ -3194,7 +3289,7 @@ impl<'a> Proof<'a> {
                 })
             }
             ProofContext::Execution(context) => {
-                let execution = self.state.execution.as_ref().ok_or_else(|| {
+                let execution = self.execution().ok_or_else(|| {
                     self.step_error("execution proposition proof lost its semantic frontier")
                 })?;
                 let surface = self.substitute_point_locals_in_proposition(surface)?;
@@ -3264,7 +3359,7 @@ impl<'a> Proof<'a> {
                 })
             }
             ProofContext::Execution(context) => {
-                let execution = self.state.execution.as_ref().ok_or_else(|| {
+                let execution = self.execution().ok_or_else(|| {
                     self.step_error("execution proposition proof lost its semantic frontier")
                 })?;
                 let surface = self.substitute_point_locals_in_proposition(surface)?;
@@ -3433,7 +3528,7 @@ impl<'a> Proof<'a> {
                     None => Goal::proposition(kernel),
                 }
             }
-            Some(Goal::Frontier(selection)) => Goal::Frontier(*selection),
+            Some(Goal::Frontier(frontier)) => Goal::Frontier(frontier.clone()),
             None => return Err(self.step_error("`unfold` requires an open goal")),
         };
         let mut unfolded_predicates = self.state.unfolded_predicates.clone();
@@ -3445,7 +3540,6 @@ impl<'a> Proof<'a> {
             goals: self.state.goals.replace_sole(goal),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
-            execution: None,
         })
     }
 
@@ -3453,10 +3547,10 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`unfold` requires an execution-frontier proof"));
         };
-        let mut execution =
-            self.state.execution.clone().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let checked = check_unfold_predicate_facts(
             &mut execution.replay,
             &execution.state,
@@ -3482,10 +3576,12 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates,
-            goals: self.state.goals.clone(),
+            // A nested proposition proof stated at this frontier may also
+            // unfold facts: the successor preserves the goal's kind while
+            // installing the updated snapshot.
+            goals: self.state.goals.replace_sole_execution(execution),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
-            execution: Some(execution),
         })
     }
 
@@ -3497,10 +3593,10 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("`observe` requires an execution-frontier proof"));
         };
         self.require_execution_frontier("`observe`")?;
-        let mut execution =
-            self.state.execution.clone().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         if execution.replay.is_at_function_exit() {
             return Err(
                 self.step_error("`observe` must run before execution reaches function exit")
@@ -3531,10 +3627,9 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goals: self.state.goals.clone(),
+            goals: self.state.goals.replace_sole_frontier(execution),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
-            execution: Some(execution),
         })
     }
 
@@ -3546,10 +3641,10 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("resource `unfold` requires an execution-frontier proof"));
         };
         self.require_execution_frontier("resource `unfold`")?;
-        let mut execution =
-            self.state.execution.clone().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         if execution.replay.is_at_function_exit() {
             return Err(self
                 .step_error("resource `unfold` must run before execution reaches function exit"));
@@ -3573,10 +3668,9 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goals: self.state.goals.clone(),
+            goals: self.state.goals.replace_sole_frontier(execution),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
-            execution: Some(execution),
         })
     }
 
@@ -3588,10 +3682,10 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("resource `fold` requires an execution-frontier proof"));
         };
         self.require_execution_frontier("resource `fold`")?;
-        let mut execution =
-            self.state.execution.clone().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         if execution.replay.is_at_function_exit() {
             return Err(
                 self.step_error("resource `fold` must run before execution reaches function exit")
@@ -3621,10 +3715,9 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goals: self.state.goals.clone(),
+            goals: self.state.goals.replace_sole_frontier(execution),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
-            execution: Some(execution),
         })
     }
 
@@ -3641,14 +3734,14 @@ impl<'a> Proof<'a> {
         // transition. A smart tactic may legitimately retain any ancestor or
         // successor; materializing the selected checked state must therefore
         // not require unique ownership of the Proof.
-        let mut state = Arc::unwrap_or_clone(self.state);
-        let execution = state
-            .execution
-            .take()
+        let execution = self
+            .goal_execution()
+            .cloned()
             .ok_or_else(|| ClickError::new(missing))?;
+        let execution = Arc::unwrap_or_clone(execution);
         Ok(ProofReplayContext {
             state: execution.state.into_value(),
-            pure_facts: state.facts.to_vec(),
+            pure_facts: self.state.facts.to_vec(),
             replay: execution.replay,
             branch_path: execution.branch_path,
         })
@@ -4586,7 +4679,7 @@ impl<'a> Proof<'a> {
     /// the broader checked selector. Both paths return only an accepted
     /// `StepUsing` descendant, never planning aftermath.
     pub(super) fn try_smart_step(&self) -> Result<Option<Self>, ClickError> {
-        let Some(execution) = self.state.execution.as_ref() else {
+        let Some(execution) = self.execution() else {
             return Ok(None);
         };
         // A standalone `step()` cannot yet decide which resource-backed facts
@@ -4620,7 +4713,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Ok(None);
         };
-        let Some(execution) = self.state.execution.as_ref() else {
+        let Some(execution) = self.execution() else {
             return Err(self.step_error("execution-frontier proof lost its semantic state"));
         };
         if !allow_unrelated_context
@@ -4793,9 +4886,7 @@ impl<'a> Proof<'a> {
     /// This is a read-only smart-tactic query: it exposes no replay state and
     /// grants no authority to advance the proof.
     pub(super) fn is_at_function_exit(&self) -> bool {
-        self.state
-            .execution
-            .as_ref()
+        self.execution()
             .is_some_and(|execution| execution.replay.is_at_function_exit())
     }
 
@@ -4806,9 +4897,7 @@ impl<'a> Proof<'a> {
     /// not apply. It grants no branch authority and performs no transition.
     fn is_at_execution_branch(&self) -> Result<bool, ClickError> {
         let execution = self
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .ok_or_else(|| self.step_error("execution proof lost its semantic frontier"))?;
         if execution.replay.is_at_function_exit() {
             return Ok(false);
@@ -4855,9 +4944,7 @@ impl<'a> Proof<'a> {
     /// proof, or `None` after function exit.
     fn current_statement_index(&self) -> Result<Option<usize>, ClickError> {
         let execution = self
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .ok_or_else(|| self.step_error("execution proof lost its semantic frontier"))?;
         Ok((!execution.replay.is_at_function_exit())
             .then_some(execution.replay.frontier.next_statement_index))
@@ -4986,7 +5073,7 @@ impl<'a> Proof<'a> {
     /// checked branch container may own structural C forks as well as linear
     /// statements without guessing what a later continuation will need.
     pub(super) fn try_exact_execute_to_exit(&self) -> Result<Option<Self>, ClickError> {
-        let Some(execution) = self.state.execution.as_ref() else {
+        let Some(execution) = self.execution() else {
             return Ok(None);
         };
         if !self.state.facts.ordered.is_empty()
@@ -5038,7 +5125,7 @@ impl<'a> Proof<'a> {
                 self.step_error("execution fact-transport search requires an execution proof")
             );
         };
-        let execution = self.state.execution.as_ref().ok_or_else(|| {
+        let execution = self.execution().ok_or_else(|| {
             self.step_error("execution fact-transport search lost its semantic frontier")
         })?;
         if execution.replay.is_at_function_entry() {
@@ -5174,10 +5261,9 @@ impl<'a> Proof<'a> {
                 "execution theorem-application search requires an execution-frontier proof",
             ));
         };
-        let execution =
-            self.state.execution.as_ref().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let pre_state = execution.replay.old_reference_state(&execution.state);
         self.select_theorem_application_step_at_point(
             application,
@@ -5338,9 +5424,7 @@ impl<'a> Proof<'a> {
             let mut snapshot_surface_error = None;
             if let ProofContext::Execution(_) = self.context.as_ref() {
                 let execution = self
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .expect("execution proof owns semantic state");
                 match checked_surface_comparison_fact_at_point_with_indexed_facts(
                     &execution.replay,
@@ -5599,7 +5683,6 @@ impl<'a> Proof<'a> {
             goals: self.state.goals.clone(),
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
-            execution: None,
         })
     }
 
@@ -5638,7 +5721,6 @@ impl<'a> Proof<'a> {
             goals: self.state.goals.discharged_if(complete),
             checked_facts: Arc::new(checked.added_facts.clone()),
             added_facts: Arc::new(checked.added_facts),
-            execution: None,
         })
     }
 
@@ -5648,10 +5730,10 @@ impl<'a> Proof<'a> {
         application: &TheoremApplication,
         surface_premises: &[ClickProposition],
     ) -> Result<ProofState, ClickError> {
-        let mut execution =
-            self.state.execution.clone().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
         let pre_state = execution
             .replay
@@ -5718,10 +5800,12 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goals: self.state.goals.discharged_if(complete),
+            goals: self
+                .state
+                .goals
+                .discharged_if_or_execution(complete, execution),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
-            execution: Some(execution),
         })
     }
 
@@ -5800,7 +5884,6 @@ impl<'a> Proof<'a> {
             goals: self.state.goals.clone(),
             added_facts: Arc::new(added_facts),
             checked_facts: Arc::new(vec![chosen_fact]),
-            execution: None,
         })
     }
 
@@ -5877,7 +5960,6 @@ impl<'a> Proof<'a> {
             ),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
-            execution: None,
         })
     }
 
@@ -5972,7 +6054,6 @@ impl<'a> Proof<'a> {
             goals: self.state.goals.discharged_if(complete),
             added_facts: Arc::new(added_facts.clone()),
             checked_facts: Arc::new(added_facts),
-            execution: None,
         })
     }
 
@@ -6112,7 +6193,6 @@ impl<'a> Proof<'a> {
             ),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
-            execution: None,
         })
     }
 
@@ -6145,7 +6225,6 @@ impl<'a> Proof<'a> {
             goals: self.state.goals.discharged_if(complete),
             added_facts: Arc::new(added_facts.clone()),
             checked_facts: Arc::new(added_facts),
-            execution: None,
         })
     }
 
@@ -6209,7 +6288,6 @@ impl<'a> Proof<'a> {
             goals: self.state.goals.discharged_if(complete),
             added_facts: Arc::new(added_facts),
             checked_facts: Arc::new(checked_facts),
-            execution: None,
         })
     }
 
@@ -6220,10 +6298,12 @@ impl<'a> Proof<'a> {
         premises: &[ClickProposition],
         context: &ExecutionProofContext<'a>,
     ) -> Result<ProofState, ClickError> {
-        let mut execution =
-            self.state.execution.clone().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        // A nested proposition proof stated at this frontier may transport
+        // facts as well; the successor below preserves the goal's kind.
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
         let pre_state = execution
             .replay
@@ -6266,10 +6346,9 @@ impl<'a> Proof<'a> {
             facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goals: self.state.goals.clone(),
+            goals: self.state.goals.replace_sole_execution(execution),
             added_facts: Arc::new(added_facts.clone()),
             checked_facts: Arc::new(added_facts),
-            execution: Some(execution),
         })
     }
 
@@ -6281,10 +6360,10 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("`step using` requires an execution-frontier proof"));
         };
         self.require_execution_frontier("`step using`")?;
-        let mut execution =
-            self.state.execution.clone().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
         let checked = check_step_using_facts(
             &mut execution.replay,
@@ -6305,10 +6384,9 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goals: self.state.goals.clone(),
+            goals: self.state.goals.replace_sole_frontier(execution),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
-            execution: Some(execution),
         })
     }
 
@@ -6317,10 +6395,10 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("`mark` requires an execution-frontier proof"));
         }
         self.require_execution_frontier("`mark`")?;
-        let mut execution =
-            self.state.execution.clone().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let point = ProgramPointRef {
             region: CodeRegionRef::Mark(name.to_string()),
             kind: ProgramPointKind::Entry,
@@ -6337,10 +6415,9 @@ impl<'a> Proof<'a> {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goals: self.state.goals.clone(),
+            goals: self.state.goals.replace_sole_frontier(execution),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
-            execution: Some(execution),
         })
     }
 
@@ -6349,10 +6426,10 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("`close_invariants` requires an execution-frontier proof"));
         }
         self.require_execution_frontier("`close_invariants`")?;
-        let mut execution =
-            self.state.execution.clone().ok_or_else(|| {
-                self.step_error("execution-frontier proof lost its semantic state")
-            })?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         if !execution.replay.loop_invariant_region {
             return Err(
                 self.step_error("`close_invariants` is only available in a loop-region proof")
@@ -6369,10 +6446,9 @@ impl<'a> Proof<'a> {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goals: self.state.goals.clone(),
+            goals: self.state.goals.replace_sole_frontier(execution),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
-            execution: Some(execution),
         })
     }
 
@@ -6460,7 +6536,6 @@ impl<'a> Proof<'a> {
             goals: self.state.goals.discharge_sole(),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
-            execution: None,
         }
     }
 
@@ -6646,13 +6721,16 @@ impl<'a> ExecutionOutcomeProofBranches<'a> {
         for (name, arm) in [("then", &self.arms[0]), ("else", &self.arms[1])] {
             if !matches!(
                 arm.sole_goal(),
-                Some(Goal::Frontier(EffectGoalSelection::None))
+                Some(Goal::Frontier(FrontierGoal {
+                    selection: EffectGoalSelection::None,
+                    ..
+                }))
             ) {
                 return Err(self.root.step_error(format!(
                     "execution outcome {name} arm did not close its effect goal"
                 )));
             }
-            let execution = arm.state.execution.as_ref().ok_or_else(|| {
+            let execution = arm.execution().ok_or_else(|| {
                 self.root.step_error(format!(
                     "execution outcome {name} arm lost its semantic frontier"
                 ))
@@ -6699,9 +6777,8 @@ impl<'a> ExecutionOutcomeProofBranches<'a> {
 
         let mut execution = self
             .root
-            .state
-            .execution
-            .clone()
+            .execution()
+            .cloned()
             .expect("validated execution outcome branch root");
         execution.replay.defer_checked_post_execution(
             checked_deferrals[0].tactic_index,
@@ -6726,10 +6803,12 @@ impl<'a> ExecutionOutcomeProofBranches<'a> {
                     .root
                     .state
                     .goals
-                    .replace_sole(Goal::Frontier(EffectGoalSelection::None)),
+                    .replace_sole(Goal::Frontier(FrontierGoal {
+                        selection: EffectGoalSelection::None,
+                        execution: Some(Arc::new(execution)),
+                    })),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
-                execution: Some(execution),
             }),
             node: Arc::new(ProofNode {
                 parent: Some(self.root.node.clone()),
@@ -6774,7 +6853,7 @@ impl<'a> ExecutionProofBranches<'a> {
     }
 
     fn derived_join_continuation(&self) -> Option<ExecutionBranchJoinContinuation> {
-        let root_execution = self.root.state.execution.as_ref()?;
+        let root_execution = self.root.execution()?;
         let mut continuations = root_execution.replay.frontier.continuations.clone();
         if let Some(remaining) = &self.continuation_remaining {
             return Some(ExecutionBranchJoinContinuation {
@@ -6803,16 +6882,16 @@ impl<'a> ExecutionProofBranches<'a> {
     }
 
     fn resource_contexts_descend_from_root(&self) -> bool {
-        let Some(root_execution) = self.root.state.execution.as_ref() else {
+        let Some(root_execution) = self.root.execution() else {
             return false;
         };
         let [Some(then_arm), Some(else_arm)] = &self.arms else {
             return false;
         };
-        let Some(then_execution) = then_arm.proof.state.execution.as_ref() else {
+        let Some(then_execution) = then_arm.proof.execution() else {
             return false;
         };
-        let Some(else_execution) = else_arm.proof.state.execution.as_ref() else {
+        let Some(else_execution) = else_arm.proof.execution() else {
             return false;
         };
         then_execution
@@ -6831,21 +6910,16 @@ impl<'a> ExecutionProofBranches<'a> {
         else_arm: &ExecutionProofArm<'a>,
         assertions: &[ProofAssertion],
     ) -> Result<ResourceContext, ClickError> {
-        let root_execution =
-            root.state.execution.as_ref().ok_or_else(|| {
-                root.step_error("execution branch root lost its resource context")
-            })?;
+        let root_execution = root
+            .execution()
+            .ok_or_else(|| root.step_error("execution branch root lost its resource context"))?;
         let then_execution = then_arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .ok_or_else(|| root.step_error("then interface arm lost its execution state"))?;
         let else_execution = else_arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .ok_or_else(|| root.step_error("else interface arm lost its execution state"))?;
         let ProofContext::Execution(context) = root.context.as_ref() else {
             return Err(root.step_error("resource interface requires an execution proof"));
@@ -6908,7 +6982,7 @@ impl<'a> ExecutionProofBranches<'a> {
         let Some(join) = self.derived_join_continuation() else {
             return false;
         };
-        let Some(execution) = arm.proof.state.execution.as_ref() else {
+        let Some(execution) = arm.proof.execution() else {
             return false;
         };
         execution
@@ -6973,7 +7047,7 @@ impl<'a> ExecutionProofBranches<'a> {
         take_then: bool,
         certificate: &ProofCertificate,
     ) -> Result<Self, ClickError> {
-        let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
+        let root_execution = self.root.execution().ok_or_else(|| {
             self.root
                 .step_error("execution branch root lost its semantic state")
         })?;
@@ -7032,9 +7106,7 @@ impl<'a> ExecutionProofBranches<'a> {
         }
         let execution = arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .expect("checked execution step retains semantic state");
         for fact in execution
             .replay
@@ -7096,9 +7168,7 @@ impl<'a> ExecutionProofBranches<'a> {
         self.arms.iter().all(|arm| {
             arm.as_ref().is_some_and(|arm| {
                 arm.proof
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .is_some_and(|execution| execution.replay.is_at_function_exit())
             })
         })
@@ -7165,9 +7235,7 @@ impl<'a> ExecutionProofBranches<'a> {
         }
         let prior_effect_count = arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .ok_or_else(|| {
                 self.root
                     .step_error("execution branch arm lost its semantic state")
@@ -7224,9 +7292,7 @@ impl<'a> ExecutionProofBranches<'a> {
         })?;
         let prior_effect_count = arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .ok_or_else(|| {
                 self.root
                     .step_error("execution branch arm lost its semantic state")
@@ -7257,9 +7323,7 @@ impl<'a> ExecutionProofBranches<'a> {
         self.ensure_arm_can_advance(take_then, arm)?;
         let prior_effect_count = arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .ok_or_else(|| {
                 self.root
                     .step_error("execution branch arm lost its semantic state")
@@ -7306,9 +7370,7 @@ impl<'a> ExecutionProofBranches<'a> {
         };
         let prior_effect_count = arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .ok_or_else(|| {
                 self.root
                     .step_error("execution branch arm lost its semantic state")
@@ -7345,9 +7407,7 @@ impl<'a> ExecutionProofBranches<'a> {
         }
         let prior_effect_count = arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .ok_or_else(|| {
                 self.root
                     .step_error("execution branch arm lost its semantic state")
@@ -7384,7 +7444,7 @@ impl<'a> ExecutionProofBranches<'a> {
                     if take_then { "then" } else { "else" }
                 ))
             })?;
-            let execution = arm.proof.state.execution.as_ref().ok_or_else(|| {
+            let execution = arm.proof.execution().ok_or_else(|| {
                 self.root
                     .step_error("execution branch arm lost its semantic state")
             })?;
@@ -7441,18 +7501,14 @@ impl<'a> ExecutionProofBranches<'a> {
         };
         if !then_arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .expect("interface arm retains execution")
             .state
             .resources()
             .shares_storage_with(
                 else_arm
                     .proof
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .expect("interface arm retains execution")
                     .state
                     .resources(),
@@ -7462,7 +7518,7 @@ impl<'a> ExecutionProofBranches<'a> {
                 "checked `branch ensuring` cannot yet retain a proper common resource delta",
             ));
         }
-        let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
+        let root_execution = self.root.execution().ok_or_else(|| {
             self.root
                 .step_error("execution branch root lost its semantic state")
         })?;
@@ -7503,7 +7559,7 @@ impl<'a> ExecutionProofBranches<'a> {
                             expected: bool,
                             arm: &ExecutionProofArm<'a>|
          -> Result<(), ClickError> {
-            let execution = arm.proof.state.execution.as_ref().ok_or_else(|| {
+            let execution = arm.proof.execution().ok_or_else(|| {
                 self.root
                     .step_error(format!("{name} branch arm lost its execution state"))
             })?;
@@ -7590,15 +7646,11 @@ impl<'a> ExecutionProofBranches<'a> {
         )?;
         let then_execution = then_arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .expect("validated then execution state");
         let else_execution = else_arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .expect("validated else execution state");
         let common_program_points = then_execution
             .replay
@@ -7621,9 +7673,7 @@ impl<'a> ExecutionProofBranches<'a> {
         for arm in [&then_arm, &else_arm] {
             let arm_execution = arm
                 .proof
-                .state
-                .execution
-                .as_ref()
+                .execution()
                 .expect("validated terminal arm execution");
             let completed = arm_execution
                 .replay
@@ -7768,10 +7818,9 @@ impl<'a> ExecutionProofBranches<'a> {
                 facts,
                 locals: self.root.state.locals.clone(),
                 unfolded_predicates,
-                goals: self.root.state.goals.clone(),
+                goals: self.root.state.goals.replace_sole_frontier(execution),
                 added_facts: Arc::new(common_added_facts.clone()),
                 checked_facts: Arc::new(common_added_facts),
-                execution: Some(execution),
             }),
             node: Arc::new(ProofNode {
                 parent: Some(self.root.node.clone()),
@@ -7798,11 +7847,11 @@ impl<'a> ExecutionProofBranches<'a> {
         let arm = self.arms[arm_index]
             .as_ref()
             .expect("sole feasible arm was selected above");
-        let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
+        let root_execution = self.root.execution().ok_or_else(|| {
             self.root
                 .step_error("execution branch root lost its semantic state")
         })?;
-        let execution = arm.proof.state.execution.as_ref().ok_or_else(|| {
+        let execution = arm.proof.execution().ok_or_else(|| {
             self.root
                 .step_error("decided execution branch arm lost its semantic state")
         })?;
@@ -7918,11 +7967,13 @@ impl<'a> ExecutionProofBranches<'a> {
         let introduced_facts = arm.introduced_facts.to_vec();
         state.added_facts = Arc::new(introduced_facts.clone());
         state.checked_facts = Arc::new(introduced_facts);
-        state
-            .execution
-            .as_mut()
-            .expect("validated decided execution state")
-            .branch_path = root_execution.branch_path.clone();
+        let mut execution = arm
+            .proof
+            .execution()
+            .cloned()
+            .expect("validated decided execution state");
+        execution.branch_path = root_execution.branch_path.clone();
+        state.goals = state.goals.replace_sole_frontier(execution);
         Ok(Proof {
             context: self.root.context.clone(),
             state: Arc::new(state),
@@ -7961,7 +8012,7 @@ impl<'a> ExecutionProofBranches<'a> {
                 .root
                 .step_error("checked `branch ensuring` found no feasible continuing arm"));
         };
-        let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
+        let root_execution = self.root.execution().ok_or_else(|| {
             self.root
                 .step_error("execution branch root lost its semantic state")
         })?;
@@ -7969,7 +8020,7 @@ impl<'a> ExecutionProofBranches<'a> {
                             expected: bool,
                             arm: &ExecutionProofArm<'a>|
          -> Result<(), ClickError> {
-            let execution = arm.proof.state.execution.as_ref().ok_or_else(|| {
+            let execution = arm.proof.execution().ok_or_else(|| {
                 self.root
                     .step_error(format!("{name} branch arm lost its execution state"))
             })?;
@@ -8060,15 +8111,11 @@ impl<'a> ExecutionProofBranches<'a> {
         )?;
         let then_execution = then_arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .expect("validated then execution state");
         let else_execution = else_arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .expect("validated else execution state");
         let common_program_points = then_execution
             .replay
@@ -8100,9 +8147,7 @@ impl<'a> ExecutionProofBranches<'a> {
             |arm: &ExecutionProofArm<'a>| -> Result<(ExecutionProofState, ProofFacts), ClickError> {
                 let mut execution = arm
                     .proof
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .expect("validated interface arm execution")
                     .clone();
                 let mut facts = arm.proof.state.facts.clone();
@@ -8316,10 +8361,9 @@ impl<'a> ExecutionProofBranches<'a> {
                 facts,
                 locals: self.root.state.locals.clone(),
                 unfolded_predicates: self.root.state.unfolded_predicates.clone(),
-                goals: self.root.state.goals.clone(),
+                goals: self.root.state.goals.replace_sole_frontier(execution),
                 added_facts: Arc::new(added_facts.clone()),
                 checked_facts: Arc::new(added_facts),
-                execution: Some(execution),
             }),
             node: Arc::new(ProofNode {
                 parent: Some(self.root.node.clone()),
@@ -8350,11 +8394,11 @@ impl<'a> ExecutionProofBranches<'a> {
         let arm = self.arms[usize::from(!take_then)]
             .as_ref()
             .expect("sole feasible interface arm was selected");
-        let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
+        let root_execution = self.root.execution().ok_or_else(|| {
             self.root
                 .step_error("execution branch root lost its semantic state")
         })?;
-        let arm_execution = arm.proof.state.execution.as_ref().ok_or_else(|| {
+        let arm_execution = arm.proof.execution().ok_or_else(|| {
             self.root
                 .step_error("decided interface arm lost its execution state")
         })?;
@@ -8471,10 +8515,9 @@ impl<'a> ExecutionProofBranches<'a> {
                 facts,
                 locals: arm.proof.state.locals.clone(),
                 unfolded_predicates: arm.proof.state.unfolded_predicates.clone(),
-                goals: arm.proof.state.goals.clone(),
+                goals: arm.proof.state.goals.replace_sole_frontier(execution),
                 added_facts: Arc::new(added_facts.clone()),
                 checked_facts: Arc::new(added_facts),
-                execution: Some(execution),
             }),
             node: Arc::new(ProofNode {
                 parent: Some(self.root.node.clone()),
@@ -8520,7 +8563,7 @@ impl<'a> ExecutionProofBranches<'a> {
                         "cannot use the empty execution join for a nonempty {name} arm"
                     )));
                 }
-                let execution = arm.proof.state.execution.as_ref().ok_or_else(|| {
+                let execution = arm.proof.execution().ok_or_else(|| {
                     self.root
                         .step_error(format!("{name} branch arm lost its execution state"))
                 })?;
@@ -8567,16 +8610,12 @@ impl<'a> ExecutionProofBranches<'a> {
         )?;
         let then_state = &then_arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .expect("validated then execution state")
             .state;
         let else_state = &else_arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .expect("validated else execution state")
             .state;
         if **then_state != **else_state {
@@ -8588,16 +8627,14 @@ impl<'a> ExecutionProofBranches<'a> {
             self.root
                 .step_error("execution `branch` has no shared continuation statement")
         })?;
-        let root_execution = self.root.state.execution.as_ref().ok_or_else(|| {
+        let root_execution = self.root.execution().ok_or_else(|| {
             self.root
                 .step_error("execution branch root lost its semantic state")
         })?;
         for (name, arm) in [("then", &then_arm), ("else", &else_arm)] {
             let replay = &arm
                 .proof
-                .state
-                .execution
-                .as_ref()
+                .execution()
                 .expect("validated branch execution state")
                 .replay;
             if replay.function_entry_execution_prerequisites.len()
@@ -8626,16 +8663,12 @@ impl<'a> ExecutionProofBranches<'a> {
         }
         let then_replay = &then_arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .expect("validated then execution state")
             .replay;
         let else_replay = &else_arm
             .proof
-            .state
-            .execution
-            .as_ref()
+            .execution()
             .expect("validated else execution state")
             .replay;
         let mut execution = root_execution.clone();
@@ -8763,10 +8796,9 @@ impl<'a> ExecutionProofBranches<'a> {
                 facts,
                 locals: self.root.state.locals.clone(),
                 unfolded_predicates,
-                goals: self.root.state.goals.clone(),
+                goals: self.root.state.goals.replace_sole_frontier(execution),
                 added_facts: Arc::new(common_added_facts.clone()),
                 checked_facts: Arc::new(common_added_facts),
-                execution: Some(execution),
             }),
             node: Arc::new(ProofNode {
                 parent: Some(self.root.node.clone()),
@@ -9213,7 +9245,6 @@ impl<'a> ProofScope<'a> {
                         goals: self.root.state.goals.clone(),
                         added_facts: Arc::new(vec![kernel.clone()]),
                         checked_facts: Arc::new(vec![kernel]),
-                        execution: self.root.state.execution.clone(),
                     }),
                     node: Arc::new(ProofNode {
                         parent: Some(self.root.node.clone()),
@@ -9234,11 +9265,16 @@ impl<'a> ProofScope<'a> {
                     unreachable!("an open scope can only be created from an execution Proof")
                 };
                 let body = self.body.certificate();
+                let mut execution = self
+                    .body
+                    .goal_execution()
+                    .cloned()
+                    .map(Arc::unwrap_or_clone)
+                    .ok_or_else(|| {
+                        self.root
+                            .step_error("open scope body lost its execution frontier")
+                    })?;
                 let mut state = Arc::unwrap_or_clone(self.body.state);
-                let mut execution = state.execution.take().ok_or_else(|| {
-                    self.root
-                        .step_error("open scope body lost its execution frontier")
-                })?;
                 execution.replay.open_scopes = execution.replay.open_scopes.saturating_sub(1);
                 if execution.replay.is_at_function_exit() {
                     execution.replay.defer_post_execution(
@@ -9273,7 +9309,7 @@ impl<'a> ProofScope<'a> {
                     execution.state = checked.state.into();
                 }
                 execution.last_step_delta = ExecutionProofStepDelta::default();
-                state.execution = Some(execution);
+                state.goals = state.goals.replace_sole_frontier(execution);
                 state.added_facts = Arc::new(self.introduced_facts.clone());
                 state.checked_facts = Arc::new(self.introduced_facts);
                 Ok(Proof {
@@ -9963,14 +9999,14 @@ mod tests {
             );
             assert_eq!(root.effect_goal_count(), expected);
             assert!(
-                matches!(root.sole_goal(), Some(&Goal::Frontier(actual)) if actual == selection)
+                matches!(root.sole_goal(), Some(Goal::Frontier(FrontierGoal { selection: actual, .. })) if *actual == selection)
             );
             let marked = root
                 .apply_step(SimpleProofStep::Mark("selected".to_string()))
                 .expect("an ordinary frontier step should preserve its effect goals");
             assert_eq!(marked.effect_goal_count(), expected);
             assert!(
-                matches!(marked.sole_goal(), Some(&Goal::Frontier(actual)) if actual == selection)
+                matches!(marked.sole_goal(), Some(Goal::Frontier(FrontierGoal { selection: actual, .. })) if *actual == selection)
             );
         }
     }
@@ -12436,11 +12472,9 @@ mod tests {
                 applied.added_facts(),
                 std::slice::from_ref(&kernel_conclusion)
             );
-            let root_execution = root.state.execution.as_ref().expect("root execution state");
+            let root_execution = root.execution().expect("root execution state");
             let applied_execution = applied
-                .state
-                .execution
-                .as_ref()
+                .execution()
                 .expect("application successor execution state");
             assert!(
                 root_execution
@@ -16004,12 +16038,8 @@ mod tests {
                 &[SimpleProofStep::UnfoldPredicate("selected".to_string())]
             );
             assert!(successor.state.facts.to_vec().len() > root.state.facts.to_vec().len());
-            let root_execution = root.state.execution.as_ref().expect("root execution state");
-            let successor_execution = successor
-                .state
-                .execution
-                .as_ref()
-                .expect("successor execution state");
+            let root_execution = root.execution().expect("root execution state");
+            let successor_execution = successor.execution().expect("successor execution state");
             assert!(
                 root_execution
                     .state
@@ -16511,9 +16541,7 @@ mod tests {
             assert!(unrelated_scope.body().certificate().steps().is_empty());
             assert!(
                 closed
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .is_some_and(|execution| !execution.replay.is_at_function_exit())
             );
 
@@ -16535,9 +16563,7 @@ mod tests {
                 .join()
                 .expect("an exit-reaching open should defer its close");
             let terminal_execution = terminal
-                .state
-                .execution
-                .as_ref()
+                .execution()
                 .expect("the terminal open retains execution state");
             assert!(terminal_execution.replay.is_at_function_exit());
             assert_eq!(terminal_execution.replay.post_execution_tactics.len(), 1);
@@ -16636,12 +16662,8 @@ mod tests {
             assert_eq!(root.certificate().steps(), &[]);
             assert_eq!(successor.certificate().steps(), &[step]);
             assert!(successor.added_facts().is_empty());
-            let root_execution = root.state.execution.as_ref().expect("root execution state");
-            let successor_execution = successor
-                .state
-                .execution
-                .as_ref()
-                .expect("successor execution state");
+            let root_execution = root.execution().expect("root execution state");
+            let successor_execution = successor.execution().expect("successor execution state");
             assert!(
                 root_execution
                     .state
@@ -16877,9 +16899,7 @@ mod tests {
             assert_eq!(selected.state.facts.to_vec(), root.state.facts.to_vec());
             assert!(
                 !selected
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .expect("assignment successor retains execution")
                     .replay
                     .is_at_function_exit()
@@ -17119,9 +17139,7 @@ mod tests {
             ));
             assert!(
                 completed
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .expect("statement successor retains execution")
                     .replay
                     .is_at_function_exit()
@@ -17134,11 +17152,9 @@ mod tests {
                 .apply_step(SimpleProofStep::Step)
                 .expect("the retained ancestor should support another checked descendant");
             assert_eq!(alternative.certificate(), completed.certificate());
-            let root_execution = root.state.execution.as_ref().expect("root execution state");
+            let root_execution = root.execution().expect("root execution state");
             let completed_execution = completed
-                .state
-                .execution
-                .as_ref()
+                .execution()
                 .expect("statement successor retains execution state");
             assert!(
                 root_execution
@@ -17231,7 +17247,10 @@ mod tests {
             let closed = root
                 .apply_step(SimpleProofStep::CloseInvariants)
                 .expect("the first close should produce a checked descendant");
-            assert_eq!(fact_node_allocations() - before, 0);
+            // The one permitted node rewrites the sole goal's execution
+            // snapshot in the persistent goal collection; the bound stays
+            // independent of ambient fact count.
+            assert!(fact_node_allocations() - before <= 1);
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());
             assert_eq!(
@@ -17239,9 +17258,7 @@ mod tests {
                 &[SimpleProofStep::CloseInvariants]
             );
             let execution = closed
-                .state
-                .execution
-                .as_ref()
+                .execution()
                 .expect("the successor retains execution state");
             assert!(execution.replay.region_invariants_closed);
             assert!(
@@ -17387,9 +17404,7 @@ mod tests {
             ));
             assert!(root.certificate().steps().is_empty());
             let execution = joined
-                .state
-                .execution
-                .as_ref()
+                .execution()
                 .expect("joined proof should own its continuation");
             assert!(execution.replay.completed_branch_regions.contains(&0));
             assert_eq!(execution.branch_path.len(), 0);
@@ -17409,9 +17424,7 @@ mod tests {
             }
             assert!(
                 completed
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .expect("completed proof retains execution state")
                     .replay
                     .is_at_function_exit()
@@ -17558,9 +17571,22 @@ mod tests {
                     },
                 ] if retained == &application && premises.is_empty()
             ));
-            let refined = applied
+            let scope = applied
                 .begin_have(reflexive.clone())
-                .expect("the joined proof should open a common nested proposition")
+                .expect("the joined proof should open a common nested proposition");
+            // The nested proposition goal borrows the frontier's execution
+            // snapshot by identity: its path-local lowering context is
+            // shared, never cloned, and can never republish a frontier.
+            assert!(Arc::ptr_eq(
+                scope
+                    .body
+                    .goal_execution()
+                    .expect("the nested goal borrows its lowering context"),
+                applied
+                    .goal_execution()
+                    .expect("the joined frontier owns its snapshot"),
+            ));
+            let refined = scope
                 .apply_step(SimpleProofStep::Assumption)
                 .expect("the theorem conclusion should close the nested proposition")
                 .join()
@@ -17582,9 +17608,7 @@ mod tests {
                 .expect("the joined continuation should execute its return");
             assert!(
                 completed
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .expect("completed proof retains execution state")
                     .replay
                     .is_at_function_exit()
@@ -17735,9 +17759,7 @@ mod tests {
                 .expect("the abstract joined frontier should execute its return");
             assert!(
                 completed
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .expect("completed interface proof retains execution")
                     .replay
                     .is_at_function_exit()
@@ -17886,18 +17908,14 @@ mod tests {
             let then_resources = branches
                 .arm(true)
                 .expect("then arm should remain feasible")
-                .state
-                .execution
-                .as_ref()
+                .execution()
                 .expect("then arm should retain execution")
                 .state
                 .resources();
             let else_resources = branches
                 .arm(false)
                 .expect("else arm should remain feasible")
-                .state
-                .execution
-                .as_ref()
+                .execution()
                 .expect("else arm should retain execution")
                 .state
                 .resources();
@@ -17972,9 +17990,7 @@ mod tests {
             ));
             assert!(
                 normalized_join
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .expect("normalized interface retains execution")
                     .state
                     .resources()
@@ -18105,9 +18121,7 @@ mod tests {
                 fact_node_allocations() - before,
             ));
             let execution = joined
-                .state
-                .execution
-                .as_ref()
+                .execution()
                 .expect("nested join should retain execution");
             assert!(
                 execution
@@ -18133,9 +18147,7 @@ mod tests {
                 .expect("derived enclosing continuation should execute the return");
             assert!(
                 completed
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .expect("completed nested proof retains execution")
                     .replay
                     .is_at_function_exit()
@@ -18259,9 +18271,7 @@ mod tests {
             ));
             assert_eq!(
                 decided
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .expect("decided path retains execution")
                     .branch_path
                     .len(),
@@ -18280,9 +18290,7 @@ mod tests {
                 .expect("the continuation return should check with retained branch facts");
             assert!(
                 completed
-                    .state
-                    .execution
-                    .as_ref()
+                    .execution()
                     .expect("completed decided proof retains execution")
                     .replay
                     .is_at_function_exit()
@@ -18417,9 +18425,7 @@ mod tests {
             ));
             assert!(root.certificate().steps().is_empty());
             let execution = joined
-                .state
-                .execution
-                .as_ref()
+                .execution()
                 .expect("terminal join should retain execution state");
             assert!(execution.replay.is_at_function_exit());
             let outcome_paths = execution
