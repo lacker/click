@@ -4473,7 +4473,9 @@ impl<'a> Proof<'a> {
     ) -> Result<Option<(Self, Vec<Proposition>)>, ClickError> {
         let target = self.resolve_statement_target(region)?;
         let Some(current) = self.current_statement_index()? else {
-            return Err(self.step_error("`execute_until` cannot run after function exit"));
+            return Err(self.step_error(format!(
+                "`execute_until(statement({target}))` cannot run after execution already reached function exit"
+            )));
         };
         if target < current {
             return Err(self.step_error(format!(
@@ -4483,13 +4485,23 @@ impl<'a> Proof<'a> {
 
         let mut proof = self.clone();
         let mut introduced_facts = Vec::new();
+        let mut advanced = false;
         loop {
             match proof.current_statement_index()? {
                 Some(current) if current == target => break,
                 Some(current) if current < target => {}
                 Some(_) | None => return Ok(None),
             }
-            let Some(next) = proof.try_indexed_statement_step()? else {
+            // The first statement must be independent of unrelated facts in
+            // the inherited root context. After it advances, the descendant
+            // owns an explicit output-sized `added_facts` delta; the checked
+            // execute selector carries only that delta through later steps.
+            let next = if advanced {
+                proof.try_indexed_execute_step()?
+            } else {
+                proof.try_indexed_statement_step()?
+            };
+            let Some(next) = next else {
                 return Ok(None);
             };
             for fact in next.added_facts() {
@@ -4498,8 +4510,9 @@ impl<'a> Proof<'a> {
                 }
             }
             proof = next;
+            advanced = true;
         }
-        Ok(Some((proof, introduced_facts)))
+        Ok(advanced.then_some((proof, introduced_facts)))
     }
 
     /// Runs the narrow checked `execute_until` search on this Proof and

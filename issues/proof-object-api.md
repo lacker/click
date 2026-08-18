@@ -1897,10 +1897,12 @@ branch, or unsupported statement rejects the entire candidate transactionally
 and restores the pointer-sharing root for the compatibility planner. Focused
 regressions require zero mutable planning transitions and no ordinary
 certificate replay for the fact-free `execute` case. Top-level
-`execute_until(...)` remains on the compatibility path: even its small
-multi-statement case needs an explicit bounded representation of facts
-introduced since the search root before it can advance several checked
-descendants without admitting unrelated inherited context.
+`execute_until(...)` now uses the same exact-root boundary. Its first statement
+must not depend on unrelated inherited context; after that accepted step, each
+descendant exposes an output-sized `added_facts` delta that the next checked
+step can carry without scanning or admitting the root's ambient facts. The
+small multi-statement regression now requires zero mutable planning
+transitions as well as no ordinary certificate replay.
 
 The repository example gate exposed why this boundary must remain narrow.
 `ring_buffer_pipeline` needs a statement-3 memory fact at its later
@@ -1913,7 +1915,8 @@ postconditions, or another Proof-owned continuation) and retain only paths
 whose continuation succeeds. Until that goal-conditioned search advances
 through Proof descendants, memory writes and calls with unrelated facts stay
 on the existing planner rather than receiving another local relevance
-heuristic.
+heuristic. The exact-root `execute_until` slice does not broaden that boundary:
+an inherited context it cannot account for still falls back transactionally.
 
 ### Progress (2026-08-17: theorem composition with historical locals)
 
