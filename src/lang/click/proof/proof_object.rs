@@ -554,11 +554,96 @@ struct ProofState {
     /// only the local delta, so creating a root never rebuilds proof history.
     /// Forks share both the insertion order and exact-membership index.
     unfolded_predicates: PersistentOrderedSet<String>,
-    goal: Goal,
-    complete: bool,
+    goals: ProofGoals,
     added_facts: Arc<Vec<Proposition>>,
     checked_facts: Arc<Vec<Proposition>>,
     execution: Option<ExecutionProofState>,
+}
+
+/// Identity of one open obligation within a proof lineage.
+///
+/// Allocation is monotonic per lineage. Ids allocated after divergent forks
+/// may collide numerically; identity comparison is meaningful only along one
+/// ancestry chain or against the recorded structure that allocated the id.
+/// See the goal and split identity rules in `issues/proof-object-api.md`.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) struct GoalId(u64);
+
+/// The persistent typed goal collection owned by one `ProofState`, paired
+/// with its lineage-local id allocator.
+///
+/// Every proof currently owns at most one open goal; the collection exists so
+/// audited splits can record several labeled successor goals without a second
+/// representation. A goal id names one obligation for its lifetime: focused
+/// refinements preserve it, discharge retires it, and a retired id is never
+/// reused within its lineage. Forks share the map root; a local update copies
+/// only logarithmic paths.
+#[derive(Clone)]
+struct ProofGoals {
+    open: PersistentMap<GoalId, Goal>,
+    next_id: u64,
+}
+
+impl ProofGoals {
+    /// Creates the root goal set of a fresh proof: one open goal.
+    fn root(goal: Goal) -> Self {
+        Self {
+            open: PersistentMap::default().with_inserted(GoalId(1), goal),
+            next_id: 2,
+        }
+    }
+
+    /// The unique open goal, while every proof owns at most one.
+    ///
+    /// Multi-goal states arrive with audited splits; readers that can only
+    /// interpret one focused goal must go through here so the single-goal
+    /// assumption stays in one place.
+    fn sole(&self) -> Option<(GoalId, &Goal)> {
+        debug_assert!(
+            self.open.len() <= 1,
+            "sole-goal reader on a multi-goal proof state"
+        );
+        self.open.iter().next().map(|(id, goal)| (*id, goal))
+    }
+
+    /// Replaces the focused goal's content while preserving its identity.
+    /// This is the successor shape of a goal-preserving refinement rule.
+    fn replace_sole(&self, goal: Goal) -> Self {
+        let Some((id, _)) = self.sole() else {
+            unreachable!("goal refinement requires an open goal");
+        };
+        Self {
+            open: self.open.with_inserted(id, goal),
+            next_id: self.next_id,
+        }
+    }
+
+    /// Retires the focused goal: the discharge shape of a goal-closing rule.
+    /// The id is never reallocated within this lineage.
+    fn discharge_sole(&self) -> Self {
+        let Some((id, _)) = self.sole() else {
+            unreachable!("goal discharge requires an open goal");
+        };
+        Self {
+            open: self.open.without_key(&id),
+            next_id: self.next_id,
+        }
+    }
+
+    /// Discharges the focused goal when `complete` holds; otherwise the open
+    /// goal set is preserved. This is the successor shape of a fact-adding
+    /// rule whose new fact may exactly close a proposition goal.
+    fn discharged_if(&self, complete: bool) -> Self {
+        if complete {
+            self.discharge_sole()
+        } else {
+            self.clone()
+        }
+    }
+
+    fn is_discharged(&self) -> bool {
+        self.open.is_empty()
+    }
 }
 
 /// Proof-local surface names introduced by checked refinements such as
@@ -807,10 +892,11 @@ impl<'a> Proof<'a> {
                 facts,
                 locals: ProofLocals::default(),
                 unfolded_predicates: PersistentOrderedSet::default(),
-                goal: surface_goal
-                    .map(|surface| Goal::surface_proposition(goal.clone(), surface))
-                    .unwrap_or_else(|| Goal::proposition(goal)),
-                complete: false,
+                goals: ProofGoals::root(
+                    surface_goal
+                        .map(|surface| Goal::surface_proposition(goal.clone(), surface))
+                        .unwrap_or_else(|| Goal::proposition(goal)),
+                ),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
                 execution: None,
@@ -1178,8 +1264,7 @@ impl<'a> Proof<'a> {
                 facts,
                 locals: ProofLocals::default(),
                 unfolded_predicates: PersistentOrderedSet::default(),
-                goal,
-                complete: false,
+                goals: ProofGoals::root(goal),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
                 execution: None,
@@ -1244,8 +1329,7 @@ impl<'a> Proof<'a> {
                 facts: ProofFacts::from_ordered(&pure_facts),
                 locals: ProofLocals::default(),
                 unfolded_predicates: PersistentOrderedSet::default(),
-                goal: Goal::Frontier(effect_goals),
-                complete: false,
+                goals: ProofGoals::root(Goal::Frontier(effect_goals)),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
                 execution: Some(ExecutionProofState {
@@ -1263,17 +1347,34 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// The unique open goal, while every proof owns at most one. Readers
+    /// that can only interpret a single focused goal go through here so the
+    /// single-goal assumption stays in one place until splits arrive.
+    fn sole_goal(&self) -> Option<&Goal> {
+        self.state.goals.sole().map(|(_, goal)| goal)
+    }
+
+    #[cfg(test)]
+    fn sole_goal_id(&self) -> Option<GoalId> {
+        self.state.goals.sole().map(|(id, _)| id)
+    }
+
+    #[cfg(test)]
+    fn goals_next_id(&self) -> u64 {
+        self.state.goals.next_id
+    }
+
     pub(super) fn goal(&self) -> Option<&Proposition> {
-        match &self.state.goal {
-            Goal::Proposition(goal) => Some(&goal.kernel),
-            Goal::Frontier(_) => None,
+        match self.sole_goal() {
+            Some(Goal::Proposition(goal)) => Some(&goal.kernel),
+            _ => None,
         }
     }
 
     fn surface_goal(&self) -> Option<&ClickProposition> {
-        match &self.state.goal {
-            Goal::Proposition(goal) => goal.surface.as_deref(),
-            Goal::Frontier(_) => None,
+        match self.sole_goal() {
+            Some(Goal::Proposition(goal)) => goal.surface.as_deref(),
+            _ => None,
         }
     }
 
@@ -1281,7 +1382,7 @@ impl<'a> Proof<'a> {
     /// frontier without materializing their clauses.
     #[cfg(test)]
     fn effect_goal_count(&self) -> usize {
-        let Goal::Frontier(selection) = self.state.goal else {
+        let Some(&Goal::Frontier(selection)) = self.sole_goal() else {
             return 0;
         };
         let ProofContext::Execution(context) = self.context.as_ref() else {
@@ -1315,7 +1416,7 @@ impl<'a> Proof<'a> {
         surface_goal: Option<ClickProposition>,
     ) -> Result<Self, ClickError> {
         if !matches!(self.context.as_ref(), ProofContext::Point(_))
-            || !matches!(&self.state.goal, Goal::Frontier(_))
+            || !matches!(self.sole_goal(), Some(Goal::Frontier(_)))
         {
             return Err(
                 self.step_error("a proposition goal can be focused only from a point frontier")
@@ -1327,10 +1428,11 @@ impl<'a> Proof<'a> {
                 facts: self.state.facts.clone(),
                 locals: self.state.locals.clone(),
                 unfolded_predicates: self.state.unfolded_predicates.clone(),
-                goal: surface_goal
-                    .map(|surface| Goal::surface_proposition(goal.clone(), surface))
-                    .unwrap_or_else(|| Goal::proposition(goal)),
-                complete: false,
+                goals: ProofGoals::root(
+                    surface_goal
+                        .map(|surface| Goal::surface_proposition(goal.clone(), surface))
+                        .unwrap_or_else(|| Goal::proposition(goal)),
+                ),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
                 execution: None,
@@ -1367,7 +1469,7 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("point obligation completion requires at least one goal"));
         }
         if !matches!(self.context.as_ref(), ProofContext::Point(_))
-            || !matches!(self.state.goal, Goal::Frontier(_))
+            || !matches!(self.sole_goal(), Some(Goal::Frontier(_)))
         {
             return Err(self.step_error("point obligations require an open point frontier"));
         }
@@ -1382,7 +1484,7 @@ impl<'a> Proof<'a> {
     }
 
     pub(super) fn is_complete(&self) -> bool {
-        self.state.complete
+        self.state.goals.is_discharged()
     }
 
     fn active_unfolded_predicates(&self) -> Vec<String> {
@@ -1424,7 +1526,7 @@ impl<'a> Proof<'a> {
         step: SimpleProofStep,
         origin: Option<ProofStepOrigin>,
     ) -> Result<Self, ClickError> {
-        if self.state.complete {
+        if self.state.goals.is_discharged() {
             return Err(self.step_error("a tactic follows a goal-closing step"));
         }
 
@@ -1491,7 +1593,7 @@ impl<'a> Proof<'a> {
         &self,
         context: &ExecutionProofContext<'_>,
     ) -> Result<Vec<usize>, ClickError> {
-        let Goal::Frontier(selection) = self.state.goal else {
+        let Some(&Goal::Frontier(selection)) = self.sole_goal() else {
             return Err(self.step_error("`frame using` requires an execution effect goal"));
         };
         let effect_count = context.function_block.effects().len();
@@ -1632,8 +1734,7 @@ impl<'a> Proof<'a> {
                     facts: self.state.facts.clone(),
                     locals: self.state.locals.clone(),
                     unfolded_predicates: self.state.unfolded_predicates.clone(),
-                    goal: self.state.goal.clone(),
-                    complete: false,
+                    goals: self.state.goals.clone(),
                     added_facts: Arc::new(Vec::new()),
                     checked_facts: Arc::new(Vec::new()),
                     execution: Some(execution),
@@ -1691,8 +1792,10 @@ impl<'a> Proof<'a> {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: Goal::Frontier(EffectGoalSelection::None),
-            complete: false,
+            goals: self
+                .state
+                .goals
+                .replace_sole(Goal::Frontier(EffectGoalSelection::None)),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
             execution: Some(execution),
@@ -2007,7 +2110,10 @@ impl<'a> Proof<'a> {
                 .apply_step_at(step, tactic_index, source_index)
                 .map(Some);
         }
-        if matches!(self.state.goal, Goal::Frontier(EffectGoalSelection::None)) {
+        if matches!(
+            self.sole_goal(),
+            Some(Goal::Frontier(EffectGoalSelection::None))
+        ) {
             return Ok(None);
         }
         if self.node.depth > 0 {
@@ -2109,10 +2215,11 @@ impl<'a> Proof<'a> {
             facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: surface_goal
-                .map(|surface| Goal::surface_proposition(goal.clone(), surface))
-                .unwrap_or_else(|| Goal::proposition(goal)),
-            complete: false,
+            goals: self.state.goals.replace_sole(
+                surface_goal
+                    .map(|surface| Goal::surface_proposition(goal.clone(), surface))
+                    .unwrap_or_else(|| Goal::proposition(goal)),
+            ),
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
             execution: None,
@@ -2233,7 +2340,7 @@ impl<'a> Proof<'a> {
         &self,
         disjunction: ClickProposition,
     ) -> Result<ProofBranches<'a>, ClickError> {
-        if self.state.complete {
+        if self.state.goals.is_discharged() {
             return Err(self.step_error("`cases` follows a completed proof"));
         }
         self.proposition_goal("`cases` requires a proposition goal")?;
@@ -2262,7 +2369,7 @@ impl<'a> Proof<'a> {
         &self,
         condition: ClickProposition,
     ) -> Result<ProofBranches<'a>, ClickError> {
-        if self.state.complete {
+        if self.state.goals.is_discharged() {
             return Err(self.step_error("`if` follows a completed proof"));
         }
         self.proposition_goal("proof `if` requires a proposition goal")?;
@@ -2288,7 +2395,7 @@ impl<'a> Proof<'a> {
         &self,
         condition: ClickProposition,
     ) -> Result<ExecutionOutcomeProofBranches<'a>, ClickError> {
-        if self.state.complete {
+        if self.state.goals.is_discharged() {
             return Err(self.step_error("execution outcome `if` follows a completed proof"));
         }
         let ProofContext::Execution(_) = self.context.as_ref() else {
@@ -2404,8 +2511,7 @@ impl<'a> Proof<'a> {
                     facts,
                     locals: self.state.locals.clone(),
                     unfolded_predicates: self.state.unfolded_predicates.clone(),
-                    goal: self.state.goal.clone(),
-                    complete: false,
+                    goals: self.state.goals.clone(),
                     added_facts: Arc::new(added_facts.clone()),
                     checked_facts: Arc::new(added_facts),
                     execution: Some(execution),
@@ -2442,13 +2548,13 @@ impl<'a> Proof<'a> {
         &self,
         proposition: ClickProposition,
     ) -> Result<ProofScope<'a>, ClickError> {
-        if self.state.complete {
+        if self.state.goals.is_discharged() {
             return Err(self.step_error("`have` follows a completed proof"));
         }
-        match (&self.state.goal, self.context.as_ref()) {
-            (Goal::Proposition(_), _) | (Goal::Frontier(_), ProofContext::Point(_)) => {}
-            (Goal::Frontier(_), ProofContext::Execution(_)) => {}
-            (Goal::Frontier(_), ProofContext::Pure(_)) => {
+        match (self.sole_goal(), self.context.as_ref()) {
+            (Some(Goal::Proposition(_)), _) => {}
+            (Some(Goal::Frontier(_)), ProofContext::Point(_) | ProofContext::Execution(_)) => {}
+            _ => {
                 return Err(self.step_error("`have` requires a proposition or point context"));
             }
         }
@@ -2459,8 +2565,10 @@ impl<'a> Proof<'a> {
                 facts: self.state.facts.clone(),
                 locals: self.state.locals.clone(),
                 unfolded_predicates: self.state.unfolded_predicates.clone(),
-                goal: Goal::surface_proposition(kernel.clone(), proposition.clone()),
-                complete: false,
+                goals: ProofGoals::root(Goal::surface_proposition(
+                    kernel.clone(),
+                    proposition.clone(),
+                )),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
                 // An execution `have` borrows the current immutable frontier
@@ -2530,8 +2638,7 @@ impl<'a> Proof<'a> {
                 facts: checked.facts,
                 locals: self.state.locals.clone(),
                 unfolded_predicates: self.state.unfolded_predicates.clone(),
-                goal: self.state.goal.clone(),
-                complete: false,
+                goals: self.state.goals.clone(),
                 added_facts: Arc::new(checked.added_facts.clone()),
                 checked_facts: Arc::new(checked.added_facts),
                 execution: Some(execution),
@@ -2565,7 +2672,8 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`branch` requires an execution-frontier proof"));
         };
-        if self.state.complete || !matches!(self.state.goal, Goal::Frontier(_)) {
+        if self.state.goals.is_discharged() || !matches!(self.sole_goal(), Some(Goal::Frontier(_)))
+        {
             return Err(self.step_error("`branch` requires an open execution frontier"));
         }
         let execution =
@@ -2740,8 +2848,7 @@ impl<'a> Proof<'a> {
                         facts: transition.pure_facts,
                         locals: self.state.locals.clone(),
                         unfolded_predicates: self.state.unfolded_predicates.clone(),
-                        goal: self.state.goal.clone(),
-                        complete: false,
+                        goals: self.state.goals.clone(),
                         added_facts: Arc::new(transition.path_facts.clone()),
                         checked_facts: Arc::new(transition.path_facts.clone()),
                         execution: Some(arm_execution),
@@ -2932,8 +3039,7 @@ impl<'a> Proof<'a> {
                 facts,
                 locals: self.state.locals.clone(),
                 unfolded_predicates: self.state.unfolded_predicates.clone(),
-                goal: self.state.goal.clone(),
-                complete: false,
+                goals: self.state.goals.clone(),
                 added_facts: Arc::new(vec![fact.clone()]),
                 checked_facts: Arc::new(vec![fact]),
                 execution: None,
@@ -3212,8 +3318,8 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
         )?;
-        let goal = match &self.state.goal {
-            Goal::Proposition(goal) => {
+        let goal = match self.sole_goal() {
+            Some(Goal::Proposition(goal)) => {
                 let kernel = unfold_predicates_in_proposition(
                     predicate_environment,
                     click_function_environment,
@@ -3235,7 +3341,8 @@ impl<'a> Proof<'a> {
                     None => Goal::proposition(kernel),
                 }
             }
-            Goal::Frontier(selection) => Goal::Frontier(*selection),
+            Some(Goal::Frontier(selection)) => Goal::Frontier(*selection),
+            None => return Err(self.step_error("`unfold` requires an open goal")),
         };
         let mut unfolded_predicates = self.state.unfolded_predicates.clone();
         unfolded_predicates.insert(name.clone());
@@ -3243,8 +3350,7 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates,
-            goal,
-            complete: false,
+            goals: self.state.goals.replace_sole(goal),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
             execution: None,
@@ -3284,8 +3390,7 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates,
-            goal: self.state.goal.clone(),
-            complete: false,
+            goals: self.state.goals.clone(),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
             execution: Some(execution),
@@ -3334,8 +3439,7 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete: false,
+            goals: self.state.goals.clone(),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
             execution: Some(execution),
@@ -3377,8 +3481,7 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete: false,
+            goals: self.state.goals.clone(),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
             execution: Some(execution),
@@ -3426,8 +3529,7 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete: false,
+            goals: self.state.goals.clone(),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
             execution: Some(execution),
@@ -5349,8 +5451,7 @@ impl<'a> Proof<'a> {
             facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete: false,
+            goals: self.state.goals.clone(),
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
             execution: None,
@@ -5389,8 +5490,7 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete,
+            goals: self.state.goals.discharged_if(complete),
             checked_facts: Arc::new(checked.added_facts.clone()),
             added_facts: Arc::new(checked.added_facts),
             execution: None,
@@ -5473,8 +5573,7 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete,
+            goals: self.state.goals.discharged_if(complete),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
             execution: Some(execution),
@@ -5553,8 +5652,7 @@ impl<'a> Proof<'a> {
             facts,
             locals,
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete: false,
+            goals: self.state.goals.clone(),
             added_facts: Arc::new(added_facts),
             checked_facts: Arc::new(vec![chosen_fact]),
             execution: None,
@@ -5627,10 +5725,11 @@ impl<'a> Proof<'a> {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: surface_goal
-                .map(|surface| Goal::surface_proposition(goal.clone(), surface))
-                .unwrap_or_else(|| Goal::proposition(goal)),
-            complete: false,
+            goals: self.state.goals.replace_sole(
+                surface_goal
+                    .map(|surface| Goal::surface_proposition(goal.clone(), surface))
+                    .unwrap_or_else(|| Goal::proposition(goal)),
+            ),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
             execution: None,
@@ -5725,8 +5824,7 @@ impl<'a> Proof<'a> {
             facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete,
+            goals: self.state.goals.discharged_if(complete),
             added_facts: Arc::new(added_facts.clone()),
             checked_facts: Arc::new(added_facts),
             execution: None,
@@ -5862,10 +5960,11 @@ impl<'a> Proof<'a> {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: surface_goal
-                .map(|surface| Goal::surface_proposition(rewritten.clone(), surface))
-                .unwrap_or_else(|| Goal::proposition(rewritten)),
-            complete: false,
+            goals: self.state.goals.replace_sole(
+                surface_goal
+                    .map(|surface| Goal::surface_proposition(rewritten.clone(), surface))
+                    .unwrap_or_else(|| Goal::proposition(rewritten)),
+            ),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
             execution: None,
@@ -5898,8 +5997,7 @@ impl<'a> Proof<'a> {
             facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete,
+            goals: self.state.goals.discharged_if(complete),
             added_facts: Arc::new(added_facts.clone()),
             checked_facts: Arc::new(added_facts),
             execution: None,
@@ -5963,8 +6061,7 @@ impl<'a> Proof<'a> {
             facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete,
+            goals: self.state.goals.discharged_if(complete),
             added_facts: Arc::new(added_facts),
             checked_facts: Arc::new(checked_facts),
             execution: None,
@@ -6024,8 +6121,7 @@ impl<'a> Proof<'a> {
             facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete: false,
+            goals: self.state.goals.clone(),
             added_facts: Arc::new(added_facts.clone()),
             checked_facts: Arc::new(added_facts),
             execution: Some(execution),
@@ -6064,8 +6160,7 @@ impl<'a> Proof<'a> {
             facts: checked.facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete: false,
+            goals: self.state.goals.clone(),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
             execution: Some(execution),
@@ -6097,8 +6192,7 @@ impl<'a> Proof<'a> {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete: false,
+            goals: self.state.goals.clone(),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
             execution: Some(execution),
@@ -6130,8 +6224,7 @@ impl<'a> Proof<'a> {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete: false,
+            goals: self.state.goals.clone(),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
             execution: Some(execution),
@@ -6205,7 +6298,7 @@ impl<'a> Proof<'a> {
     }
 
     fn require_execution_frontier(&self, operation: &str) -> Result<(), ClickError> {
-        matches!(self.state.goal, Goal::Frontier(_))
+        matches!(self.sole_goal(), Some(Goal::Frontier(_)))
             .then_some(())
             .ok_or_else(|| {
                 self.step_error(format!(
@@ -6219,8 +6312,7 @@ impl<'a> Proof<'a> {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: self.state.goal.clone(),
-            complete: true,
+            goals: self.state.goals.discharge_sole(),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
             execution: None,
@@ -6353,7 +6445,10 @@ impl<'a> ExecutionOutcomeProofBranches<'a> {
         ];
         let mut checked_deferrals = Vec::with_capacity(2);
         for (name, arm) in [("then", &self.arms[0]), ("else", &self.arms[1])] {
-            if !matches!(arm.state.goal, Goal::Frontier(EffectGoalSelection::None)) {
+            if !matches!(
+                arm.sole_goal(),
+                Some(Goal::Frontier(EffectGoalSelection::None))
+            ) {
                 return Err(self.root.step_error(format!(
                     "execution outcome {name} arm did not close its effect goal"
                 )));
@@ -6428,8 +6523,11 @@ impl<'a> ExecutionOutcomeProofBranches<'a> {
                 facts: self.root.state.facts.clone(),
                 locals: self.root.state.locals.clone(),
                 unfolded_predicates: self.root.state.unfolded_predicates.clone(),
-                goal: Goal::Frontier(EffectGoalSelection::None),
-                complete: false,
+                goals: self
+                    .root
+                    .state
+                    .goals
+                    .replace_sole(Goal::Frontier(EffectGoalSelection::None)),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
                 execution: Some(execution),
@@ -7431,8 +7529,7 @@ impl<'a> ExecutionProofBranches<'a> {
                 facts,
                 locals: self.root.state.locals.clone(),
                 unfolded_predicates,
-                goal: self.root.state.goal.clone(),
-                complete: false,
+                goals: self.root.state.goals.clone(),
                 added_facts: Arc::new(common_added_facts.clone()),
                 checked_facts: Arc::new(common_added_facts),
                 execution: Some(execution),
@@ -7962,8 +8059,7 @@ impl<'a> ExecutionProofBranches<'a> {
                 facts,
                 locals: self.root.state.locals.clone(),
                 unfolded_predicates: self.root.state.unfolded_predicates.clone(),
-                goal: self.root.state.goal.clone(),
-                complete: false,
+                goals: self.root.state.goals.clone(),
                 added_facts: Arc::new(added_facts.clone()),
                 checked_facts: Arc::new(added_facts),
                 execution: Some(execution),
@@ -8111,8 +8207,7 @@ impl<'a> ExecutionProofBranches<'a> {
                 facts,
                 locals: arm.proof.state.locals.clone(),
                 unfolded_predicates: arm.proof.state.unfolded_predicates.clone(),
-                goal: arm.proof.state.goal.clone(),
-                complete: arm.proof.state.complete,
+                goals: arm.proof.state.goals.clone(),
                 added_facts: Arc::new(added_facts.clone()),
                 checked_facts: Arc::new(added_facts),
                 execution: Some(execution),
@@ -8385,8 +8480,7 @@ impl<'a> ExecutionProofBranches<'a> {
                 facts,
                 locals: self.root.state.locals.clone(),
                 unfolded_predicates,
-                goal: self.root.state.goal.clone(),
-                complete: false,
+                goals: self.root.state.goals.clone(),
                 added_facts: Arc::new(common_added_facts.clone()),
                 checked_facts: Arc::new(common_added_facts),
                 execution: Some(execution),
@@ -8827,8 +8921,7 @@ impl<'a> ProofScope<'a> {
                         facts,
                         locals: self.root.state.locals.clone(),
                         unfolded_predicates: self.root.state.unfolded_predicates.clone(),
-                        goal: self.root.state.goal.clone(),
-                        complete: false,
+                        goals: self.root.state.goals.clone(),
                         added_facts: Arc::new(vec![kernel.clone()]),
                         checked_facts: Arc::new(vec![kernel]),
                         execution: self.root.state.execution.clone(),
@@ -9580,12 +9673,16 @@ mod tests {
                 &theorem_environment,
             );
             assert_eq!(root.effect_goal_count(), expected);
-            assert!(matches!(root.state.goal, Goal::Frontier(actual) if actual == selection));
+            assert!(
+                matches!(root.sole_goal(), Some(&Goal::Frontier(actual)) if actual == selection)
+            );
             let marked = root
                 .apply_step(SimpleProofStep::Mark("selected".to_string()))
                 .expect("an ordinary frontier step should preserve its effect goals");
             assert_eq!(marked.effect_goal_count(), expected);
-            assert!(matches!(marked.state.goal, Goal::Frontier(actual) if actual == selection));
+            assert!(
+                matches!(marked.sole_goal(), Some(&Goal::Frontier(actual)) if actual == selection)
+            );
         }
     }
 
@@ -9632,6 +9729,69 @@ mod tests {
         );
         assert!(!root.is_complete());
         assert!(root.certificate().steps().is_empty());
+    }
+
+    #[test]
+    fn goal_identity_is_stable_across_fork_refinement_and_discharge() {
+        let fact = indexed_fact(7);
+        let goal = Proposition::Implies(Box::new(fact.clone()), Box::new(fact));
+        let theorem_context = PureTheoremContext {
+            memory: CMemory::new(),
+            values: BTreeMap::new(),
+            array_refs: BTreeMap::new(),
+            requires: Vec::new(),
+            surface_requirements: SurfacePropositionMap::default(),
+        };
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let root = Proof::for_pure_goal(
+            "identity",
+            &[],
+            goal,
+            &theorem_context,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        );
+
+        // Forking preserves every open goal's identity and allocates nothing.
+        let root_id = root
+            .sole_goal_id()
+            .expect("a fresh proof owns its root goal");
+        let fork = root.clone();
+        assert_eq!(fork.sole_goal_id(), Some(root_id));
+
+        // A goal-preserving refinement rule changes the obligation's content
+        // but keeps its id and allocates no new identifier. The persistent
+        // budget covers the one-node goal-map update plus inserting the
+        // introduced antecedent into each fact index of this one-fact proof;
+        // it must stay a small constant, not scale with proof size.
+        let before_refinement = fact_node_allocations();
+        let introduced = root
+            .apply_step(SimpleProofStep::Intro)
+            .expect("intro should refine the implication goal");
+        assert_eq!(introduced.sole_goal_id(), Some(root_id));
+        assert_eq!(introduced.goals_next_id(), root.goals_next_id());
+        assert!(
+            fact_node_allocations() - before_refinement <= 24,
+            "refining the sole goal must touch only constant persistent state"
+        );
+
+        // Discharge retires the id: the collection is empty and the allocator
+        // never reuses the retired identifier.
+        let complete = introduced
+            .apply_step(SimpleProofStep::Assumption)
+            .expect("the introduced fact should close the consequent");
+        assert!(complete.is_complete());
+        assert_eq!(complete.sole_goal_id(), None);
+        assert_eq!(complete.goals_next_id(), introduced.goals_next_id());
+
+        // Retiring the goal in one descendant leaves the forked sibling's
+        // obligation open under the same identity.
+        assert_eq!(fork.sole_goal_id(), Some(root_id));
+        assert!(!fork.is_complete());
+        assert!(!introduced.is_complete());
     }
 
     #[test]
@@ -10383,9 +10543,12 @@ mod tests {
             &[],
         );
         let allocations = fact_node_allocations() - before;
-        assert_eq!(
-            allocations, 0,
-            "creating a point Proof must not rebuild inherited unfold history"
+        // The one permitted node stores the root goal in the persistent goal
+        // collection; the bound must stay independent of the inherited size.
+        assert!(
+            allocations <= 1,
+            "creating a point Proof must not rebuild inherited unfold history \
+             ({allocations} persistent nodes allocated)"
         );
         assert_eq!(root.state.unfolded_predicates.len(), 0);
         assert_eq!(root.active_unfolded_predicates(), inherited);
@@ -10427,9 +10590,10 @@ mod tests {
             let focused = root
                 .focus_point_goal(goal.clone())
                 .expect("an initial point frontier should focus one ensure goal");
-            assert_eq!(
-                fact_node_allocations() - before,
-                0,
+            // The one permitted node stores the focused root goal in the
+            // fresh proof's goal collection; every fact index stays shared.
+            assert!(
+                fact_node_allocations() - before <= 1,
                 "focusing a goal must share every persistent fact index"
             );
             assert!(
@@ -10786,9 +10950,13 @@ mod tests {
                 .apply_step(SimpleProofStep::Witness(witness.clone()))
                 .expect("the named int32 witness should refine the existential");
             let allocations = fact_node_allocations() - before;
-            assert_eq!(
-                allocations, 0,
-                "size {size} witness should not alter the persistent fact index"
+            // The one permitted node rewrites the sole entry of the goal
+            // collection; the bound must stay independent of `size` because
+            // the witness never touches the persistent fact index.
+            assert!(
+                allocations <= 1,
+                "size {size} witness should not alter the persistent fact index \
+                 ({allocations} persistent nodes allocated)"
             );
             assert_eq!(
                 refined.certificate().steps(),
@@ -11034,9 +11202,13 @@ mod tests {
                 .apply_step(step.clone())
                 .expect("the exact available equality should rewrite the goal");
             let allocations = fact_node_allocations() - before;
-            assert_eq!(
-                allocations, 0,
-                "size {size} rewrite should not alter the persistent fact index"
+            // The one permitted node rewrites the sole entry of the goal
+            // collection; the bound must stay independent of `size` because
+            // the rewrite never touches the persistent fact index.
+            assert!(
+                allocations <= 1,
+                "size {size} rewrite should not alter the persistent fact index \
+                 ({allocations} persistent nodes allocated)"
             );
             assert_eq!(rewritten.certificate().steps(), &[step.clone()]);
             assert!(
@@ -14711,7 +14883,7 @@ mod tests {
                     &[],
                 );
                 let retained_root = root.clone();
-                let Goal::Proposition(root_goal) = &root.state.goal else {
+                let Some(Goal::Proposition(root_goal)) = root.sole_goal() else {
                     unreachable!("the structural regression owns a proposition goal")
                 };
                 let root_surface = root_goal
@@ -14722,7 +14894,7 @@ mod tests {
                     .begin_if(branch_condition.clone())
                     .expect("an unrelated condition should fork the structural goal");
                 for arm in &branches.arms {
-                    let Goal::Proposition(arm_goal) = &arm.state.goal else {
+                    let Some(Goal::Proposition(arm_goal)) = arm.sole_goal() else {
                         unreachable!("a pure proof branch retains its proposition goal")
                     };
                     assert!(Arc::ptr_eq(

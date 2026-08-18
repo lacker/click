@@ -124,6 +124,51 @@ with zero, one, or several checked successor goals and records the matching
 certificate node. The goal collection and all path-local semantic data use
 persistent structural sharing so candidate forks remain cheap.
 
+#### Goal and split identity rules
+
+These rules are normative for the substrate implementation. `GoalId` and
+`SplitId` are plain integers allocated from a monotonic counter stored in the
+persistent proof state, so the counter forks with the proof and allocation is
+O(1).
+
+1. **A `GoalId` names one obligation for its lifetime.** The audited
+   operation that creates a goal allocates its id: root construction
+   allocates the root goal set, `apply_step` allocates ids for successor
+   goals it introduces, and `split` allocates its labeled children plus one
+   `SplitId` for the split node itself. A focused refinement that evolves
+   the same obligation — a statement advancing an execution frontier, an
+   `Intro` peeling a connective — preserves the focused goal's id. Discharge
+   retires the id. Whether a step rule preserves or replaces its focused
+   goal's id is a static, documented property of that rule, never a runtime
+   choice; a rule that changes the goal's kind or count (a return converting
+   a frontier into outcome goals, a branch splitting a frontier) retires the
+   parent id and records the fresh child ids on its structural node.
+2. **Fork preserves identity; nothing else does.** Cloning a `Proof`
+   preserves every open goal's id and content. Applying a step to one goal
+   leaves every other goal's id and content untouched. Retired ids are never
+   reused within the allocating lineage and never reappear.
+3. **Comparison is lineage-scoped.** Divergent forks each extend their own
+   copy of the counter, so ids allocated after a fork may numerically
+   collide across forks. Id equality is meaningful only along one ancestry
+   chain or among descendants of the recorded split/scope node whose ids
+   they reference. Audited joins verify ancestry first (exact root and node
+   identity, as the current containers do); id equality is evidence only
+   inside that verified scope. There is no global goal registry.
+4. **Join legality is expressed in recorded ids.** A split records its child
+   goal ids at creation. `join(split, interface)` is legal only for a proof
+   that descends from the recorded split node and has discharged, or brought
+   to the declared interface, exactly the recorded child ids. An id not
+   recorded by that split can never satisfy its join.
+5. **Memoization ignores ids.** Memo keys use semantic proof-state identity
+   (facts, goal content, C state), never `GoalId` values or derivation
+   history. Two semantically identical states reached along different paths
+   may carry different ids and must hit the same memo entry.
+6. **Certificate order is recorded order.** An operation introducing several
+   goals assigns their ids in the deterministic order fixed by its rule
+   (then-arm before else-arm, outcomes in source order) and records that
+   order on its structural node. Certificate extraction renders the recorded
+   order; it never sorts by id magnitude or discharge order.
+
 An execution step can therefore have these audited outcomes:
 
 - one successor execution-frontier goal for a linear statement;
