@@ -1660,6 +1660,48 @@ fn remaining_increment_bound_derivations_retain_both_exact_bounds() {
 }
 
 #[test]
+fn strict_lower_increment_derivation_retains_both_exact_strict_bounds() {
+    let lower = Bitvector32Term::Variable(Variable(220_100));
+    let value = Bitvector32Term::Variable(Variable(220_101));
+    let upper = Bitvector32Term::Variable(Variable(220_102));
+    let lower_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(lower.clone(), value.clone()),
+        true,
+    );
+    let upper_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_than(upper.clone(), value.clone()),
+        true,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_than(
+            Bitvector32Term::add(value.clone(), Bitvector32Term::Constant(1)),
+            lower.clone(),
+        ),
+        true,
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(lower_premise.clone())
+        .assume_proposition(upper_premise.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("the two strict bounds should prove the incremented strict lower bound");
+    let (lower_bound, upper_bound) = derivation
+        .int32_increment_strict_greater_from_strict_lower_steps()
+        .expect("the atomic decision should retain both exact strict premises");
+    assert_eq!(lower_bound.lower(), &lower);
+    assert_eq!(lower_bound.upper(), &value);
+    assert!(lower_bound.is_strict());
+    assert_eq!(lower_bound.premise(), &lower_premise);
+    assert_eq!(upper_bound.lower(), &value);
+    assert_eq!(upper_bound.upper(), &upper);
+    assert!(upper_bound.is_strict());
+    assert_eq!(upper_bound.premise(), &upper_premise);
+    assert!(derivation.replay(&assumptions));
+    assert!(!derivation.replay(&PureFactContext::new().assume_proposition(lower_premise)));
+}
+
+#[test]
 fn predecessor_derivations_retain_their_exact_named_rule_premises() {
     let value = Bitvector32Term::Variable(Variable(221));
     let bound = Bitvector32Term::Variable(Variable(222));

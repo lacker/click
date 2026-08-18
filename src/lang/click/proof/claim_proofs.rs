@@ -3351,23 +3351,28 @@ pub(super) fn finish_ordered_proof_replay(
                                     };
                                     if direct_supported && !direct_claims.is_empty() {
                                         let transition_facts = path.execution_facts();
-                                        let mut direct_proof = Proof::for_point_frontier(
-                                            &proof_label,
-                                            *tactic_index,
-                                            &path_requirements,
-                                            parsed_function.parameters(),
-                                            arguments,
-                                            pre_state,
-                                            post_state,
-                                            Some(result),
-                                            &replay.program_point_states,
-                                            &outcome_surface_propositions,
-                                            predicate_environment,
-                                            click_function_environment,
-                                            theorem_environment,
-                                            &unfolded_predicates,
-                                            &transition_facts,
-                                        );
+                                        let mut direct_proof =
+                                            Proof::for_point_frontier_with_premise_anchor(
+                                                &proof_label,
+                                                *tactic_index,
+                                                &path_requirements,
+                                                parsed_function.parameters(),
+                                                arguments,
+                                                pre_state,
+                                                post_state,
+                                                Some(result),
+                                                replay
+                                                    .proof_certificate_builder
+                                                    .last_step_entry
+                                                    .as_ref(),
+                                                &replay.program_point_states,
+                                                &outcome_surface_propositions,
+                                                predicate_environment,
+                                                click_function_environment,
+                                                theorem_environment,
+                                                &unfolded_predicates,
+                                                &transition_facts,
+                                            );
                                         let mut direct_available = path_requirements.clone();
                                         let mut selected = true;
                                         for (_, surface_goal) in &direct_claims {

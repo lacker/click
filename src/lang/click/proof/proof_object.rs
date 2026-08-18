@@ -424,6 +424,7 @@ struct PointProofContext<'a> {
     pre_state: &'a CState,
     state: &'a CState,
     result: Option<&'a CValue>,
+    premise_anchor: Option<ProgramPointRef>,
     program_point_states: &'a ProgramPointStates,
     surface_propositions: &'a SurfacePropositionMap,
     predicate_environment: &'a PredicateEnvironment,
@@ -683,6 +684,7 @@ impl<'a> Proof<'a> {
             pre_state,
             state,
             None,
+            None,
             program_point_states,
             surface_propositions,
             predicate_environment,
@@ -726,6 +728,7 @@ impl<'a> Proof<'a> {
             pre_state,
             state,
             result,
+            None,
             program_point_states,
             surface_propositions,
             predicate_environment,
@@ -766,6 +769,49 @@ impl<'a> Proof<'a> {
             pre_state,
             state,
             result,
+            None,
+            program_point_states,
+            surface_propositions,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            unfolded_predicates,
+            effect_facts,
+            &[],
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn for_point_frontier_with_premise_anchor(
+        claim_label: &'a str,
+        tactic_index: usize,
+        available: &'a [Proposition],
+        parameters: &'a [syntax::C0Parameter],
+        arguments: &'a [CExpression],
+        pre_state: &'a CState,
+        state: &'a CState,
+        result: Option<&'a CValue>,
+        premise_anchor: Option<&ProgramPointRef>,
+        program_point_states: &'a ProgramPointStates,
+        surface_propositions: &'a SurfacePropositionMap,
+        predicate_environment: &'a PredicateEnvironment,
+        click_function_environment: &'a ClickFunctionEnvironment,
+        theorem_environment: &'a TheoremEnvironment,
+        unfolded_predicates: &'a [String],
+        effect_facts: &'a [ExecutionPureFact],
+    ) -> Self {
+        Self::for_point(
+            claim_label,
+            tactic_index,
+            available,
+            Goal::Frontier(EffectGoalSelection::None),
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            result,
+            premise_anchor.cloned(),
             program_point_states,
             surface_propositions,
             predicate_environment,
@@ -789,6 +835,7 @@ impl<'a> Proof<'a> {
         pre_state: &'a CState,
         state: &'a CState,
         result: Option<&'a CValue>,
+        premise_anchor: Option<ProgramPointRef>,
         program_point_states: &'a ProgramPointStates,
         surface_propositions: &'a SurfacePropositionMap,
         predicate_environment: &'a PredicateEnvironment,
@@ -811,6 +858,7 @@ impl<'a> Proof<'a> {
                 pre_state,
                 state,
                 result,
+                premise_anchor,
                 program_point_states,
                 surface_propositions,
                 predicate_environment,
@@ -2603,6 +2651,76 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Lowers a surface proposition at this Proof's actual semantic point,
+    /// without accepting a historical Surface-to-kernel index entry as a
+    /// substitute for an in-scope spelling.
+    ///
+    /// The ordinary checker may use that index to recognize an exact fact.
+    /// Smart theorem selection additionally needs arguments that can be
+    /// lowered when the retained `apply` step runs. In particular, a local
+    /// that has left scope must be spelled through `at(...)` rather than
+    /// merely associated with an indexed historical fact.
+    fn lower_surface_proposition_direct(
+        &self,
+        surface: &ClickProposition,
+        description: &str,
+    ) -> Result<Proposition, ClickError> {
+        match self.context.as_ref() {
+            ProofContext::Pure(context) => lower_pure_theorem_proposition(
+                context.claim_label,
+                surface,
+                &context.theorem_context.values,
+                &context.theorem_context.array_refs,
+                &context.theorem_context.memory,
+                context.predicate_environment,
+                context.click_function_environment,
+            )
+            .map_err(|message| {
+                self.step_error(format!("could not lower {description}: {message}"))
+            }),
+            ProofContext::Point(context) => {
+                let surface = self.substitute_point_locals_in_proposition(surface)?;
+                lower_point_proposition_with_assumptions(
+                    &surface,
+                    self.state.facts.assumptions(),
+                    context.parameters,
+                    context.arguments,
+                    context.pre_state,
+                    context.state,
+                    context.result,
+                    context.program_point_states,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+                .map_err(|message| {
+                    self.step_error(format!("could not lower {description}: {message}"))
+                })
+            }
+            ProofContext::Execution(context) => {
+                let execution = self.state.execution.as_ref().ok_or_else(|| {
+                    self.step_error("execution proposition proof lost its semantic frontier")
+                })?;
+                let surface = self.substitute_point_locals_in_proposition(surface)?;
+                let pre_state = execution.replay.old_reference_state(&execution.state);
+                lower_point_proposition_with_assumptions(
+                    &surface,
+                    self.state.facts.assumptions(),
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    pre_state,
+                    &execution.state,
+                    None,
+                    &execution.replay.program_point_states,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+                .map_err(|message| {
+                    self.step_error(format!("could not lower {description}: {message}"))
+                })
+            }
+        }
+    }
+
     /// Lowers a newly stated proof goal at the current semantic point.
     ///
     /// Fact references may deliberately resolve through a recorded surface
@@ -3009,27 +3127,51 @@ impl<'a> Proof<'a> {
         if let Some(proof) = self.try_direct_logical_closure() {
             return Some(proof);
         }
-        let (surface_facts, point_application_closes_goal) = match self.context.as_ref() {
-            ProofContext::Pure(context) => (&context.theorem_context.surface_requirements, false),
-            ProofContext::Point(context) => (context.surface_propositions, true),
-            ProofContext::Execution(_) => return None,
-        };
+        let (surface_facts, point_application_closes_goal, premise_anchor) =
+            match self.context.as_ref() {
+                ProofContext::Pure(context) => {
+                    (&context.theorem_context.surface_requirements, false, None)
+                }
+                ProofContext::Point(context) => (
+                    context.surface_propositions,
+                    true,
+                    context.premise_anchor.as_ref(),
+                ),
+                ProofContext::Execution(_) => return None,
+            };
         let goal = self.goal()?;
         let plan = plan_simp_certificate(goal, self.state.facts.assumptions())?;
         let SimpEvidence::Derivation(derivation) = &plan else {
             return None;
         };
+        let replayable_surface = |kernel: &Proposition| {
+            surface_facts.surfaces(kernel).find_map(|surface| {
+                let matches_kernel = |candidate: &ClickProposition| {
+                    let lowered = self
+                        .lower_surface_proposition_direct(candidate, "typed simp premise spelling")
+                        .ok()?;
+                    (lowered == *kernel || condition_polarity_equivalent(&lowered, kernel))
+                        .then_some(())
+                };
+                if matches_kernel(surface).is_some() {
+                    return Some(surface.clone());
+                }
+                let anchor = premise_anchor?;
+                let anchored = surface_with_source_site(surface, anchor).ok()?;
+                matches_kernel(&anchored).map(|()| anchored)
+            })
+        };
         let premise_pairs = derivation
             .context_premises()
             .iter()
             .map(|premise| {
-                if let Some(surface) = surface_facts.surfaces(premise).next().cloned() {
+                if let Some(surface) = replayable_surface(premise) {
                     return Some((premise.clone(), surface));
                 }
                 condition_polarity_spellings(premise)
                     .into_iter()
                     .find_map(|spelling| {
-                        let surface = surface_facts.surfaces(&spelling).next().cloned();
+                        let surface = replayable_surface(&spelling);
                         surface.map(|surface| (spelling, surface))
                     })
             })
@@ -3197,6 +3339,17 @@ impl<'a> Proof<'a> {
                     &premise_pairs,
                 )?;
                 plan_recorded_int32_increment_strict_greater_lower_bound_for_context(
+                    goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_increment_strict_greater_from_strict_lower_pairs(
+                    derivation,
+                    &premise_pairs,
+                )?;
+                plan_recorded_int32_increment_strict_greater_from_strict_lower_for_context(
                     goal,
                     &recorded,
                     point_application_closes_goal,
@@ -12378,6 +12531,121 @@ mod tests {
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
                 assert!(pure_root.certificate().steps().is_empty());
             }
+        }
+
+        let strict_lower_premise = ClickProposition::Comparison {
+            left: expression(lower.clone()),
+            operator: ComparisonOperator::LessThan,
+            right: expression(value.clone()),
+        };
+        let strict_goal_surface = ClickProposition::Comparison {
+            left: increment(value.clone()),
+            operator: ComparisonOperator::GreaterThan,
+            right: expression(lower.clone()),
+        };
+        let kernel_strict_lower = lower_surface(&strict_lower_premise);
+        let strict_goal = lower_surface(&strict_goal_surface);
+        let mut strict_surface_propositions = SurfacePropositionMap::default();
+        strict_surface_propositions
+            .record_lowering(&strict_lower_premise, &kernel_strict_lower)
+            .expect("the exact strict lower premise should be indexed");
+        strict_surface_propositions
+            .record_lowering(&upper_premise, &kernel_upper)
+            .expect("the exact upper premise should be indexed");
+        let strict_selected_premises = [strict_lower_premise.clone(), upper_premise.clone()];
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.extend([kernel_strict_lower.clone(), kernel_upper.clone()]);
+            let root = Proof::for_point_goal(
+                "persistent point strict increment-bound simp",
+                0,
+                &facts,
+                strict_goal.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &strict_surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("the strict-lower increment path should advance one Proof");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 96 * logarithmic_height + 384;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} point strict-lower simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [
+                    SimpleProofStep::ApplyTheoremUsing { application: first, premises: first_premises },
+                    SimpleProofStep::ApplyTheoremUsing { application: second, premises: second_premises },
+                ] if first.name == "int32_lt_implies_le"
+                    && first_premises == std::slice::from_ref(&strict_lower_premise)
+                    && second.name == "int32_increment_strict_greater_lower_bound"
+                    && second_premises.len() == 2
+                    && second_premises[1] == upper_premise
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+
+            let theorem_context = PureTheoremContext {
+                memory: state.memory().clone(),
+                values: BTreeMap::new(),
+                array_refs: BTreeMap::new(),
+                requires: facts.clone(),
+                surface_requirements: strict_surface_propositions.clone(),
+            };
+            let pure_root = Proof::for_pure_goal(
+                "persistent restricted strict increment-bound simp",
+                &facts,
+                strict_goal.clone(),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_pure_root = pure_root.clone();
+            for omitted in [
+                std::slice::from_ref(&strict_lower_premise),
+                std::slice::from_ref(&upper_premise),
+            ] {
+                assert!(pure_root.try_restricted_simp_closure(omitted).is_none());
+                assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+            }
+            let before_restricted = fact_node_allocations();
+            let pure_closed = pure_root
+                .try_restricted_simp_closure(&strict_selected_premises)
+                .expect("restricted strict-lower simp should advance one Proof");
+            let restricted_allocations = fact_node_allocations() - before_restricted;
+            assert!(
+                restricted_allocations <= allocation_bound,
+                "size {size} restricted strict-lower simp allocated {restricted_allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(pure_closed.is_complete());
+            assert!(matches!(
+                pure_closed.certificate().steps(),
+                [
+                    SimpleProofStep::ApplyTheoremUsing { application: first, .. },
+                    SimpleProofStep::ApplyTheoremUsing { application: second, .. },
+                    SimpleProofStep::Assumption,
+                ] if first.name == "int32_lt_implies_le"
+                    && second.name == "int32_increment_strict_greater_lower_bound"
+            ));
+            assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+            assert!(pure_root.certificate().steps().is_empty());
         }
     }
 

@@ -451,3 +451,33 @@ and strict-upper premises and translates to a fixed composition of named
 simple theorem applications. Keep the common-execute regression independent
 of this arithmetic gap; this reproduction stays here until strict positivity
 has its own retained steps.
+
+### Progress (2026-08-17: strict-positive increment composition)
+
+The strict-positive increment decision is now typed. For the goal
+`value + 1 > lower`, the kernel records the exact strict lower edge
+`lower < value` and the exact strict upper edge `value < upper`; replay checks
+both original facts, their endpoints and strictness, and the literal
+increment goal shape. The retained proof deliberately composes existing
+simple rules: `int32_lt_implies_le(lower, value)` establishes the non-strict
+intermediate, then
+`int32_increment_strict_greater_lower_bound(value, lower, upper)` establishes
+the goal. Both applications advance the same immutable `Proof`, so the second
+consumes the first application's checked conclusion without reconstruction
+or ordinary replay.
+
+The post-execution reproduction above now verifies, expands to those two
+named applications, and independently reverifies. Historical local facts are
+spelled through their selected statement-entry `at(...)` anchor. Selection
+checks each candidate spelling by direct lowering at the Proof's semantic
+point, so an out-of-scope unqualified local cannot be accepted merely because
+the Surface index remembers its old kernel meaning. This lookup remains
+output-sensitive in the selected fact's spelling bucket rather than scanning
+ambient facts.
+
+The shared point and restricted-pure regression holds this two-application
+path fixed across 16, 64, 256, 1024, and 4096 unrelated facts. It pins
+logarithmic persistent allocation, ancestor isolation, and transactional
+rejection when either named source premise is omitted. This closes the new
+reproduction, not the broader issue: the remaining legacy evidence families
+and ambient reconstruction paths listed above still need migration.

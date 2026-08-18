@@ -392,6 +392,18 @@ pub(super) fn lower_surface_atomic_derivation(
                 false,
             )
         });
+    let typed_increment_strict_from_strict_pairs =
+        recorded_int32_increment_strict_greater_from_strict_lower_pairs(derivation, &premise_pairs);
+    let typed_increment_strict_from_strict_plan = typed_increment_strict_from_strict_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_increment_strict_greater_from_strict_lower_for_context(
+                &lowered_conclusion,
+                pairs,
+                false,
+            )
+        });
     let typed_increment_preserves_order_pairs =
         recorded_int32_increment_preserves_order_pairs(derivation, &premise_pairs);
     let typed_increment_preserves_order_plan = typed_increment_preserves_order_pairs
@@ -562,6 +574,7 @@ pub(super) fn lower_surface_atomic_derivation(
         || typed_increment_lower_bound_plan.is_some()
         || typed_increment_greater_equal_plan.is_some()
         || typed_increment_strict_greater_plan.is_some()
+        || typed_increment_strict_from_strict_plan.is_some()
         || typed_increment_preserves_order_plan.is_some()
         || typed_positive_predecessor_nonnegative_plan.is_some()
         || typed_positive_predecessor_decrease_plan.is_some()
@@ -613,6 +626,9 @@ pub(super) fn lower_surface_atomic_derivation(
     } else if typed_increment_strict_greater_plan.is_some() {
         premise_pairs = typed_increment_strict_greater_pairs
             .expect("a typed strict-greater increment plan retains both exact premises");
+    } else if typed_increment_strict_from_strict_plan.is_some() {
+        premise_pairs = typed_increment_strict_from_strict_pairs
+            .expect("a typed strict-lower increment plan retains both exact premises");
     } else if typed_increment_preserves_order_plan.is_some() {
         premise_pairs = typed_increment_preserves_order_pairs
             .expect("a typed increment-order plan retains both exact premises");
@@ -865,6 +881,14 @@ pub(super) fn lower_surface_atomic_derivation(
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "recorded strict-greater increment rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_increment_strict_from_strict_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded strict-lower increment rule produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -3583,6 +3607,23 @@ pub(super) fn recorded_int32_increment_strict_greater_lower_bound_pairs(
         .collect()
 }
 
+pub(super) fn recorded_int32_increment_strict_greater_from_strict_lower_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    let (lower_bound, upper_bound) =
+        derivation.int32_increment_strict_greater_from_strict_lower_steps()?;
+    [lower_bound.premise(), upper_bound.premise()]
+        .into_iter()
+        .map(|premise| {
+            premise_pairs
+                .iter()
+                .find(|(kernel, _)| kernel == premise)
+                .cloned()
+        })
+        .collect()
+}
+
 pub(super) fn recorded_int32_increment_preserves_order_pairs(
     derivation: &PropositionDerivation,
     premise_pairs: &[(Proposition, ClickProposition)],
@@ -3920,6 +3961,19 @@ pub(super) fn plan_recorded_int32_increment_strict_greater_lower_bound_for_conte
     point_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_increment_strict_greater_lower_bound(goal, premise_pairs)?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut tactics)?;
+    }
+    Some(tactics)
+}
+
+pub(super) fn plan_recorded_int32_increment_strict_greater_from_strict_lower_for_context(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
+    let mut tactics =
+        plan_explicit_increment_strict_greater_from_strict_lower(goal, premise_pairs)?;
     if point_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
@@ -4941,6 +4995,59 @@ fn plan_explicit_increment_strict_greater_lower_bound(
         }
     }
     None
+}
+
+fn plan_explicit_increment_strict_greater_from_strict_lower(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedGreaterThan(incremented, goal_lower),
+        true,
+    ) = goal
+    else {
+        return None;
+    };
+    let base = increment_base(incremented)?;
+    let [(lower_kernel, lower_surface), (upper_kernel, upper_surface)] = premise_pairs else {
+        return None;
+    };
+    let Some((premise_lower, lower_base)) = signed_strict_parts(lower_kernel) else {
+        return None;
+    };
+    let Some((upper_base, _)) = signed_strict_parts(upper_kernel) else {
+        return None;
+    };
+    if premise_lower != goal_lower.as_ref() || lower_base != base || upper_base != base {
+        return None;
+    }
+    let (surface_lower, surface_value) = surface_strict_parts(lower_surface)?;
+    let (surface_upper_base, surface_upper) = surface_strict_parts(upper_surface)?;
+    if surface_upper_base != surface_value {
+        return None;
+    }
+    let weakened_lower = ClickProposition::Comparison {
+        left: surface_lower.clone(),
+        operator: ComparisonOperator::LessEqual,
+        right: surface_value.clone(),
+    };
+    Some(vec![
+        ProofTactic::ApplyTheoremUsing {
+            application: TheoremApplication {
+                name: "int32_lt_implies_le".to_string(),
+                arguments: vec![surface_lower.clone(), surface_value.clone()],
+            },
+            premises: vec![lower_surface.clone()],
+        },
+        ProofTactic::ApplyTheoremUsing {
+            application: TheoremApplication {
+                name: "int32_increment_strict_greater_lower_bound".to_string(),
+                arguments: vec![surface_value, surface_lower, surface_upper],
+            },
+            premises: vec![weakened_lower, upper_surface.clone()],
+        },
+        ProofTactic::Assumption,
+    ])
 }
 
 fn plan_explicit_strict_transitive(

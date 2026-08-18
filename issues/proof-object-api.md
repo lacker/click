@@ -1915,6 +1915,24 @@ through Proof descendants, memory writes and calls with unrelated facts stay
 on the existing planner rather than receiving another local relevance
 heuristic.
 
+### Progress (2026-08-17: theorem composition with historical locals)
+
+The theorem-application seam now retains a two-rule arithmetic composition
+for a post-execution claim. From exact `lower < value` and `value < upper`
+facts, smart `simp` first applies `int32_lt_implies_le`, then applies
+`int32_increment_strict_greater_lower_bound` on the resulting Proof. The
+second simple step consumes the checked fact added by the first; ordinary
+verification neither rebuilds nor independently replays the sequence.
+
+Outcome facts that mention a C local after it leaves scope use the Proof's
+selected statement-entry anchor. Candidate Surface spellings must lower
+directly at the Proof's semantic point before theorem selection accepts them;
+an old Surface-index association alone is insufficient authority for theorem
+arguments. This keeps spelling recovery within the exact selected fact's
+small spelling bucket, and the expanded `at(...)` applications independently
+reverify. A 16-through-4096 unrelated-fact curve covers the same two-step
+path for point and restricted-pure Proofs.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

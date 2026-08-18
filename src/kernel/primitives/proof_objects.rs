@@ -220,6 +220,24 @@ impl PropositionDerivation {
         }
     }
 
+    /// Return the exact strict lower edge and strict upper edge selected when
+    /// the atomic prover established a strict lower bound on `value + 1` by
+    /// first weakening the lower edge to non-strict order.
+    pub fn int32_increment_strict_greater_from_strict_lower_steps(
+        &self,
+    ) -> Option<(&SignedOrderDerivationStep, &SignedOrderDerivationStep)> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32IncrementStrictGreaterFromStrictLower(
+                        bounds,
+                    ),
+                ..
+            } => Some((&bounds.lower_bound, &bounds.upper_bound)),
+            _ => None,
+        }
+    }
+
     /// Return the exact non-strict order edge and strict upper edge selected
     /// when the atomic prover established that increment preserves order.
     pub fn int32_increment_preserves_order_steps(

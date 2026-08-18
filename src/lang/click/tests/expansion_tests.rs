@@ -6356,6 +6356,78 @@ fn branch_join_retains_linear_execute_on_its_common_successor() {
 }
 
 #[test]
+fn incremented_strict_lower_bound_retains_its_theorem_path() {
+    let c_source = r#"
+        int32 select_and_increment_positive(int32 flag) {
+            int32 selected;
+            if (flag != 0) {
+                selected = 1;
+            } else {
+                selected = 2;
+            }
+            selected = selected + 1;
+            return selected;
+        }
+    "#;
+    let click_source = r#"
+        verifying "select_and_increment_positive.c";
+
+        int32 select_and_increment_positive(int32 flag) {
+            immutable;
+            ensures result > 0;
+        } by {
+            step();
+            branch {
+                ensuring {
+                    fact selected > 0;
+                    fact selected < 2147483647;
+                }
+                then { step(); }
+                else { step(); }
+            }
+            execute();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(
+            click_source,
+            &[("select_and_increment_positive.c", c_source)],
+        )
+    });
+    verified.expect("strict positivity should retain a composed theorem path on Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "select_and_increment_positive.contract"
+                    && name == "surface certificate replay"
+        )),
+        "the typed outcome simp must not ordinarily replay its theorem path: {events:#?}"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("select_and_increment_positive.c", c_source)],
+        "select_and_increment_positive",
+        CProofClaim::Grouped,
+    )
+    .expect("the strict-positive increment proof should expand");
+    assert!(
+        expanded.contains("apply(int32_lt_implies_le("),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("apply(int32_increment_strict_greater_lower_bound("),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &[("select_and_increment_positive.c", c_source)])
+        .expect("the retained strict-positive theorem path should independently reverify");
+}
+
+#[test]
 fn branch_arms_retain_bare_fact_transports_on_proof() {
     let c_source = r#"
         int32 set_choice_return_first(int32 p[2], int32 flag) {
