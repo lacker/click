@@ -2707,12 +2707,17 @@ path's working set as a mutable `path_requirements: Vec<Proposition>`
 `Proof` per outcome per tactic. Typed outcome goals exist; this migration
 makes them load-bearing. Stage it as independently green slices:
 
-1. **Entry seam.** The drain entry accepts the terminal execution `Proof`
-   (or its derived outcome-goal set) alongside the legacy context wherever
-   the caller came through the checked path; `into_execution_context`
-   callers that feed the drain thread the proof through instead of exporting
-   first. Callers still on wholly legacy paths pass no proof and change
-   nothing.
+1. **Entry seam.** The replay engine threads `ProofReplayContext` by value
+   through its whole recursion, so do not thread a `Proof` alongside it.
+   Instead, the drain head re-enters the substrate once: it already owns the
+   final context and every environment `for_execution_frontier` needs, so it
+   constructs the terminal execution `Proof` there (effect selection
+   `None` — frames are deferred by this point) and derives the outcome goal
+   set. This covers checked and wholly legacy execution paths uniformly and
+   changes no upstream signatures. Each outcome goal's facts equal the
+   drain's current per-path working set by construction (the frontier facts
+   plus that path's own facts), which is the parity invariant slice 2
+   consumes.
 2. **Per-outcome persistent proofs.** For drained paths with an available
    outcome goal, the drain evolves that one result-aware `Proof` through the
    path's tactics: each already-migrated point operation (`unfold`,
