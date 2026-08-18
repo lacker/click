@@ -1025,10 +1025,9 @@ pub(super) fn finish_ordered_proof_replay(
                 matches!(
                     &deferred.tactic,
                     PostExecutionTactic::UnfoldPredicate(_)
-                        | PostExecutionTactic::Transport {
-                            premises: Some(_),
-                            ..
-                        }
+                        | PostExecutionTactic::Transport { .. }
+                        | PostExecutionTactic::Apply(_)
+                        | PostExecutionTactic::ApplyUsing { .. }
                 )
             });
     let outcome_substrate = drain_consumes_outcome_goals
@@ -2675,23 +2674,34 @@ pub(super) fn finish_ordered_proof_replay(
                                     None
                                 };
                                 let (added_facts, checked_facts, certificate) =
-                                    if let (Some(premises), Some(evolving)) =
-                                        (premises.as_ref(), outcome_proof.take())
-                                    {
-                                        // The migrated explicit case: the checked
-                                        // transport advances this path's evolving
-                                        // outcome proof and records its lowerings
-                                        // on the goal atomically.
+                                    if let Some(evolving) = outcome_proof.take() {
+                                        // The migrated cases: an explicit
+                                        // transport applies its source step and
+                                        // a smart one searches its gathered
+                                        // candidates, both advancing this
+                                        // path's evolving outcome proof, which
+                                        // records the checked lowerings on the
+                                        // goal atomically.
                                         let resynced = evolving
                                             .with_drained_outcome_facts(&transport_available)?;
                                         let before = resynced.checkpoint();
-                                        let transported = resynced.apply_step(
-                                            SimpleProofStep::TransportUsing {
-                                                source: source.clone(),
-                                                target: target.clone(),
-                                                premises: premises.clone(),
-                                            },
-                                        )?;
+                                        let transported = if let Some(premises) = premises {
+                                            resynced.apply_step(
+                                                SimpleProofStep::TransportUsing {
+                                                    source: source.clone(),
+                                                    target: target.clone(),
+                                                    premises: premises.clone(),
+                                                },
+                                            )?
+                                        } else {
+                                            resynced.search_point_fact_transport(
+                                                source,
+                                                target,
+                                                candidates
+                                                    .clone()
+                                                    .expect("smart transport gathered candidates"),
+                                            )?
+                                        };
                                         let added_facts = transported.added_facts().to_vec();
                                         let checked_facts = transported.checked_facts().to_vec();
                                         let certificate = transported.certificate_since(&before)?;

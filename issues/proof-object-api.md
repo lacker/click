@@ -2862,6 +2862,16 @@ The search guard recognizes a focused outcome goal as result-aware; the
 derivation gate admits all transports. Every post-execution transport and
 theorem application in the corpus now runs on typed outcome goals.
 
+The drain rewiring for this slice initially failed silently: a bulk edit
+whose pattern had drifted from the formatted source matched nothing, so the
+prior commit landed only the search-guard relaxation while the suites stayed
+green through the untouched fallback — and the same failure had quietly
+narrowed the derivation gate to two tactic kinds. The follow-up commit
+completes the rewiring, restores the gate to every migrated kind, and the
+process lesson is recorded here: bulk-edit application must be verified by
+grep before the claim, because a behavior-preserving fallback makes a
+silently unapplied migration invisible to the gate.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
