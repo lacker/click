@@ -3593,6 +3593,56 @@ impl<'a> Proof<'a> {
             .then_some(execution.replay.frontier.next_statement_index))
     }
 
+    /// Searches a straight-line prefix up to one named statement by applying
+    /// every selected `StepUsing` to the current checked descendant. The
+    /// returned fact list is only the prefix's output delta; scope adapters
+    /// use it to retain facts introduced inside their owned representation.
+    fn try_linear_execute_until_descendant(
+        &self,
+        region: &CodeRegionRef,
+    ) -> Result<Option<(Self, Vec<Proposition>)>, ClickError> {
+        let target = self.resolve_statement_target(region)?;
+        let Some(current) = self.current_statement_index()? else {
+            return Err(self.step_error("`execute_until` cannot run after function exit"));
+        };
+        if target < current {
+            return Err(self.step_error(format!(
+                "`execute_until(statement({target}))` cannot move backward from statement({current})"
+            )));
+        }
+
+        let mut proof = self.clone();
+        let mut introduced_facts = Vec::new();
+        loop {
+            match proof.current_statement_index()? {
+                Some(current) if current == target => break,
+                Some(current) if current < target => {}
+                Some(_) | None => return Ok(None),
+            }
+            let Some(next) = proof.try_indexed_statement_step()? else {
+                return Ok(None);
+            };
+            for fact in next.added_facts() {
+                if !introduced_facts.contains(fact) {
+                    introduced_facts.push(fact.clone());
+                }
+            }
+            proof = next;
+        }
+        Ok(Some((proof, introduced_facts)))
+    }
+
+    /// Runs the narrow checked `execute_until` search on this Proof and
+    /// returns only the already-accepted descendant.
+    pub(super) fn try_linear_execute_until(
+        &self,
+        region: &CodeRegionRef,
+    ) -> Result<Option<Self>, ClickError> {
+        Ok(self
+            .try_linear_execute_until_descendant(region)?
+            .map(|(proof, _)| proof))
+    }
+
     /// Searches explicit premise spellings for one point fact transport.
     ///
     /// Every candidate is checked by applying the corresponding simple step
@@ -7501,39 +7551,19 @@ impl<'a> ProofScope<'a> {
         &self,
         region: &CodeRegionRef,
     ) -> Result<Option<Self>, ClickError> {
-        let target = self.body.resolve_statement_target(region)?;
-        let Some(current) = self.body.current_statement_index()? else {
-            return Err(self
-                .root
-                .step_error("`execute_until` cannot run after function exit"));
+        let Some((body, added_facts)) = self.body.try_linear_execute_until_descendant(region)?
+        else {
+            return Ok(None);
         };
-        if target < current {
-            return Err(self.root.step_error(format!(
-                "`execute_until(statement({target}))` cannot move backward from statement({current})"
-            )));
-        }
-
-        let mut proof = self.body.clone();
         let mut introduced_facts = self.introduced_facts.clone();
-        loop {
-            match proof.current_statement_index()? {
-                Some(current) if current == target => break,
-                Some(current) if current < target => {}
-                Some(_) | None => return Ok(None),
+        for fact in added_facts {
+            if !introduced_facts.contains(&fact) {
+                introduced_facts.push(fact);
             }
-            let Some(next) = proof.try_indexed_statement_step()? else {
-                return Ok(None);
-            };
-            for fact in next.added_facts() {
-                if !introduced_facts.contains(fact) {
-                    introduced_facts.push(fact.clone());
-                }
-            }
-            proof = next;
         }
         let mut next = self.clone();
         next.introduced_facts = introduced_facts;
-        next.body = proof;
+        next.body = body;
         Ok(Some(next))
     }
 

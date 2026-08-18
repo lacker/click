@@ -6023,6 +6023,7 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
             } else {
                 selected = 2;
             }
+            selected = selected + 1;
             return selected;
         }
     "#;
@@ -6037,6 +6038,7 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
             branch {
                 ensuring {
                     fact selected > 0;
+                    fact selected < 2147483647;
                 }
                 then { step(); }
                 else { step(); }
@@ -6044,6 +6046,7 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
             have selected >= 0 by {
                 apply(int32_strictly_positive_is_nonnegative(selected));
             }
+            execute_until(statement(5));
             step();
             frame();
             simp();
@@ -6077,14 +6080,21 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
                     ..
                 }),
                 ProofTactic::StepUsing(_),
+                ProofTactic::StepUsing(_),
                 ProofTactic::FrameUsing { region: None, premises },
                 ..
             ] if matches!(
                     branch.ensuring.as_deref(),
-                    Some([ProofAssertion::Fact(ClickProposition::Comparison {
-                        operator: ComparisonOperator::GreaterThan,
-                        ..
-                    })])
+                    Some([
+                        ProofAssertion::Fact(ClickProposition::Comparison {
+                            operator: ComparisonOperator::GreaterThan,
+                            ..
+                        }),
+                        ProofAssertion::Fact(ClickProposition::Comparison {
+                            operator: ComparisonOperator::LessThan,
+                            ..
+                        }),
+                    ])
                 )
                 && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
                 && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])

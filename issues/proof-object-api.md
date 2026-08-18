@@ -1703,6 +1703,18 @@ later `have result ...` as one proposition on the joined execution Proof,
 because `result` is path-local and is intentionally interpreted by each
 result-aware point Proof.
 
+Straight-line `execute_until(...)` now stays on that common successor as well.
+The bounded search is a Proof operation shared with resource scopes: it
+resolves the named frontier read-only, selects each concrete `StepUsing`, and
+advances only through the returned checked descendant. The scope adapter
+receives the same operation's output-sized fact delta rather than maintaining
+a second search loop. A source regression joins a real two-arm selected value,
+retains a common nested theorem proof, executes a meaningful checked increment
+up to the named return statement, and independently verifies the resulting
+`Branch; Have; StepUsing` expansion. Unsupported or branched prefixes still
+discard the candidate and resume through compatibility search from the
+unchanged root.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

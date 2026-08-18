@@ -130,6 +130,7 @@ fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
                 | ProofTactic::ApplyTheorem(_)
                 | ProofTactic::Transport { .. }
                 | ProofTactic::Have(_)
+                | ProofTactic::ExecuteUntil(_)
                 | ProofTactic::SmartFrame(_)
         )
 }
@@ -236,6 +237,11 @@ fn advance_checked_linear_continuation<'a>(
                 return Ok(None);
             };
             selected.join()?
+        } else if let ProofTactic::ExecuteUntil(region) = &indexed.tactic {
+            let Some(executed) = proof.try_linear_execute_until(region)? else {
+                return Ok(None);
+            };
+            executed
         } else if let ProofTactic::SmartFrame(region) = &indexed.tactic {
             // The checked empty-frame capability is the audited immutable
             // subset. A mutable smart frame may need path-specific planned
