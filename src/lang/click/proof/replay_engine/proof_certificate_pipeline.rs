@@ -204,22 +204,31 @@ pub(in crate::lang::click::proof) fn complete_smart_tactic(
     let proof = ProofCertificate::from_steps(construction.steps.clone());
     let outer_certificate = context.replay.proof_certificate_builder.clone();
     let deferred_before = context.replay.post_execution_tactics.len();
-    let mut verified_result = replay_proof_certificate(
-        context,
-        function_block,
-        parsed_function,
-        claims,
+    let mut verified_result = crate::instrumentation::measure_operation(
+        function_block.signature().name(),
         claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        function,
-        arguments,
-        tactic_index,
-        source_index,
-        &proof,
+        format!(
+            "smart tactic compatibility replay (tactic {tactic_index}, source {source_index})"
+        ),
+        || {
+            replay_proof_certificate(
+                context,
+                function_block,
+                parsed_function,
+                claims,
+                claim_label,
+                function_environment,
+                predicate_environment,
+                click_function_environment,
+                resource_environment,
+                theorem_environment,
+                function,
+                arguments,
+                tactic_index,
+                source_index,
+                &proof,
+            )
+        },
     )
     .map_err(|error| {
         ClickError::new(format!(

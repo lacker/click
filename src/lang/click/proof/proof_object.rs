@@ -1420,8 +1420,8 @@ impl<'a> Proof<'a> {
 
     /// Whether this frame step is inside the deliberately narrow checked
     /// terminal-operation slice. Returning `false` preserves the legacy path
-    /// for region frames and for empty mutable frames whose current surface
-    /// meaning still includes ambient-fact selection.
+    /// for empty mutable function frames whose current surface meaning still
+    /// includes ambient-fact selection.
     fn supports_checked_execution_frame_using(
         &self,
         region: Option<&CodeRegionRef>,
@@ -1431,7 +1431,7 @@ impl<'a> Proof<'a> {
             return Ok(false);
         };
         if !matches!(region, None | Some(CodeRegionRef::Function)) {
-            return Ok(false);
+            return Ok(premises.is_empty());
         }
         if !premises.is_empty() {
             return Ok(true);
@@ -1466,16 +1466,57 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("`frame using` requires function exit"));
         }
         if let Some(region) = region {
+            // Loop effect clauses are declared by frontier-local `loop`
+            // tactics. Bind the exact clauses already checked on this replay
+            // before resolving labels or validating the qualified frame.
+            let frame_function_block =
+                (!execution.replay.frontier_loop_clauses.is_empty()).then(|| {
+                    context.function_block.with_bound_frontier_loop_clauses(
+                        &execution.replay.frontier_loop_clauses.to_vec(),
+                    )
+                });
+            let frame_function_block = frame_function_block
+                .as_ref()
+                .unwrap_or(context.function_block);
             let resolved = resolve_code_region_ref(
-                context.function_block,
+                frame_function_block,
                 region,
                 context.claim_label,
                 context.tactic_index,
             )?;
             if !matches!(resolved, CodeRegion::Function) {
-                return Err(self.step_error(
-                    "checked execution `frame using` currently supports only the function region",
-                ));
+                if !premises.is_empty() {
+                    return Err(self.step_error(
+                        "checked qualified `frame using` does not support explicit premises",
+                    ));
+                }
+                validate_qualified_frame_code_region(
+                    frame_function_block,
+                    context.parsed_function,
+                    resolved,
+                    context.claim_label,
+                    origin.map_or(context.tactic_index, |origin| origin.tactic_index),
+                )?;
+                let origin = origin.unwrap_or(ProofStepOrigin {
+                    tactic_index: context.tactic_index,
+                    source_index: context.tactic_index,
+                });
+                execution.replay.defer_checked_post_execution(
+                    origin.tactic_index,
+                    origin.source_index,
+                    PostExecutionTactic::FrameRegion(region.clone()),
+                );
+                execution.last_step_delta = ExecutionProofStepDelta::default();
+                return Ok(ProofState {
+                    facts: self.state.facts.clone(),
+                    locals: self.state.locals.clone(),
+                    unfolded_predicates: self.state.unfolded_predicates.clone(),
+                    goal: self.state.goal.clone(),
+                    complete: false,
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                    execution: Some(execution),
+                });
             }
         }
 
@@ -1862,22 +1903,17 @@ impl<'a> Proof<'a> {
         tactic_index: usize,
         source_index: usize,
     ) -> Result<Option<Self>, ClickError> {
-        if matches!(self.state.goal, Goal::Frontier(EffectGoalSelection::None)) {
-            return Ok(None);
-        }
-        if !matches!(region, None | Some(CodeRegionRef::Function)) {
-            return Ok(None);
-        }
         if let Some(region) = region {
             let step = SimpleProofStep::FrameUsing {
                 region: Some(region.clone()),
                 premises: Vec::new(),
             };
-            return match self.apply_step_at(step, tactic_index, source_index) {
-                Ok(framed) => Ok(Some(framed)),
-                Err(error) if crate::instrumentation::deadline_exceeded() => Err(error),
-                Err(_) => Ok(None),
-            };
+            return self
+                .apply_step_at(step, tactic_index, source_index)
+                .map(Some);
+        }
+        if matches!(self.state.goal, Goal::Frontier(EffectGoalSelection::None)) {
+            return Ok(None);
         }
         if self.node.depth > 0 {
             let step = SimpleProofStep::FrameUsing {

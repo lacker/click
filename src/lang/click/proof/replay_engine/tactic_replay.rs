@@ -772,6 +772,7 @@ fn try_smart_frame_on_proof<'a>(
         Some(proof) => {
             let certificate = proof.certificate();
             let mut context = proof.into_execution_context()?;
+            let mut ordered_region_frame = false;
             if ordered_deferred {
                 let mut deferred = context
                     .replay
@@ -782,22 +783,32 @@ fn try_smart_frame_on_proof<'a>(
                             "`{claim_label}` tactic {tactic_index}: Proof-owned frame retained no ordered deferral"
                         ))
                     })?;
-                if !matches!(
-                    deferred.tactic,
-                    PostExecutionTactic::CheckedFrameUsing { .. }
-                ) {
+                ordered_region_frame =
+                    matches!(deferred.tactic, PostExecutionTactic::FrameRegion(_));
+                if !ordered_region_frame
+                    && !matches!(
+                        deferred.tactic,
+                        PostExecutionTactic::CheckedFrameUsing { .. }
+                    )
+                {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: Proof-owned frame retained the wrong ordered operation"
                     )));
                 }
-                deferred.surface_recorded = false;
+                if !ordered_region_frame {
+                    deferred.surface_recorded = false;
+                }
                 context.replay.post_execution_tactics.push(deferred);
             }
             *state = context.state;
             *pure_facts = context.pure_facts;
             *replay = context.replay;
             *branch_path = context.branch_path;
-            if !ordered_deferred {
+            // Function frames are recorded by their checked ordered drain.
+            // A region frame contributes facts at that drain but its exact
+            // simple spelling is already owned by this Proof, so retain the
+            // node now just as the former construction path did.
+            if !ordered_deferred || ordered_region_frame {
                 for step in certificate.steps() {
                     replay.proof_certificate_builder.push_step(step.clone());
                 }
@@ -1853,59 +1864,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     }
                     continue;
                 }
-                if region_ref.is_some() {
-                    let proof = ProofCertificate::from_proof_tactics(&[ProofTactic::FrameUsing {
-                        region: region_ref.clone(),
-                        premises: Vec::new(),
-                    }])
-                    .expect("exact frame is a simple tactic");
-                    let construction = ProofCertificateBuilder {
-                        steps: proof.steps().to_vec(),
-                        last_step_entry: replay.proof_certificate_builder.last_step_entry.clone(),
-                        ..ProofCertificateBuilder::default()
-                    };
-                    let result = complete_smart_tactic(
-                        ProofReplayContext {
-                            state,
-                            pure_facts: requirement_pure_facts,
-                            replay,
-                            branch_path,
-                        },
-                        function_block,
-                        parsed_function,
-                        claims,
-                        claim_label,
-                        function_environment,
-                        predicate_environment,
-                        click_function_environment,
-                        resource_environment,
-                        theorem_environment,
-                        function,
-                        arguments,
-                        tactic_index,
-                        source_index,
-                        construction,
-                        false,
-                        true,
-                    )?;
-                    state = result.state;
-                    requirement_pure_facts = result.pure_facts;
-                    replay = result.replay;
-                    branch_path = result.branch_path;
-                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
-                    let slice = end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
-                    if capture_this_tactic {
-                        finish_tactic_expansion_capture(
-                            expansion_capture.as_deref_mut(),
-                            &slice,
-                            false,
-                        );
-                    }
-                    continue;
-                }
+                debug_assert!(region_ref.is_none());
                 require_function_exit(&replay, claim_label, tactic_index, "frame")?;
                 let Some(effect_claim) = claims
                     .iter()

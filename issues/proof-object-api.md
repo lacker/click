@@ -2085,6 +2085,25 @@ checked child proofs, and `split` to remain one persistent proof lineage. A
 pure source regression forbids construction replay and independently verifies
 the three retained rewrites and structural join.
 
+### Progress (2026-08-17: qualified frame transition on Proof)
+
+An explicit smart `frame(loop(N))` or labeled loop frame now advances through
+one checked `SimpleProofStep::FrameUsing` on the immutable `Proof`. The step
+binds the frontier loop clauses already checked by the enclosing loop proof,
+uses the shared structural region validator, and schedules the existing
+audited `FrameRegion` outcome operation. It retains its exact simple node at
+that transition; the replay driver no longer rebuilds the same frame into a
+detached certificate and sends it through `complete_smart_tactic`.
+
+The compatibility replay gateway now emits an explicitly attributed operation
+event including the tactic and source coordinates. The load-bearing symbolic
+loop-bound regression requires the qualified frame not to enter that gateway,
+requires its retained `FrameUsing { region: Loop(0) }` node, expands the proof,
+and independently verifies the expansion. Label resolution and the missing
+loop-effect diagnostic remain covered by their existing regressions. Qualified
+frames with explicit `using` premises remain on the compatibility surface;
+the smart syntax migrated here constructs the exact premise-free simple step.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

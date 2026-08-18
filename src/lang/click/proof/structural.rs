@@ -60,7 +60,31 @@ pub(super) fn validate_frame_code_region(
             }
             Ok(())
         }
-        Some(CodeRegion::Loop(loop_index)) => {
+        Some(code_region) => validate_qualified_frame_code_region(
+            function_block,
+            parsed_function,
+            code_region,
+            claim_label,
+            tactic_index,
+        ),
+    }
+}
+
+/// Validates a code-region-qualified frame independently of the surrounding
+/// function claim. Qualified frames contribute preservation facts for later
+/// proposition checking; unlike an unqualified function frame, their
+/// structural requirements do not depend on whether the current claim is an
+/// ensure or an effect.
+pub(super) fn validate_qualified_frame_code_region(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    code_region: CodeRegion,
+    claim_label: &str,
+    tactic_index: usize,
+) -> Result<(), ClickError> {
+    match code_region {
+        CodeRegion::Function => Ok(()),
+        CodeRegion::Loop(loop_index) => {
             validate_loop_code_region(parsed_function, loop_index, claim_label, tactic_index)?;
             if !function_block.structural_clauses().iter().any(|clause| {
                 clause.region() == &CodeRegion::Loop(loop_index)
@@ -72,7 +96,7 @@ pub(super) fn validate_frame_code_region(
             }
             Ok(())
         }
-        Some(CodeRegion::Statement(statement_index)) => {
+        CodeRegion::Statement(statement_index) => {
             let statement_count = count_statements(parsed_function.body());
             if statement_index >= statement_count {
                 return Err(ClickError::new(format!(

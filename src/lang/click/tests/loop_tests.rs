@@ -1430,10 +1430,46 @@ fn frame_loop_region_uses_frontier_loop_effect_summary_for_ensures() {
             }
         "#;
 
-    crate::instrumentation::with_deadline(std::time::Duration::from_secs(3), || {
-        verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-    })
-    .expect("a qualified frame should prove preservation from the loop effect summary");
+    let (verified, events) = crate::instrumentation::collect(|| {
+        crate::instrumentation::with_deadline(std::time::Duration::from_secs(3), || {
+            verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+        })
+    });
+    let verified =
+        verified.expect("a qualified frame should prove preservation from the loop effect summary");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "fill_n.contract"
+                    && name == "smart tactic compatibility replay (tactic 4, source 6)"
+        )),
+        "the qualified frame's checked Proof successor must bypass compatibility replay: {events:#?}"
+    );
+    assert!(
+        verified[0]
+            .expanded_proof_tactics()
+            .expect("the qualified frame should retain a surface certificate")
+            .iter()
+            .any(|tactic| matches!(
+                tactic,
+                ProofTactic::FrameUsing {
+                    region: Some(CodeRegionRef::Loop(0)),
+                    premises,
+                } if premises.is_empty()
+            )),
+        "the Proof-owned region frame must retain its exact simple step"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("fill_n.c", c_source)],
+        "fill_n",
+        CProofClaim::Grouped,
+    )
+    .expect("the Proof-owned qualified frame should expand");
+    verify_c0_sources(&expanded, &[("fill_n.c", c_source)])
+        .expect("the retained qualified frame should independently reverify");
 }
 
 #[test]
