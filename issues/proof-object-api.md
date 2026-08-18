@@ -2547,6 +2547,46 @@ an additional bound. Both require zero mutable planning transitions, no
 compatibility replay, exact once-only statement steps, and an independently
 verified grouped expansion.
 
+### Progress (2026-08-18: substrate 1 — persistent typed goal collection)
+
+`ProofState` now owns `ProofGoals`: a persistent `GoalId`-keyed collection
+paired with the lineage-local id allocator, replacing the former single
+`goal`/`complete` pair. Roots allocate their obligation's id; goal-preserving
+refinement rules (`intro`, `witness`, `rewrite`, goal predicate unfold, and
+the frame's effect-selection update) keep it; closers retire it; and
+completion is the explicit empty-collection invariant. The normative identity
+rules above are the specification this slice implements. A regression pins
+fork stability, refinement id preservation, discharge retirement, and forked
+sibling isolation. Four allocation regressions now permit the one constant
+goal-collection node their operations legitimately write; their bounds remain
+independent of proof size.
+
+### Progress (2026-08-18: substrate 2 — bounded attempt combinators)
+
+The untrusted search layer now has one shared combinator module deliberately
+outside the audited core: it compiles against the same `pub(super)` `Proof`
+surface smart tactics use and owns no semantic authority. `attempt`,
+`first_success`, `try_steps`, and `try_sequence` run transactional candidates
+from a shared immutable root under a deterministic `AttemptBudget`;
+exhaustion is a prompt bounded miss. `candidate_outcome` is the single place
+a checked operation's rejection becomes a search miss, so an error raised
+with the global deadline exceeded aborts the search loudly instead of
+masquerading as one more rejection — previously the shared closure searches
+swallowed deadline errors and let them resurface later, misattributed, from
+fallback paths.
+
+`try_direct_logical_closure`, `try_simp_closure`, and the structural closure
+search now run on these combinators with `Result<Option<Proof>>` signatures
+through their production callers; the point/outcome atomic-derivation helpers
+retain their internal `Option` idiom behind one deadline check at the `simp`
+search boundary until their own migration. Regressions pin: a locally
+successful prefix whose continuation fails returns the unchanged ancestor and
+publishes no partial expansion; N candidate suffixes over one shared checked
+prefix cost N suffix checks with the prefix checked once and only the
+accepted path retained; budget exhaustion attempts exactly the admitted
+candidates; and the same rejected candidate is a miss without a deadline but
+a loud abort with one exceeded.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

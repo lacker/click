@@ -2,6 +2,7 @@ use super::diagnostics::*;
 use super::validation::{collect_called_predicates, collect_resource_count_families, tactic_name};
 use super::*;
 
+mod attempt;
 mod claim_proofs;
 mod cursor_execution;
 mod execution_planning;

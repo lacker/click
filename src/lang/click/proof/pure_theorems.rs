@@ -468,7 +468,7 @@ fn verify_theorem_ensure(
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
-            );
+            )?;
             if checked_certificate.is_none() {
                 prove_pure_theorem_goal(
                     claim_label,
@@ -495,7 +495,7 @@ fn verify_theorem_ensure(
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
-            );
+            )?;
             if checked_certificate.is_none() {
                 prove_pure_theorem_goal(
                     claim_label,
@@ -664,7 +664,7 @@ fn check_direct_pure_goal_with_proof(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
-) -> Option<ProofCertificate> {
+) -> Result<Option<ProofCertificate>, ClickError> {
     let root = Proof::for_pure_surface_goal(
         claim_label,
         &context.requires,
@@ -675,9 +675,11 @@ fn check_direct_pure_goal_with_proof(
         click_function_environment,
         theorem_environment,
     );
-    let proof = root.try_simp_closure()?;
+    let Some(proof) = root.try_simp_closure()? else {
+        return Ok(None);
+    };
     debug_assert!(proof.is_complete());
-    Some(proof.certificate())
+    Ok(Some(proof.certificate()))
 }
 
 fn verify_kernel_standard_theorem_axiom(
@@ -951,7 +953,7 @@ fn check_pure_script_with_proof(
     }
 
     if matches!(tactics, [ProofTactic::Simp])
-        && let Some(proof) = root.try_simp_closure()
+        && let Some(proof) = root.try_simp_closure()?
     {
         return Ok(Some(proof.certificate()));
     }

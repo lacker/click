@@ -3406,11 +3406,11 @@ pub(super) fn finish_ordered_proof_replay(
                                                     scope
                                                 };
                                             let selected_scope = if let Some(scope) =
-                                                scope.try_direct_logical_closure()
+                                                scope.try_direct_logical_closure()?
                                             {
                                                 Some(scope)
                                             } else if existence_candidate.is_none()
-                                                && let Some(scope) = scope.try_simp_closure()
+                                                && let Some(scope) = scope.try_simp_closure()?
                                             {
                                                 Some(scope)
                                             } else if existence_candidate.is_none() {

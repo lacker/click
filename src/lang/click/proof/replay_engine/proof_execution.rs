@@ -410,7 +410,7 @@ fn solve_nested_have<'a>(
 ) -> Result<Option<ProofScope<'a>>, ClickError> {
     let selected = match &have.proof {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
-            nested.try_simp_closure()
+            nested.try_simp_closure()?
         }
         SourceProof::Script(body) => {
             if let Some(selected) = nested.try_linear_smart_script(body)? {

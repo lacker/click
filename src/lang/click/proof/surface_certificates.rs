@@ -7026,7 +7026,7 @@ fn certify_outcome_simp_have(
         if scope.goal()? != goal {
             return None;
         }
-        let scope = scope.try_simp_closure()?;
+        let scope = scope.try_simp_closure().ok().flatten()?;
         let checked = scope.join().ok()?;
         let tactics = checked.certificate().to_proof_tactics();
         (tactics.len() == 1).then(|| tactics[0].clone())

@@ -3579,22 +3579,32 @@ impl<'a> Proof<'a> {
     /// A small shared search combinator for structural proposition closure.
     /// Every candidate is accepted only through `apply_step`; `intro` is the
     /// sole nonterminal move and strictly removes one outer goal connective.
-    pub(super) fn try_direct_logical_closure(&self) -> Option<Self> {
+    ///
+    /// A miss is `Ok(None)` and leaves `self` the unchanged authority. An
+    /// error is a tooling failure such as an exceeded deadline; it must abort
+    /// the enclosing search rather than read as one more rejection.
+    pub(super) fn try_direct_logical_closure(&self) -> Result<Option<Self>, ClickError> {
+        let mut budget = attempt::AttemptBudget::unbounded();
         let mut proof = self.clone();
         loop {
-            for closer in [
-                SimpleProofStep::Assumption,
-                SimpleProofStep::Normalize,
-                SimpleProofStep::Split,
-                SimpleProofStep::Left,
-                SimpleProofStep::Right,
-                SimpleProofStep::Enumerate,
-            ] {
-                if let Ok(closed) = proof.apply_step(closer) {
-                    return Some(closed);
-                }
+            if let Some(closed) = attempt::try_steps(
+                &proof,
+                &mut budget,
+                [
+                    SimpleProofStep::Assumption,
+                    SimpleProofStep::Normalize,
+                    SimpleProofStep::Split,
+                    SimpleProofStep::Left,
+                    SimpleProofStep::Right,
+                    SimpleProofStep::Enumerate,
+                ],
+            )? {
+                return Ok(Some(closed));
             }
-            proof = proof.apply_step(SimpleProofStep::Intro).ok()?;
+            match attempt::candidate_outcome(proof.apply_step(SimpleProofStep::Intro))? {
+                Some(introduced) => proof = introduced,
+                None => return Ok(None),
+            }
         }
     }
 
@@ -3606,9 +3616,9 @@ impl<'a> Proof<'a> {
     /// applications, rewrites, and nested `have` scopes. The candidate
     /// advances this same `Proof`; no semantic result is produced before
     /// those simple steps have been accepted.
-    pub(super) fn try_simp_closure(&self) -> Option<Self> {
-        if let Some(proof) = self.try_direct_logical_closure() {
-            return Some(proof);
+    pub(super) fn try_simp_closure(&self) -> Result<Option<Self>, ClickError> {
+        if let Some(proof) = self.try_direct_logical_closure()? {
+            return Ok(Some(proof));
         }
         let atomic = (|| {
             let (
@@ -3632,30 +3642,60 @@ impl<'a> Proof<'a> {
                 .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
                 .or_else(|| self.try_selected_disjunction_cases(&premise_pairs))
         })();
-        if atomic.is_some() {
-            return atomic;
+        if let Some(atomic) = atomic {
+            return Ok(Some(atomic));
         }
-        let surface_goal = self.surface_goal()?.clone();
+        // The atomic helpers still classify their internal candidate misses
+        // as `Option`; surface a deadline that fired inside them here rather
+        // than continuing into structural search with it exceeded.
+        check_verification_deadline()?;
+        let Some(surface_goal) = self.surface_goal().cloned() else {
+            return Ok(None);
+        };
         self.try_structural_simp_closure(&surface_goal)
     }
 
     /// Refines the Proof-owned Surface goal through audited scopes and steps.
     /// The caller cannot supply a second description of the judgment: this
     /// syntax is the view paired with the kernel goal in `PropositionGoal`.
-    fn try_structural_simp_closure(&self, surface_goal: &ClickProposition) -> Option<Self> {
-        let goal = self.goal()?;
+    fn try_structural_simp_closure(
+        &self,
+        surface_goal: &ClickProposition,
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(goal) = self.goal() else {
+            return Ok(None);
+        };
         match (surface_goal, goal) {
-            (ClickProposition::Implies(_, _), Proposition::Implies(_, _)) => self
-                .apply_step(SimpleProofStep::Intro)
-                .ok()?
-                .try_simp_closure(),
+            (ClickProposition::Implies(_, _), Proposition::Implies(_, _)) => {
+                match attempt::candidate_outcome(self.apply_step(SimpleProofStep::Intro))? {
+                    Some(introduced) => introduced.try_simp_closure(),
+                    None => Ok(None),
+                }
+            }
             (ClickProposition::And(surface_left, surface_right), Proposition::And(_, _)) => {
-                let left = self.begin_have(surface_left.as_ref().clone()).ok()?;
-                let left = left.try_simp_closure()?;
-                let proof = left.join().ok()?;
-                let right = proof.begin_have(surface_right.as_ref().clone()).ok()?;
-                let right = right.try_simp_closure()?;
-                right.join().ok()?.apply_step(SimpleProofStep::Split).ok()
+                let Some(left) =
+                    attempt::candidate_outcome(self.begin_have(surface_left.as_ref().clone()))?
+                else {
+                    return Ok(None);
+                };
+                let Some(left) = left.try_simp_closure()? else {
+                    return Ok(None);
+                };
+                let Some(proof) = attempt::candidate_outcome(left.join())? else {
+                    return Ok(None);
+                };
+                let Some(right) =
+                    attempt::candidate_outcome(proof.begin_have(surface_right.as_ref().clone()))?
+                else {
+                    return Ok(None);
+                };
+                let Some(right) = right.try_simp_closure()? else {
+                    return Ok(None);
+                };
+                let Some(joined) = attempt::candidate_outcome(right.join())? else {
+                    return Ok(None);
+                };
+                attempt::candidate_outcome(joined.apply_step(SimpleProofStep::Split))
             }
             (ClickProposition::Or(surface_left, surface_right), Proposition::Or(_, _)) => {
                 for (surface, closer) in [
@@ -3663,17 +3703,26 @@ impl<'a> Proof<'a> {
                     (surface_right.as_ref(), SimpleProofStep::Right),
                 ] {
                     let selected = (|| {
-                        let scope = self.begin_have(surface.clone()).ok()?;
-                        let scope = scope.try_simp_closure()?;
-                        scope.join().ok()?.apply_step(closer.clone()).ok()
+                        let Some(scope) =
+                            attempt::candidate_outcome(self.begin_have(surface.clone()))?
+                        else {
+                            return Ok(None);
+                        };
+                        let Some(scope) = scope.try_simp_closure()? else {
+                            return Ok(None);
+                        };
+                        let Some(joined) = attempt::candidate_outcome(scope.join())? else {
+                            return Ok(None);
+                        };
+                        attempt::candidate_outcome(joined.apply_step(closer.clone()))
                     })();
-                    if selected.is_some() {
-                        return selected;
+                    if let Some(selected) = selected? {
+                        return Ok(Some(selected));
                     }
                 }
-                None
+                Ok(None)
             }
-            _ => None,
+            _ => Ok(None),
         }
     }
 
@@ -3774,6 +3823,8 @@ impl<'a> Proof<'a> {
             };
             if let Some(closed) = rewritten
                 .try_direct_logical_closure()
+                .ok()
+                .flatten()
                 .or_else(|| rewritten.try_typed_atomic_simp_closure())
             {
                 return Some(closed);
@@ -3851,7 +3902,7 @@ impl<'a> Proof<'a> {
                 let Ok(scope) = scope.apply_step(SimpleProofStep::Rewrite(equality)) else {
                     continue;
                 };
-                let Some(scope) = scope.try_direct_logical_closure() else {
+                let Some(scope) = scope.try_direct_logical_closure().ok().flatten() else {
                     continue;
                 };
                 let joined = scope.join().ok()?;
@@ -3868,7 +3919,7 @@ impl<'a> Proof<'a> {
                 if applied.is_complete() {
                     return Some(applied);
                 }
-                if let Some(closed) = applied.try_direct_logical_closure() {
+                if let Some(closed) = applied.try_direct_logical_closure().ok().flatten() {
                     return Some(closed);
                 }
             }
@@ -3901,12 +3952,14 @@ impl<'a> Proof<'a> {
             let mut complete = true;
             for (index, assumed_surface) in branch_surfaces.into_iter().enumerate() {
                 let branch = &branches.arms[index];
-                let selected = branch.try_simp_closure().or_else(|| {
+                let selected = branch.try_simp_closure().ok().flatten().or_else(|| {
                     let rewritten = branch
                         .apply_step(SimpleProofStep::Rewrite(assumed_surface.clone()))
                         .ok()?;
                     rewritten
                         .try_direct_logical_closure()
+                        .ok()
+                        .flatten()
                         .or_else(|| rewritten.try_typed_atomic_simp_closure())
                 });
                 let Some(selected) = selected else {
@@ -4304,7 +4357,7 @@ impl<'a> Proof<'a> {
                     proof = applied;
                 }
                 ProofTactic::Simp => {
-                    let Some(closed) = proof.try_simp_closure() else {
+                    let Some(closed) = proof.try_simp_closure()? else {
                         return Ok(None);
                     };
                     proof = closed;
@@ -4314,7 +4367,7 @@ impl<'a> Proof<'a> {
                     let selected = match &have.proof {
                         SourceProof::Default
                         | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
-                            scope.try_simp_closure()
+                            scope.try_simp_closure()?
                         }
                         SourceProof::Script(body) if script_contains_linear_search(body) => {
                             scope.try_linear_smart_script(body)?
@@ -8849,18 +8902,24 @@ impl<'a> ProofScope<'a> {
 
     /// Runs the small shared smart closure search inside the nested proof.
     /// Every accepted candidate still advances through `Proof::apply_step`.
-    pub(super) fn try_direct_logical_closure(&self) -> Option<Self> {
+    pub(super) fn try_direct_logical_closure(&self) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self.body.try_direct_logical_closure()? else {
+            return Ok(None);
+        };
         let mut next = self.clone();
-        next.body = self.body.try_direct_logical_closure()?;
-        Some(next)
+        next.body = body;
+        Ok(Some(next))
     }
 
     /// Runs the migrated `simp` search inside the nested proof and retains
     /// the accepted descendant directly.
-    pub(super) fn try_simp_closure(&self) -> Option<Self> {
+    pub(super) fn try_simp_closure(&self) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self.body.try_simp_closure()? else {
+            return Ok(None);
+        };
         let mut next = self.clone();
-        next.body = self.body.try_simp_closure()?;
-        Some(next)
+        next.body = body;
+        Ok(Some(next))
     }
 
     /// Runs one supported smart script inside the owned nested body and
@@ -9684,6 +9743,168 @@ mod tests {
                 matches!(marked.sole_goal(), Some(&Goal::Frontier(actual)) if actual == selection)
             );
         }
+    }
+
+    fn pure_identity_fixture() -> PureTheoremContext {
+        PureTheoremContext {
+            memory: CMemory::new(),
+            values: BTreeMap::new(),
+            array_refs: BTreeMap::new(),
+            requires: Vec::new(),
+            surface_requirements: SurfacePropositionMap::default(),
+        }
+    }
+
+    #[test]
+    fn attempt_discards_failed_continuation_and_shares_the_checked_prefix() {
+        let fact = indexed_fact(7);
+        let goal = Proposition::Implies(Box::new(fact.clone()), Box::new(fact));
+        let theorem_context = pure_identity_fixture();
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let root = Proof::for_pure_goal(
+            "attempt",
+            &[],
+            goal,
+            &theorem_context,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        );
+
+        // A locally successful prefix whose continuation fails is one
+        // discarded candidate: the ancestor is unchanged and no partial
+        // expansion is published.
+        let mut budget = attempt::AttemptBudget::unbounded();
+        let missed = attempt::attempt(&root, &mut budget, |candidate| {
+            let prefix = attempt::candidate_outcome(candidate.apply_step(SimpleProofStep::Intro))?
+                .expect("intro is locally valid on the implication goal");
+            // The continuation demands a step the prefix cannot support.
+            attempt::candidate_outcome(prefix.apply_step(SimpleProofStep::Split))
+        })
+        .expect("a rejected continuation is a miss, not a tooling failure");
+        assert!(missed.is_none());
+        assert!(root.certificate().steps().is_empty());
+        assert!(!root.is_complete());
+
+        // N candidate suffixes over one shared checked prefix cost N suffix
+        // checks: every attempt starts from the same prefix state, which was
+        // produced by exactly one accepted `Intro`.
+        let prefix = root
+            .apply_step(SimpleProofStep::Intro)
+            .expect("intro should refine the implication goal");
+        let mut attempts = 0usize;
+        let mut budget = attempt::AttemptBudget::unbounded();
+        let selected = attempt::first_success(
+            &prefix,
+            &mut budget,
+            [
+                SimpleProofStep::Split,
+                SimpleProofStep::Left,
+                SimpleProofStep::Right,
+                SimpleProofStep::Assumption,
+            ],
+            |shared, step| {
+                attempts += 1;
+                assert!(Arc::ptr_eq(&shared.state, &prefix.state));
+                attempt::candidate_outcome(shared.apply_step(step))
+            },
+        )
+        .expect("candidate misses must not abort the search")
+        .expect("the assumption suffix should close the goal");
+        assert_eq!(attempts, 4);
+        assert!(selected.is_complete());
+        assert_eq!(
+            selected.certificate().steps(),
+            &[SimpleProofStep::Intro, SimpleProofStep::Assumption],
+            "the retained certificate contains only the accepted path"
+        );
+
+        // An exhausted deterministic budget is a prompt bounded miss.
+        let mut attempts = 0usize;
+        let mut budget = attempt::AttemptBudget::new(1);
+        let bounded = attempt::first_success(
+            &prefix,
+            &mut budget,
+            [
+                SimpleProofStep::Split,
+                SimpleProofStep::Assumption,
+                SimpleProofStep::Left,
+            ],
+            |shared, step| {
+                attempts += 1;
+                attempt::candidate_outcome(shared.apply_step(step))
+            },
+        )
+        .expect("budget exhaustion is a miss, not an error");
+        assert!(bounded.is_none());
+        assert_eq!(attempts, 1, "only the admitted candidate may be attempted");
+
+        // An all-or-nothing sequence discards its partial descendant.
+        let mut budget = attempt::AttemptBudget::unbounded();
+        let sequence = attempt::try_sequence(
+            &root,
+            &mut budget,
+            &[SimpleProofStep::Intro, SimpleProofStep::Split],
+        )
+        .expect("a rejected sequence tail is a miss");
+        assert!(sequence.is_none());
+        let mut budget = attempt::AttemptBudget::unbounded();
+        let sequence = attempt::try_sequence(
+            &root,
+            &mut budget,
+            &[SimpleProofStep::Intro, SimpleProofStep::Assumption],
+        )
+        .expect("an accepted sequence is not an error")
+        .expect("the checked sequence should close the goal");
+        assert_eq!(
+            sequence.certificate().steps(),
+            &[SimpleProofStep::Intro, SimpleProofStep::Assumption]
+        );
+    }
+
+    #[test]
+    fn attempt_reports_deadline_failure_instead_of_a_rejection() {
+        let goal = indexed_fact(7);
+        let theorem_context = pure_identity_fixture();
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let root = Proof::for_pure_goal(
+            "deadline",
+            &[],
+            goal,
+            &theorem_context,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        );
+
+        // Without a deadline the unprovable candidate is an ordinary miss.
+        let mut budget = attempt::AttemptBudget::unbounded();
+        let missed = attempt::try_steps(&root, &mut budget, [SimpleProofStep::Assumption])
+            .expect("a rejected candidate is a miss");
+        assert!(missed.is_none());
+
+        // With the deadline exceeded, the same rejection is a tooling
+        // failure: the search aborts loudly instead of reading the error as
+        // one more rejected candidate and continuing.
+        let aborted = crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
+            let mut budget = attempt::AttemptBudget::unbounded();
+            attempt::try_steps(&root, &mut budget, [SimpleProofStep::Assumption])
+        });
+        assert!(
+            aborted.is_err(),
+            "an exceeded deadline must abort the search, not read as a miss"
+        );
+        let aborted = crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
+            root.try_direct_logical_closure()
+        });
+        assert!(
+            aborted.is_err(),
+            "the shared closure search must propagate an exceeded deadline"
+        );
     }
 
     #[test]
@@ -11354,6 +11575,7 @@ mod tests {
                 .expect("the exact equality should produce a checked rewrite successor");
             let closed = rewritten
                 .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
                 .expect("the rewritten Surface conjunction should retain both child proofs");
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -12845,6 +13067,7 @@ mod tests {
             let before = fact_node_allocations();
             let closed = root
                 .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
                 .expect("the typed path should build one checked Proof descendant");
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -12936,6 +13159,7 @@ mod tests {
             let before = fact_node_allocations();
             let closed = root
                 .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
                 .expect("one selected equality should refine and close the Proof");
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -13042,6 +13266,7 @@ mod tests {
             let before = fact_node_allocations();
             let closed = root
                 .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
                 .expect("the predecessor search should retain one structured descendant");
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -13141,6 +13366,7 @@ mod tests {
             let before = fact_node_allocations();
             let closed = root
                 .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
                 .expect("the typed equality path should build one checked Proof descendant");
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -13246,6 +13472,7 @@ mod tests {
             let before = fact_node_allocations();
             let closed = root
                 .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
                 .expect("the typed order path should build one checked point Proof descendant");
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -13582,6 +13809,7 @@ mod tests {
                 let before = fact_node_allocations();
                 let closed = root
                     .try_simp_closure()
+                    .expect("smart search must not exceed its deadline")
                     .expect("the typed increment rule should build one checked Proof descendant");
                 let allocations = fact_node_allocations() - before;
                 let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -13855,6 +14083,7 @@ mod tests {
                 let before = fact_node_allocations();
                 let closed = root
                     .try_simp_closure()
+                    .expect("smart search must not exceed its deadline")
                     .expect("the typed two-premise rule should build one checked Proof descendant");
                 let allocations = fact_node_allocations() - before;
                 let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -13968,6 +14197,7 @@ mod tests {
             let before = fact_node_allocations();
             let closed = root
                 .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
                 .expect("the strict-lower increment path should advance one Proof");
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -14124,6 +14354,7 @@ mod tests {
             let before = fact_node_allocations();
             let closed = root
                 .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
                 .expect("the typed equality rule should build one checked Proof descendant");
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -14326,6 +14557,7 @@ mod tests {
             let before = fact_node_allocations();
             let closed = root
                 .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
                 .expect("the typed >=/not-> rule should build one checked Proof descendant");
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -14431,6 +14663,7 @@ mod tests {
             let before = fact_node_allocations();
             let closed = root
                 .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
                 .expect("the typed <=/!= rule should build one checked Proof descendant");
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -14569,7 +14802,10 @@ mod tests {
                 );
                 let retained_root = root.clone();
                 let before = fact_node_allocations();
-                let closed = root.try_simp_closure().expect(
+                let closed = root
+                    .try_simp_closure()
+                    .expect("smart search must not exceed its deadline")
+                    .expect(
                     "the typed symbolic arithmetic rule should build one checked Proof descendant",
                 );
                 let allocations = fact_node_allocations() - before;
@@ -14722,6 +14958,7 @@ mod tests {
             let before = fact_node_allocations();
             let closed = root
                 .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
                 .expect("the selected disjunction should close both checked Proof arms");
             let allocations = fact_node_allocations() - before;
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -14908,6 +15145,7 @@ mod tests {
                 let before = fact_node_allocations();
                 let closed = root
                     .try_simp_closure()
+                    .expect("smart search must not exceed its deadline")
                     .unwrap_or_else(|| panic!("the {label} should retain its recursive proof"));
                 let allocations = fact_node_allocations() - before;
                 assert!(
@@ -15122,6 +15360,7 @@ mod tests {
                 let before = fact_node_allocations();
                 let closed = root
                     .try_simp_closure()
+                    .expect("smart search must not exceed its deadline")
                     .unwrap_or_else(|| {
                         panic!(
                             "the typed predecessor rule {theorem_name} (nested={nested}) should build a checked Proof descendant"

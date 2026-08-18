@@ -541,7 +541,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         );
         let checked = match proof {
             SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
-                root.try_simp_closure()
+                root.try_simp_closure()?
             }
             SourceProof::Script(tactics) => root.try_linear_smart_script(tactics)?,
             SourceProof::Tactic(SmartTactic::Frame) => None,
