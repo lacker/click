@@ -78,7 +78,11 @@ pub(super) struct ProofBranches<'a> {
 /// into one ordered resource transition.
 struct ExecutionOutcomeProofBranches<'a> {
     root: Proof<'a>,
-    root_checkpoint: ProofCheckpoint<'a>,
+    /// The recorded split with each arm's child goal id and entry marker,
+    /// then-arm before else-arm.
+    split: SplitId,
+    child_goals: [GoalId; 2],
+    entries: [ProofCheckpoint<'a>; 2],
     condition: ClickProposition,
     arms: [Proof<'a>; 2],
     root_post_execution_count: usize,
@@ -92,7 +96,13 @@ struct ExecutionOutcomeProofBranches<'a> {
 #[derive(Clone)]
 pub(super) struct ExecutionProofBranches<'a> {
     root: Proof<'a>,
-    root_checkpoint: ProofCheckpoint<'a>,
+    /// The recorded split with each arm's child goal id and entry provenance
+    /// marker, then-arm before else-arm. This identity lives on the
+    /// container, never on an arm value: a spliced foreign arm must not be
+    /// able to carry its own credentials into this split's join.
+    split: SplitId,
+    child_goals: [GoalId; 2],
+    entries: [Option<ProofCheckpoint<'a>>; 2],
     statement_index: usize,
     continuation_index: usize,
     continuation_remaining: Option<Arc<CStatement>>,
@@ -2530,6 +2540,7 @@ impl<'a> Proof<'a> {
         let arguments = checked.arguments().to_vec();
         let polarity_facts = [then_fact, else_fact];
         let polarity_surfaces = [condition.clone(), else_surface];
+        let (split, child_goals, children_goals) = self.state.goals.branch_children::<2>();
         let mut arms = Vec::with_capacity(2);
         for arm_index in 0..2 {
             let mut execution = root_execution.clone();
@@ -2564,12 +2575,18 @@ impl<'a> Proof<'a> {
                     facts,
                     locals: self.state.locals.clone(),
                     unfolded_predicates: self.state.unfolded_predicates.clone(),
-                    goals: self.state.goals.clone(),
+                    goals: children_goals[arm_index].clone(),
                     added_facts: Arc::new(added_facts.clone()),
                     checked_facts: Arc::new(added_facts),
                     execution: Some(execution),
                 }),
-                node: self.node.clone(),
+                // The entry marker records this split instance; the join
+                // accepts only descendants that pass through it.
+                node: Arc::new(ProofNode {
+                    parent: Some(self.node.clone()),
+                    step: None,
+                    depth: self.node.depth,
+                }),
             });
         }
         let mut arms = arms.into_iter();
@@ -2581,7 +2598,9 @@ impl<'a> Proof<'a> {
             .expect("the else outcome partition was constructed");
         Ok(ExecutionOutcomeProofBranches {
             root: self.clone(),
-            root_checkpoint: self.checkpoint(),
+            split,
+            child_goals,
+            entries: [then_arm.checkpoint(), else_arm.checkpoint()],
             condition,
             arms: [then_arm, else_arm],
             root_post_execution_count: root_execution.replay.post_execution_tactics.len(),
@@ -2792,6 +2811,8 @@ impl<'a> Proof<'a> {
                 context.claim_label, context.tactic_index
             ),
         )?;
+        let (split, child_goals, children_goals) = self.state.goals.branch_children::<2>();
+        let mut entries: [Option<ProofCheckpoint<'a>>; 2] = [None, None];
         let mut arms: [Option<ExecutionProofArm<'a>>; 2] = [None, None];
         for transition in transitions {
             let take_then = transition.is_true;
@@ -2894,22 +2915,30 @@ impl<'a> Proof<'a> {
             for fact in &transition.path_facts {
                 introduced_facts.insert(fact.clone());
             }
+            let arm_index = usize::from(!take_then);
+            let proof = Proof {
+                context: self.context.clone(),
+                state: Arc::new(ProofState {
+                    facts: transition.pure_facts,
+                    locals: self.state.locals.clone(),
+                    unfolded_predicates: self.state.unfolded_predicates.clone(),
+                    goals: children_goals[arm_index].clone(),
+                    added_facts: Arc::new(transition.path_facts.clone()),
+                    checked_facts: Arc::new(transition.path_facts.clone()),
+                    execution: Some(arm_execution),
+                }),
+                // The structural certificate is owned by the container and
+                // installed atomically by the checked join. The entry marker
+                // carries no step; its identity records this split instance.
+                node: Arc::new(ProofNode {
+                    parent: Some(self.node.clone()),
+                    step: None,
+                    depth: self.node.depth,
+                }),
+            };
+            entries[arm_index] = Some(proof.checkpoint());
             let arm = ExecutionProofArm {
-                proof: Proof {
-                    context: self.context.clone(),
-                    state: Arc::new(ProofState {
-                        facts: transition.pure_facts,
-                        locals: self.state.locals.clone(),
-                        unfolded_predicates: self.state.unfolded_predicates.clone(),
-                        goals: self.state.goals.clone(),
-                        added_facts: Arc::new(transition.path_facts.clone()),
-                        checked_facts: Arc::new(transition.path_facts.clone()),
-                        execution: Some(arm_execution),
-                    }),
-                    // The structural certificate is owned by the container
-                    // and installed atomically by the checked join.
-                    node: self.node.clone(),
-                },
+                proof,
                 introduced_facts,
                 introduced_effect_facts: Vec::new(),
                 introduced_function_entry_prerequisites: PersistentOrderedSet::default(),
@@ -2917,14 +2946,16 @@ impl<'a> Proof<'a> {
                 introduced_unfolded_predicates: PersistentOrderedSet::default(),
                 condition_theorem: transition.theorem,
             };
-            arms[usize::from(!take_then)] = Some(arm);
+            arms[arm_index] = Some(arm);
         }
         if arms.iter().all(Option::is_none) {
             return Err(self.step_error("`branch` found no feasible C `if` arm"));
         }
         Ok(ExecutionProofBranches {
             root: self.clone(),
-            root_checkpoint: self.checkpoint(),
+            split,
+            child_goals,
+            entries,
             statement_index,
             continuation_index: source_region.continuation_node,
             continuation_remaining: remaining.map(Arc::new),
@@ -6582,9 +6613,34 @@ impl<'a> ExecutionOutcomeProofBranches<'a> {
             unreachable!("execution outcome branches retained a non-execution context")
         };
         let expected_effects = self.root.selected_effect_indices(context)?;
+        for (name, (arm, expected)) in ["then", "else"]
+            .into_iter()
+            .zip(self.arms.iter().zip(self.child_goals))
+        {
+            if arm.sole_goal_id() != Some(expected) {
+                return Err(self.root.step_error(format!(
+                    "execution outcome {name} arm does not own the goal recorded by split {:?}",
+                    self.split
+                )));
+            }
+        }
         let arm_certificates = [
-            self.arms[0].certificate_since(&self.root_checkpoint)?,
-            self.arms[1].certificate_since(&self.root_checkpoint)?,
+            self.arms[0]
+                .certificate_since(&self.entries[0])
+                .map_err(|error| {
+                    self.root.step_error(format!(
+                        "execution outcome then arm did not derive from split {:?} ({error:?})",
+                        self.split
+                    ))
+                })?,
+            self.arms[1]
+                .certificate_since(&self.entries[1])
+                .map_err(|error| {
+                    self.root.step_error(format!(
+                        "execution outcome else arm did not derive from split {:?} ({error:?})",
+                        self.split
+                    ))
+                })?,
         ];
         let mut checked_deferrals = Vec::with_capacity(2);
         for (name, arm) in [("then", &self.arms[0]), ("else", &self.arms[1])] {
@@ -6689,6 +6745,34 @@ impl<'a> ExecutionOutcomeProofBranches<'a> {
 }
 
 impl<'a> ExecutionProofBranches<'a> {
+    /// Extracts one arm's checked body through its recorded entry marker and
+    /// requires the arm to still own its recorded child goal. A derivation
+    /// from another split of the same root fails here transactionally
+    /// instead of being spliced into the structured certificate.
+    fn arm_certificate(
+        root: &Proof<'a>,
+        split: SplitId,
+        expected_goal: GoalId,
+        entry: Option<&ProofCheckpoint<'a>>,
+        arm: &ExecutionProofArm<'a>,
+    ) -> Result<ProofCertificate, ClickError> {
+        let Some(entry) = entry else {
+            return Err(root.step_error(format!(
+                "split {split:?} recorded no entry for this branch arm"
+            )));
+        };
+        if arm.proof.sole_goal_id() != Some(expected_goal) {
+            return Err(root.step_error(format!(
+                "branch arm does not own the goal recorded by split {split:?}"
+            )));
+        }
+        arm.proof.certificate_since(entry).map_err(|error| {
+            root.step_error(format!(
+                "branch arm did not derive from split {split:?} ({error:?})"
+            ))
+        })
+    }
+
     fn derived_join_continuation(&self) -> Option<ExecutionBranchJoinContinuation> {
         let root_execution = self.root.state.execution.as_ref()?;
         let mut continuations = root_execution.replay.frontier.continuations.clone();
@@ -7474,10 +7558,17 @@ impl<'a> ExecutionProofBranches<'a> {
         validate_arm("else", false, &else_arm)?;
 
         let terminal_certificate =
-            |arm: &ExecutionProofArm<'a>,
+            |arm_index: usize,
+             arm: &ExecutionProofArm<'a>,
              empty_source_arm: bool,
              path_condition: ClickProposition| {
-                let body = arm.proof.certificate_since(&self.root_checkpoint)?;
+                let body = Self::arm_certificate(
+                    &self.root,
+                    self.split,
+                    self.child_goals[arm_index],
+                    self.entries[arm_index].as_ref(),
+                    arm,
+                )?;
                 let entry_steps = 1 + usize::from(empty_source_arm);
                 let mut steps = Vec::with_capacity(entry_steps + body.steps().len());
                 steps.push(SimpleProofStep::StepUsing(vec![path_condition]));
@@ -7485,9 +7576,14 @@ impl<'a> ExecutionProofBranches<'a> {
                 steps.extend_from_slice(body.steps());
                 Ok::<_, ClickError>(ProofCertificate::from_steps(steps))
             };
-        let then_proof =
-            terminal_certificate(&then_arm, empty_source_arms[0], surface_condition.clone())?;
+        let then_proof = terminal_certificate(
+            0,
+            &then_arm,
+            empty_source_arms[0],
+            surface_condition.clone(),
+        )?;
         let else_proof = terminal_certificate(
+            1,
             &else_arm,
             empty_source_arms[1],
             negate_click_proposition(&surface_condition),
@@ -7793,7 +7889,13 @@ impl<'a> ExecutionProofBranches<'a> {
         } else {
             else_branch.as_ref()
         };
-        let body = arm.proof.certificate_since(&self.root_checkpoint)?;
+        let body = Self::arm_certificate(
+            &self.root,
+            self.split,
+            self.child_goals[arm_index],
+            self.entries[arm_index].as_ref(),
+            arm,
+        )?;
         let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
         let path_condition = if take_then {
             surface_condition.clone()
@@ -7942,8 +8044,20 @@ impl<'a> ExecutionProofBranches<'a> {
         validate_arm("then", true, &then_arm)?;
         validate_arm("else", false, &else_arm)?;
 
-        let then_proof = then_arm.proof.certificate_since(&self.root_checkpoint)?;
-        let else_proof = else_arm.proof.certificate_since(&self.root_checkpoint)?;
+        let then_proof = Self::arm_certificate(
+            &self.root,
+            self.split,
+            self.child_goals[0],
+            self.entries[0].as_ref(),
+            &then_arm,
+        )?;
+        let else_proof = Self::arm_certificate(
+            &self.root,
+            self.split,
+            self.child_goals[1],
+            self.entries[1].as_ref(),
+            &else_arm,
+        )?;
         let then_execution = then_arm
             .proof
             .state
@@ -8337,7 +8451,14 @@ impl<'a> ExecutionProofBranches<'a> {
                 added_facts.push(fact.clone());
             }
         }
-        let selected = arm.proof.certificate_since(&self.root_checkpoint)?;
+        let decided_index = usize::from(!take_then);
+        let selected = Self::arm_certificate(
+            &self.root,
+            self.split,
+            self.child_goals[decided_index],
+            self.entries[decided_index].as_ref(),
+            arm,
+        )?;
         let empty = ProofCertificate::from_steps(Vec::new());
         let (then_proof, else_proof) = if take_then {
             (selected, empty)
@@ -8386,7 +8507,14 @@ impl<'a> ExecutionProofBranches<'a> {
         };
         let validate_arm =
             |name: &str, expected: bool, arm: &ExecutionProofArm<'a>| -> Result<(), ClickError> {
-                let body = arm.proof.certificate_since(&self.root_checkpoint)?;
+                let arm_index = usize::from(!expected);
+                let body = Self::arm_certificate(
+                    &self.root,
+                    self.split,
+                    self.child_goals[arm_index],
+                    self.entries[arm_index].as_ref(),
+                    arm,
+                )?;
                 if require_empty && !body.steps().is_empty() {
                     return Err(self.root.step_error(format!(
                         "cannot use the empty execution join for a nonempty {name} arm"
@@ -8423,8 +8551,20 @@ impl<'a> ExecutionProofBranches<'a> {
             };
         validate_arm("then", true, &then_arm)?;
         validate_arm("else", false, &else_arm)?;
-        let then_proof = then_arm.proof.certificate_since(&self.root_checkpoint)?;
-        let else_proof = else_arm.proof.certificate_since(&self.root_checkpoint)?;
+        let then_proof = Self::arm_certificate(
+            &self.root,
+            self.split,
+            self.child_goals[0],
+            self.entries[0].as_ref(),
+            &then_arm,
+        )?;
+        let else_proof = Self::arm_certificate(
+            &self.root,
+            self.split,
+            self.child_goals[1],
+            self.entries[1].as_ref(),
+            &else_arm,
+        )?;
         let then_state = &then_arm
             .proof
             .state
@@ -17627,6 +17767,38 @@ mod tests {
         assert!(error.message().contains("did not establish fact"));
         assert!(Arc::ptr_eq(&root.state, &retained.state));
         assert!(root.certificate().steps().is_empty());
+
+        // An arm advanced under a different split of the same root has
+        // identical replay metadata — both splits opened the same C `if` —
+        // so only the recorded entry marker distinguishes it. The join must
+        // reject the splice transactionally.
+        let root = make_root(16, CState::new());
+        let genuine = root
+            .begin_execution_branch()
+            .expect("identity test should open both arms")
+            .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+            .expect("then assignment should check")
+            .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+            .expect("else assignment should check");
+        let foreign = root
+            .begin_execution_branch()
+            .expect("a second split of the same root should open both arms")
+            .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+            .expect("foreign then assignment should check");
+        let mut spliced = genuine.clone();
+        spliced.arms[0] = foreign.arms[0].clone();
+        let error = spliced
+            .join_with_interface(Vec::new())
+            .err()
+            .expect("a foreign arm must not satisfy this split's join");
+        assert!(
+            error.message().contains("did not derive from split"),
+            "{error:?}"
+        );
+        assert!(root.certificate().steps().is_empty());
+        genuine
+            .join_with_interface(Vec::new())
+            .expect("the recorded arms still join after the rejected splice");
 
         let marker_clause = ResourceClause::Declared {
             access: ResourceAccessMode::Own,

@@ -2602,6 +2602,22 @@ isolation, foreign-arm rejection, and the legitimate join's retained
 certificate. The execution branch containers still join through the shared
 root checkpoint and migrate onto recorded split identity next.
 
+### Progress (2026-08-18: recorded split identity for execution branches)
+
+`begin_execution_branch` and the terminal outcome partition now allocate the
+same recorded split identity: a `SplitId` with rule-ordered child goal ids,
+each feasible arm re-keyed to its recorded goal under a fresh entry
+provenance marker. The identity lives on the container, never on an arm
+value — an early draft stored each arm's marker on the arm itself, and the
+new adversarial regression correctly rejected that design by joining a
+spliced foreign arm that carried its own credentials. Every join
+(`join_terminal`, `finish_decided`, both interface joins, and `join_checked`)
+extracts arm certificates through one shared verified operation that requires
+the container-recorded goal id and entry marker, so an arm advanced under a
+different split of the same root — with identical replay metadata and
+colliding numeric ids — fails transactionally. The regression pins that
+rejection and that the genuine arms still join afterward.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
