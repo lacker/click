@@ -2951,6 +2951,27 @@ by an explicit existence-candidate check rather than by the removed error,
 and lifting it requires expansion parity for goal-checked existence
 closures.
 
+### Progress (2026-08-18: the drain writes through the outcome goal)
+
+The sync direction flipped: one authoritative import of the prepared
+working set happens at path start, migrated tactics advance the evolving
+proof directly with no per-tactic re-import, and only a legacy mutation —
+the `Fold`/`CloseOpen` resource projections, a certified region-frame goal,
+a fallback arm, or the `simp` exit planner — marks the working set dirty for
+one re-import at the end of that iteration. Transport and `have` keep their
+imports because theirs are semantic supersets (checked store equations and
+memory-effect summaries), not drift repairs.
+
+A debug net replaced the dropped re-imports and immediately earned its keep
+twice: it caught that legacy fallback arms mutate the vector without the
+goal (the dirty-flag design is the answer), and then that the goal
+legitimately carries **more** than the vector — the superset imports persist
+across tactics on the goal where the legacy vector rebuilt them per tactic.
+The invariant is one-directional and asserted corpus-wide in debug: the
+outcome goal's facts contain the legacy working set between mutations. The
+outcome goal is now the richer context; the vector is maintenance for the
+shrinking legacy set, which is exactly the posture the deletion slice needs.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

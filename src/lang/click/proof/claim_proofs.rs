@@ -982,6 +982,35 @@ fn proof_case_fact_conflicts(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Debug net for the drain's write-through invariant: between legacy
+/// mutations, the evolving outcome goal's fact context must contain the
+/// legacy working set. The goal may legitimately carry more — the transport
+/// and `have` imports add checked store equations and memory-effect
+/// summaries the legacy vector never held.
+#[cfg(debug_assertions)]
+fn assert_outcome_sync(
+    proof: &Proof<'_>,
+    requirements: &[Proposition],
+    proof_label: &str,
+    path_index: usize,
+) {
+    let goal_facts = proof
+        .available_fact_vector()
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let legacy = requirements
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    if !goal_facts.is_superset(&legacy) {
+        let only_legacy = legacy.difference(&goal_facts).take(3).collect::<Vec<_>>();
+        panic!(
+            "`{proof_label}` path {path_index}: the outcome goal is missing drain working-set \
+             facts: {only_legacy:?}"
+        );
+    }
+}
+
 pub(super) fn finish_ordered_proof_replay(
     mut expansion_capture: Option<&mut ExpansionCapture>,
     context: ProofReplayContext,
@@ -1783,14 +1812,21 @@ pub(super) fn finish_ordered_proof_replay(
                     // This path's evolving result-aware proof: tactic kinds
                     // that have migrated onto the outcome goal advance this
                     // one lineage and retain their checked steps directly.
-                    // The interim resync adapter re-imports the legacy
-                    // working set before each migrated tactic until the
-                    // remaining kinds stop mutating the vector.
+                    // One authoritative import of the prepared working set
+                    // happens here; the tactic loop then writes through the
+                    // goal, and only a legacy vector mutation re-imports.
+                    // Transport and `have` keep their own imports because
+                    // theirs are semantic supersets, not drift repairs.
                     let mut outcome_proof =
                         outcome_substrate.as_ref().and_then(|(substrate, _)| {
                             let goal = substrate.outcome_goal_for_path(path_index)?;
-                            substrate.focus(goal).ok()
+                            let focused = substrate.focus(goal).ok()?;
+                            focused.with_drained_outcome_facts(&path_requirements).ok()
                         });
+                    // Set by any arm that mutates the legacy working set
+                    // without writing through the outcome goal; the end of
+                    // the iteration re-imports once.
+                    let mut working_set_dirty = false;
                     drop(_path_preparation_timing);
                     let _post_execution_timing = crate::instrumentation::OperationTiming::new(
                         function_block.signature().name(),
@@ -1871,6 +1907,10 @@ pub(super) fn finish_ordered_proof_replay(
                                     &proof_label,
                                     path_index,
                                 )?;
+                                // A legacy resource transition rewrote the
+                                // working set without writing through the
+                                // outcome goal.
+                                working_set_dirty = true;
                                 record_post_execution_surface_tactic(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
@@ -1916,6 +1956,10 @@ pub(super) fn finish_ordered_proof_replay(
                                     &proof_label,
                                     path_index,
                                 )?;
+                                // A legacy resource transition rewrote the
+                                // working set without writing through the
+                                // outcome goal.
+                                working_set_dirty = true;
                             }
                             PostExecutionTactic::UnfoldPredicate(name) => {
                                 let CFunctionOutcome::Return {
@@ -1933,10 +1977,15 @@ pub(super) fn finish_ordered_proof_replay(
                                         // The migrated path: the tactic advances
                                         // this path's one evolving outcome proof
                                         // and retains its checked step directly.
-                                        let resynced = evolving
-                                            .with_drained_outcome_facts(&path_requirements)?;
-                                        let before = resynced.checkpoint();
-                                        let unfolded = resynced.apply_step(
+                                        #[cfg(debug_assertions)]
+                                        assert_outcome_sync(
+                                            &evolving,
+                                            &path_requirements,
+                                            &proof_label,
+                                            path_index,
+                                        );
+                                        let before = evolving.checkpoint();
+                                        let unfolded = evolving.apply_step(
                                             SimpleProofStep::UnfoldPredicate(name.clone()),
                                         )?;
                                         let added_facts = unfolded.added_facts().to_vec();
@@ -1944,6 +1993,7 @@ pub(super) fn finish_ordered_proof_replay(
                                         outcome_proof = Some(unfolded);
                                         (added_facts, certificate)
                                     } else {
+                                        working_set_dirty = true;
                                         let transition_facts = path.execution_facts();
                                         let proof = Proof::for_point_frontier(
                                             &proof_label,
@@ -2009,16 +2059,22 @@ pub(super) fn finish_ordered_proof_replay(
                                         // the goal-aware view and the accepted
                                         // application advances this path's
                                         // evolving outcome proof.
-                                        let resynced = evolving
-                                            .with_drained_outcome_facts(&path_requirements)?;
-                                        let before = resynced.checkpoint();
+                                        #[cfg(debug_assertions)]
+                                        assert_outcome_sync(
+                                            &evolving,
+                                            &path_requirements,
+                                            &proof_label,
+                                            path_index,
+                                        );
+                                        let before = evolving.checkpoint();
                                         let applied =
-                                            resynced.apply_theorem_application(application)?;
+                                            evolving.apply_theorem_application(application)?;
                                         let added_facts = applied.added_facts().to_vec();
                                         let certificate = applied.certificate_since(&before)?;
                                         outcome_proof = Some(applied);
                                         (added_facts, certificate)
                                     } else {
+                                        working_set_dirty = true;
                                         let proof = Proof::for_point_frontier(
                                             &proof_label,
                                             *tactic_index,
@@ -2082,9 +2138,14 @@ pub(super) fn finish_ordered_proof_replay(
                                     // The migrated explicit case: the checked
                                     // application advances this path's
                                     // evolving outcome proof directly.
-                                    let resynced =
-                                        evolving.with_drained_outcome_facts(&path_requirements)?;
-                                    let applied = resynced.apply_step(
+                                    #[cfg(debug_assertions)]
+                                    assert_outcome_sync(
+                                        &evolving,
+                                        &path_requirements,
+                                        &proof_label,
+                                        path_index,
+                                    );
+                                    let applied = evolving.apply_step(
                                         SimpleProofStep::ApplyTheoremUsing {
                                             application: application.clone(),
                                             premises: premises.clone(),
@@ -2094,6 +2155,7 @@ pub(super) fn finish_ordered_proof_replay(
                                     outcome_proof = Some(applied);
                                     added_facts
                                 } else {
+                                    working_set_dirty = true;
                                     let proof = Proof::for_point_frontier(
                                         &proof_label,
                                         *tactic_index,
@@ -2247,6 +2309,9 @@ pub(super) fn finish_ordered_proof_replay(
                                 } else {
                                     None
                                 };
+                                if evolving_have.is_none() {
+                                    working_set_dirty = true;
+                                }
                                 let checked_smart_have = if evolving_have.is_some() {
                                     evolving_have
                                 } else if Proof::supports_linear_smart_source(&have.proof) {
@@ -2770,6 +2835,7 @@ pub(super) fn finish_ordered_proof_replay(
                                         outcome_proof = Some(transported);
                                         (added_facts, checked_facts, certificate)
                                     } else {
+                                        working_set_dirty = true;
                                         let proof = Proof::for_point_frontier(
                                             &proof_label,
                                             *tactic_index,
@@ -2870,9 +2936,16 @@ pub(super) fn finish_ordered_proof_replay(
                                 // the evolving outcome proof supplies them
                                 // when this path derived a goal.
                                 let point_root = match (outcome_proof.as_ref(), &outcome) {
-                                    (Some(evolving), _) => Some(
-                                        evolving.with_drained_outcome_facts(&path_requirements)?,
-                                    ),
+                                    (Some(evolving), _) => {
+                                        #[cfg(debug_assertions)]
+                                        assert_outcome_sync(
+                                            evolving,
+                                            &path_requirements,
+                                            &proof_label,
+                                            path_index,
+                                        );
+                                        Some(evolving.clone())
+                                    }
                                     (
                                         None,
                                         CFunctionOutcome::Return {
@@ -3010,9 +3083,16 @@ pub(super) fn finish_ordered_proof_replay(
                                 // the evolving outcome proof supplies them
                                 // when this path derived a goal.
                                 let point_root = match (outcome_proof.as_ref(), &outcome) {
-                                    (Some(evolving), _) => Some(
-                                        evolving.with_drained_outcome_facts(&path_requirements)?,
-                                    ),
+                                    (Some(evolving), _) => {
+                                        #[cfg(debug_assertions)]
+                                        assert_outcome_sync(
+                                            evolving,
+                                            &path_requirements,
+                                            &proof_label,
+                                            path_index,
+                                        );
+                                        Some(evolving.clone())
+                                    }
                                     (
                                         None,
                                         CFunctionOutcome::Return {
@@ -3138,7 +3218,14 @@ pub(super) fn finish_ordered_proof_replay(
                                 // path lineage itself is not advanced.
                                 let point_root = match outcome_proof.as_ref() {
                                     Some(evolving) => {
-                                        evolving.with_drained_outcome_facts(&path_requirements)?
+                                        #[cfg(debug_assertions)]
+                                        assert_outcome_sync(
+                                            evolving,
+                                            &path_requirements,
+                                            &proof_label,
+                                            path_index,
+                                        );
+                                        evolving.clone()
                                     }
                                     None => Proof::for_point_frontier(
                                         &proof_label,
@@ -3258,6 +3345,10 @@ pub(super) fn finish_ordered_proof_replay(
                                         }
                                     }
                                 }
+                                // The certified region-frame goal entered the
+                                // working set without writing through the
+                                // outcome goal.
+                                working_set_dirty = true;
                             }
                             PostExecutionTactic::Frame => {
                                 let mut closed_effect = false;
@@ -3558,6 +3649,10 @@ pub(super) fn finish_ordered_proof_replay(
                                 }
                             }
                             PostExecutionTactic::Simp => {
+                                // The legacy exit planner behind the direct
+                                // path may mutate the working set; re-import
+                                // at the end of the iteration.
+                                working_set_dirty = true;
                                 let capturing_this_tactic = replay
                                     .deferred_tactic_capture
                                     .as_ref()
@@ -3639,8 +3734,16 @@ pub(super) fn finish_ordered_proof_replay(
                                             existence_candidate.is_none(),
                                             outcome_proof.as_ref(),
                                         ) {
-                                            (true, Some(evolving)) => evolving
-                                                .with_drained_outcome_facts(&path_requirements)?,
+                                            (true, Some(evolving)) => {
+                                                #[cfg(debug_assertions)]
+                                                assert_outcome_sync(
+                                                    evolving,
+                                                    &path_requirements,
+                                                    &proof_label,
+                                                    path_index,
+                                                );
+                                                evolving.clone()
+                                            }
                                             _ => Proof::for_point_frontier_with_premise_anchor(
                                                 &proof_label,
                                                 *tactic_index,
@@ -4044,6 +4147,17 @@ pub(super) fn finish_ordered_proof_replay(
                                     }
                                 }
                             }
+                        }
+                        if working_set_dirty {
+                            // A legacy arm mutated the working set without
+                            // writing through the outcome goal; one
+                            // re-import restores the write-through invariant
+                            // for the next tactic.
+                            if let Some(evolving) = outcome_proof.take() {
+                                outcome_proof =
+                                    Some(evolving.with_drained_outcome_facts(&path_requirements)?);
+                            }
+                            working_set_dirty = false;
                         }
                         if crate::instrumentation::deadline_exceeded() {
                             return Err(ClickError::new(format!(
