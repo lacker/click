@@ -2203,6 +2203,16 @@ independently checked by the whole-claim gate and by source expansion, but
 that check performs no search: it consumes the already-selected `StepUsing`,
 theorem-backed `Have`, and exact `FrameUsing` operations.
 
+The same transaction now covers grouped effect scripts. Contextual frame
+selection combines each path's derivations across every selected effect claim
+before it applies the single terminal `FrameUsing`; it no longer plans only
+the first claim and then discovers during checking that a later claim needs
+different evidence. Regressions cover both one grouped mutable effect and two
+independently true complete-footprint claims whose symbolic clause requires
+an additional bound. Both require zero mutable planning transitions, no
+compatibility replay, exact once-only statement steps, and an independently
+verified grouped expansion.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

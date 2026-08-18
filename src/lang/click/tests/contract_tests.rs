@@ -544,6 +544,159 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
 }
 
 #[test]
+fn grouped_contextual_frame_retains_complete_effect_script_on_proof() {
+    let c_source = r#"
+            int32 write_in_bounds(int32 p[], int32 i, int32 n, int32* unrelated) {
+                p[i] = 9;
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_in_bounds.c";
+
+            int32 write_in_bounds(int32 p[], int32 i, int32 n, int32* unrelated) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires i >= 0;
+                requires i < n;
+                requires loadable(p[0..n]);
+                requires loadable(unrelated[0..1]);
+                consumes p[0..n];
+                mutable p[0..n];
+            } by {
+                execute();
+                frame();
+            }
+        "#;
+
+    let ((verified, events), planning_transitions) = collect_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| {
+            verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
+        })
+    });
+    let verified = verified.expect("the grouped effect proof should verify");
+    assert!(
+        planning_transitions.is_empty(),
+        "the complete grouped effect script must search only on checked Proof descendants: \
+         {planning_transitions:#?}"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name.starts_with("smart tactic compatibility replay")
+        )),
+        "the complete grouped effect script must not enter compatibility replay: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the grouped effect proof should retain a simple certificate");
+    assert_eq!(
+        expanded
+            .iter()
+            .filter(|tactic| matches!(tactic, ProofTactic::StepUsing(_)))
+            .count(),
+        2,
+        "the grouped store and return should each be retained exactly once: {expanded:#?}"
+    );
+    assert!(
+        !format!("{expanded:?}").contains("unrelated"),
+        "the grouped certificate selected an unrelated indexed fact: {expanded:#?}"
+    );
+    assert!(matches!(
+        expanded.last(),
+        Some(ProofTactic::FrameUsing { region: None, .. })
+    ));
+    ProofCertificate::from_proof_tactics(&expanded)
+        .expect("the grouped effect expansion should be a simple certificate");
+
+    let expanded_source = expand_c0_claim_source(
+        click_source,
+        &[("write_in_bounds.c", c_source)],
+        "write_in_bounds",
+        CProofClaim::Grouped,
+    )
+    .expect("the grouped effect proof should expand");
+    verify_c0_sources(&expanded_source, &[("write_in_bounds.c", c_source)])
+        .expect("the grouped retained certificate should independently verify");
+}
+
+#[test]
+fn grouped_contextual_frame_combines_multiple_effect_certificates_on_proof() {
+    let c_source = r#"
+            int32 write_both(int32* p, int32* q, int32 n, int32* unrelated) {
+                p[0] = 1;
+                q[0] = 2;
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_both.c";
+
+            int32 write_both(int32* p, int32* q, int32 n, int32* unrelated) {
+                requires n >= 1;
+                requires loadable(p[0..1]);
+                requires loadable(q[0..1]);
+                requires loadable(unrelated[0..1]);
+                consumes p[0..1];
+                consumes q[0..1];
+                mutable p[0..1], q[0..1];
+                mutable p[0..n], q[0..n];
+            } by {
+                execute();
+                frame();
+            }
+        "#;
+
+    let ((verified, events), planning_transitions) = collect_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| {
+            verify_c0_sources(click_source, &[("write_both.c", c_source)])
+        })
+    });
+    let verified = verified.expect("the grouped multi-effect proof should verify");
+    assert!(
+        planning_transitions.is_empty(),
+        "the grouped multi-effect script must search only on checked Proof descendants: \
+         {planning_transitions:#?}"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name.starts_with("smart tactic compatibility replay")
+        )),
+        "the grouped multi-effect script must not enter compatibility replay: {events:#?}"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the grouped multi-effect proof should retain a simple certificate");
+    assert_eq!(
+        expanded
+            .iter()
+            .filter(|tactic| matches!(tactic, ProofTactic::StepUsing(_)))
+            .count(),
+        3,
+        "both stores and the return should be retained exactly once: {expanded:#?}"
+    );
+    assert!(
+        !format!("{expanded:?}").contains("unrelated"),
+        "the grouped multi-effect certificate selected an unrelated fact: {expanded:#?}"
+    );
+    ProofCertificate::from_proof_tactics(&expanded)
+        .expect("the grouped multi-effect expansion should be a simple certificate");
+
+    let expanded_source = expand_c0_claim_source(
+        click_source,
+        &[("write_both.c", c_source)],
+        "write_both",
+        CProofClaim::Grouped,
+    )
+    .expect("the grouped multi-effect proof should expand");
+    verify_c0_sources(&expanded_source, &[("write_both.c", c_source)])
+        .expect("the grouped multi-effect certificate should independently verify");
+}
+
+#[test]
 fn contextual_frame_expands_independently_in_branch_leaves() {
     let c_source = r#"
             int32 write_selected(int32 p[2], int32 flag) {

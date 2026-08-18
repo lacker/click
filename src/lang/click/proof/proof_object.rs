@@ -1823,7 +1823,6 @@ impl<'a> Proof<'a> {
             return Ok(None);
         }
         let effect_indices = self.selected_effect_indices(context)?;
-        let effect = context.function_block.effects()[effect_indices[0]].effect();
         let execution = execution_state.replay.execution().ok_or_else(|| {
             self.step_error("function-exit proof has no checked execution outcomes")
         })?;
@@ -1849,17 +1848,25 @@ impl<'a> Proof<'a> {
             }
             let mut path_facts = available.clone();
             path_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-            path_derivations.push(plan_effect_clause_derivations(
-                context.claim_label,
-                path_index,
-                path.effect_facts(),
-                &path_facts,
-                effect,
-                context.parsed_function.parameters(),
-                context.arguments,
-                pre_state,
-                path.outcome(),
-            )?);
+            let mut combined = Vec::new();
+            for effect_index in &effect_indices {
+                for derivation in plan_effect_clause_derivations(
+                    context.claim_label,
+                    path_index,
+                    path.effect_facts(),
+                    &path_facts,
+                    context.function_block.effects()[*effect_index].effect(),
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    pre_state,
+                    path.outcome(),
+                )? {
+                    if !combined.contains(&derivation) {
+                        combined.push(derivation);
+                    }
+                }
+            }
+            path_derivations.push(combined);
         }
         let skeleton = surface_branch_skeleton(self.certificate().steps());
         let mut construction_replay = execution_state.replay.clone();
