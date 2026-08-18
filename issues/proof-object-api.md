@@ -2697,6 +2697,43 @@ consume these goals — evolving one persistent result-aware proof per outcome
 through its tactics — instead of constructing a fresh point root per outcome
 per tactic.
 
+### Outcome-drain migration plan (written 2026-08-18, next work)
+
+The ordered outcome drain (`finish_ordered_proof_replay` and the per-path
+per-tactic loop in `claim_proofs.rs`) is the remaining large consumer of the
+legacy replay boundary: it receives a `ProofReplayContext`, maintains each
+path's working set as a mutable `path_requirements: Vec<Proposition>`
+(seventy-plus touch points), and constructs a fresh `for_point_frontier`
+`Proof` per outcome per tactic. Typed outcome goals exist; this migration
+makes them load-bearing. Stage it as independently green slices:
+
+1. **Entry seam.** The drain entry accepts the terminal execution `Proof`
+   (or its derived outcome-goal set) alongside the legacy context wherever
+   the caller came through the checked path; `into_execution_context`
+   callers that feed the drain thread the proof through instead of exporting
+   first. Callers still on wholly legacy paths pass no proof and change
+   nothing.
+2. **Per-outcome persistent proofs.** For drained paths with an available
+   outcome goal, the drain evolves that one result-aware `Proof` through the
+   path's tactics: each already-migrated point operation (`unfold`,
+   `transport using`, `apply using`, `have`, rewrite, `simp` closures)
+   advances the outcome-focused proof, and `path_requirements` for
+   still-legacy tactic kinds is materialized from the goal's facts at an
+   explicit adapter boundary rather than maintained as parallel state.
+3. **Case routing on goals.** Proof-level `if` case assumptions select and
+   refine outcome goals through the recorded split structure instead of
+   re-deriving membership per path from the requirements vector.
+4. **Delete the vector.** When every drained tactic kind consumes the goal,
+   remove `path_requirements` and the per-tactic `for_point_frontier`
+   constructions; the drain becomes traversal over outcome goals plus the
+   ordered resource transitions it already owns.
+
+Each slice keeps the existing drain diagnostics and source-order semantics;
+parity is judged by the full gate, and any behavioral difference is a
+finding, not an accepted cost. Do not begin slice 2 by adding a second
+requirements representation that survives the migration — the goal's
+persistent facts are the working set, and the vector dies with slice 4.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
