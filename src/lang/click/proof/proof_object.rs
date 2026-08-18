@@ -511,8 +511,34 @@ struct ExecutionProofStepDelta {
 /// proof; later slices will add the frontier transition steps themselves.
 #[derive(Clone)]
 enum Goal {
-    Proposition(Arc<Proposition>),
+    Proposition(PropositionGoal),
     Frontier(EffectGoalSelection),
+}
+
+/// One proposition judgment keeps its checked kernel meaning and, when the
+/// judgment originated in Surface Click, the exact syntax needed to refine
+/// structural goals. Both values belong to the same immutable Proof state;
+/// smart search must not carry a second caller-owned description of its goal.
+#[derive(Clone)]
+struct PropositionGoal {
+    kernel: Arc<Proposition>,
+    surface: Option<Arc<ClickProposition>>,
+}
+
+impl Goal {
+    fn proposition(kernel: Proposition) -> Self {
+        Self::Proposition(PropositionGoal {
+            kernel: Arc::new(kernel),
+            surface: None,
+        })
+    }
+
+    fn surface_proposition(kernel: Proposition, surface: ClickProposition) -> Self {
+        Self::Proposition(PropositionGoal {
+            kernel: Arc::new(kernel),
+            surface: Some(Arc::new(surface)),
+        })
+    }
 }
 
 /// Function-effect obligations owned alongside an execution frontier.
@@ -629,6 +655,52 @@ impl<'a> Proof<'a> {
         click_function_environment: &'a ClickFunctionEnvironment,
         theorem_environment: &'a TheoremEnvironment,
     ) -> Self {
+        Self::for_pure_goal_with_surface(
+            claim_label,
+            requires,
+            goal,
+            None,
+            theorem_context,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn for_pure_surface_goal(
+        claim_label: &'a str,
+        requires: &[Proposition],
+        goal: Proposition,
+        surface_goal: ClickProposition,
+        theorem_context: &'a PureTheoremContext,
+        predicate_environment: &'a PredicateEnvironment,
+        click_function_environment: &'a ClickFunctionEnvironment,
+        theorem_environment: &'a TheoremEnvironment,
+    ) -> Self {
+        Self::for_pure_goal_with_surface(
+            claim_label,
+            requires,
+            goal,
+            Some(surface_goal),
+            theorem_context,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn for_pure_goal_with_surface(
+        claim_label: &'a str,
+        requires: &[Proposition],
+        goal: Proposition,
+        surface_goal: Option<ClickProposition>,
+        theorem_context: &'a PureTheoremContext,
+        predicate_environment: &'a PredicateEnvironment,
+        click_function_environment: &'a ClickFunctionEnvironment,
+        theorem_environment: &'a TheoremEnvironment,
+    ) -> Self {
         let facts = ProofFacts::from_ordered(requires);
         Self {
             context: Arc::new(ProofContext::Pure(PureProofContext {
@@ -642,7 +714,9 @@ impl<'a> Proof<'a> {
                 facts,
                 locals: ProofLocals::default(),
                 unfolded_predicates: PersistentOrderedSet::default(),
-                goal: Goal::Proposition(Arc::new(goal)),
+                goal: surface_goal
+                    .map(|surface| Goal::surface_proposition(goal.clone(), surface))
+                    .unwrap_or_else(|| Goal::proposition(goal)),
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
@@ -678,7 +752,50 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
             available,
-            Goal::Proposition(Arc::new(goal)),
+            Goal::proposition(goal),
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            None,
+            None,
+            program_point_states,
+            surface_propositions,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            unfolded_predicates,
+            effect_facts,
+            &[],
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
+    pub(super) fn for_point_surface_goal(
+        claim_label: &'a str,
+        tactic_index: usize,
+        available: &'a [Proposition],
+        goal: Proposition,
+        surface_goal: ClickProposition,
+        parameters: &'a [syntax::C0Parameter],
+        arguments: &'a [CExpression],
+        pre_state: &'a CState,
+        state: &'a CState,
+        program_point_states: &'a ProgramPointStates,
+        surface_propositions: &'a SurfacePropositionMap,
+        predicate_environment: &'a PredicateEnvironment,
+        click_function_environment: &'a ClickFunctionEnvironment,
+        theorem_environment: &'a TheoremEnvironment,
+        unfolded_predicates: &'a [String],
+        effect_facts: &'a [ExecutionPureFact],
+    ) -> Self {
+        Self::for_point(
+            claim_label,
+            tactic_index,
+            available,
+            Goal::surface_proposition(goal, surface_goal),
             parameters,
             arguments,
             pre_state,
@@ -723,7 +840,7 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
             available,
-            Goal::Proposition(Arc::new(goal)),
+            Goal::proposition(goal),
             parameters,
             arguments,
             pre_state,
@@ -963,7 +1080,14 @@ impl<'a> Proof<'a> {
 
     pub(super) fn goal(&self) -> Option<&Proposition> {
         match &self.state.goal {
-            Goal::Proposition(goal) => Some(goal),
+            Goal::Proposition(goal) => Some(&goal.kernel),
+            Goal::Frontier(_) => None,
+        }
+    }
+
+    fn surface_goal(&self) -> Option<&ClickProposition> {
+        match &self.state.goal {
+            Goal::Proposition(goal) => goal.surface.as_deref(),
             Goal::Frontier(_) => None,
         }
     }
@@ -997,6 +1121,14 @@ impl<'a> Proof<'a> {
     /// checked `have` facts before another external obligation is selected;
     /// a proof that already owns a proposition goal cannot replace it.
     pub(super) fn focus_point_goal(&self, goal: Proposition) -> Result<Self, ClickError> {
+        self.focus_point_goal_with_surface(goal, None)
+    }
+
+    fn focus_point_goal_with_surface(
+        &self,
+        goal: Proposition,
+        surface_goal: Option<ClickProposition>,
+    ) -> Result<Self, ClickError> {
         if !matches!(self.context.as_ref(), ProofContext::Point(_))
             || !matches!(&self.state.goal, Goal::Frontier(_))
         {
@@ -1010,7 +1142,9 @@ impl<'a> Proof<'a> {
                 facts: self.state.facts.clone(),
                 locals: self.state.locals.clone(),
                 unfolded_predicates: self.state.unfolded_predicates.clone(),
-                goal: Goal::Proposition(Arc::new(goal)),
+                goal: surface_goal
+                    .map(|surface| Goal::surface_proposition(goal.clone(), surface))
+                    .unwrap_or_else(|| Goal::proposition(goal)),
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
@@ -1029,7 +1163,7 @@ impl<'a> Proof<'a> {
     /// fact but owns fresh provenance for that obligation's closing steps.
     fn focus_point_surface_goal(&self, goal: &ClickProposition) -> Result<Self, ClickError> {
         let kernel = self.lower_surface_goal(goal, "point obligation")?;
-        self.focus_point_goal(kernel)
+        self.focus_point_goal_with_surface(kernel, Some(goal.clone()))
     }
 
     /// Completes externally owned point obligations against this frontier and
@@ -1723,6 +1857,10 @@ impl<'a> Proof<'a> {
 
     #[inline(never)]
     fn apply_intro(&self) -> Result<ProofState, ClickError> {
+        let surface_goal = match self.surface_goal() {
+            Some(ClickProposition::Implies(_, consequent)) => Some(consequent.as_ref().clone()),
+            _ => None,
+        };
         let goal = self
             .proposition_goal("`intro` requires a proposition goal")?
             .clone();
@@ -1748,7 +1886,9 @@ impl<'a> Proof<'a> {
             facts,
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: Goal::Proposition(Arc::new(goal)),
+            goal: surface_goal
+                .map(|surface| Goal::surface_proposition(goal.clone(), surface))
+                .unwrap_or_else(|| Goal::proposition(goal)),
             complete: false,
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
@@ -2096,7 +2236,7 @@ impl<'a> Proof<'a> {
                 facts: self.state.facts.clone(),
                 locals: self.state.locals.clone(),
                 unfolded_predicates: self.state.unfolded_predicates.clone(),
-                goal: Goal::Proposition(Arc::new(kernel.clone())),
+                goal: Goal::surface_proposition(kernel.clone(), proposition.clone()),
                 complete: false,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
@@ -2845,16 +2985,16 @@ impl<'a> Proof<'a> {
             tactic_index,
         )?;
         let goal = match &self.state.goal {
-            Goal::Proposition(goal) => Goal::Proposition(Arc::new(
+            Goal::Proposition(goal) => Goal::proposition(
                 unfold_predicates_in_proposition(
                     predicate_environment,
                     click_function_environment,
                     std::slice::from_ref(name),
-                    goal,
+                    &goal.kernel,
                     checked.facts.assumptions(),
                 )
                 .map_err(|message| self.step_error(message))?,
-            )),
+            ),
             Goal::Frontier(selection) => Goal::Frontier(*selection),
         };
         let mut unfolded_predicates = self.state.unfolded_predicates.clone();
@@ -3128,46 +3268,45 @@ impl<'a> Proof<'a> {
         if let Some(proof) = self.try_direct_logical_closure() {
             return Some(proof);
         }
-        let (
-            goal,
-            derivation,
-            premise_pairs,
-            all_premises_replayable,
-            point_application_closes_goal,
-        ) = self.selected_simp_derivation()?;
-        all_premises_replayable
-            .then(|| {
-                self.check_typed_atomic_simp_candidate(
-                    &goal,
-                    &derivation,
-                    &premise_pairs,
-                    point_application_closes_goal,
-                )
-            })
-            .flatten()
-            .or_else(|| self.try_single_selected_equality_rewrite_closure(&premise_pairs))
-            .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
-            .or_else(|| self.try_selected_disjunction_cases(&premise_pairs))
+        let atomic = (|| {
+            let (
+                goal,
+                derivation,
+                premise_pairs,
+                all_premises_replayable,
+                point_application_closes_goal,
+            ) = self.selected_simp_derivation()?;
+            all_premises_replayable
+                .then(|| {
+                    self.check_typed_atomic_simp_candidate(
+                        &goal,
+                        &derivation,
+                        &premise_pairs,
+                        point_application_closes_goal,
+                    )
+                })
+                .flatten()
+                .or_else(|| self.try_single_selected_equality_rewrite_closure(&premise_pairs))
+                .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
+                .or_else(|| self.try_selected_disjunction_cases(&premise_pairs))
+        })();
+        if atomic.is_some() {
+            return atomic;
+        }
+        let surface_goal = self.surface_goal()?.clone();
+        self.try_structural_simp_closure(&surface_goal)
     }
 
-    /// Runs smart closure with the exact Surface spelling of the current
-    /// goal available to structural search. Child goals are opened through
-    /// audited `have` scopes (or `intro`) and each accepted descendant is
-    /// retained before the enclosing connective is closed. This is search
-    /// over ordinary Proof operations, not a parallel certificate planner.
-    pub(super) fn try_simp_closure_for_surface_goal(
-        &self,
-        surface_goal: &ClickProposition,
-    ) -> Option<Self> {
-        if let Some(closed) = self.try_simp_closure() {
-            return Some(closed);
-        }
+    /// Refines the Proof-owned Surface goal through audited scopes and steps.
+    /// The caller cannot supply a second description of the judgment: this
+    /// syntax is the view paired with the kernel goal in `PropositionGoal`.
+    fn try_structural_simp_closure(&self, surface_goal: &ClickProposition) -> Option<Self> {
         let goal = self.goal()?;
         match (surface_goal, goal) {
-            (ClickProposition::Implies(_, surface_consequent), Proposition::Implies(_, _)) => self
+            (ClickProposition::Implies(_, _), Proposition::Implies(_, _)) => self
                 .apply_step(SimpleProofStep::Intro)
                 .ok()?
-                .try_simp_closure_for_surface_goal(surface_consequent),
+                .try_simp_closure(),
             (ClickProposition::And(surface_left, surface_right), Proposition::And(_, _)) => {
                 let left = self.begin_have(surface_left.as_ref().clone()).ok()?;
                 let left = left.try_simp_closure()?;
@@ -5125,7 +5264,7 @@ impl<'a> Proof<'a> {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: Goal::Proposition(Arc::new(goal)),
+            goal: Goal::proposition(goal),
             complete: false,
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
@@ -5349,7 +5488,7 @@ impl<'a> Proof<'a> {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: Goal::Proposition(Arc::new(rewritten)),
+            goal: Goal::proposition(rewritten),
             complete: false,
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
@@ -8215,12 +8354,7 @@ impl<'a> ProofScope<'a> {
     /// the accepted descendant directly.
     pub(super) fn try_simp_closure(&self) -> Option<Self> {
         let mut next = self.clone();
-        next.body = match self.structure.as_ref() {
-            ProofScopeStructure::Have { proposition, .. } => {
-                self.body.try_simp_closure_for_surface_goal(proposition)?
-            }
-            ProofScopeStructure::Open { .. } => self.body.try_simp_closure()?,
-        };
+        next.body = self.body.try_simp_closure()?;
         Some(next)
     }
 
@@ -13880,6 +14014,11 @@ mod tests {
         let right_nonnegative = ClickProposition::Comparison {
             left: expression(Bitvector32Term::Constant(0)),
             operator: ComparisonOperator::LessEqual,
+            right: expression(right_value.clone()),
+        };
+        let branch_condition = ClickProposition::Comparison {
+            left: expression(left_value.clone()),
+            operator: ComparisonOperator::Equal,
             right: expression(right_value),
         };
         let negative = ClickProposition::Comparison {
@@ -13948,11 +14087,12 @@ mod tests {
             ] {
                 let mut facts = unrelated.clone();
                 facts.extend_from_slice(selected_facts);
-                let root = Proof::for_point_goal(
+                let root = Proof::for_point_surface_goal(
                     "persistent surface structural simp",
                     0,
                     &facts,
                     lower(surface_goal),
+                    surface_goal.clone(),
                     parsed_function.parameters(),
                     &arguments,
                     &state,
@@ -13966,9 +14106,31 @@ mod tests {
                     &[],
                 );
                 let retained_root = root.clone();
+                let Goal::Proposition(root_goal) = &root.state.goal else {
+                    unreachable!("the structural regression owns a proposition goal")
+                };
+                let root_surface = root_goal
+                    .surface
+                    .as_ref()
+                    .expect("the root should own its exact Surface goal");
+                let branches = root
+                    .begin_if(branch_condition.clone())
+                    .expect("an unrelated condition should fork the structural goal");
+                for arm in &branches.arms {
+                    let Goal::Proposition(arm_goal) = &arm.state.goal else {
+                        unreachable!("a pure proof branch retains its proposition goal")
+                    };
+                    assert!(Arc::ptr_eq(
+                        root_surface,
+                        arm_goal
+                            .surface
+                            .as_ref()
+                            .expect("the branch should share the root Surface goal")
+                    ));
+                }
                 let before = fact_node_allocations();
                 let closed = root
-                    .try_simp_closure_for_surface_goal(surface_goal)
+                    .try_simp_closure()
                     .unwrap_or_else(|| panic!("the {label} should retain its recursive proof"));
                 let allocations = fact_node_allocations() - before;
                 assert!(

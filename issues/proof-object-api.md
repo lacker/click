@@ -2034,6 +2034,25 @@ independently verifies each expansion. The underlying structural search
 continues to use the shared 16-through-4096 persistent-fact scaling
 regression.
 
+### Progress (2026-08-17: proposition goals own their Surface view)
+
+`Goal::Proposition` now pairs the checked kernel proposition with an optional
+shared Surface Click view inside the immutable `Proof` state. Structural smart
+search no longer accepts a caller-supplied goal spelling: it reads the syntax
+owned by the same proof whose simple steps it applies. `begin_have` creates a
+paired child goal, proposition branches share the complete Surface view by
+identity, and `Intro` advances the kernel implication and Surface consequent
+together. Goal-changing operations such as rewrite, witness selection, and
+predicate unfolding deliberately clear the view when they cannot preserve an
+exact corresponding Surface judgment.
+
+This removes the dual `try_simp_closure` / caller-supplied structural closure
+interface and lets nested linear smart scripts retain recursive logical
+proofs inside checked `if` arms. The pure branch regression expands the owning
+`If` to both retained conjunction certificates and independently verifies it.
+The existing 16-through-4096 structural curve now also requires every branch
+fork to share the root Surface goal allocation by pointer identity.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

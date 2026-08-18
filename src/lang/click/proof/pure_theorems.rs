@@ -665,16 +665,17 @@ fn check_direct_pure_goal_with_proof(
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Option<ProofCertificate> {
-    let root = Proof::for_pure_goal(
+    let root = Proof::for_pure_surface_goal(
         claim_label,
         &context.requires,
         goal.clone(),
+        surface_goal.clone(),
         context,
         predicate_environment,
         click_function_environment,
         theorem_environment,
     );
-    let proof = root.try_simp_closure_for_surface_goal(surface_goal)?;
+    let proof = root.try_simp_closure()?;
     debug_assert!(proof.is_complete());
     Some(proof.certificate())
 }
@@ -932,10 +933,11 @@ fn check_pure_script_with_proof(
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Option<ProofCertificate>, ClickError> {
-    let root = Proof::for_pure_goal(
+    let root = Proof::for_pure_surface_goal(
         claim_label,
         &context.requires,
         goal.clone(),
+        surface_goal.clone(),
         context,
         predicate_environment,
         click_function_environment,
@@ -949,7 +951,7 @@ fn check_pure_script_with_proof(
     }
 
     if matches!(tactics, [ProofTactic::Simp])
-        && let Some(proof) = root.try_simp_closure_for_surface_goal(surface_goal)
+        && let Some(proof) = root.try_simp_closure()
     {
         return Ok(Some(proof.certificate()));
     }

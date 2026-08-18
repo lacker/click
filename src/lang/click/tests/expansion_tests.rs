@@ -1695,6 +1695,18 @@ fn pure_structural_simp_builds_recursive_conjunction_on_proof() {
                 simp();
             }
         }
+
+        theorem nonnegative_pair_branches(flag: int32, x: int32, y: int32) {
+            requires 1 <= x;
+            requires 1 <= y;
+            ensures 0 <= x and 0 <= y by {
+                if flag == 0 {
+                    simp();
+                } else {
+                    simp();
+                }
+            }
+        }
     "#;
 
     let (verified, events) =
@@ -1703,6 +1715,7 @@ fn pure_structural_simp_builds_recursive_conjunction_on_proof() {
     for claim in [
         "nonnegative_pair_direct.ensures_0",
         "nonnegative_pair_script.ensures_0",
+        "nonnegative_pair_branches.ensures_0",
     ] {
         assert!(
             events.iter().all(|event| !matches!(
@@ -1717,13 +1730,33 @@ fn pure_structural_simp_builds_recursive_conjunction_on_proof() {
         );
     }
 
-    for offset in [
-        click_source
-            .find("simp;")
-            .expect("the direct theorem should contain smart simp"),
-        click_source
-            .rfind("simp();")
-            .expect("the script theorem should contain smart simp"),
+    let script_start = click_source
+        .find("theorem nonnegative_pair_script")
+        .expect("the script theorem should be present");
+    let branch_start = click_source
+        .find("theorem nonnegative_pair_branches")
+        .expect("the branch theorem should be present");
+    for (offset, expected_applications) in [
+        (
+            click_source
+                .find("simp;")
+                .expect("the direct theorem should contain smart simp"),
+            2,
+        ),
+        (
+            script_start
+                + click_source[script_start..]
+                    .find("simp();")
+                    .expect("the script theorem should contain smart simp"),
+            2,
+        ),
+        (
+            branch_start
+                + click_source[branch_start..]
+                    .find("simp();")
+                    .expect("the branch theorem should contain smart simp"),
+            4,
+        ),
     ] {
         let position = expansion::position_at_offset(click_source, offset);
         let expanded =
@@ -1733,7 +1766,7 @@ fn pure_structural_simp_builds_recursive_conjunction_on_proof() {
             expanded
                 .matches("apply(int32_positive_is_nonnegative(")
                 .count(),
-            2,
+            expected_applications,
             "{expanded}"
         );
         assert!(expanded.contains("split();"), "{expanded}");
