@@ -5927,6 +5927,93 @@ fn branch_join_retains_a_bare_theorem_application_in_its_continuation() {
 }
 
 #[test]
+fn branch_join_retains_a_bare_fact_transport_in_its_continuation() {
+    let c_source = r#"
+        int32 choose_bound_transport(int32 lower, int32 upper, int32 flag) {
+            int32 choice;
+            if (flag != 0) {
+                choice = lower;
+            } else {
+                choice = upper;
+            }
+            return choice;
+        }
+    "#;
+    let click_source = r#"
+        verifying "choose_bound_transport.c";
+
+        int32 choose_bound_transport(int32 lower, int32 upper, int32 flag) {
+            requires lower < upper;
+            immutable;
+            ensures lower < upper;
+        } by {
+            step();
+            branch {
+                ensuring {
+                    fact old(lower) < old(upper);
+                }
+                then { step(); }
+                else { step(); }
+            }
+            transport(old(lower) < old(upper), lower < upper);
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("choose_bound_transport.c", c_source)])
+    });
+    let verified = verified.expect("the common fact transport should advance the joined Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "choose_bound_transport.contract"
+                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+        )),
+        "the branch, transport, return, and frame must retain one checked Proof: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked common fact transport should retain an expansion");
+    assert!(
+        matches!(
+            tactics.as_slice(),
+            [
+                ProofTactic::StepUsing(_),
+                ProofTactic::Branch(branch),
+                ProofTactic::TransportUsing { premises, .. },
+                ProofTactic::StepUsing(_),
+                ProofTactic::FrameUsing { region: None, premises: frame_premises },
+                ..
+            ] if matches!(
+                    branch.ensuring.as_deref(),
+                    Some([ProofAssertion::Fact(ClickProposition::Comparison {
+                        operator: ComparisonOperator::LessThan,
+                        ..
+                    })])
+                )
+                && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && !premises.is_empty()
+                && frame_premises.is_empty()
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("choose_bound_transport.c", c_source)],
+        "choose_bound_transport",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained common fact transport should expand");
+    verify_c0_sources(&expanded, &[("choose_bound_transport.c", c_source)])
+        .expect("the explicit common transport step should independently re-derive");
+}
+
+#[test]
 fn branch_arms_retain_bare_fact_transports_on_proof() {
     let c_source = r#"
         int32 set_choice_return_first(int32 p[2], int32 flag) {

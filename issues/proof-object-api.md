@@ -1671,6 +1671,19 @@ the changed local through `branch ensuring`, observes neither ordinary replay
 nor the legacy exact-effect recheck, pins the explicit theorem step, and
 independently verifies expansion.
 
+The bounded source-local fact transport query now composes on that same common
+successor. A two-arm join can retain an entry-snapshot interface fact, select
+one explicit `TransportUsing` against the joined `Proof`, and continue through
+the common statement and immutable frame without exporting intermediate
+contexts. A miss rejects the entire candidate path transactionally, so richer
+premise discovery remains available through the unchanged compatibility
+operation. The existing 16-through-4096 transport-query curve proves that its
+candidate selection ignores unrelated facts, while the nonterminal-join curve
+proves logarithmic branch composition. A source regression uses a real
+lower-or-upper choice, transports the preserved ordering fact from `old` to
+the current snapshot, observes neither ordinary replay nor the legacy exact
+effect recheck, and independently verifies the retained explicit certificate.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms
