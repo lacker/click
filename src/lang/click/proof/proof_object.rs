@@ -2081,7 +2081,7 @@ impl<'a> Proof<'a> {
         step: SimpleProofStep,
         origin: Option<ProofStepOrigin>,
     ) -> Result<Self, ClickError> {
-        if self.state.goals.is_discharged() {
+        if self.focused_discharged() {
             return Err(self.step_error("a tactic follows a goal-closing step"));
         }
 
@@ -3753,11 +3753,17 @@ impl<'a> Proof<'a> {
                 next: usize,
             },
             BranchLeft {
-                branches: ProofBranches<'proof>,
+                marker: ProofCheckpoint<'proof>,
+                split: SplitId,
+                ids: [GoalId; 2],
+                structure: ProofBranchStructure,
                 right: &'certificate ProofCertificate,
             },
             BranchRight {
-                branches: ProofBranches<'proof>,
+                marker: ProofCheckpoint<'proof>,
+                split: SplitId,
+                ids: [GoalId; 2],
+                structure: ProofBranchStructure,
             },
             Have {
                 scope: ProofScope<'proof>,
@@ -3777,11 +3783,18 @@ impl<'a> Proof<'a> {
                         left_proof,
                         right_proof,
                     } => {
-                        let branches = proof.begin_cases(disjunction.clone())?;
-                        proof = branches.arms[ProofArm::Left.index()].clone();
+                        let (split_proof, split, ids) =
+                            proof.split_focused_cases(disjunction.clone())?;
+                        let marker = split_proof.checkpoint();
+                        proof = split_proof;
                         frames.push(CheckFrame::Continue { steps, next });
                         frames.push(CheckFrame::BranchLeft {
-                            branches,
+                            marker,
+                            split,
+                            ids,
+                            structure: ProofBranchStructure::Cases {
+                                disjunction: disjunction.clone(),
+                            },
                             right: right_proof,
                         });
                         steps = left_proof.steps();
@@ -3792,11 +3805,18 @@ impl<'a> Proof<'a> {
                         then_proof,
                         else_proof,
                     } => {
-                        let branches = proof.begin_if(condition.clone())?;
-                        proof = branches.arms[ProofArm::Left.index()].clone();
+                        let (split_proof, split, ids) =
+                            proof.split_focused_if(condition.clone())?;
+                        let marker = split_proof.checkpoint();
+                        proof = split_proof;
                         frames.push(CheckFrame::Continue { steps, next });
                         frames.push(CheckFrame::BranchLeft {
-                            branches,
+                            marker,
+                            split,
+                            ids,
+                            structure: ProofBranchStructure::If {
+                                condition: condition.clone(),
+                            },
                             right: else_proof,
                         });
                         steps = then_proof.steps();
@@ -3830,18 +3850,36 @@ impl<'a> Proof<'a> {
                     next = continuation_next;
                 }
                 CheckFrame::BranchLeft {
-                    mut branches,
+                    marker,
+                    split,
+                    ids,
+                    structure,
                     right,
                 } => {
-                    branches.arms[ProofArm::Left.index()] = proof;
-                    proof = branches.arms[ProofArm::Right.index()].clone();
-                    frames.push(CheckFrame::BranchRight { branches });
+                    proof = proof.focus(ids[1])?;
+                    frames.push(CheckFrame::BranchRight {
+                        marker,
+                        split,
+                        ids,
+                        structure,
+                    });
                     steps = right.steps();
                     next = 0;
                 }
-                CheckFrame::BranchRight { mut branches } => {
-                    branches.arms[ProofArm::Right.index()] = proof;
-                    proof = branches.join()?;
+                CheckFrame::BranchRight {
+                    marker,
+                    split,
+                    ids,
+                    structure,
+                } => {
+                    proof = match structure {
+                        ProofBranchStructure::Cases { disjunction } => {
+                            proof.join_focused_cases(&marker, split, ids, disjunction)?
+                        }
+                        ProofBranchStructure::If { condition } => {
+                            proof.join_focused_if(&marker, split, ids, condition)?
+                        }
+                    };
                     steps = &[];
                     next = 0;
                 }

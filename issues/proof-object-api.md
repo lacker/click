@@ -3048,6 +3048,23 @@ open, and the two notions coincide only on single-goal proofs.
 next, and the container then survives only in tests until they move to the
 split regressions.
 
+### Progress (2026-08-18: the certificate checker splits in-`Proof`)
+
+The explicit certificate checker — the audited path for serialized `Cases`
+and `If` nodes — now checks branch structure through in-`Proof` splits: its
+work-stack frames carry the split marker, recorded ids, and structure
+instead of a container value, each arm's steps apply on the focused sibling,
+and the frame pop joins through the shared attribution-partitioning join.
+`apply_step`'s entry guard also moved to the focused notion — a tactic
+following a goal-closing step is judged against the focused obligation, not
+the whole map, which is identical on single-goal proofs and correct inside
+splits. With this, `ProofBranches` has no production consumer: it survives
+only in four regressions until they migrate to the split equivalents, and
+then the container is deleted. (One combined fixture-gate failure during
+this chunk was transient load, per the two-consecutive-identical-tree-pass
+rule; suite wall-times have drifted upward across this long session and are
+worth one fresh-machine check.)
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
