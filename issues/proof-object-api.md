@@ -1715,6 +1715,20 @@ up to the named return statement, and independently verifies the resulting
 discard the candidate and resume through compatibility search from the
 unchanged root.
 
+Linear `execute()` and `execute_all_paths()` now use the same Proof-owned
+search on a common branch successor. The former scope-only loop is one shared
+operation: each straight-line statement applies its selected `StepUsing`, and
+an encountered terminal C branch composes through the audited execution-branch
+container. Search publishes a descendant only at function exit; scope callers
+also receive its output-sized introduced-fact delta. A source regression joins
+a real positive selection, executes the meaningful common increment and
+return, applies the immutable function frame on that same descendant, and
+independently verifies the retained statement path. Its claim is deliberately
+the immutable effect exercised by this seam. The separate missing typed
+certificate for the stronger arithmetic postcondition after the increment is
+recorded in `atomic-derivation-returns-premises-not-steps.md` with its exact
+reproduction.
+
 1. Land the canonical vocabulary and a private proof-object core for a small
    linear pure-goal slice. Add deterministic fork/apply scaling regressions.
 2. Migrate bare theorem application and fact transport. Their smart forms

@@ -131,6 +131,8 @@ fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
                 | ProofTactic::Transport { .. }
                 | ProofTactic::Have(_)
                 | ProofTactic::ExecuteUntil(_)
+                | ProofTactic::SmartExecute
+                | ProofTactic::SmartExecuteAllPaths
                 | ProofTactic::SmartFrame(_)
         )
 }
@@ -239,6 +241,14 @@ fn advance_checked_linear_continuation<'a>(
             selected.join()?
         } else if let ProofTactic::ExecuteUntil(region) = &indexed.tactic {
             let Some(executed) = proof.try_linear_execute_until(region)? else {
+                return Ok(None);
+            };
+            executed
+        } else if matches!(
+            indexed.tactic,
+            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
+        ) {
+            let Some(executed) = proof.try_linear_execute()? else {
                 return Ok(None);
             };
             executed

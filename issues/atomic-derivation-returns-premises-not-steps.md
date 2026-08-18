@@ -431,3 +431,23 @@ Pure, point, and outcome smart `simp` submit the selected application to the
 immutable `Proof`. Reversed source comparison spelling survives expansion,
 ordinary verification performs no construction replay, and the shared
 16-through-4096 single-premise curve covers both rules and rejected omission.
+
+### New reproduction (2026-08-17: increment preserves strict positivity)
+
+A post-execution goal `result > 0` after `result` is computed as
+`selected + 1` is still an untyped atomic decision. With exact retained
+premises `0 < selected` and `selected < INT32_MAX`, smart `simp` reports that
+it proved the goal and then fails because Click has no explicit simple
+certificate for the derivation. The minimal C shape is a real two-arm choice
+of positive `selected`, followed by `selected = selected + 1; return
+selected;`; the proof joins the arms with those two bounds and executes the
+common suffix.
+
+This is not an execution-Proof or branch-join failure: the checked common
+`execute()` reaches function exit and retains both statement steps before
+outcome simplification encounters the missing arithmetic evidence. Acceptance
+for this member is a typed decision that records the exact strict-positive
+and strict-upper premises and translates to a fixed composition of named
+simple theorem applications. Keep the common-execute regression independent
+of this arithmetic gap; this reproduction stays here until strict positivity
+has its own retained steps.

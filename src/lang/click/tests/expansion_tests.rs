@@ -6120,6 +6120,96 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
 }
 
 #[test]
+fn branch_join_retains_linear_execute_on_its_common_successor() {
+    let c_source = r#"
+        int32 select_and_increment(int32 flag) {
+            int32 selected;
+            if (flag != 0) {
+                selected = 1;
+            } else {
+                selected = 2;
+            }
+            selected = selected + 1;
+            return selected;
+        }
+    "#;
+    let click_source = r#"
+        verifying "select_and_increment.c";
+
+        int32 select_and_increment(int32 flag) {
+            immutable;
+        } by {
+            step();
+            branch {
+                ensuring {
+                    fact selected > 0;
+                    fact selected < 2147483647;
+                }
+                then { step(); }
+                else { step(); }
+            }
+            execute();
+            frame();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("select_and_increment.c", c_source)])
+    });
+    let verified = verified.expect("common execute should advance the joined Proof to exit");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "select_and_increment.contract"
+                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+        )),
+        "the branch, execute, and frame must retain one checked Proof: {events:#?}"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("common execute should retain its checked expansion");
+    assert!(
+        matches!(
+            tactics.as_slice(),
+            [
+                ProofTactic::StepUsing(_),
+                ProofTactic::Branch(branch),
+                ProofTactic::StepUsing(_),
+                ProofTactic::StepUsing(_),
+                ProofTactic::FrameUsing { region: None, premises },
+                ..
+            ] if matches!(
+                    branch.ensuring.as_deref(),
+                    Some([
+                        ProofAssertion::Fact(ClickProposition::Comparison {
+                            operator: ComparisonOperator::GreaterThan,
+                            ..
+                        }),
+                        ProofAssertion::Fact(ClickProposition::Comparison {
+                            operator: ComparisonOperator::LessThan,
+                            ..
+                        }),
+                    ])
+                )
+                && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && premises.is_empty()
+        ),
+        "{tactics:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("select_and_increment.c", c_source)],
+        "select_and_increment",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained common execute should expand");
+    verify_c0_sources(&expanded, &[("select_and_increment.c", c_source)])
+        .expect("the explicit common execute path should independently re-derive");
+}
+
+#[test]
 fn branch_arms_retain_bare_fact_transports_on_proof() {
     let c_source = r#"
         int32 set_choice_return_first(int32 p[2], int32 flag) {

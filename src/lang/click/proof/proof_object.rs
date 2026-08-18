@@ -3643,6 +3643,61 @@ impl<'a> Proof<'a> {
             .map(|(proof, _)| proof))
     }
 
+    /// Runs the narrow linear `execute` search over checked descendants.
+    /// Straight-line statements and audited terminal C branches advance only
+    /// through their Proof operations; a partial path is discarded unless it
+    /// reaches function exit.
+    fn try_linear_execute_descendant(
+        &self,
+    ) -> Result<Option<(Self, Vec<Proposition>)>, ClickError> {
+        let mut proof = self.clone();
+        let mut introduced_facts = Vec::new();
+        let mut advanced = false;
+        while !proof.is_at_function_exit() {
+            let next = if let Some(next) = proof.try_indexed_execute_step()? {
+                next
+            } else {
+                if !proof.is_at_execution_branch()? {
+                    return Ok(None);
+                }
+                let branches = proof.begin_execution_branch()?;
+                if let Some(take_then) = branches.sole_feasible_arm() {
+                    let Some(branches) = branches.try_execute_arm_to_exit(take_then)? else {
+                        return Ok(None);
+                    };
+                    branches.finish_decided()?
+                } else {
+                    let Some(branches) = branches.try_execute_arm_to_exit(true)? else {
+                        return Ok(None);
+                    };
+                    let Some(branches) = branches.try_execute_arm_to_exit(false)? else {
+                        return Ok(None);
+                    };
+                    branches.join_terminal()?
+                }
+            };
+            for fact in next.added_facts() {
+                if !introduced_facts.contains(fact) {
+                    introduced_facts.push(fact.clone());
+                }
+            }
+            proof = next;
+            advanced = true;
+        }
+        if !advanced {
+            return Ok(None);
+        }
+        Ok(Some((proof, introduced_facts)))
+    }
+
+    /// Returns the already-checked function-exit descendant selected by the
+    /// narrow linear `execute` search.
+    pub(super) fn try_linear_execute(&self) -> Result<Option<Self>, ClickError> {
+        Ok(self
+            .try_linear_execute_descendant()?
+            .map(|(proof, _)| proof))
+    }
+
     /// Searches explicit premise spellings for one point fact transport.
     ///
     /// Every candidate is checked by applying the corresponding simple step
@@ -7445,46 +7500,18 @@ impl<'a> ProofScope<'a> {
     /// advance is discarded unless the checked descendant reaches function
     /// exit, so unsupported frontiers continue through the legacy path.
     pub(super) fn try_linear_execute(&self) -> Result<Option<Self>, ClickError> {
-        let mut proof = self.body.clone();
-        let mut introduced_facts = self.introduced_facts.clone();
-        let mut advanced = false;
-        while !proof.is_at_function_exit() {
-            let next = if let Some(next) = proof.try_indexed_execute_step()? {
-                next
-            } else {
-                if !proof.is_at_execution_branch()? {
-                    return Ok(None);
-                }
-                let branches = proof.begin_execution_branch()?;
-                if let Some(take_then) = branches.sole_feasible_arm() {
-                    let Some(branches) = branches.try_execute_arm_to_exit(take_then)? else {
-                        return Ok(None);
-                    };
-                    branches.finish_decided()?
-                } else {
-                    let Some(branches) = branches.try_execute_arm_to_exit(true)? else {
-                        return Ok(None);
-                    };
-                    let Some(branches) = branches.try_execute_arm_to_exit(false)? else {
-                        return Ok(None);
-                    };
-                    branches.join_terminal()?
-                }
-            };
-            for fact in next.added_facts() {
-                if !introduced_facts.contains(fact) {
-                    introduced_facts.push(fact.clone());
-                }
-            }
-            proof = next;
-            advanced = true;
-        }
-        if !advanced {
+        let Some((body, added_facts)) = self.body.try_linear_execute_descendant()? else {
             return Ok(None);
+        };
+        let mut introduced_facts = self.introduced_facts.clone();
+        for fact in added_facts {
+            if !introduced_facts.contains(&fact) {
+                introduced_facts.push(fact);
+            }
         }
         let mut next = self.clone();
         next.introduced_facts = introduced_facts;
-        next.body = proof;
+        next.body = body;
         Ok(Some(next))
     }
 
