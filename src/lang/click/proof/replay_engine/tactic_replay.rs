@@ -521,11 +521,12 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
             "`{claim_label}` have proof {tactic_index}: could not lower pure goal: {message}"
         ))
     })?;
-    let proof = Proof::for_point_goal_with_requirements(
+    let proof = Proof::for_point_surface_goal_with_requirements(
         claim_label,
         tactic_index,
         available,
         goal.clone(),
+        have.proposition.clone(),
         parameters,
         arguments,
         pre_state,

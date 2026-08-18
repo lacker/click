@@ -2261,6 +2261,12 @@ pub(super) fn finish_ordered_proof_replay(
                                                 .collect::<Vec<_>>()
                                         })
                                         .unwrap_or_else(|| planning_available.clone());
+                                    let compatibility_timing =
+                                        crate::instrumentation::OperationTiming::new(
+                                            function_block.signature().name(),
+                                            &proof_label,
+                                            "post-execution smart have compatibility construction",
+                                        );
                                     let closing_tactics = if let Some(pairs) = &restricted_simp_pairs {
                                 plan_restricted_simp_expansion(
                                     &unfolded_goal,
@@ -2298,7 +2304,8 @@ pub(super) fn finish_ordered_proof_replay(
                                     "`{proof_label}` path {path_index}, tactic {tactic_index}: `have` failed: {}",
                                     error.message()
                                 ))
-                            })?;
+                                })?;
+                                    drop(compatibility_timing);
                                     let mut proof_tactics = smart_unfolds
                                         .iter()
                                         .cloned()

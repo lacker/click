@@ -782,8 +782,9 @@ fn post_execution_smart_have_builds_recursive_conjunction_on_proof() {
                 event,
                 crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
                     if name.starts_with("post-execution simple have replay")
+                        || name == "post-execution smart have compatibility construction"
             )),
-        "the checked smart have must not replay a reconstructed body: {events:#?}"
+        "the checked smart have must not construct or replay a second proof: {events:#?}"
     );
 
     let have_offset = click_source

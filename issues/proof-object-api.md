@@ -2053,6 +2053,12 @@ proofs inside checked `if` arms. The pure branch regression expands the owning
 The existing 16-through-4096 structural curve now also requires every branch
 fork to share the root Surface goal allocation by pointer identity.
 
+The production point-level `have` adapter now uses that paired constructor as
+well. Previously it lowered the Surface goal and then discarded the spelling
+when it created the root `Proof`; the compatibility constructor silently
+masked the lost direct path. The post-execution structural-`have` regression
+now rejects both compatibility construction and later certificate replay.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
