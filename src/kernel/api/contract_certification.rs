@@ -2199,6 +2199,14 @@ pub(super) fn certification_proves_proposition(
         // quantified proof search.
         return true;
     }
+    // Disjunction elimination is a bounded structural proof rule, not a
+    // fuel-dependent simp heuristic. Contract certification must recognize
+    // the same rule as proposition derivation; otherwise a retained `cases`
+    // proof can verify while the independently certified contract frontier
+    // rejects its atomic conclusion.
+    if assumptions.proves_by_disjunction_cases(proposition) {
+        return true;
+    }
     if let Proposition::ConditionIs(condition, value) = proposition
         && let Some(canonical) = condition_with_canonical_loads(condition)
         && &canonical != condition

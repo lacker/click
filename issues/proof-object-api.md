@@ -1972,6 +1972,28 @@ curve pins the point-Proof structure, logarithmic persistent updates, and
 ancestor isolation. General historical equality search remains a compatibility
 boundary rather than being approximated by an ambient scan.
 
+### Progress (2026-08-17: disjunction elimination on checked branches)
+
+Post-execution `simp` can now eliminate a selected disjunctive requirement
+while proving an atomic claim. The proposition derivation records ordinary
+disjunction elimination for arbitrary conclusions, and `Proof` opens the
+selected Surface spelling with `begin_cases`, proves each branch on its owned
+immutable descendant, and joins the retained bodies as one
+`SimpleProofStep::Cases`. The grouped outcome certifier accepts that checked
+point `have` directly; it no longer requires a flat legacy certificate before
+the Proof search can run, nor independently replays the already-checked body.
+
+The motivating `x == 0 or x == 1` proof of `0 <= result` expands to two exact
+`Rewrite; Normalize` arms and independently reverifies. Kernel derivation and
+contract certification share the same bounded case rule, so proof acceptance
+and the independently certified contract frontier agree. A dedicated
+disjunction-fact index prevents this broader rule from scanning unrelated
+propositions. The 16-through-4096 regression fixes that index at one candidate,
+bounds persistent allocations logarithmically, requires exact retained branch
+structure, and verifies ancestor isolation. Outcome vocabulary not yet
+handled by `Proof::try_simp_closure` remains on the explicit compatibility
+fallback.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

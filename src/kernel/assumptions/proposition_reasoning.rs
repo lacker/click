@@ -2429,10 +2429,7 @@ impl PureFactContext {
         proposition: &Proposition,
         for_simp: bool,
     ) -> Option<PropositionDerivationRule> {
-        if !matches!(proposition, Proposition::Or(_, _)) {
-            return None;
-        }
-        for disjunction in self.prop_facts.iter() {
+        for disjunction in self.disjunction_facts.iter() {
             let mut cases = Vec::new();
             collect_or_cases(disjunction, &mut cases);
             if cases.len() < 2 || cases.len() > DISJUNCTION_CASE_LIMIT {
@@ -2460,11 +2457,7 @@ impl PureFactContext {
     }
 
     pub(in crate::kernel) fn proves_by_disjunction_cases(&self, proposition: &Proposition) -> bool {
-        if !matches!(proposition, Proposition::Or(_, _)) {
-            return false;
-        }
-
-        for disjunction in self.prop_facts.iter() {
+        for disjunction in self.disjunction_facts.iter() {
             let mut cases = Vec::new();
             collect_or_cases(disjunction, &mut cases);
             if cases.len() < 2 || cases.len() > DISJUNCTION_CASE_LIMIT {

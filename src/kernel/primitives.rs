@@ -1809,6 +1809,10 @@ pub struct PureFactContext {
         std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>>>,
     >,
     pub(super) prop_facts: std::sync::Arc<BTreeSet<Proposition>>,
+    /// Exact disjunctive proposition facts. This derived index keeps bounded
+    /// case search proportional to possible case splits rather than every
+    /// unrelated proposition in the context.
+    pub(super) disjunction_facts: std::sync::Arc<BTreeSet<Proposition>>,
     pub(super) resource_compositions: std::sync::Arc<BTreeSet<ResourceContext>>,
     pub(super) memory_loadable_facts: std::sync::Arc<BTreeMap<PointerBlock, BTreeSet<Proposition>>>,
     pub(super) memory_loadable_shape_facts:

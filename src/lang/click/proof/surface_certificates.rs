@@ -6473,22 +6473,6 @@ fn certify_outcome_simp_have(
     tactic_index: usize,
     path_index: usize,
 ) -> Result<Vec<ProofTactic>, ClickError> {
-    // First require an explicit proof plan for the claim itself. The final
-    // proof is rebuilt below after its separately certified loadability
-    // obligations have been added to the replay context.
-    lower_outcome_simp_proof(
-        replay,
-        surface_goal,
-        goal,
-        available,
-        parameters,
-        arguments,
-        pre_state,
-        post_state,
-        result,
-        predicate_environment,
-        click_function_environment,
-    )?;
     let mut goal_lowering_facts = available.to_vec();
     let lowered = lower_outcome_proposition_with_obligations(
         parameters,
@@ -7016,24 +7000,65 @@ fn certify_outcome_simp_have(
         certified_available.push(obligation);
     }
 
-    let proof = lower_outcome_simp_proof(
-        replay,
-        surface_goal,
-        goal,
-        &certified_available,
-        parameters,
-        arguments,
-        pre_state,
-        post_state,
-        result,
-        predicate_environment,
-        click_function_environment,
-    )?;
-    let surface_have = ProofHave {
-        proposition: certificate_surface_goal,
-        proof,
+    // Migrated smart search advances an immutable point Proof and retains the
+    // accepted simple steps as it finds them. This is the authoritative path:
+    // the legacy constructor below is only a compatibility fallback for
+    // vocabulary that the Proof search has not yet learned.
+    let checked_surface_tactic = (|| {
+        let root = Proof::for_point_frontier(
+            claim_label,
+            tactic_index,
+            &certified_available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            Some(result),
+            &replay.program_point_states,
+            &replay.surface_propositions,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            &replay.unfolded_predicates,
+            &replay.effect_facts,
+        );
+        let scope = root.begin_have(certificate_surface_goal.clone()).ok()?;
+        if scope.goal()? != goal {
+            return None;
+        }
+        let scope = scope.try_simp_closure()?;
+        let checked = scope.join().ok()?;
+        let tactics = checked.certificate().to_proof_tactics();
+        (tactics.len() == 1).then(|| tactics[0].clone())
+    })();
+    let (surface_tactic, certificate_already_checked) =
+        if let Some(surface_tactic) = checked_surface_tactic {
+            (surface_tactic, true)
+        } else {
+            let proof = lower_outcome_simp_proof(
+                replay,
+                surface_goal,
+                goal,
+                &certified_available,
+                parameters,
+                arguments,
+                pre_state,
+                post_state,
+                result,
+                predicate_environment,
+                click_function_environment,
+            )?;
+            (
+                ProofTactic::Have(ProofHave {
+                    proposition: certificate_surface_goal,
+                    proof,
+                }),
+                false,
+            )
+        };
+    let ProofTactic::Have(surface_have) = &surface_tactic else {
+        unreachable!("a checked point have retains one have tactic")
     };
-    let surface_tactic = ProofTactic::Have(surface_have.clone());
     let certificate = ProofCertificate::from_proof_tactics(std::slice::from_ref(&surface_tactic))
         .map_err(|error| {
         ClickError::new(format!(
@@ -7054,32 +7079,36 @@ fn certify_outcome_simp_have(
             replay_available.push(equation);
         }
     }
-    let replayed_goal = prove_have_at_point(
-        &surface_have,
-        theorem_environment,
-        claim_label,
-        tactic_index,
-        &replay_available,
-        &replay.effect_facts,
-        parameters,
-        arguments,
-        pre_state,
-        post_state,
-        Some(result),
-        &replay.program_point_states,
-        Some(&replay.surface_propositions),
-        predicate_environment,
-        click_function_environment,
-        function_requires,
-        Some(path_index),
-    )
-    .map_err(|error| {
-        ClickError::new(format!(
-            "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` certificate failed replay:\n{}\n{}",
-            format_proof_certificate(&certificate),
-            error.message(),
-        ))
-    })?;
+    let replayed_goal = if certificate_already_checked {
+        goal.clone()
+    } else {
+        prove_have_at_point(
+            surface_have,
+            theorem_environment,
+            claim_label,
+            tactic_index,
+            &replay_available,
+            &replay.effect_facts,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            Some(result),
+            &replay.program_point_states,
+            Some(&replay.surface_propositions),
+            predicate_environment,
+            click_function_environment,
+            function_requires,
+            Some(path_index),
+        )
+        .map_err(|error| {
+            ClickError::new(format!(
+                "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` certificate failed replay:\n{}\n{}",
+                format_proof_certificate(&certificate),
+                error.message(),
+            ))
+        })?
+    };
     if replayed_goal != *goal {
         // The claim goal may be spelled with `unfold(...)` active while the
         // replay produces the folded predicate; both name one proposition by

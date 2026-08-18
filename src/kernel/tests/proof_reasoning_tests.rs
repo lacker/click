@@ -3140,6 +3140,28 @@ fn assumptions_prove_by_bounded_disjunction_cases() {
 }
 
 #[test]
+fn assumptions_eliminate_disjunction_to_prove_atomic_consequence() {
+    let x = Bitvector32Term::Variable(Variable(890));
+    let x_is_zero = Proposition::ConditionIs(
+        ConditionTerm::equal(x.clone(), Bitvector32Term::Constant(0)),
+        true,
+    );
+    let x_is_one = Proposition::ConditionIs(
+        ConditionTerm::equal(x.clone(), Bitvector32Term::Constant(1)),
+        true,
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(Proposition::Or(Box::new(x_is_zero), Box::new(x_is_one)));
+    let nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), x),
+        true,
+    );
+
+    assert!(assumptions.proves(&nonnegative));
+    assert_replayable_derivation(&assumptions, &nonnegative);
+}
+
+#[test]
 fn known_memory_block_bounds_prove_symbolic_element_access() {
     let index = Variable(91);
     let index_bits = Bitvector32Term::Variable(index);

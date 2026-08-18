@@ -636,6 +636,57 @@ fn grouped_post_execution_simp_applies_planned_steps_once_through_proof() {
 }
 
 #[test]
+fn post_execution_simp_builds_disjunction_cases_on_proof() {
+    let c_source = r#"
+        int32 choose(int32 x) {
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "choose.c";
+
+        int32 choose(int32 x) {
+            requires x == 0 or x == 1;
+            ensures 0 <= result;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("choose.c", c_source)])
+    });
+    verified.expect("the two-value result should prove nonnegative by cases");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp compatibility construction"
+        )),
+        "the checked Proof case split must bypass compatibility construction: {events:#?}"
+    );
+
+    let simp_offset = click_source
+        .find("simp();")
+        .expect("proof should contain the selected grouped simp");
+    let position = expansion::position_at_offset(click_source, simp_offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("choose.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the checked case split should expand");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    assert!(expanded.contains("cases (x == 0 or x == 1)"), "{expanded}");
+    assert_eq!(expanded.matches("rewrite(").count(), 2, "{expanded}");
+    assert_eq!(expanded.matches("normalize();").count(), 2, "{expanded}");
+    verify_c0_sources(&expanded, &[("choose.c", c_source)])
+        .expect("the retained case split should verify independently");
+}
+
+#[test]
 fn post_execution_existential_simp_retains_its_checked_scope() {
     let c_source = r#"
         int32 identity(int32 x) {

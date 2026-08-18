@@ -1444,6 +1444,7 @@ impl PureFactContext {
 
     pub(super) fn clear_proposition_facts(&mut self) {
         self.prop_facts = std::sync::Arc::new(BTreeSet::new());
+        self.disjunction_facts = std::sync::Arc::new(BTreeSet::new());
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
         self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
@@ -1454,6 +1455,13 @@ impl PureFactContext {
 
     pub(super) fn retain_proposition_facts(&mut self, keep: impl FnMut(&Proposition) -> bool) {
         std::sync::Arc::make_mut(&mut self.prop_facts).retain(keep);
+        self.disjunction_facts = std::sync::Arc::new(
+            self.prop_facts
+                .iter()
+                .filter(|fact| matches!(fact, Proposition::Or(_, _)))
+                .cloned()
+                .collect(),
+        );
         self.rebuild_memory_loadable_facts();
         self.rebuild_memory_separation_facts();
         self.recompute_content_fingerprint();
@@ -1652,6 +1660,9 @@ impl PureFactContext {
             return;
         }
         if std::sync::Arc::make_mut(&mut self.prop_facts).insert(proposition.clone()) {
+            if matches!(proposition, Proposition::Or(_, _)) {
+                std::sync::Arc::make_mut(&mut self.disjunction_facts).insert(proposition.clone());
+            }
             self.adjust_memory_loadable_fact(&proposition, true);
             self.adjust_memory_separation_fact(&proposition, true);
             self.content_fingerprint ^= Self::fingerprint(2, &proposition);
@@ -1660,10 +1671,18 @@ impl PureFactContext {
 
     pub(super) fn remove_proposition_fact(&mut self, proposition: &Proposition) {
         if std::sync::Arc::make_mut(&mut self.prop_facts).remove(proposition) {
+            if matches!(proposition, Proposition::Or(_, _)) {
+                std::sync::Arc::make_mut(&mut self.disjunction_facts).remove(proposition);
+            }
             self.adjust_memory_loadable_fact(proposition, false);
             self.adjust_memory_separation_fact(proposition, false);
             self.content_fingerprint ^= Self::fingerprint(2, proposition);
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn disjunction_fact_count(&self) -> usize {
+        self.disjunction_facts.len()
     }
 
     #[cfg(test)]
@@ -2129,9 +2148,7 @@ impl PropositionDerivation {
                     )
             }
             PropositionDerivationRule::DisjunctionCases { disjunction, cases } => {
-                if !matches!(self.conclusion, Proposition::Or(_, _))
-                    || !available.prop_facts.contains(disjunction)
-                {
+                if !available.prop_facts.contains(disjunction) {
                     return false;
                 }
                 let mut expected_cases = Vec::new();

@@ -3151,6 +3151,7 @@ impl<'a> Proof<'a> {
                     .flatten()
             })
             .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
+            .or_else(|| self.try_selected_disjunction_cases(&premise_pairs))
     }
 
     /// Retains the kernel decision and the exact replayable Surface spellings
@@ -3347,6 +3348,52 @@ impl<'a> Proof<'a> {
                 if let Some(closed) = applied.try_direct_logical_closure() {
                     return Some(closed);
                 }
+            }
+        }
+        None
+    }
+
+    /// Eliminates one disjunction selected by the kernel derivation and
+    /// proves both arms on their branch-local `Proof`s. The disjunction is
+    /// never reopened once either disjunct is already available, which makes
+    /// recursive branch search descend through distinct case assumptions.
+    fn try_selected_disjunction_cases(
+        &self,
+        premise_pairs: &[(Proposition, ClickProposition)],
+    ) -> Option<Self> {
+        for (kernel, surface) in premise_pairs {
+            let Proposition::Or(left, right) = kernel else {
+                continue;
+            };
+            if self.state.facts.contains(left) || self.state.facts.contains(right) {
+                continue;
+            }
+            let ClickProposition::Or(surface_left, surface_right) = surface else {
+                continue;
+            };
+            let Ok(mut branches) = self.begin_cases(surface.clone()) else {
+                continue;
+            };
+            let branch_surfaces = [surface_left.as_ref(), surface_right.as_ref()];
+            let mut complete = true;
+            for (index, assumed_surface) in branch_surfaces.into_iter().enumerate() {
+                let branch = &branches.arms[index];
+                let selected = branch.try_simp_closure().or_else(|| {
+                    let rewritten = branch
+                        .apply_step(SimpleProofStep::Rewrite(assumed_surface.clone()))
+                        .ok()?;
+                    rewritten
+                        .try_direct_logical_closure()
+                        .or_else(|| rewritten.try_typed_atomic_simp_closure())
+                });
+                let Some(selected) = selected else {
+                    complete = false;
+                    break;
+                };
+                branches.arms[index] = selected;
+            }
+            if complete && let Ok(joined) = branches.join() {
+                return Some(joined);
             }
         }
         None
@@ -13628,6 +13675,124 @@ mod tests {
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
                 assert!(pure_root.certificate().steps().is_empty());
             }
+        }
+    }
+
+    #[test]
+    fn selected_disjunction_simp_retains_checked_cases_and_scales() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("the standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test C function should parse");
+        let state = CState::new();
+        let arguments = Vec::new();
+        let program_point_states = ProgramPointStates::new();
+        let value = Bitvector32Term::Variable(Variable(8_178_900));
+        let expression = |term: Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term)))
+        };
+        let equal_zero = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::Equal,
+            right: expression(Bitvector32Term::Constant(0)),
+        };
+        let equal_one = ClickProposition::Comparison {
+            left: expression(value.clone()),
+            operator: ComparisonOperator::Equal,
+            right: expression(Bitvector32Term::Constant(1)),
+        };
+        let disjunction =
+            ClickProposition::Or(Box::new(equal_zero.clone()), Box::new(equal_one.clone()));
+        let surface_goal = ClickProposition::Comparison {
+            left: expression(Bitvector32Term::Constant(0)),
+            operator: ComparisonOperator::LessEqual,
+            right: expression(value),
+        };
+        let lower = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the fixed proposition should lower")
+        };
+        let kernel_disjunction = lower(&disjunction);
+        let kernel_goal = lower(&surface_goal);
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
+            .record_lowering(&disjunction, &kernel_disjunction)
+            .expect("the selected disjunction should be indexed");
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.push(kernel_disjunction.clone());
+            let root = Proof::for_point_goal(
+                "persistent point disjunction simp",
+                0,
+                &facts,
+                kernel_goal.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            assert_eq!(
+                root.state.facts.assumptions().disjunction_fact_count(),
+                1,
+                "unrelated facts must not enter the disjunction candidate index"
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("the selected disjunction should close both checked Proof arms");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 160 * logarithmic_height + 640;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} disjunction simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [SimpleProofStep::Cases {
+                    disjunction: retained,
+                    left_proof,
+                    right_proof,
+                }] if retained == &disjunction
+                    && matches!(
+                        left_proof.steps(),
+                        [SimpleProofStep::Rewrite(equality), SimpleProofStep::Normalize]
+                            if equality == &equal_zero
+                    )
+                    && matches!(
+                        right_proof.steps(),
+                        [SimpleProofStep::Rewrite(equality), SimpleProofStep::Normalize]
+                            if equality == &equal_one
+                    )
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
         }
     }
 
