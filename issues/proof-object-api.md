@@ -2769,6 +2769,19 @@ path in the corpus. Slice 2 starts consuming the goals: per-outcome
 persistent proofs advancing through the drained tactics, with
 `available_fact_vector` as the explicit legacy adapter boundary.
 
+### Progress (2026-08-18: the unfold delta is path-local goal state)
+
+The proof-local predicate-unfold delta moved from `ProofState` into
+`GoalContext`: sibling goals now unfold independently, which the outcome
+drain requires — each drained path evolves its own unfold history. Ordinary
+successors preserve the focused goal's delta; both unfold transitions
+install their updated delta atomically with their fact and snapshot
+successors (`with_context_at`); execution joins merge arm deltas into the
+root goal's context through one frontier-checked context update; nested
+`have` bodies inherit the parent goal's delta; and outcome goals inherit the
+frontier's at derivation. `ProofState` now carries only locals, the goal
+collection, and the per-step output deltas.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
