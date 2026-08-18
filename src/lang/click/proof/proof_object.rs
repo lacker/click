@@ -3077,16 +3077,28 @@ impl<'a> Proof<'a> {
             tactic_index,
         )?;
         let goal = match &self.state.goal {
-            Goal::Proposition(goal) => Goal::proposition(
-                unfold_predicates_in_proposition(
+            Goal::Proposition(goal) => {
+                let kernel = unfold_predicates_in_proposition(
                     predicate_environment,
                     click_function_environment,
                     std::slice::from_ref(name),
                     &goal.kernel,
                     checked.facts.assumptions(),
                 )
-                .map_err(|message| self.step_error(message))?,
-            ),
+                .map_err(|message| self.step_error(message))?;
+                match &goal.surface {
+                    Some(surface) => {
+                        let surface = unfold_structural_invariant_proposition(
+                            predicate_environment,
+                            surface,
+                            std::slice::from_ref(name),
+                        )
+                        .map_err(|message| self.step_error(message))?;
+                        Goal::surface_proposition(kernel, surface)
+                    }
+                    None => Goal::proposition(kernel),
+                }
+            }
             Goal::Frontier(selection) => Goal::Frontier(*selection),
         };
         let mut unfolded_predicates = self.state.unfolded_predicates.clone();
@@ -9842,10 +9854,11 @@ mod tests {
                 requires: requires.clone(),
                 ..base_context.clone()
             };
-            let root = Proof::for_pure_goal(
+            let root = Proof::for_pure_surface_goal(
                 "persistent proposition unfold",
                 &requires,
-                goal.clone(),
+                predicate.clone(),
+                predicate_surface.clone(),
                 &theorem_context,
                 &predicate_environment,
                 &click_function_environment,
@@ -9881,6 +9894,8 @@ mod tests {
                 "size {size} proposition unfold allocated {allocations} persistent nodes (bound {allocation_bound})"
             );
             assert!(unfolded.state.facts.contains(&goal));
+            assert_eq!(unfolded.goal(), Some(&goal));
+            assert_eq!(unfolded.surface_goal(), Some(&goal_surface));
             assert!(
                 unfolded
                     .state

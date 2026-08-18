@@ -8716,6 +8716,28 @@ fn unfolded_conjunction_have_simp_expands_to_a_split_certificate() {
                 simp();
             }
         "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("set_pair.c", c_source)])
+    });
+    verified.expect("the unfolded conjunction should verify on the checked Proof path");
+    let source_verification_events = events.iter().take_while(|event| {
+        !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "whole-contract certificate construction"
+        )
+    });
+    assert!(
+        source_verification_events
+            .into_iter()
+            .all(|event| !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "post-execution smart have compatibility construction"
+                        || name.starts_with("post-execution simple have replay")
+            )),
+        "the checked unfold and structural simp must not reconstruct or replay their proof: {events:#?}"
+    );
     let offset = click_source.find("have ordered_pair").unwrap();
     let position = expansion::position_at_offset(click_source, offset);
     let expanded = expand_c0_tactic_source_at(

@@ -2059,6 +2059,14 @@ when it created the root `Proof`; the compatibility constructor silently
 masked the lost direct path. The post-execution structural-`have` regression
 now rejects both compatibility construction and later certificate replay.
 
+Checked proposition `UnfoldPredicate` now transforms the Proof-owned Surface
+goal with the same predicate definition while it unfolds the kernel goal and
+facts. Consequently `unfold(predicate); simp()` retains the recursive proof
+of a predicate-body conjunction instead of discarding the Surface view and
+reconstructing a certificate. The existing `ordered_pair` expansion now also
+requires ordinary verification to avoid compatibility construction and
+replay.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
