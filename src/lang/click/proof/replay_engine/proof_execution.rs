@@ -1,6 +1,13 @@
 use super::*;
 
 fn linear_execution_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
+    // `frame()` is source sugar for the smart frame search even though the
+    // surface certificate parser can represent its empty spelling as a
+    // `FrameUsing`. Keep the source operation on the smart branch so mutable
+    // effects can select and retain their contextual premises.
+    if matches!(tactic, ProofTactic::SmartFrame(_)) {
+        return None;
+    }
     let certificate = ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).ok()?;
     let [step] = certificate.steps() else {
         return None;
@@ -155,6 +162,30 @@ fn checked_linear_continuation_reaches_frame(node: &InternalProofNode) -> bool {
     false
 }
 
+/// Whether one flat source script can be checked as a complete execution
+/// effect proof before any descendant is published. The terminal frame is
+/// load-bearing: it validates the facts retained by the preceding execution
+/// search, so a miss can discard the whole candidate and leave the legacy
+/// context untouched.
+fn checked_terminal_effect_script(tactics: &[IndexedTactic]) -> bool {
+    let Some((last, prefix)) = tactics.split_last() else {
+        return false;
+    };
+    matches!(
+        last.tactic,
+        ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
+    ) && prefix.iter().any(|indexed| {
+        matches!(
+            indexed.tactic,
+            ProofTactic::SmartExecute
+                | ProofTactic::SmartExecuteAllPaths
+                | ProofTactic::ExecuteUntil(_)
+        )
+    }) && tactics
+        .iter()
+        .all(|indexed| checked_linear_continuation_tactic(&indexed.tactic))
+}
+
 fn linear_terminal_frame_prefix(node: &InternalProofNode) -> Option<&IndexedTactic> {
     linear_execution_tactics(node)?.first().filter(|indexed| {
         matches!(
@@ -193,6 +224,7 @@ fn advance_checked_linear_continuation<'a>(
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
     owning_source_index: usize,
+    allow_contextual_frame: bool,
 ) -> Result<Option<(Proof<'a>, Vec<IndexedTactic>)>, ClickError> {
     let Some(tactics) = linear_execution_tactics(continuation) else {
         return Ok(None);
@@ -253,11 +285,13 @@ fn advance_checked_linear_continuation<'a>(
             };
             executed
         } else if let ProofTactic::SmartFrame(region) = &indexed.tactic {
-            // The checked empty-frame capability is the audited immutable
-            // subset. A mutable smart frame may need path-specific planned
-            // evidence; leave the entire candidate path to the compatibility
-            // driver until that planner operates on the joined Proof state.
-            if !proof.supports_checked_frame_using(region.as_ref(), &[])? {
+            // Partial continuation migration keeps the audited exact-frame
+            // subset. A complete transactional effect script may also search
+            // for contextual premises because a miss discards the whole
+            // Proof lineage instead of publishing its execution prefix.
+            if !allow_contextual_frame
+                && !proof.supports_checked_frame_using(region.as_ref(), &[])?
+            {
                 return Ok(None);
             }
             let Some(framed) =
@@ -296,6 +330,78 @@ fn advance_checked_linear_continuation<'a>(
         }
     }
     Ok(Some((proof, Vec::new())))
+}
+
+/// Tries a complete flat execution/effect script on one immutable Proof.
+///
+/// Search may inspect and fork the Proof, but every accepted statement and
+/// frame advances through its ordinary checked operation. Nothing is exported
+/// unless the terminal frame closes the selected effect goal; a miss therefore
+/// preserves the original replay context for compatibility diagnostics.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn try_execute_checked_terminal_effect_script<'a>(
+    context: &ProofReplayContext,
+    tactics: &[IndexedTactic],
+    expansion_capture: Option<&mut ExpansionCapture>,
+    function_block: &'a FunctionBlock,
+    parsed_function: &'a syntax::C0Function,
+    claim_label: &'a str,
+    function_environment: &'a CExecutionEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    resource_environment: &'a ResourceEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    function: &'a CFunction,
+    arguments: &'a [CExpression],
+) -> Result<Option<ProofReplayContext>, ClickError> {
+    if !checked_terminal_effect_script(tactics) {
+        return Ok(None);
+    }
+    let root = Proof::for_execution_frontier(
+        claim_label,
+        tactics[0].index,
+        context.clone(),
+        function_block,
+        function,
+        parsed_function,
+        arguments,
+        function_environment,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    );
+    let checkpoint = root.checkpoint();
+    let linear = InternalProofNode::Linear {
+        tactics: tactics.to_vec(),
+        continuation: Box::new(InternalProofNode::Done),
+    };
+    let Some((proof, remaining)) = advance_checked_linear_continuation(
+        root,
+        &linear,
+        expansion_capture,
+        context.replay.proof_site.as_ref(),
+        usize::MAX,
+        true,
+    )?
+    else {
+        return Ok(None);
+    };
+    if !remaining.is_empty() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` checked terminal effect script left an unexpected source suffix"
+        )));
+    }
+    let certificate = proof.certificate_since(&checkpoint)?;
+    let mut checked = proof.into_execution_context()?;
+    for step in certificate.steps() {
+        checked
+            .replay
+            .proof_certificate_builder
+            .push_step(step.clone());
+    }
+    Ok(Some(checked))
 }
 
 fn solve_nested_have<'a>(
@@ -917,6 +1023,26 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             continuation,
         } => {
             let branch_path = context.branch_path.clone();
+            if matches!(continuation.as_ref(), InternalProofNode::Done)
+                && let Some(checked) = try_execute_checked_terminal_effect_script(
+                    &context,
+                    tactics,
+                    expansion_capture.as_deref_mut(),
+                    function_block,
+                    parsed_function,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                )
+                .map_err(|error| add_proof_branch_path(error, &branch_path))?
+            {
+                return Ok(vec![checked]);
+            }
             let context = replay_linear_tactics(
                 context,
                 expansion_capture.as_deref_mut(),
@@ -1278,6 +1404,7 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                             expansion_capture.as_deref_mut(),
                             context.replay.proof_site.as_ref(),
                             *source_index,
+                            false,
                         )?
                         .map(|(proof, remaining)| {
                             let continuation = if remaining.is_empty() {

@@ -2175,6 +2175,34 @@ own that suffix. Such a miss therefore continues from the unchanged root on
 the compatibility path until continuation-conditioned search is represented
 by `Proof`; it is not approximated by harvesting ambient resource facts.
 
+### Progress (2026-08-18: complete linear effect scripts on Proof)
+
+An individual effect proof whose flat script executes to function exit and
+ends in `frame()` now searches the complete script on one immutable `Proof`
+before publishing any descendant. Every selected statement is retained as
+its checked `StepUsing`; the terminal smart frame selects its contextual
+`Have` and `FrameUsing` certificate and applies those steps to the same
+lineage. If execution, continuation, or frame search misses, the complete
+candidate is discarded and the unchanged root remains available for the
+compatibility diagnostic. Partial continuations keep their narrower frame
+capability boundary.
+
+Memory stores obtain their explicit bounds through source-name indexes. The
+selector collects only C variables mentioned by the current statement and
+queries the persistent current-variable buckets for those names; it does not
+scan unrelated ambient facts. This is enough for a symbolic `p[i] = value`
+store to select the `i` bounds and `p` resource fact required by its checked
+transition. A deterministic 16-through-4096 unrelated-name curve bounds the
+successful store selection by persistent-index height and requires the
+retained premise list to exclude every unrelated spelling.
+
+The motivating `execute(); frame();` mutable-effect regression now requires
+zero mutable planning transitions and no smart-tactic compatibility replay
+during ordinary verification. Its retained simple certificate is still
+independently checked by the whole-claim gate and by source expansion, but
+that check performs no search: it consumes the already-selected `StepUsing`,
+theorem-backed `Have`, and exact `FrameUsing` operations.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

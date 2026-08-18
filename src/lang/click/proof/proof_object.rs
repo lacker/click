@@ -182,6 +182,99 @@ fn source_proof_contains_linear_search(proof: &SourceProof) -> bool {
     }
 }
 
+/// Collects only source-local C names mentioned by one candidate statement.
+/// Smart statement selection uses these names as keys into the persistent
+/// Surface-fact index; it never scans the ambient proposition set.
+fn collect_expression_variable_names(expression: &CExpression, names: &mut BTreeSet<String>) {
+    match expression {
+        CExpression::Variable(name) => {
+            names.insert(name.clone());
+        }
+        CExpression::Value(_) => {}
+        CExpression::PointerOffsetBytes { pointer, .. } => {
+            collect_expression_variable_names(pointer, names)
+        }
+        CExpression::AddressOf(inner) | CExpression::Not(inner) | CExpression::Load(inner) => {
+            collect_expression_variable_names(inner, names)
+        }
+        CExpression::TypedLoad { pointer, .. } => collect_expression_variable_names(pointer, names),
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            collect_expression_variable_names(left, names);
+            collect_expression_variable_names(right, names);
+        }
+        CExpression::BitwiseNot(inner) => collect_expression_variable_names(inner, names),
+    }
+}
+
+fn collect_statement_variable_names(statement: &CStatement, names: &mut BTreeSet<String>) {
+    match statement {
+        CStatement::Skip | CStatement::Declare { .. } => {}
+        CStatement::Assign { name, expression } => {
+            names.insert(name.clone());
+            collect_expression_variable_names(expression, names);
+        }
+        CStatement::Return(expression)
+        | CStatement::Assert {
+            condition: expression,
+            ..
+        }
+        | CStatement::HeapAllocate {
+            bytes: expression, ..
+        }
+        | CStatement::HeapFree {
+            pointer: expression,
+        } => collect_expression_variable_names(expression, names),
+        CStatement::CallAssign {
+            target, arguments, ..
+        } => {
+            names.insert(target.clone());
+            for argument in arguments {
+                collect_expression_variable_names(argument, names);
+            }
+        }
+        CStatement::Call { arguments, .. } => {
+            for argument in arguments {
+                collect_expression_variable_names(argument, names);
+            }
+        }
+        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
+            collect_expression_variable_names(pointer, names);
+            collect_expression_variable_names(value, names);
+        }
+        // The execution cursor normally splits sequences before selection.
+        // If a composite statement reaches this helper, only its immediate
+        // operation may influence the next checked transition; later source
+        // must not widen one smart step's dependency query.
+        CStatement::Seq(first, _) => {
+            collect_statement_variable_names(first, names);
+        }
+        CStatement::If { condition, .. } => {
+            collect_expression_variable_names(condition, names);
+        }
+        CStatement::While { condition, .. } => {
+            collect_expression_variable_names(condition, names);
+        }
+    }
+}
+
 fn script_contains_linear_search(tactics: &[ProofTactic]) -> bool {
     tactics.iter().any(|tactic| match tactic {
         ProofTactic::ApplyTheorem(_) | ProofTactic::Simp => true,
@@ -4329,7 +4422,10 @@ impl<'a> Proof<'a> {
                 // the explicit empty candidate through the simple checker;
                 // it either returns the checked descendant or leaves this
                 // root untouched.
-                return self.try_statement_step_using(Vec::new());
+                if let Some(proof) = self.try_statement_step_using(Vec::new())? {
+                    return Ok(Some(proof));
+                }
+                continue;
             };
             for premise in derivation.context_premises() {
                 if !selected.contains(&premise) {
@@ -4343,7 +4439,7 @@ impl<'a> Proof<'a> {
         {
             return Ok(None);
         }
-        let mut local_dependencies = BTreeSet::new();
+        let mut indexed_dependencies = BTreeMap::new();
         if allow_unrelated_context {
             for fact in self.state.added_facts.iter() {
                 if execution
@@ -4357,25 +4453,61 @@ impl<'a> Proof<'a> {
                     selected.push(fact.clone());
                 }
             }
+            if let Some(proof) = self.try_statement_step_with_selected_facts(
+                execution,
+                &selected,
+                &indexed_dependencies,
+            )? {
+                return Ok(Some(proof));
+            }
         }
-        if let Some(name) = assigned_local {
+        let mut dependency_names = BTreeSet::new();
+        if allow_unrelated_context {
+            collect_statement_variable_names(&statement, &mut dependency_names);
+        } else if let Some(name) = assigned_local {
+            dependency_names.insert(name.to_string());
+        }
+        for name in dependency_names {
             for fact in execution
                 .replay
                 .surface_propositions
-                .current_c_variable_kernel_facts(name)
+                .current_c_variable_kernel_facts(&name)
             {
                 if self.state.facts.contains_top_level(fact) {
-                    local_dependencies.insert(fact.clone());
+                    indexed_dependencies
+                        .entry(fact.clone())
+                        .or_insert_with(|| name.clone());
                     if !selected.contains(fact) {
                         selected.push(fact.clone());
+                        if allow_unrelated_context
+                            && let Some(proof) = self.try_statement_step_with_selected_facts(
+                                execution,
+                                &selected,
+                                &indexed_dependencies,
+                            )?
+                        {
+                            return Ok(Some(proof));
+                        }
                     }
                 }
             }
         }
+        if allow_unrelated_context {
+            return Ok(None);
+        }
+        self.try_statement_step_with_selected_facts(execution, &selected, &indexed_dependencies)
+    }
+
+    fn try_statement_step_with_selected_facts(
+        &self,
+        execution: &ExecutionProofState,
+        selected: &[Proposition],
+        indexed_dependencies: &BTreeMap<Proposition, String>,
+    ) -> Result<Option<Self>, ClickError> {
         let mut premises = Vec::with_capacity(selected.len());
         for fact in selected {
-            let surface = assigned_local
-                .filter(|_| local_dependencies.contains(&fact))
+            let surface = indexed_dependencies
+                .get(fact)
                 .and_then(|name| {
                     execution
                         .replay
@@ -16028,6 +16160,126 @@ mod tests {
             assert!(
                 allocations <= logarithmic_bound,
                 "size {size} assignment selection allocated {allocations} persistent nodes (bound {logarithmic_bound})"
+            );
+        }
+    }
+
+    #[test]
+    fn smart_store_selection_uses_only_statement_name_indexes() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+                    requires n >= 0;
+                    requires n <= 2147483647;
+                    requires i >= 0;
+                    requires i < n;
+                    requires loadable(p[0..n]);
+                    consumes p[0..n];
+                    mutable p[0..n] by { execute(); frame(); }
+                }
+            "#,
+        )
+        .expect("test function contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+        let parsed_function = syntax::parse_function(
+            "int32 write_in_bounds(int32 p[], int32 i, int32 n) { p[i] = 9; return 0; }",
+        )
+        .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let function_environment = CExecutionEnvironment::new();
+        let (state, arguments, base_facts, base_surfaces) = initial_claim_context(
+            function_block,
+            &parsed_function,
+            &resource_environment,
+            &predicate_environment,
+            &click_function_environment,
+            "indexed store selection",
+        )
+        .expect("the resource-backed claim context should initialize");
+        let mut samples = Vec::new();
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut pure_facts = base_facts.clone();
+            let mut surface_propositions = base_surfaces.clone();
+            for index in 0..size {
+                let fact = indexed_fact(index + 10_000);
+                let surface = ClickProposition::Comparison {
+                    left: ContractExpression::CFragment(CExpression::Variable(format!(
+                        "unrelated_{index}"
+                    ))),
+                    operator: ComparisonOperator::Equal,
+                    right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+                };
+                surface_propositions
+                    .record_lowering(&surface, &fact)
+                    .expect("the unrelated surface fact should be indexed");
+                pure_facts.push(fact);
+            }
+            let replay = TacticReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                surface_propositions,
+                ..TacticReplayState::default()
+            };
+            let root = Proof::for_execution_frontier(
+                "indexed store selection",
+                0,
+                ProofReplayContext {
+                    state: state.clone(),
+                    pure_facts,
+                    replay,
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let selected = root
+                .try_indexed_execute_step()
+                .expect("indexed store selection should remain available")
+                .expect("the statement-local bounds and resource should prove the store");
+            let allocations = fact_node_allocations() - before;
+            samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                allocations,
+            ));
+
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+            let certificate = selected.certificate();
+            let [SimpleProofStep::StepUsing(premises)] = certificate.steps() else {
+                panic!(
+                    "the selected store should retain one explicit statement step: {:#?}",
+                    certificate.steps()
+                );
+            };
+            assert!(
+                premises
+                    .iter()
+                    .all(|premise| !format!("{premise:?}").contains("unrelated_")),
+                "the store selected an unrelated indexed fact: {premises:#?}"
+            );
+        }
+
+        let (_, base_height, base_allocations) = samples[0];
+        for (size, height, allocations) in samples {
+            let logarithmic_bound = base_allocations + 24 * (height - base_height);
+            assert!(
+                allocations <= logarithmic_bound,
+                "size {size} indexed store selection allocated {allocations} persistent nodes (bound {logarithmic_bound})"
             );
         }
     }

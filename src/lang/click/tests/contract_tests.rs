@@ -472,8 +472,25 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
             }
         "#;
 
-    let verified = verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
-        .expect("contextual frame should verify");
+    let ((verified, events), planning_transitions) = collect_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| {
+            verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
+        })
+    });
+    let verified = verified.expect("contextual frame should verify");
+    assert!(
+        planning_transitions.is_empty(),
+        "the complete effect script must search only on checked Proof descendants: \
+         {planning_transitions:#?}"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name.starts_with("smart tactic compatibility replay")
+        )),
+        "the complete effect script must not enter compatibility replay: {events:#?}"
+    );
     let theorem = verified
         .iter()
         .find(|theorem| theorem.effect_clause().is_some())
@@ -488,6 +505,24 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
         expanded
             .iter()
             .any(|tactic| matches!(tactic, ProofTactic::Have(_)))
+    );
+    let statement_steps = expanded
+        .iter()
+        .filter_map(|tactic| match tactic {
+            ProofTactic::StepUsing(premises) => Some(premises),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        statement_steps.len(),
+        2,
+        "the store and return should each occur exactly once in the retained certificate: {expanded:#?}"
+    );
+    assert!(
+        statement_steps
+            .iter()
+            .all(|premises| !format!("{premises:?}").contains("unrelated")),
+        "statement selection leaked an unrelated indexed fact: {statement_steps:#?}"
     );
     assert!(
         !format!("{expanded:?}").contains("Derive("),
