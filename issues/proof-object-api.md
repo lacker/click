@@ -2067,6 +2067,14 @@ reconstructing a certificate. The existing `ordered_pair` expansion now also
 requires ordinary verification to avoid compatibility construction and
 replay.
 
+Checked point `Witness` now performs the corresponding capture-avoiding
+substitution on the Proof-owned existential Surface goal after the kernel has
+accepted and evaluated the witness. A following structural `simp` can refine
+an instantiated conjunction on that successor directly. The 16-through-4096
+witness curve still requires zero persistent-fact allocation and now checks
+the exact Surface body; a source regression expands and independently checks
+the retained `witness`, child proofs, and `split` without compatibility work.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

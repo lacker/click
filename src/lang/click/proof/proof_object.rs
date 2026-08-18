@@ -5364,11 +5364,26 @@ impl<'a> Proof<'a> {
             0,
             context.tactic_index,
         )?;
+        let surface_goal = match self.surface_goal() {
+            Some(ClickProposition::Exists { name, body, .. }) if name == &witness.name => {
+                let substitutions = BTreeMap::from([(name.clone(), witness.value.clone())]);
+                Some(
+                    substitute_click_proposition(body, &substitutions).map_err(|message| {
+                        self.step_error(format!(
+                            "could not instantiate Surface witness goal: {message}"
+                        ))
+                    })?,
+                )
+            }
+            _ => None,
+        };
         Ok(ProofState {
             facts: self.state.facts.clone(),
             locals: self.state.locals.clone(),
             unfolded_predicates: self.state.unfolded_predicates.clone(),
-            goal: Goal::proposition(goal),
+            goal: surface_goal
+                .map(|surface| Goal::surface_proposition(goal.clone(), surface))
+                .unwrap_or_else(|| Goal::proposition(goal)),
             complete: false,
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
@@ -10423,14 +10438,30 @@ mod tests {
             name: "chosen".to_string(),
             value: ContractExpression::CFragment(CExpression::Value(int32(7))),
         };
+        let expected_surface = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("chosen".to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(7))),
+        };
+        let surface_goal = ClickProposition::Exists {
+            c_type: C0Type::Int32,
+            name: "chosen".to_string(),
+            body: Box::new(expected_surface),
+        };
+        let instantiated_surface = ClickProposition::Comparison {
+            left: witness.value.clone(),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(7))),
+        };
 
         for size in [16_u32, 64, 256, 1024, 4096] {
             let facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
-            let root = Proof::for_point_goal(
+            let root = Proof::for_point_surface_goal(
                 "persistent witness",
                 0,
                 &facts,
                 goal.clone(),
+                surface_goal.clone(),
                 &[],
                 &[],
                 &state,
@@ -10469,6 +10500,7 @@ mod tests {
                 refined.certificate().steps(),
                 &[SimpleProofStep::Witness(witness.clone())]
             );
+            assert_eq!(refined.surface_goal(), Some(&instantiated_surface));
             assert!(refined.added_facts().is_empty());
             assert!(!refined.is_complete());
             let completed = refined

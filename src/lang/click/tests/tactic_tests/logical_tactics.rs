@@ -1278,6 +1278,73 @@ fn explicit_mid_execution_witness_certificate_checks_and_expands() {
 }
 
 #[test]
+fn point_witness_retains_a_structural_surface_goal_for_simp() {
+    let c_source = "int32 witness_pair(int32 x, int32 y) { return x; }";
+    let click_source = r#"
+            verifying "witness_pair.c";
+
+            int32 witness_pair(int32 x, int32 y) {
+                requires x == 0;
+                requires y == 0;
+                ensures result == x;
+            } by {
+                have exists (j: int32) { j == 0 and y == 0 } by {
+                    witness(j = x);
+                    simp();
+                }
+                execute();
+                simp();
+            }
+        "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("witness_pair.c", c_source)])
+    });
+    verified.expect("witness followed by structural simp should stay on Proof");
+    let source_verification_events = events.iter().take_while(|event| {
+        !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "whole-contract certificate construction"
+        )
+    });
+    assert!(
+        source_verification_events
+            .into_iter()
+            .all(|event| !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "post-execution smart have compatibility construction"
+                        || name.starts_with("post-execution simple have replay")
+            )),
+        "the witness successor must retain the structural proof without reconstruction: {events:#?}"
+    );
+
+    let have_offset = click_source
+        .find("have exists (j: int32)")
+        .expect("source should contain the existential have");
+    let position = expansion::position_at_offset(click_source, have_offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("witness_pair.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the retained witness proof should expand");
+    let expanded_have = &expanded[expanded
+        .find("have exists (j: int32)")
+        .expect("expansion should retain the selected have")
+        ..expanded
+            .find("execute();")
+            .expect("expansion should retain the proof suffix")];
+    assert!(expanded_have.contains("witness(j = x);"), "{expanded_have}");
+    assert!(expanded_have.contains("split();"), "{expanded_have}");
+    assert!(!expanded_have.contains("simp();"), "{expanded_have}");
+    verify_c0_sources(&expanded, &[("witness_pair.c", c_source)])
+        .expect("the expanded witness and structural proof should verify independently");
+}
+
+#[test]
 fn mid_execution_proof_if_have_expands_to_a_simple_certificate() {
     let c_source = r#"
             int32 sign_partition(int32 x) {
