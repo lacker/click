@@ -279,3 +279,20 @@ what resource content it emits into path_grouped_surface_closers, and
 either reproduce that content from the direct proof or extend
 complete_point_obligations_since with typed resource-production
 steps.
+
+## Chunk 2 resource vocabulary landed (2026-08-19)
+
+Three gate-green commits close the resource-ensure escape class:
+ungrouped resource ensures (75ad9b74), grouped resource ensures via the
+Assumption-padded grouped transition (63078245), and all-resource claim
+sets closing without a proof attempt (this commit). The
+compatibility-lowering fallback is gated to ungrouped attempts so
+grouped sets needing nested-have spelling keep the legacy certifier
+(pinned by outcome_predecessor_upper_bound...). Census across both
+corpora: legacy-exit-closer entries 154 -> 81, of which 71 are direct
+proof attempts whose goals the direct closures cannot prove yet (the
+next vocabulary frontier) and ~10 are divergent/existence/frame
+special cases. The remaining chunk items: strengthen the direct
+closures against the 71 (measure which closure step fails), the single
+frame-certified admission, then retire the legacy closer for the
+converted classes.

@@ -3690,6 +3690,50 @@ pub(super) fn finish_ordered_proof_replay(
                                             }
                                         }
                                     }
+                                    if direct_supported
+                                        && direct_claims.is_empty()
+                                        && !direct_resource_claims.is_empty()
+                                    {
+                                        // A claim set of checked resource
+                                        // productions needs no proof attempt:
+                                        // its certificate is the same
+                                        // Assumption-per-claim stream the
+                                        // legacy certifier emits when it has
+                                        // no proposition goals.
+                                        let tactics = vec![
+                                            ProofTactic::Assumption;
+                                            direct_resource_claims.len()
+                                        ];
+                                        let certificate =
+                                            ProofCertificate::from_proof_tactics(&tactics)
+                                                .map_err(|error| {
+                                                    ClickError::new(format!(
+                                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: resource `simp` produced an invalid surface certificate: {error:?}"
+                                                    ))
+                                                })?;
+                                        if replay.grouped_contract {
+                                            for (claim_index, _) in &direct_resource_claims {
+                                                closures[*claim_index] =
+                                                    ClaimClosure::by_grouped_transition(
+                                                        &certificate,
+                                                    );
+                                            }
+                                            path_grouped_surface_closers
+                                                .extend(certificate.to_proof_tactics());
+                                        } else {
+                                            for (claim_index, _) in &direct_resource_claims {
+                                                closures[*claim_index] =
+                                                    ClaimClosure::by_checked_certificate(
+                                                        &certificate,
+                                                    );
+                                            }
+                                        }
+                                        if capturing_this_tactic {
+                                            path_deferred_capture_tactics
+                                                .extend(certificate.to_proof_tactics());
+                                        }
+                                        continue;
+                                    }
                                     if direct_supported && !direct_claims.is_empty() {
                                         let direct_certificate =
                                             crate::kernel::with_search_attempt_rollback(|| {
