@@ -518,6 +518,7 @@ pub(in crate::kernel) fn read_c_lvalue_expression_paths(
             lvalue_path.facts,
             lvalue_path.obligations,
             assumptions,
+            &mut budget.next_verification_variable,
         ));
     }
     budget.consume_paths(paths.len())?;
@@ -530,6 +531,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
+    next_verification_variable: &mut u64,
 ) -> Vec<CExpressionPath> {
     match outcome {
         CLValueOutcome::LValue(lvalue) => match &lvalue.storage {
@@ -595,6 +597,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                     obligations,
                     assumptions,
                     has_external_read_resource,
+                    next_verification_variable,
                 )
             }
         },

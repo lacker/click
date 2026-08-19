@@ -62,6 +62,7 @@ impl MemoryLoadAliasCache {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::kernel) fn evaluate_c_memory_load_paths(
     memory: &CMemory,
     pointer: Pointer,
@@ -70,6 +71,7 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
     has_external_read_resource: bool,
+    next_verification_variable: &mut u64,
 ) -> Vec<CExpressionPath> {
     let _assumptions_id_scope = assumptions.enter_id_scope();
     let mut alias_cache = MemoryLoadAliasCache::default();
@@ -82,6 +84,7 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
         assumptions,
         has_external_read_resource,
         &mut alias_cache,
+        next_verification_variable,
     )
 }
 
@@ -95,6 +98,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     assumptions: &PureFactContext,
     has_external_read_resource: bool,
     alias_cache: &mut MemoryLoadAliasCache,
+    next_verification_variable: &mut u64,
 ) -> Vec<CExpressionPath> {
     let mut facts = facts;
     let mut load_assumptions = assumptions.clone();
@@ -160,7 +164,13 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     // pointer. Avoid proving every other symbolic cell distinct before the
     // direct map lookup.
     if let Some(value) = memory.known_value(&pointer) {
-        if let Some(value) = symbolic_pointer_value_from_int_cell(&pointer, &value, value_type) {
+        if let Some(value) = canonicalized_pointer_value_from_int_cell(
+            &pointer,
+            &value,
+            value_type,
+            next_verification_variable,
+            &mut facts,
+        ) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(value),
                 facts,
@@ -186,7 +196,13 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             .resolution_equal(&pointer, stored_pointer, assumptions)
             .then(|| value.clone())
     }) {
-        if let Some(value) = symbolic_pointer_value_from_int_cell(&pointer, &value, value_type) {
+        if let Some(value) = canonicalized_pointer_value_from_int_cell(
+            &pointer,
+            &value,
+            value_type,
+            next_verification_variable,
+            &mut facts,
+        ) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(value),
                 facts,
@@ -261,7 +277,13 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }
 
     if let Some(value) = memory.known_value(&pointer) {
-        if let Some(value) = symbolic_pointer_value_from_int_cell(&pointer, &value, value_type) {
+        if let Some(value) = canonicalized_pointer_value_from_int_cell(
+            &pointer,
+            &value,
+            value_type,
+            next_verification_variable,
+            &mut facts,
+        ) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(value),
                 facts,
@@ -322,9 +344,13 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         )
         .is_some()
         {
-            let equal_outcome = if let Some(value) =
-                symbolic_pointer_value_from_int_cell(&pointer, &stored_value, value_type)
-            {
+            let equal_outcome = if let Some(value) = canonicalized_pointer_value_from_int_cell(
+                &pointer,
+                &stored_value,
+                value_type,
+                next_verification_variable,
+                &mut facts,
+            ) {
                 CExpressionOutcome::Value(value)
             } else if value_type.accepts(&stored_value) {
                 CExpressionOutcome::Value(stored_value)
@@ -357,6 +383,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 assumptions,
                 has_external_read_resource,
                 alias_cache,
+                next_verification_variable,
             ));
         }
 
@@ -428,6 +455,51 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         facts,
         obligations,
     }]
+}
+
+/// The canonicalizing form of [`symbolic_pointer_value_from_int_cell`] for
+/// execution paths: a loaded index never enters a pointer offset as a
+/// `MemoryLoad` term. The loaded value is bound to a fresh verification
+/// variable whose defining equation joins the path's fact stream, so the
+/// offset arithmetic downstream works over a small term and the snapshot
+/// stays proof-side, consulted only through the defining fact.
+pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
+    pointer: &Pointer,
+    value: &CValue,
+    value_type: CType,
+    next_verification_variable: &mut u64,
+    facts: &mut Vec<ExecutionPureFact>,
+) -> Option<CValue> {
+    let CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) = value else {
+        return None;
+    };
+    let pointee_byte_width = match value_type {
+        CType::Int32Pointer => 4,
+        CType::UInt8Pointer => 1,
+        _ => return None,
+    };
+    let mut existing = std::collections::BTreeSet::new();
+    crate::kernel::reasoning::collect_bitvector_variables(bits, &mut existing);
+    let mut variables = crate::kernel::primitives::VerificationVariableGenerator::fresh_for(
+        *next_verification_variable,
+        existing,
+    );
+    let fresh = variables.next();
+    *next_verification_variable = variables.next;
+    facts.push(ExecutionPureFact::new(Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::Variable(fresh)),
+            Box::new(bits.clone()),
+        ),
+        true,
+    )));
+    Some(CValue::Pointer(Pointer {
+        block: pointer.block.clone(),
+        offset: PointerOffsetTerm::scale_int32(
+            Bitvector32Term::Variable(fresh),
+            i64::from(pointee_byte_width),
+        ),
+    }))
 }
 
 pub(in crate::kernel) fn symbolic_pointer_value_from_int_cell(
