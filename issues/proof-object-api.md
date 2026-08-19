@@ -3568,6 +3568,26 @@ derivation a certificate, this particular flip becomes benign, but the
 epoch mechanism protects every other try-then-fallback site and is the
 durable fix for the discarded-branch principle at the search layer.
 
+### Progress (2026-08-18: hermetic attempts land; Simp chunk 1 lands)
+
+Attempt hermeticity is implemented as memo-id salting:
+`with_search_attempt_rollback` pushes a fresh per-attempt salt that every
+assumptions memo id folds in at its read points (`ambient`, the DAG id's
+content fallback, and the id scope's exposed id), so every entry an
+attempt writes — across all thirteen id-keyed reasoning memos at once —
+lands in a namespace no later lookup consults. One mechanism, no
+per-store plumbing; attempts run memo-cold by design, and a first
+journal-based prototype that rolled back only the decision memo proved
+insufficient (the reproducing flip persisted through the provenance
+family), which motivated the namespace approach. With attempts hermetic,
+the `Simp` direct-path gate is widened: every ungrouped claim now enters
+the direct goal path, with unsupported and failed claims falling back
+bit-identically. The reproducing selection-flip mdtest passes with memos
+enabled, and the full suites are green. Chunk 2 (resource ensures,
+rewritten and frame-certified goals) is next; the fallback population it
+inherits is now the goal-path misses rather than the entire ungrouped
+corpus.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

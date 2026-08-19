@@ -20,6 +20,7 @@ pub use api::*;
 pub(crate) use assumptions::{
     PureFactContextIdScope, collect_reasoning_provenance, conditions_equal_ignoring_memories,
     finite_forall_goal_instances, record_implicit_reasoning_provenance,
+    with_search_attempt_rollback,
 };
 pub(crate) use eval::resolve_pending_heap_allocations;
 pub(crate) use functions::unreturned_allocation_at_function_exit;

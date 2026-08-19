@@ -505,7 +505,7 @@ pub(super) fn dag_memo_assumptions_id(assumptions: &PureFactContext) -> Option<u
     }
     Some(
         ambient_assumptions_memo_id(assumptions)
-            .unwrap_or_else(|| assumptions_memo_id(assumptions)),
+            .unwrap_or_else(|| apply_attempt_salt(assumptions_memo_id(assumptions))),
     )
 }
 
@@ -534,7 +534,10 @@ impl PureFactContextIdScope {
         let address = assumptions as *const PureFactContext as usize;
         let id = assumptions_memo_id(assumptions);
         ASSUMPTIONS_ID_SCOPES.with(|scopes| scopes.borrow_mut().push((address, id)));
-        Self { id, pushed: true }
+        Self {
+            id: apply_attempt_salt(id),
+            pushed: true,
+        }
     }
 }
 
@@ -551,7 +554,7 @@ pub(super) fn ambient_assumptions_memo_id(assumptions: &PureFactContext) -> Opti
             .iter()
             .rev()
             .find(|(scope_address, _)| *scope_address == address)
-            .map(|(_, id)| *id)
+            .map(|(_, id)| apply_attempt_salt(*id))
     })
 }
 
@@ -562,6 +565,56 @@ impl Drop for PureFactContextIdScope {
                 scopes.borrow_mut().pop();
             });
         }
+    }
+}
+
+thread_local! {
+    static ATTEMPT_SALT_STACK: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+    static NEXT_ATTEMPT_SALT: Cell<u64> = const { Cell::new(1) };
+}
+
+/// Runs one candidate search attempt whose memo footprint must not outlive a
+/// discarded result. Every reasoning memo keys by an assumptions memo id;
+/// inside an attempt those ids are salted with a fresh per-attempt value, so
+/// entries the attempt writes land in a namespace no later lookup consults.
+/// A discarded attempt therefore cannot perturb a later search's
+/// order-sensitive selection by transporting answers computed under its own
+/// budget. The trade is that attempts run memo-cold (they see none of the
+/// ambient warmth and leave none behind, kept or discarded); `keep` exists
+/// so callers state intent, and a kept attempt's semantic products are its
+/// returned certificates, never its cache side effects.
+pub(crate) fn with_search_attempt_rollback<T>(body: impl FnOnce() -> (T, bool)) -> T {
+    let salt = NEXT_ATTEMPT_SALT.with(|next| {
+        let salt = next.get();
+        next.set(salt + 1);
+        salt
+    });
+    ATTEMPT_SALT_STACK.with(|stack| stack.borrow_mut().push(salt));
+    let (value, _keep) = body();
+    ATTEMPT_SALT_STACK.with(|stack| {
+        stack
+            .borrow_mut()
+            .pop()
+            .expect("attempt salt frames are push/pop balanced");
+    });
+    value
+}
+
+/// The active attempt's memo-id salt, mixed into every assumptions memo id
+/// so attempt-scoped entries stay invisible outside the attempt. Zero when
+/// no attempt is active, preserving all ids exactly as before.
+fn attempt_memo_salt() -> u64 {
+    ATTEMPT_SALT_STACK.with(|stack| stack.borrow().last().copied().unwrap_or(0))
+}
+
+fn apply_attempt_salt(id: u64) -> u64 {
+    let salt = attempt_memo_salt();
+    if salt == 0 {
+        id
+    } else {
+        // Multiply-xor folds the salt into the id without colliding with
+        // unsalted ids drawn from the small dense counter space.
+        id ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15)
     }
 }
 

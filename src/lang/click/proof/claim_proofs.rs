@@ -3575,8 +3575,14 @@ pub(super) fn finish_ordered_proof_replay(
                                     .deferred_tactic_capture
                                     .as_ref()
                                     .is_some_and(|capture| capture.tactic_index == *tactic_index);
-                                if ((replay.grouped_contract && existence_tactics.is_empty())
-                                    || (!replay.grouped_contract && !existence_tactics.is_empty()))
+                                // Grouped proofs forbid top-level existence
+                                // tactics, so the direct path admits every
+                                // grouped claim without them and every
+                                // ungrouped claim; unsupported or failed
+                                // claims fall back unchanged, and the
+                                // attempt's memo footprint rolls back with
+                                // it.
+                                if (!replay.grouped_contract || existence_tactics.is_empty())
                                     && let CFunctionOutcome::Return {
                                         value: result,
                                         state: post_state,
@@ -3637,6 +3643,12 @@ pub(super) fn finish_ordered_proof_replay(
                                         }
                                     };
                                     if direct_supported && !direct_claims.is_empty() {
+                                        let direct_certificate =
+                                            crate::kernel::with_search_attempt_rollback(|| {
+                                                let attempt = || -> Result<
+                                                        Option<ProofCertificate>,
+                                                        ClickError,
+                                                    > {
                                         let transition_facts = path.execution_facts();
                                         // The evolving outcome proof supplies
                                         // the grouped obligation root when the
@@ -3789,16 +3801,23 @@ pub(super) fn finish_ordered_proof_replay(
                                             }
                                             direct_proof = joined;
                                         }
-                                        if selected {
-                                            let surface_goals = direct_claims
-                                                .iter()
-                                                .map(|(_, goal)| goal.clone())
-                                                .collect::<Vec<_>>();
-                                            let certificate = direct_proof
-                                                .complete_point_obligations_since(
-                                                    &direct_base,
-                                                    &surface_goals,
-                                                )?;
+                                        if !selected {
+                                            return Ok(None);
+                                        }
+                                        let surface_goals = direct_claims
+                                            .iter()
+                                            .map(|(_, goal)| goal.clone())
+                                            .collect::<Vec<_>>();
+                                        Ok(Some(direct_proof.complete_point_obligations_since(
+                                            &direct_base,
+                                            &surface_goals,
+                                        )?))
+                                                    };
+                                                let outcome = attempt();
+                                                let keep = matches!(&outcome, Ok(Some(_)));
+                                                (outcome, keep)
+                                            })?;
+                                        if let Some(certificate) = direct_certificate {
                                             if replay.grouped_contract {
                                                 for (claim_index, _) in direct_claims {
                                                     closures[claim_index] =
