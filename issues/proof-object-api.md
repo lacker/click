@@ -3357,6 +3357,30 @@ vector's ~80 read sites with goal-derived reads, delete the vector and
 the `with_drained_outcome_facts` resync adapters, and retire the no-goal
 fallback point roots that the unconditional substrate makes unreachable.
 
+### The working-set inversion, sliced (written 2026-08-18, next work)
+
+The survey of `path_requirements` mutation sites reshapes the retirement:
+fourteen write sites, of which two (`project_outcome_resource_facts`, the
+resource-projection arms) *replace* the working set wholesale — and the
+parity invariant is asserted only at path start, so mid-path the goal
+context legitimately diverges after a projection. The inversion is
+therefore per-arm semantic migration, not a mechanical read swap:
+
+1. **Projections onto the goal.** After each resource projection, install
+   the projected set as the focused outcome goal's fact context (the goal
+   remains authoritative through the projection), and extend the parity
+   assertion to hold after every mutation, not only at path start.
+2. **Re-derivation resyncs.** The two whole-set re-derivations flow
+   through the goal the same way.
+3. **Write-through completion.** The six remaining vector pushes (case
+   routing and tactic arms) either already mirror into the goal or gain
+   the goal write; each then reads back from the goal, and the push
+   deletes.
+4. **Deletion.** Replace the read sites with a goal-derived view, delete
+   the vector, `with_drained_outcome_facts`, and `working_set_dirty`, and
+   retire the no-goal fallback point roots the unconditional substrate
+   made unreachable.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
