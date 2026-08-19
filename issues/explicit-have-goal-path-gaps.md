@@ -362,3 +362,21 @@ Scope-closed grouped sets already replay fine with focus-based
 closers (63078245), so the mismatch is specific to planner-produced
 haves. Reproduction:
 outcome_predecessor_upper_bound_spells_a_rewritten_nonnegative_leg.
+
+## Grouped planner fallback landed (2026-08-19, 13442de7)
+
+The nested-have certifier now plans grouped goals the scope closures
+cannot prove, applied at the proof level with the kernel goal lowered
+under active unfolds (the fix for the claim-closer replay: the planner
+only chooses the unfolded certificate spelling when the kernel goal it
+receives was lowered that way). Planner-closed claims take bare
+trailing assumptions. Census: legacy-exit-closer entries 81 -> 74
+(43 ungrouped mdtests; 25+6 grouped). The grouped residue is goals the
+planner also fails on plus gate-bailed sets (divergent, existence,
+frame-certified); the ungrouped residue are per-claim
+certificate-closed by the legacy loop (already checked certificates,
+not unsound escapes). Remaining chunk-2 work is therefore incremental:
+teach the scope closures / planner the residual goal classes, and
+admit ungrouped attempt-misses through certify_outcome_simp the same
+way if retiring the legacy loop entirely is wanted before the drain
+escape retirement.
