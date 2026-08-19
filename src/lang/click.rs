@@ -771,6 +771,25 @@ impl SurfacePropositionMap {
                 },
                 Proposition::Exists { body, .. },
             ) => self.record_lowering(surface_body, body),
+            // A connective's kernel form may collapse when one leg resolves
+            // concretely (a materialized cell decides `i <= len` at a loop
+            // exit, and the simplifier keeps only the live leg). Record the
+            // whole kernel against whichever leg still matches its
+            // structure; a kernel matching neither leg is a real
+            // mislowering and still errors below.
+            (
+                ClickProposition::And(surface_left, surface_right)
+                | ClickProposition::Or(surface_left, surface_right)
+                | ClickProposition::Implies(surface_left, surface_right),
+                kernel,
+            ) if self.clone().record_lowering(surface_left, kernel).is_ok()
+                || self.clone().record_lowering(surface_right, kernel).is_ok() =>
+            {
+                if self.record_lowering(surface_left, kernel).is_err() {
+                    self.record_lowering(surface_right, kernel)?;
+                }
+                Ok(())
+            }
             (ClickProposition::And(_, _), _)
             | (ClickProposition::Or(_, _), _)
             | (ClickProposition::Not(_), _)
