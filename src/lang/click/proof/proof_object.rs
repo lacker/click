@@ -3690,6 +3690,323 @@ impl<'a> Proof<'a> {
     /// carries the split identity, per-arm condition theorems, split-time
     /// fact bases for `introduced_since`, and the shared continuation data
     /// its joins verify — bookkeeping, never semantic authority.
+    /// The delta checks both execution join variants share: the arm kept
+    /// its recorded condition polarity, and every replay store the join
+    /// migrates changed by exactly the arm's claimed introduction delta,
+    /// while the unmigrated stores did not change at all.
+    fn validate_execution_join_arm_deltas(
+        &self,
+        variant: &str,
+        name: &str,
+        expected: bool,
+        arm: &CheckedExecutionJoinArm<'_>,
+        parent_execution: &ExecutionProofState,
+    ) -> Result<(), ClickError> {
+        if !matches!(
+            implication_body(arm.condition_theorem.proposition()),
+            Proposition::CConditionEvaluates {
+                outcome: CConditionOutcome::Value(actual),
+                ..
+            } if *actual == expected
+        ) {
+            return Err(self.step_error(format!("{name} arm retained the wrong condition theorem")));
+        }
+        let replay = &arm.execution.replay;
+        if replay.function_entry_execution_prerequisites.len()
+            != parent_execution
+                .replay
+                .function_entry_execution_prerequisites
+                .len()
+                + arm.introduced_prerequisites.len()
+            || replay.function_entry_derivations.len()
+                != parent_execution.replay.function_entry_derivations.len()
+                    + arm.introduced_derivations.len()
+            || replay.frontier_loop_clauses.len()
+                != parent_execution.replay.frontier_loop_clauses.len()
+            || replay.frontier_loop_rules.len() != parent_execution.replay.frontier_loop_rules.len()
+            || replay.unfolded_predicates.len()
+                != parent_execution.replay.unfolded_predicates.len() + arm.introduced_unfolds.len()
+            || replay.planned_statement_transitions.len()
+                != parent_execution.replay.planned_statement_transitions.len()
+        {
+            return Err(self.step_error(format!(
+                "{name} execution arm changed replay metadata that the checked {variant} has not migrated"
+            )));
+        }
+        Ok(())
+    }
+
+    /// The merge law for a terminal two-arm execution join: both arms
+    /// completed at function exit, so distinct return outcomes remain as
+    /// separate paths instead of requiring one equal C state. Produces the
+    /// function-exit continuation context and the structured logical `If`
+    /// step, wrapping each arm's body certificate with its explicit entry
+    /// steps. Callers assemble the successor proof.
+    #[allow(clippy::too_many_arguments)]
+    fn merge_terminal_execution_join(
+        &self,
+        parent_facts: &ProofFacts,
+        parent_unfolds: &PersistentOrderedSet<String>,
+        parent_execution: &ExecutionProofState,
+        statement_index: usize,
+        execution_start_state: CState,
+        initial_continuation_depth: usize,
+        arms: [CheckedExecutionJoinArm<'_>; 2],
+    ) -> Result<CheckedExecutionJoinParts, ClickError> {
+        if !arms[0]
+            .execution
+            .state
+            .resources()
+            .shares_storage_with(arms[1].execution.state.resources())
+        {
+            return Err(self.step_error(
+                "checked `branch ensuring` cannot yet retain a proper common resource delta",
+            ));
+        }
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            unreachable!("execution branch retained a non-execution context")
+        };
+        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+            &parent_execution.replay,
+            &parent_execution.state,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "terminal branch join",
+        )?;
+        let CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } = statement
+        else {
+            return Err(
+                self.step_error("terminal execution branch root no longer points at a C `if`")
+            );
+        };
+        let surface_condition = surface_with_source_site(
+            &surface_c_condition(&condition),
+            &ProgramPointRef {
+                region: CodeRegionRef::Statement(statement_index),
+                kind: ProgramPointKind::Entry,
+            },
+        )?;
+        let empty_source_arms = [
+            matches!(then_branch.as_ref(), CStatement::Skip),
+            matches!(else_branch.as_ref(), CStatement::Skip),
+        ];
+        for (name, expected, arm) in [("then", true, &arms[0]), ("else", false, &arms[1])] {
+            let replay = &arm.execution.replay;
+            if !replay.is_at_function_exit()
+                || replay.frontier.continuations.len() > initial_continuation_depth
+            {
+                return Err(self.step_error(format!(
+                    "{name} branch arm has not completed at function exit (at exit: {}, continuation depth: {}, root depth: {})",
+                    replay.is_at_function_exit(),
+                    replay.frontier.continuations.len(),
+                    initial_continuation_depth,
+                )));
+            }
+            self.validate_execution_join_arm_deltas(
+                "terminal join",
+                name,
+                expected,
+                arm,
+                parent_execution,
+            )?;
+        }
+
+        let terminal_certificate =
+            |body: &ProofCertificate, empty_source_arm: bool, path_condition: ClickProposition| {
+                let entry_steps = 1 + usize::from(empty_source_arm);
+                let mut steps = Vec::with_capacity(entry_steps + body.steps().len());
+                steps.push(SimpleProofStep::StepUsing(vec![path_condition]));
+                steps.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
+                steps.extend_from_slice(body.steps());
+                ProofCertificate::from_steps(steps)
+            };
+        let then_proof = terminal_certificate(
+            &arms[0].certificate,
+            empty_source_arms[0],
+            surface_condition.clone(),
+        );
+        let else_proof = terminal_certificate(
+            &arms[1].certificate,
+            empty_source_arms[1],
+            negate_click_proposition(&surface_condition),
+        );
+        let then_replay = &arms[0].execution.replay;
+        let else_replay = &arms[1].execution.replay;
+        let common_program_points = then_replay
+            .program_point_states
+            .common_descendant(
+                &else_replay.program_point_states,
+                &parent_execution.replay.program_point_states,
+            )
+            .ok_or_else(|| {
+                self.step_error(
+                    "terminal execution arms do not descend from the branch root's program points",
+                )
+            })?;
+
+        // Root facts remain shared in `ProofState`. Only facts introduced in
+        // one arm need to be copied into that arm's returned execution paths;
+        // doing so avoids duplicating the complete ambient proof context per
+        // outcome.
+        let mut paths = Vec::new();
+        for arm in &arms {
+            let completed = arm
+                .execution
+                .replay
+                .execution()
+                .expect("validated terminal arm is at function exit");
+            for path in completed.paths() {
+                let mut path_facts = path.execution_facts();
+                for proposition in &arm.introduced_facts {
+                    let fact = ExecutionPureFact::new(proposition.clone());
+                    if !path_facts.contains(&fact) {
+                        path_facts.push(fact);
+                    }
+                }
+                let obligations = path.obligations().to_vec();
+                if !paths
+                    .iter()
+                    .any(|(existing_outcome, existing_facts, existing_obligations)| {
+                        existing_outcome == path.outcome()
+                            && existing_facts == &path_facts
+                            && existing_obligations == &obligations
+                    })
+                {
+                    paths.push((path.outcome().clone(), path_facts, obligations));
+                }
+            }
+        }
+
+        let outcomes = c_function_execution_candidates_from_outcomes(
+            execution_start_state.clone(),
+            context.function.clone(),
+            context.arguments.to_vec(),
+            paths,
+        );
+        let mut execution = parent_execution.clone();
+        execution.state = execution_start_state.clone().into();
+        execution.replay.program_point_states = common_program_points;
+        execution
+            .replay
+            .completed_branch_regions
+            .insert(statement_index);
+        for continuation in &parent_execution.replay.frontier.continuations {
+            if let ProofExecutionContinuationKind::Branch { statement_index } = continuation.kind {
+                execution
+                    .replay
+                    .completed_branch_regions
+                    .insert(statement_index);
+            }
+        }
+        execution.replay.frontier.continuations.clear();
+        execution.replay.frontier.execution_start_state = Some(execution_start_state);
+        execution.replay.frontier.point = ProofExecutionPoint::FunctionExit {
+            execution: outcomes,
+        };
+        execution.replay.has_structured_branch_history = true;
+        execution.replay.next_opaque_call = then_replay
+            .next_opaque_call
+            .max(else_replay.next_opaque_call);
+        execution.replay.next_verification_variable = then_replay
+            .next_verification_variable
+            .max(else_replay.next_verification_variable);
+        for effect in arms[0]
+            .introduced_effect_facts
+            .iter()
+            .chain(&arms[1].introduced_effect_facts)
+        {
+            append_execution_effect_facts(
+                &mut execution.replay.effect_facts,
+                std::slice::from_ref(effect),
+            );
+        }
+        for fact in arms[0]
+            .introduced_prerequisites
+            .iter()
+            .chain(&arms[1].introduced_prerequisites)
+        {
+            execution
+                .replay
+                .function_entry_execution_prerequisites
+                .insert(fact.clone());
+        }
+        for theorem in arms[0]
+            .introduced_derivations
+            .iter()
+            .chain(&arms[1].introduced_derivations)
+        {
+            execution
+                .replay
+                .function_entry_derivations
+                .insert(theorem.clone());
+        }
+        for name in arms[0]
+            .introduced_unfolds
+            .iter()
+            .chain(&arms[1].introduced_unfolds)
+        {
+            if !execution.replay.unfolded_predicates.contains(name) {
+                execution.replay.unfolded_predicates.push(name.clone());
+            }
+        }
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        execution.branch_path = parent_execution.branch_path.clone();
+        execution.replay.case_assumptions = parent_execution.replay.case_assumptions.clone();
+
+        let mut facts = parent_facts.clone();
+        let mut common_added_facts = Vec::new();
+        let else_introduced: std::collections::BTreeSet<&Proposition> =
+            arms[1].introduced_facts.iter().collect();
+        for fact in &arms[0].introduced_facts {
+            if else_introduced.contains(fact)
+                && arms[0].facts.contains(fact)
+                && arms[1].facts.contains(fact)
+                && !facts.contains(fact)
+            {
+                facts = facts.with_fact(fact.clone());
+                common_added_facts.push(fact.clone());
+                for surface in then_replay.surface_propositions.surfaces(fact) {
+                    if else_replay
+                        .surface_propositions
+                        .surfaces(fact)
+                        .any(|candidate| candidate == surface)
+                    {
+                        execution
+                            .replay
+                            .surface_propositions
+                            .record_lowering(surface, fact)?;
+                    }
+                }
+            }
+        }
+        let mut unfolded_predicates = parent_unfolds.clone();
+        for name in arms[0]
+            .introduced_unfolds
+            .iter()
+            .chain(&arms[1].introduced_unfolds)
+        {
+            unfolded_predicates.insert(name.clone());
+        }
+        let step = SimpleProofStep::If {
+            condition: surface_condition,
+            then_proof: Box::new(then_proof),
+            else_proof: Box::new(else_proof),
+        };
+        Ok(CheckedExecutionJoinParts {
+            execution,
+            facts,
+            common_added_facts,
+            unfolded_predicates,
+            step,
+        })
+    }
+
     /// The merge law for a checked two-arm execution join: verifies both
     /// arms reached the shared continuation with identical C states and
     /// matching condition polarity, re-applies each arm's introduction
@@ -3724,40 +4041,7 @@ impl<'a> Proof<'a> {
                     "{name} branch arm has not reached its shared continuation"
                 )));
             }
-            if !matches!(
-                implication_body(arm.condition_theorem.proposition()),
-                Proposition::CConditionEvaluates {
-                    outcome: CConditionOutcome::Value(actual),
-                    ..
-                } if *actual == expected
-            ) {
-                return Err(
-                    self.step_error(format!("{name} arm retained the wrong condition theorem"))
-                );
-            }
-            if replay.function_entry_execution_prerequisites.len()
-                != parent_execution
-                    .replay
-                    .function_entry_execution_prerequisites
-                    .len()
-                    + arm.introduced_prerequisites.len()
-                || replay.function_entry_derivations.len()
-                    != parent_execution.replay.function_entry_derivations.len()
-                        + arm.introduced_derivations.len()
-                || replay.frontier_loop_clauses.len()
-                    != parent_execution.replay.frontier_loop_clauses.len()
-                || replay.frontier_loop_rules.len()
-                    != parent_execution.replay.frontier_loop_rules.len()
-                || replay.unfolded_predicates.len()
-                    != parent_execution.replay.unfolded_predicates.len()
-                        + arm.introduced_unfolds.len()
-                || replay.planned_statement_transitions.len()
-                    != parent_execution.replay.planned_statement_transitions.len()
-            {
-                return Err(self.step_error(format!(
-                    "{name} execution arm changed replay metadata that the checked join has not migrated"
-                )));
-            }
+            self.validate_execution_join_arm_deltas("join", name, expected, arm, parent_execution)?;
         }
         let then_state = &arms[0].execution.state;
         let else_state = &arms[1].execution.state;
@@ -3920,6 +4204,62 @@ impl<'a> Proof<'a> {
         record: &ExecutionSplit<'a>,
         require_empty: bool,
     ) -> Result<Self, ClickError> {
+        let (ids, selection, arms) = self.sibling_execution_arm_views(record)?;
+        let parts = self.merge_checked_execution_join(
+            &record.parent_facts,
+            &record.parent_unfolds,
+            &record.parent_execution,
+            record.statement_index,
+            record.continuation_index,
+            record.continuation_remaining.clone(),
+            record.execution_start_state.clone(),
+            record.initial_continuation_depth,
+            require_empty,
+            arms,
+        )?;
+        self.resume_parent_after_sibling_join(record, ids, selection, parts)
+    }
+
+    /// Joins the two sibling execution frontier goals created by
+    /// [`Proof::split_focused_execution_branch`] when both arms completed
+    /// at function exit: distinct return outcomes remain as separate paths
+    /// under a logical `If`, and the parent obligation resumes at function
+    /// exit under its original id.
+    pub(super) fn join_focused_execution_terminal(
+        &self,
+        record: &ExecutionSplit<'a>,
+    ) -> Result<Self, ClickError> {
+        let (ids, selection, arms) = self.sibling_execution_arm_views(record)?;
+        let parts = self.merge_terminal_execution_join(
+            &record.parent_facts,
+            &record.parent_unfolds,
+            &record.parent_execution,
+            record.statement_index,
+            record.execution_start_state.clone(),
+            record.initial_continuation_depth,
+            arms,
+        )?;
+        self.resume_parent_after_sibling_join(record, ids, selection, parts)
+    }
+
+    /// Reduces the two sibling arms of an in-`Proof` execution split to the
+    /// shared per-arm join view: both recorded goals must be open execution
+    /// frontiers, the steps since the split marker partition by recorded
+    /// attribution into per-arm body certificates, and each arm's
+    /// introduction deltas are recovered by suffix walks against the
+    /// recorded split-time bases.
+    #[allow(clippy::type_complexity)]
+    fn sibling_execution_arm_views<'v>(
+        &'v self,
+        record: &'v ExecutionSplit<'a>,
+    ) -> Result<
+        (
+            [GoalId; 2],
+            EffectGoalSelection,
+            [CheckedExecutionJoinArm<'v>; 2],
+        ),
+        ClickError,
+    > {
         let [Some(then_id), Some(else_id)] = record.ids else {
             return Err(self.step_error(
                 "an execution `branch` with one feasible arm is a decided path, not a join",
@@ -3999,19 +4339,21 @@ impl<'a> Proof<'a> {
         let Ok(arms) = <[CheckedExecutionJoinArm; 2]>::try_from(arm_views) else {
             unreachable!("both recorded arms produced views")
         };
-        let parts = self.merge_checked_execution_join(
-            &record.parent_facts,
-            &record.parent_unfolds,
-            &record.parent_execution,
-            record.statement_index,
-            record.continuation_index,
-            record.continuation_remaining.clone(),
-            record.execution_start_state.clone(),
-            record.initial_continuation_depth,
-            require_empty,
-            arms,
-        )?;
         let selection = selection.expect("both arms carried the parent selection");
+        Ok(([then_id, else_id], selection, arms))
+    }
+
+    /// Consumes both sibling arm goals and resumes the parent obligation
+    /// under its original id with the merged continuation context, splicing
+    /// the structured join step over the split region so step attribution
+    /// stays correct for enclosing splits.
+    fn resume_parent_after_sibling_join(
+        &self,
+        record: &ExecutionSplit<'a>,
+        ids: [GoalId; 2],
+        selection: EffectGoalSelection,
+        parts: CheckedExecutionJoinParts,
+    ) -> Result<Self, ClickError> {
         let parent_goal = record.marker.node.focused;
         let parent_node = record.marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join `branch`: the split marker lost its root")
@@ -4020,8 +4362,8 @@ impl<'a> Proof<'a> {
             .state
             .goals
             .open
-            .without_key(&then_id)
-            .without_key(&else_id)
+            .without_key(&ids[0])
+            .without_key(&ids[1])
             .with_inserted(
                 parent_goal,
                 Goal::Frontier(FrontierGoal {
@@ -8983,319 +9325,88 @@ impl<'a> ExecutionProofBranches<'a> {
                 .root
                 .step_error("a terminal execution `branch` requires both feasible arms"));
         };
-        if !then_arm
-            .proof
-            .execution()
-            .expect("interface arm retains execution")
-            .state
-            .resources()
-            .shares_storage_with(
-                else_arm
-                    .proof
-                    .execution()
-                    .expect("interface arm retains execution")
-                    .state
-                    .resources(),
-            )
-        {
-            return Err(self.root.step_error(
-                "checked `branch ensuring` cannot yet retain a proper common resource delta",
-            ));
-        }
+        let then_body = Self::arm_certificate(
+            &self.root,
+            self.split,
+            self.child_goals[0],
+            self.entries[0].as_ref(),
+            &then_arm,
+        )?;
+        let else_body = Self::arm_certificate(
+            &self.root,
+            self.split,
+            self.child_goals[1],
+            self.entries[1].as_ref(),
+            &else_arm,
+        )?;
+        let then_execution = then_arm.proof.execution().ok_or_else(|| {
+            self.root
+                .step_error("then branch arm lost its execution state")
+        })?;
+        let else_execution = else_arm.proof.execution().ok_or_else(|| {
+            self.root
+                .step_error("else branch arm lost its execution state")
+        })?;
         let root_execution = self.root.execution().ok_or_else(|| {
             self.root
                 .step_error("execution branch root lost its semantic state")
         })?;
-        let ProofContext::Execution(context) = self.root.context.as_ref() else {
-            unreachable!("execution branch retained a non-execution context")
-        };
-        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-            &root_execution.replay,
-            &root_execution.state,
-            context.function,
-            context.arguments,
-            context.claim_label,
-            context.tactic_index,
-            "terminal branch join",
-        )?;
-        let CStatement::If {
-            condition,
-            then_branch,
-            else_branch,
-        } = statement
-        else {
-            return Err(self
-                .root
-                .step_error("terminal execution branch root no longer points at a C `if`"));
-        };
-        let surface_condition = surface_with_source_site(
-            &surface_c_condition(&condition),
-            &ProgramPointRef {
-                region: CodeRegionRef::Statement(self.statement_index),
-                kind: ProgramPointKind::Entry,
-            },
-        )?;
-        let empty_source_arms = [
-            matches!(then_branch.as_ref(), CStatement::Skip),
-            matches!(else_branch.as_ref(), CStatement::Skip),
-        ];
-        let validate_arm = |name: &str,
-                            expected: bool,
-                            arm: &ExecutionProofArm<'a>|
-         -> Result<(), ClickError> {
-            let execution = arm.proof.execution().ok_or_else(|| {
-                self.root
-                    .step_error(format!("{name} branch arm lost its execution state"))
-            })?;
-            if !execution.replay.is_at_function_exit()
-                || execution.replay.frontier.continuations.len() > self.initial_continuation_depth
-            {
-                return Err(self.root.step_error(format!(
-                    "{name} branch arm has not completed at function exit (at exit: {}, continuation depth: {}, root depth: {})",
-                    execution.replay.is_at_function_exit(),
-                    execution.replay.frontier.continuations.len(),
-                    self.initial_continuation_depth,
-                )));
-            }
-            if !matches!(
-                implication_body(arm.condition_theorem.proposition()),
-                Proposition::CConditionEvaluates {
-                    outcome: CConditionOutcome::Value(actual),
-                    ..
-                } if *actual == expected
-            ) {
-                return Err(self
-                    .root
-                    .step_error(format!("{name} arm retained the wrong condition theorem")));
-            }
-            let replay = &execution.replay;
-            if replay.function_entry_execution_prerequisites.len()
-                != root_execution
-                    .replay
-                    .function_entry_execution_prerequisites
-                    .len()
-                    + arm.introduced_function_entry_prerequisites.len()
-                || replay.function_entry_derivations.len()
-                    != root_execution.replay.function_entry_derivations.len()
-                        + arm.introduced_function_entry_derivations.len()
-                || replay.frontier_loop_clauses.len()
-                    != root_execution.replay.frontier_loop_clauses.len()
-                || replay.frontier_loop_rules.len()
-                    != root_execution.replay.frontier_loop_rules.len()
-                || replay.unfolded_predicates.len()
-                    != root_execution.replay.unfolded_predicates.len()
-                        + arm.introduced_unfolded_predicates.len()
-                || replay.planned_statement_transitions.len()
-                    != root_execution.replay.planned_statement_transitions.len()
-            {
-                return Err(self.root.step_error(format!(
-                        "{name} execution arm changed replay metadata that the checked terminal join has not migrated"
-                    )));
-            }
-            Ok(())
-        };
-        validate_arm("then", true, &then_arm)?;
-        validate_arm("else", false, &else_arm)?;
-
-        let terminal_certificate =
-            |arm_index: usize,
-             arm: &ExecutionProofArm<'a>,
-             empty_source_arm: bool,
-             path_condition: ClickProposition| {
-                let body = Self::arm_certificate(
-                    &self.root,
-                    self.split,
-                    self.child_goals[arm_index],
-                    self.entries[arm_index].as_ref(),
-                    arm,
-                )?;
-                let entry_steps = 1 + usize::from(empty_source_arm);
-                let mut steps = Vec::with_capacity(entry_steps + body.steps().len());
-                steps.push(SimpleProofStep::StepUsing(vec![path_condition]));
-                steps.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
-                steps.extend_from_slice(body.steps());
-                Ok::<_, ClickError>(ProofCertificate::from_steps(steps))
-            };
-        let then_proof = terminal_certificate(
-            0,
-            &then_arm,
-            empty_source_arms[0],
-            surface_condition.clone(),
-        )?;
-        let else_proof = terminal_certificate(
-            1,
-            &else_arm,
-            empty_source_arms[1],
-            negate_click_proposition(&surface_condition),
-        )?;
-        let then_execution = then_arm
-            .proof
-            .execution()
-            .expect("validated then execution state");
-        let else_execution = else_arm
-            .proof
-            .execution()
-            .expect("validated else execution state");
-        let common_program_points = then_execution
-            .replay
-            .program_point_states
-            .common_descendant(
-                &else_execution.replay.program_point_states,
-                &root_execution.replay.program_point_states,
-            )
-            .ok_or_else(|| {
-                self.root.step_error(
-                    "terminal execution arms do not descend from the branch root's program points",
-                )
-            })?;
-
-        // Root facts remain shared in `ProofState`. Only facts introduced in
-        // one arm need to be copied into that arm's returned execution paths;
-        // doing so avoids duplicating the complete ambient proof context per
-        // outcome.
-        let mut paths = Vec::new();
-        for arm in [&then_arm, &else_arm] {
-            let arm_execution = arm
-                .proof
-                .execution()
-                .expect("validated terminal arm execution");
-            let completed = arm_execution
-                .replay
-                .execution()
-                .expect("validated terminal arm is at function exit");
-            for path in completed.paths() {
-                let mut facts = path.execution_facts();
-                for proposition in &arm.introduced_facts {
-                    let fact = ExecutionPureFact::new(proposition.clone());
-                    if !facts.contains(&fact) {
-                        facts.push(fact);
-                    }
-                }
-                let obligations = path.obligations().to_vec();
-                if !paths
-                    .iter()
-                    .any(|(existing_outcome, existing_facts, existing_obligations)| {
-                        existing_outcome == path.outcome()
-                            && existing_facts == &facts
-                            && existing_obligations == &obligations
-                    })
-                {
-                    paths.push((path.outcome().clone(), facts, obligations));
-                }
-            }
-        }
-
-        let outcomes = c_function_execution_candidates_from_outcomes(
+        let parts = self.root.merge_terminal_execution_join(
+            self.root.facts(),
+            self.root.focused_goal_unfolds(),
+            root_execution,
+            self.statement_index,
             self.execution_start_state.clone(),
-            context.function.clone(),
-            context.arguments.to_vec(),
-            paths,
-        );
-        let mut execution = root_execution.clone();
-        execution.state = self.execution_start_state.clone().into();
-        execution.replay.program_point_states = common_program_points;
-        execution
-            .replay
-            .completed_branch_regions
-            .insert(self.statement_index);
-        for continuation in &root_execution.replay.frontier.continuations {
-            if let ProofExecutionContinuationKind::Branch { statement_index } = continuation.kind {
-                execution
-                    .replay
-                    .completed_branch_regions
-                    .insert(statement_index);
-            }
-        }
-        execution.replay.frontier.continuations.clear();
-        execution.replay.frontier.execution_start_state = Some(self.execution_start_state.clone());
-        execution.replay.frontier.point = ProofExecutionPoint::FunctionExit {
-            execution: outcomes,
-        };
-        execution.replay.has_structured_branch_history = true;
-        execution.replay.next_opaque_call = then_execution
-            .replay
-            .next_opaque_call
-            .max(else_execution.replay.next_opaque_call);
-        execution.replay.next_verification_variable = then_execution
-            .replay
-            .next_verification_variable
-            .max(else_execution.replay.next_verification_variable);
-        for effect in then_arm
-            .introduced_effect_facts
-            .iter()
-            .chain(&else_arm.introduced_effect_facts)
-        {
-            append_execution_effect_facts(
-                &mut execution.replay.effect_facts,
-                std::slice::from_ref(effect),
-            );
-        }
-        for fact in then_arm
-            .introduced_function_entry_prerequisites
-            .iter()
-            .chain(&else_arm.introduced_function_entry_prerequisites)
-        {
-            execution
-                .replay
-                .function_entry_execution_prerequisites
-                .insert(fact.clone());
-        }
-        for theorem in then_arm
-            .introduced_function_entry_derivations
-            .iter()
-            .chain(&else_arm.introduced_function_entry_derivations)
-        {
-            execution
-                .replay
-                .function_entry_derivations
-                .insert(theorem.clone());
-        }
-        for name in then_arm
-            .introduced_unfolded_predicates
-            .iter()
-            .chain(&else_arm.introduced_unfolded_predicates)
-        {
-            if !execution.replay.unfolded_predicates.contains(name) {
-                execution.replay.unfolded_predicates.push(name.clone());
-            }
-        }
-        execution.last_step_delta = ExecutionProofStepDelta::default();
-        execution.branch_path = root_execution.branch_path.clone();
-        execution.replay.case_assumptions = root_execution.replay.case_assumptions.clone();
-
-        let mut facts = self.root.facts().clone();
-        let mut common_added_facts = Vec::new();
-        for fact in &then_arm.introduced_facts {
-            if else_arm.introduced_facts.contains(fact)
-                && then_arm.proof.facts().contains(fact)
-                && else_arm.proof.facts().contains(fact)
-                && !facts.contains(fact)
-            {
-                facts = facts.with_fact(fact.clone());
-                common_added_facts.push(fact.clone());
-                for surface in then_execution.replay.surface_propositions.surfaces(fact) {
-                    if else_execution
-                        .replay
-                        .surface_propositions
-                        .surfaces(fact)
-                        .any(|candidate| candidate == surface)
-                    {
-                        execution
-                            .replay
-                            .surface_propositions
-                            .record_lowering(surface, fact)?;
-                    }
-                }
-            }
-        }
-        let mut unfolded_predicates = self.root.focused_goal_unfolds().clone();
-        for name in then_arm
-            .introduced_unfolded_predicates
-            .iter()
-            .chain(&else_arm.introduced_unfolded_predicates)
-        {
-            unfolded_predicates.insert(name.clone());
-        }
+            self.initial_continuation_depth,
+            [
+                CheckedExecutionJoinArm {
+                    certificate: then_body,
+                    facts: then_arm.proof.facts(),
+                    execution: then_execution,
+                    condition_theorem: &then_arm.condition_theorem,
+                    introduced_facts: then_arm.introduced_facts.iter().cloned().collect(),
+                    introduced_effect_facts: then_arm.introduced_effect_facts.clone(),
+                    introduced_prerequisites: then_arm
+                        .introduced_function_entry_prerequisites
+                        .iter()
+                        .cloned()
+                        .collect(),
+                    introduced_derivations: then_arm
+                        .introduced_function_entry_derivations
+                        .iter()
+                        .cloned()
+                        .collect(),
+                    introduced_unfolds: then_arm
+                        .introduced_unfolded_predicates
+                        .iter()
+                        .cloned()
+                        .collect(),
+                },
+                CheckedExecutionJoinArm {
+                    certificate: else_body,
+                    facts: else_arm.proof.facts(),
+                    execution: else_execution,
+                    condition_theorem: &else_arm.condition_theorem,
+                    introduced_facts: else_arm.introduced_facts.iter().cloned().collect(),
+                    introduced_effect_facts: else_arm.introduced_effect_facts.clone(),
+                    introduced_prerequisites: else_arm
+                        .introduced_function_entry_prerequisites
+                        .iter()
+                        .cloned()
+                        .collect(),
+                    introduced_derivations: else_arm
+                        .introduced_function_entry_derivations
+                        .iter()
+                        .cloned()
+                        .collect(),
+                    introduced_unfolds: else_arm
+                        .introduced_unfolded_predicates
+                        .iter()
+                        .cloned()
+                        .collect(),
+                },
+            ],
+        )?;
         Ok(Proof {
             context: self.root.context.clone(),
             state: Arc::new(ProofState {
@@ -9303,21 +9414,17 @@ impl<'a> ExecutionProofBranches<'a> {
                 goals: self.root.state.goals.replace_frontier_context_at(
                     self.root.focused,
                     GoalContext {
-                        facts,
-                        unfolded_predicates,
-                        execution: Some(Arc::new(execution)),
+                        facts: parts.facts,
+                        unfolded_predicates: parts.unfolded_predicates,
+                        execution: Some(Arc::new(parts.execution)),
                     },
                 ),
-                added_facts: Arc::new(common_added_facts.clone()),
-                checked_facts: Arc::new(common_added_facts),
+                added_facts: Arc::new(parts.common_added_facts.clone()),
+                checked_facts: Arc::new(parts.common_added_facts),
             }),
             node: Arc::new(ProofNode {
                 parent: Some(self.root.node.clone()),
-                step: Some(Arc::new(SimpleProofStep::If {
-                    condition: surface_condition,
-                    then_proof: Box::new(then_proof),
-                    else_proof: Box::new(else_proof),
-                })),
+                step: Some(Arc::new(parts.step)),
                 focused: self.root.focused,
                 depth: self.root.node.depth + 1,
             }),
@@ -19990,6 +20097,71 @@ mod tests {
                 expected_outcome_fact_sizes = Some(outcome_fact_sizes);
             }
             assert_eq!(execution.branch_path.len(), 0);
+
+            // The in-`Proof` terminal join: both siblings return on their
+            // own lineage and rejoin as a logical `If` whose outcome paths
+            // stay separate, resuming the parent obligation at function
+            // exit under its original id.
+            let parent_id = root.focused;
+            let (split_proof, record) = root
+                .split_focused_execution_branch()
+                .expect("the symbolic condition should split in-proof");
+            let sibling_ids: Vec<GoalId> = split_proof.goals().collect();
+            assert_eq!(sibling_ids.len(), 2);
+            let premature = split_proof
+                .join_focused_execution_terminal(&record)
+                .err()
+                .expect("arms at branch entry have not completed");
+            assert!(
+                premature
+                    .message()
+                    .contains("has not completed at function exit"),
+                "{premature:?}"
+            );
+            let both_returned = split_proof
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("the then sibling returns in place")
+                .focus(sibling_ids[1])
+                .expect("the else sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("the else sibling returns in place");
+            let sibling_joined = both_returned
+                .join_focused_execution_terminal(&record)
+                .expect("both returned siblings form a terminal logical case split");
+            assert_eq!(sibling_joined.focused, parent_id);
+            let continuation_ids: Vec<GoalId> = sibling_joined.goals().collect();
+            assert_eq!(continuation_ids, [parent_id]);
+            assert!(matches!(
+                sibling_joined.certificate().steps(),
+                [SimpleProofStep::If {
+                    condition,
+                    then_proof,
+                    else_proof,
+                }] if matches!(
+                    then_proof.steps(),
+                    [SimpleProofStep::StepUsing(entry), SimpleProofStep::StepUsing(body)]
+                        if entry == std::slice::from_ref(condition) && body.is_empty()
+                ) && matches!(
+                    else_proof.steps(),
+                    [SimpleProofStep::StepUsing(entry), SimpleProofStep::StepUsing(body)]
+                        if matches!(entry.as_slice(), [fact]
+                            if *fact == negate_click_proposition(condition))
+                            && body.is_empty()
+                )
+            ));
+            let sibling_execution = sibling_joined
+                .execution()
+                .expect("the sibling terminal join retains execution state");
+            assert!(sibling_execution.replay.is_at_function_exit());
+            assert_eq!(
+                sibling_execution
+                    .replay
+                    .execution()
+                    .expect("the sibling terminal join retains outcomes")
+                    .paths()
+                    .len(),
+                2
+            );
         }
         let (_, base_height, base_allocations) = allocation_samples[0];
         for (size, height, allocations) in allocation_samples {

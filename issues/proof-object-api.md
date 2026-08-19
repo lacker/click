@@ -3168,6 +3168,23 @@ interleaved siblings, pins the premature-join and foreign-marker
 rejections, and completes the continuation to function exit. The remaining
 variants (terminal, decided, interface) migrate next.
 
+### Progress (2026-08-18: the terminal execution join merges sibling goals)
+
+`join_terminal` follows the same extraction: `merge_terminal_execution_join`
+owns the terminal law — function-exit arrival, resource-storage identity,
+the shared polarity/metadata delta guards (now one
+`validate_execution_join_arm_deltas` used by both variants), per-path
+outcome retention with arm-introduced facts copied only into that arm's
+paths, and logical-`If` assembly with explicit entry steps — and the
+container consumes it. The sibling derivation and parent-resume assembly
+extracted from the checked join (`sibling_execution_arm_views`,
+`resume_parent_after_sibling_join`) are shared, so
+`join_focused_execution_terminal` is a three-call composition. The terminal
+regression drives both siblings to their returns on one lineage and pins
+the same certificate shape, separate outcome paths, and premature-join
+rejection as the container form. Remaining variants: decided and the two
+interface joins.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
