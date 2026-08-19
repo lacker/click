@@ -3525,6 +3525,26 @@ legacy `ExitClaimContext` closer machinery deletes when the three chunks
 land, which retires the `Simp` dirty-flag site; the smart-`have` miss
 fallback then remains the drain's only legacy escape.
 
+### Finding (2026-08-18): search attempts are not hermetic
+
+Widening the `Simp` direct-path gate (chunk 1) surfaced a violation of
+the discarded-branch isolation principle at the search layer. With the
+gate widened, `composite_resource_observe_nested_separate_contains`
+fails: the direct attempt on its ungrouped separation claim misses and
+falls back — correctly, all-or-nothing — but the *legacy closer then
+selects a different, uncertifiable derivation* ("no explicit simple
+certificate") where before the widening it found a certifiable one. The
+discarded attempt is not semantically discarded: shared thread-local
+search state (decision and resolution memos, equality caches, and/or
+the shared per-tactic work budget) perturbs the fallback's
+order-sensitive premise selection. The gate widening is reverted; the
+prerequisite for chunk 1 is attempt hermeticity — either scoped
+save/restore of the ambient search caches around candidate attempts, or
+budget-partitioned attempts — which is worth building once, since every
+try-then-fallback structure in the drain shares the same exposure. The
+uncertifiable-derivation shape itself (separation via composite
+`contains` reasoning) is chunk 2 vocabulary either way.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
