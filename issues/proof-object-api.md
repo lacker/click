@@ -3202,6 +3202,25 @@ parent obligation. The regression drives the sole sibling through its
 smart-selected step, pins the certificate shape, id resumption, and the
 two-feasible-sibling refusal. Remaining variants: the two interface joins.
 
+### Progress (2026-08-18: the interface join merges sibling goals)
+
+`join_with_interface`'s two-arm law is extracted as
+`merge_interface_execution_join` — arrival at the derived shared
+continuation (the continuation derivation is now a free function over the
+parent execution and recorded continuation data), the shared
+polarity/metadata guards, per-arm abstraction through the explicit
+interface, exact agreement of abstract states and exported facts, owned
+resource consumption before residual intersection (that helper generalized
+onto the per-arm view), and `Branch { ensuring, .. }` assembly — consumed
+by the container and by `join_focused_execution_interface`, which resumes
+the parent obligation with the abstract continuation. The interface
+regression's sibling section now joins the interleaved siblings (whose
+concrete states genuinely differ) through the interface, and pins the
+transactional failure when an arm cannot establish it. The last variant is
+the decided interface finish (`finish_decided_with_interface`), whose
+sibling form is the one remaining seam before the container's join surface
+is fully mirrored.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
