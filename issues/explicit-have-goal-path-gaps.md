@@ -67,6 +67,22 @@ so, the honest fix is kernel-side: bound or index the general-alias
 range queries the fresh lowering performs (the attribution shows 1.34M
 units there), not a return to recorded-lowering shortcuts.
 
+## Attempt log (2026-08-18)
+
+Extending the resolution-query memo to the general
+`pointers_proven_distinct` (mirroring the bounded variant's
+`PointerDistinct` key with a `PointerDistinctGeneral` variant) did not
+move the budget: the reproducing have still exhausts 2,000,000 units.
+Either the cell-pair queries do not repeat within one ambient context, or
+`resolution_query_memo_id` returns `None` on this path (no ambient
+assumptions scope, fuel armed, or DAG lookup depth nonzero) — the next
+session should first count memo engagement (`key.is_some()`) at this call
+site before optimizing further. The sub-attribution stands: 67% of the
+range work is the `derived separation` fallback
+(`proves_resource_separate` on 1-byte ranges per alias miss), so bounding
+or short-circuiting that fallback under snapshot comparison is the other
+untried lever.
+
 ## Intended regression
 
 - A deterministic curve comparing goal-path versus legacy explicit-have
