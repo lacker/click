@@ -209,6 +209,11 @@ fn rewrite_atomic_proposition_by_exact_equality(
     let is_available = |fact: &Proposition| {
         available.contains(fact)
             || materialization_equivalent_available_fact(fact, available).is_some()
+            // Canonical load variables are kernel-internal names; recorded
+            // equalities chained through one are the same user-level fact.
+            || crate::lang::click::proof::fact_reasoning::premise_bridged_by_canonical_name_chain(
+                fact, available,
+            )
     };
 
     if let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) = equality

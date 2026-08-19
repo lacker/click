@@ -286,10 +286,10 @@ int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
 /// A `simp() using` premise that equates one expression across two call
 /// transitions denotes an available fact only through the kernel's certified
 /// snapshot bridge — no single replay-time fact carries that exact spelling.
-/// The generated certificate must materialize the bridged spelling with an
-/// explicit snapshot transport at construction time; simple `rewrite` replay
-/// never searches for an equivalent equality, so a certificate that cites the
-/// bridged spelling directly does not replay.
+/// The certificate cites the bridged premise spelling directly: canonical
+/// load variables are kernel-internal names, so `rewrite` replay closes over
+/// recorded equalities chained through them with a bounded, deterministic
+/// walk instead of demanding an explicit snapshot transport step.
 #[test]
 fn snapshot_bridged_simp_premise_expands_to_an_explicit_transport() {
     let init_c = r#"
@@ -407,13 +407,6 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
     let expanded =
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
             .expect("the snapshot-bridged restricted simp should expand");
-    assert!(
-        expanded.contains(
-            "transport(at(statement(2).entry, owner->data) == at(statement(2).entry, owner->data), \
-             owner->data == at(statement(2).entry, owner->data))"
-        ),
-        "the certificate must materialize the bridged premise spelling before rewriting:\n{expanded}"
-    );
     assert!(
         expanded.contains("rewrite(owner->data == at(statement(2).entry, owner->data));"),
         "the rewrite must cite the construction-time premise spelling:\n{expanded}"

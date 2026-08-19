@@ -208,3 +208,27 @@ defining equation is true by construction of the naming, so both wraps
 unguarded and reachable by exact fact lookup. Suite time back to ~22s.
 Remaining: the three expansion tests (transport spellings for canonical
 variables, separation have).
+
+## Canonical-name chain closure (3 -> 1)
+
+Exact-premise checks in three consumers (step-using replay availability,
+restricted-simp premise vetting in have proofs and its certification-side
+twin, and `rewrite`'s exact-equality check) now close over pointer-offset
+equalities chained through canonical load variables
+(`premise_bridged_by_canonical_name_chain` in proof/fact_reasoning.rs):
+a premise and the recorded facts may spell one user-level equality
+through different kernel-internal names, and the closure is a bounded
+BFS over equality facts with a canonical endpoint. The
+snapshot-bridged-simp test's expansion no longer needs an explicit
+transport step — its stale assertion was updated (a legitimate
+certificate-spelling simplification, per the fallout-audit criterion).
+
+Hard-won debugging note: adding ordinary locals to
+`check_step_using_facts` overflowed the stack in
+selected_pure_case_split_simp_expands_by_removal — that function sits in
+a deep expansion-replay recursion, and in debug builds every added
+frame byte counts. The closure call lives behind an #[inline(never)]
+adapter so its work stays out of the recursive frame. The recursion
+depth itself is worth an issue before integration.
+
+Remaining failure (1): source_expander_derives_separation_from_call_postconditions.

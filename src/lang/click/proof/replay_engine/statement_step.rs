@@ -188,7 +188,12 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
                             &concretized,
                             &replay.effect_facts,
                         )
-                };
+                }
+                // Canonical load variables are kernel-internal names; two
+                // recorded equalities chained through one are the same
+                // user-level fact, so availability closes over them rather
+                // than demanding the certificate spell the chain.
+                || premise_bridged_by_canonical_names(&premise, requirement_pure_facts);
         if !premise_is_available {
             let all_pure_facts = requirement_pure_facts.to_vec();
             return Err(ClickError::new(format!(
@@ -285,4 +290,12 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
         facts,
         added_facts: introduced_facts,
     })
+}
+
+/// Frame-lean adapter for the shared canonical-name closure: the caller
+/// sits in a deep expansion-replay recursion where every frame byte
+/// counts, so the fact-vector materialization stays out of its frame.
+#[inline(never)]
+fn premise_bridged_by_canonical_names(premise: &Proposition, facts: &ProofFacts) -> bool {
+    super::super::fact_reasoning::premise_bridged_by_canonical_name_chain(premise, &facts.to_vec())
 }

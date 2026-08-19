@@ -480,6 +480,15 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
                     // does not add the rest of `available` to simp's context.
                     snapshot_bridged_fact_is_available(&lowered, &available, &[])
                         .then_some(lowered.clone())
+                })
+                .or_else(|| {
+                    // Canonical load variables are kernel-internal names;
+                    // recorded equalities chained through one are the same
+                    // user-level fact.
+                    super::super::fact_reasoning::premise_bridged_by_canonical_name_chain(
+                        &lowered, &available,
+                    )
+                    .then_some(lowered.clone())
                 });
             let Some(exact_fact) = exact_available else {
                 return Err(ClickError::new(format!(

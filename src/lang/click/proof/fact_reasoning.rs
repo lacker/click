@@ -2185,3 +2185,66 @@ mod tests {
         );
     }
 }
+
+/// Whether a pointer-offset equality premise follows from recorded
+/// equalities by chaining through canonical load variables. Canonical
+/// variables are kernel-internal names invisible to Click source, so a
+/// premise and the recorded facts may legitimately spell one user-level
+/// equality through different intermediate names. The closure is bounded:
+/// only equality facts with a canonical-variable endpoint contribute
+/// edges, and the walk visits each such fact at most once.
+pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain(
+    premise: &Proposition,
+    facts: &[Proposition],
+) -> bool {
+    let offset_sides =
+        |proposition: &Proposition| -> Option<(PointerOffsetTerm, PointerOffsetTerm)> {
+            let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) =
+                proposition
+            else {
+                return None;
+            };
+            Some((left.as_ref().clone(), right.as_ref().clone()))
+        };
+    let is_canonical_scaled = |term: &PointerOffsetTerm| {
+        matches!(
+            term,
+            PointerOffsetTerm::Int32Scaled { value, .. }
+                if matches!(
+                    value.as_ref(),
+                    Bitvector32Term::Variable(variable)
+                        if crate::kernel::is_canonical_load_variable(variable)
+                )
+        )
+    };
+    let Some((start, goal)) = offset_sides(premise) else {
+        return false;
+    };
+    let edges: Vec<(PointerOffsetTerm, PointerOffsetTerm)> = facts
+        .iter()
+        .filter_map(offset_sides)
+        .filter(|(left, right)| is_canonical_scaled(left) || is_canonical_scaled(right))
+        .collect();
+    if edges.is_empty() {
+        return false;
+    }
+    let mut frontier = vec![start];
+    let mut visited: Vec<PointerOffsetTerm> = Vec::new();
+    while let Some(current) = frontier.pop() {
+        if current == goal {
+            return true;
+        }
+        if visited.contains(&current) {
+            continue;
+        }
+        visited.push(current.clone());
+        for (left, right) in &edges {
+            if left == &current && !visited.contains(right) {
+                frontier.push(right.clone());
+            } else if right == &current && !visited.contains(left) {
+                frontier.push(left.clone());
+            }
+        }
+    }
+    false
+}

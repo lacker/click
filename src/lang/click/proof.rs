@@ -6,7 +6,7 @@ mod attempt;
 mod claim_proofs;
 mod cursor_execution;
 mod execution_planning;
-mod fact_reasoning;
+pub(in crate::lang::click) mod fact_reasoning;
 mod point_proofs;
 mod proof_object;
 

@@ -1609,6 +1609,16 @@ pub(super) fn append_simple_proof_step_for_operation(
             });
         }
         (None, Some(ConstructionEvidence::CertifiedFactTransport { source, target, .. })) => {
+            // A canonical-load defining equation is kernel-internal naming
+            // with no user-visible spelling; its transported form at the new
+            // snapshot is itself certified by construction, so expansion
+            // needs no explicit step for it.
+            if !std::env::var("CLICK_DISABLE_TSKIP").is_ok()
+                && crate::kernel::is_canonical_load_defining_fact(source)
+                && crate::kernel::is_canonical_load_defining_fact(target)
+            {
+                return;
+            }
             let Some(step_entry) = replay.proof_certificate_builder.last_step_entry.clone() else {
                 replay
                     .proof_certificate_builder
@@ -2694,6 +2704,19 @@ pub(super) fn surface_smart_have_certificate(
                             // with an explicit snapshot transport before any
                             // simple step may cite it as evidence.
                             return Ok((lowered.clone(), PremiseSpelling::SnapshotBridged));
+                        }
+                        if let Ok(lowered) = &freshly_lowered
+                            && premise_bridged_by_canonical_name_chain(
+                                lowered,
+                                restricted_context_available,
+                            )
+                        {
+                            // Canonical load variables are kernel-internal
+                            // names; recorded equalities chained through one
+                            // are the same user-level fact, and replay closes
+                            // over the same chain, so the listed spelling is
+                            // exactly citable.
+                            return Ok((lowered.clone(), PremiseSpelling::ExactlyAvailable));
                         }
                         Err(ClickError::new(match freshly_lowered {
                             Ok(_) => format!(
