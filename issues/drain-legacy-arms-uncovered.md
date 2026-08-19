@@ -26,6 +26,18 @@ One small mdtest whose claim folds a composite resource at function exit
 projection arm), and one driving the region-frame certifier. Each should
 pin the resulting certificate shape, not merely verification success.
 
+## Finding (2026-08-18)
+
+A fold-at-exit fixture (`mdtests/post_execution_fold_projects_outcome.md`,
+grouped contract with `execute(); fold(...); simp()`) verifies entirely
+through the Proof-based drivers with zero deferrals: the legacy
+`tactic_replay` executor never runs, so the drain's `Fold` projection arm
+is unreachable by any script shape the smart drivers accept. The
+surviving legacy arms are therefore reachable only through scripts the
+smart drivers decline; establishing which declining shapes are
+user-expressible (and pinning one per arm) — or proving driver
+subsumption — is what stands between the arms and deletion.
+
 ## Acceptance criteria
 
 - Running the reachability probe (temporary `eprintln!` at each remaining
