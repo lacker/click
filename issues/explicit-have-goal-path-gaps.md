@@ -433,3 +433,18 @@ genuinely failing ones to legacy — which requires per-claim rollback
 boundaries instead of the single with_search_attempt_rollback around
 the whole set. That is a deliberate design change to the attempt
 protocol; note it for discussion rather than landing it overnight.
+
+## Planner-miss sample (2026-08-19)
+
+Of the 28 grouped legacy entries, only 6 sets reach the nested-have
+planner at all (the rest abort earlier: a sibling claim already failed,
+or existence candidates route around the planner arm). The 6 planner
+misses split into quantified goals the planner cannot spell
+(Exists/ForAll postconditions) and "expressible facts do not replay the
+postcondition derivation" cases — genuine certifier capability limits
+shared with the legacy transition (the same certifier), meaning those
+sets close in legacy today through path-level effects rather than the
+per-claim certifier. Remaining conversion is therefore blocked on
+either per-claim rollback boundaries (the sibling-abort lever, flagged
+for discussion) or certifier capability work (quantified spelling),
+both design-scale.

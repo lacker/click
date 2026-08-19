@@ -3990,7 +3990,7 @@ pub(super) fn finish_ordered_proof_replay(
                                                         outcome_surface_propositions.clone();
                                                     certificate_replay.unfolded_predicates =
                                                         unfolded_predicates.clone();
-                                                    if let Ok(tactics) = certify_outcome_simp_have(
+                                                    let planned = certify_outcome_simp_have(
                                                         &certificate_replay,
                                                         surface_goal,
                                                         &goal,
@@ -4007,10 +4007,12 @@ pub(super) fn finish_ordered_proof_replay(
                                                         &claim_label,
                                                         *tactic_index,
                                                         path_index,
-                                                    ) && let Ok(candidate) =
-                                                        ProofCertificate::from_proof_tactics(
-                                                            &tactics,
-                                                        )
+                                                    );
+                                                    if let Ok(tactics) = planned
+                                                        && let Ok(candidate) =
+                                                            ProofCertificate::from_proof_tactics(
+                                                                &tactics,
+                                                            )
                                                         && let Ok(next) =
                                                             direct_proof.check_certificate(&candidate)
                                                     {
