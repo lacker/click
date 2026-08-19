@@ -402,3 +402,18 @@ named_successor (the reproduction is fast) and diff the tactic
 streams, then either reproduce claim_tactics()' framing or hand the
 per-claim closures through the same newly_closed bookkeeping the
 legacy loop uses.
+
+## Ungrouped per-claim mirror landed (2026-08-19, 1b788c63)
+
+The earlier expansion breakage had a one-line root cause: individually
+closed ungrouped claims also joined the grouped trailing-Assumption
+padding, adding a spurious claim closer to captured streams (found by
+diffing the legacy vs direct expanded source for named_successor —
+identical except one extra `assumption()`). With the padding gated to
+grouped mode the mirror lands gate-green. Census: legacy-exit-closer
+entries 74 -> 56 (25 ungrouped + 31 grouped). The residue: ungrouped
+entries that fail even the per-claim certifier or carry existence
+tactics/divergent outcomes; grouped planner-misses and gate-bailed
+special cases. Each further conversion is now strictly a
+prover-capability question (the routing surface is fully migrated for
+proposition and resource claims in both modes).
