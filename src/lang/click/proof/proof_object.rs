@@ -9072,6 +9072,53 @@ impl<'a> Proof<'a> {
                     })?,
                 )
             }
+            Some(ClickProposition::RangeAny {
+                start,
+                end,
+                item,
+                body,
+            }) if item == &witness.name => {
+                let substitutions = BTreeMap::from([(item.clone(), witness.value.clone())]);
+                let start =
+                    substitute_contract_expression(start, &substitutions).map_err(|message| {
+                        self.step_error(format!(
+                            "could not instantiate Surface range start: {message}"
+                        ))
+                    })?;
+                let end =
+                    substitute_contract_expression(end, &substitutions).map_err(|message| {
+                        self.step_error(format!(
+                            "could not instantiate Surface range end: {message}"
+                        ))
+                    })?;
+                let value = substitute_contract_expression(&witness.value, &substitutions)
+                    .map_err(|message| {
+                        self.step_error(format!(
+                            "could not instantiate Surface range witness: {message}"
+                        ))
+                    })?;
+                let body =
+                    substitute_click_proposition(body, &substitutions).map_err(|message| {
+                        self.step_error(format!(
+                            "could not instantiate Surface range witness goal: {message}"
+                        ))
+                    })?;
+                Some(ClickProposition::And(
+                    Box::new(ClickProposition::And(
+                        Box::new(ClickProposition::Comparison {
+                            left: start,
+                            operator: ComparisonOperator::LessEqual,
+                            right: value.clone(),
+                        }),
+                        Box::new(ClickProposition::Comparison {
+                            left: value,
+                            operator: ComparisonOperator::LessThan,
+                            right: end,
+                        }),
+                    )),
+                    Box::new(body),
+                ))
+            }
             _ => None,
         };
         Ok(ProofState {

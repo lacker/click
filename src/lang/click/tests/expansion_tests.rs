@@ -861,6 +861,52 @@ fn post_execution_existential_simp_retains_its_checked_scope() {
 }
 
 #[test]
+fn bounded_range_witness_closes_on_the_checked_outcome_scope() {
+    let c_source = r#"
+        int32 witness_zero(int32 n) {
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "witness.c";
+
+        int32 witness_zero(int32 n) {
+            requires 0 < n;
+            ensures found_zero: (0..n).any(|k| { k == result }) by {
+                execute();
+                witness(k = 0);
+                simp();
+            }
+        }
+    "#;
+    let sources = [("witness.c", c_source)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the bounded witness body should close through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp legacy exit planning"
+                    || name == "outcome simp compatibility construction"
+        )),
+        "the checked bounded witness must not enter legacy outcome planning"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "witness_zero",
+        CProofClaim::Ensure(0),
+    )
+    .expect("the retained bounded witness should expand");
+    assert!(expanded.contains("witness(k = 0);"), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the retained bounded witness should replay independently");
+}
+
+#[test]
 fn selected_post_execution_smart_apply_uses_exact_path_premises() {
     let c_source = r#"
             int32 identity(int32 x) {
