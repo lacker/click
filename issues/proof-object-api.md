@@ -3545,6 +3545,29 @@ try-then-fallback structure in the drain shares the same exposure. The
 uncertifiable-derivation shape itself (separation via composite
 `contains` reasoning) is chunk 2 vocabulary either way.
 
+### The hermeticity vector, discriminated (2026-08-18)
+
+With the widened gate re-applied under diagnostic switches, the failing
+mdtest still fails with tactic budgets disabled but **passes with
+`CLICK_DISABLE_DECIDE_MEMO=1`**: the decision memo is the pollution
+vector, not the shared budget. The mechanism is sharper than cache
+staleness — every memo entry is *true*, but the memo transports answers
+across ambient fuel contexts: facts the attempt decided under its own
+budget become warm hits that the legacy search's tighter ambient fuel
+would have truncated, so the fallback's premise selection sees a richer
+decidable world and picks a derivation outside the certificate
+vocabulary. Validity is preserved; selection determinism is not. The
+hermeticity mechanism therefore targets the decision/equality-graph
+memos (and the resolution-query memo for uniformity): an attempt-scoped
+epoch on the memo stores — entries written during a candidate attempt
+are epoch-tagged, a failed attempt bumps the epoch so its entries stop
+serving lookups, a successful attempt keeps them — restoring
+order-independence of the fallback without cloning the stores. Note the
+duality: once `Simp` chunk 2 gives the composite-`contains` separation
+derivation a certificate, this particular flip becomes benign, but the
+epoch mechanism protects every other try-then-fallback site and is the
+durable fix for the discarded-branch principle at the search layer.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
