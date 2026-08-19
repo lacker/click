@@ -8881,8 +8881,17 @@ impl<'a> Proof<'a> {
         argument: &ContractExpression,
         surface_premises: &[ClickProposition],
     ) -> Result<ProofState, ClickError> {
-        let ProofContext::Point(context) = self.context.as_ref() else {
-            return Err(self.step_error("`instantiate` requires a point proposition proof"));
+        let view = match self.context.as_ref() {
+            ProofContext::Point(context) => PointOperationView::from_point(context),
+            // An instantiation on a judgment stated at a function outcome
+            // evaluates its argument and quantified fact in that outcome's
+            // result-aware point environment.
+            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => self
+                .outcome_point_view()
+                .expect("a focused outcome judgment resolves its point view"),
+            _ => {
+                return Err(self.step_error("`instantiate` requires a point proposition proof"));
+            }
         };
         self.proposition_goal("`instantiate` requires a proposition goal")?;
 
@@ -8914,28 +8923,25 @@ impl<'a> Proof<'a> {
             )));
         };
 
-        let parameter_values = parameter_values(context.parameters, context.arguments)
+        let parameter_values = parameter_values(view.parameters, view.arguments)
             .map_err(|error| self.step_error(error.message))?;
-        let array_refs = array_refs_for_parameters(
-            context.parameters,
-            &parameter_values,
-            context.state.memory(),
-        );
+        let array_refs =
+            array_refs_for_parameters(view.parameters, &parameter_values, view.state.memory());
         let (values, array_refs) =
-            contract_environment_at_state(&parameter_values, &array_refs, context.state);
+            contract_environment_at_state(&parameter_values, &array_refs, view.state);
         let mut active_functions = BTreeSet::new();
         let argument = self.substitute_point_locals_in_expression(argument)?;
         let value = evaluate_contract_expression_with_environment(
             &values,
             &array_refs,
-            context.pre_state,
-            context.state,
-            context.result,
+            view.pre_state,
+            view.state,
+            view.result,
             self.facts().assumptions(),
             &argument,
-            context.predicate_environment,
-            context.click_function_environment,
-            context.program_point_states,
+            view.predicate_environment,
+            view.click_function_environment,
+            view.program_point_states,
             &mut active_functions,
         )
         .map_err(|message| {

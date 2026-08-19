@@ -1428,6 +1428,55 @@ fn instantiate_specializes_a_universal_fact_at_an_explicit_value() {
 }
 
 #[test]
+fn outcome_instantiate_uses_the_checked_proof_path() {
+    let c_source = r#"
+        int32 pick(int32 value) {
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "pick.c";
+
+        int32 pick(int32 value) {
+            requires bounded: forall (k: int32) {
+                0 <= k and k < 3 implies k <= value
+            };
+            ensures two_le: 2 <= value;
+        } by {
+            execute();
+            have 2 <= value by {
+                instantiate(forall (k: int32) {
+                    0 <= k and k < 3 implies k <= value
+                }, 2) using {}
+            }
+            assumption();
+        }
+    "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("pick.c", c_source)])
+    });
+    verified.expect("outcome instantiation should prove the bound directly through Proof");
+    let source_verification_events = events.iter().take_while(|event| {
+        !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "whole-contract certificate construction"
+        )
+    });
+    assert!(
+        source_verification_events
+            .into_iter()
+            .all(|event| !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name.starts_with("post-execution simple have replay")
+            )),
+        "outcome instantiation must remain on the checked Proof path: {events:#?}"
+    );
+}
+
+#[test]
 fn instantiate_does_not_discharge_guards_from_ambient_facts() {
     let c_source = r#"
         int32 pick(int32 value, int32 n) {

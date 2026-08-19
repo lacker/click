@@ -476,3 +476,14 @@ per-claim certifier. Remaining conversion is therefore blocked on
 either per-claim rollback boundaries (the sibling-abort lever, flagged
 for discussion) or certifier capability work (quantified spelling),
 both design-scale.
+
+## Ground outcome instantiation landed (2026-08-19)
+
+The typed outcome proposition path now checks explicit `InstantiateUsing`
+steps through its result-aware point view, and a source-level regression
+forbids post-execution simple-have replay. This removes the context rejection
+for already-ground arguments. Binder-aware generated certificates remain in
+the residue: `intro` must retain the Surface universal binder in goal-local
+state before a later instantiation or transport can lower that name. It must
+not be inserted into the lineage-wide proof-local map, where it could leak to
+a sibling goal.

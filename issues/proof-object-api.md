@@ -3643,6 +3643,23 @@ green. Residual drain misses are smart `simp`/exit-planner certificates whose
 binder, rewrite, or loadability shapes still need the outcome-closer migration;
 they are no longer searchless source-script dispatch gaps.
 
+### Progress (2026-08-19: explicit instantiation reads the outcome point view)
+
+`instantiate(..., value) using {...}` now resolves the same
+`PointOperationView` for an outcome-stated proposition judgment that it uses
+for an ordinary point proof. Argument evaluation, recorded Surface lowering,
+the post-state, and `result` therefore come from the typed outcome goal, and
+the checked successor retains the `InstantiateUsing` node without entering
+the post-execution simple-have replay. An end-to-end regression observes that
+no compatibility operation runs during ordinary source verification.
+
+This closes the ground-instantiation context gap. Universal-goal planning is
+still separate: after `intro`, the Surface binder must be represented in
+goal-local proof state so it cannot leak into a sibling goal. The current
+lineage-wide proof-local map is appropriate for `choose` scopes but is not a
+sound substitute for that binder scope; the binder-aware planner residue
+therefore remains open rather than being hidden in that map.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

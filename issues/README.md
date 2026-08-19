@@ -31,10 +31,10 @@ when evidence exposes one.
   behind the explicit-have budget gap and the owned-vector quarantine,
   with a scoped canonicalization design.
 - [Explicit have scripts cannot move onto the goal path yet](explicit-have-goal-path-gaps.md):
-  searchless source scripts now check directly inside the typed outcome
-  goal; the file also carries the remaining outcome-`simp` planner and
-  legacy-exit-closer migration journal, whose quantified, binder-aware,
-  rewrite, and loadability residues still fall back.
+  searchless source scripts and ground universal instantiation now check
+  directly inside the typed outcome goal; the file also carries the remaining
+  outcome-`simp` planner and legacy-exit-closer migration journal, whose
+  binder-aware quantified, rewrite, and loadability residues still fall back.
 - [Expansion replay recursion exhausts the stack](expansion-replay-recursion-exhausts-the-stack.md):
   ordinary edits — a local, a closure, an unboxed enum payload — abort an
   unrelated expansion test with a stack overflow and no backtrace; the
