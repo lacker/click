@@ -966,10 +966,11 @@ fn certified_transitions_from_execution(
                 }
                 let mut transported_execution_facts = Vec::new();
                 for transport in &transported_facts {
-                    successor_facts.retain(|fact| fact != &transport.source);
-                    if !successor_facts.contains(&transport.target) {
-                        successor_facts.push(transport.target.clone());
-                    }
+                    replace_fact_in_place(
+                        &mut successor_facts,
+                        &transport.source,
+                        &transport.target,
+                    );
                     for fact in &mut execution_facts {
                         if fact.proposition() == &transport.source {
                             if fact.is_certified() {
@@ -990,10 +991,11 @@ fn certified_transitions_from_execution(
                     }
                 }
                 for transport in &transported_facts {
-                    introduced_facts.retain(|fact| fact != &transport.source);
-                    if !introduced_facts.contains(&transport.target) {
-                        introduced_facts.push(transport.target.clone());
-                    }
+                    replace_fact_in_place(
+                        &mut introduced_facts,
+                        &transport.source,
+                        &transport.target,
+                    );
                 }
                 for fact in transported_execution_facts {
                     if !execution_facts.contains(&fact) {
@@ -1071,4 +1073,21 @@ fn certified_transitions_from_execution(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok((transitions, loop_rule))
+}
+
+/// Replaces a transported fact's source with its target at the source's
+/// position: downstream premise selection is order-sensitive, so respelling
+/// must not reorder the working set. Never inlined — the caller participates
+/// in expansion recursion where added frame bytes overflow the stack.
+#[inline(never)]
+fn replace_fact_in_place(facts: &mut Vec<Proposition>, source: &Proposition, target: &Proposition) {
+    if let Some(position) = facts.iter().position(|fact| fact == source) {
+        if facts.contains(target) {
+            facts.remove(position);
+        } else {
+            facts[position] = target.clone();
+        }
+    } else if !facts.contains(target) {
+        facts.push(target.clone());
+    }
 }

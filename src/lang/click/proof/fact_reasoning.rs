@@ -83,7 +83,19 @@ pub(super) enum SnapshotBlindPropositionKey {
     And(Box<Self>, Box<Self>),
     Or(Box<Self>, Box<Self>),
     Not(Box<Self>),
+    MemorySeparate(
+        Box<SnapshotBlindMemoryRangeKey>,
+        Box<SnapshotBlindMemoryRangeKey>,
+    ),
     Exact(Proposition),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(super) struct SnapshotBlindMemoryRangeKey {
+    block: PointerBlock,
+    offset: SnapshotBlindPointerOffsetKey,
+    start: SnapshotBlindBitvectorKey,
+    end: SnapshotBlindBitvectorKey,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -242,6 +254,14 @@ impl SnapshotBlindPropositionKey {
                 left.forgets_a_snapshot() || right.forgets_a_snapshot()
             }
             Self::Not(body) => body.forgets_a_snapshot(),
+            Self::MemorySeparate(left, right) => {
+                let side = |key: &SnapshotBlindMemoryRangeKey| {
+                    key.offset.forgets_a_snapshot()
+                        || key.start.forgets_a_snapshot()
+                        || key.end.forgets_a_snapshot()
+                };
+                side(left) || side(right)
+            }
             Self::Exact(_) => false,
         }
     }
@@ -323,8 +343,24 @@ pub(super) fn snapshot_blind_proposition_key(
         Proposition::Not(body) => {
             SnapshotBlindPropositionKey::Not(Box::new(snapshot_blind_proposition_key(body)))
         }
+        Proposition::CResourceSeparate {
+            left: CResource::Memory(left),
+            right: CResource::Memory(right),
+        } => SnapshotBlindPropositionKey::MemorySeparate(
+            snapshot_blind_memory_range_key(left),
+            snapshot_blind_memory_range_key(right),
+        ),
         proposition => SnapshotBlindPropositionKey::Exact(proposition.clone()),
     }
+}
+
+fn snapshot_blind_memory_range_key(range: &CMemoryRange) -> Box<SnapshotBlindMemoryRangeKey> {
+    Box::new(SnapshotBlindMemoryRangeKey {
+        block: range.base().block.clone(),
+        offset: snapshot_blind_pointer_offset_key(&range.base().offset),
+        start: snapshot_blind_bitvector_key(range.start()),
+        end: snapshot_blind_bitvector_key(range.end()),
+    })
 }
 
 fn snapshot_blind_condition_key(condition: &ConditionTerm) -> SnapshotBlindConditionKey {
@@ -578,6 +614,13 @@ fn propositions_equal_modulo_proven_snapshots(
         (Proposition::Not(left_body), Proposition::Not(right_body)) => {
             propositions_equal_modulo_proven_snapshots(left_body, right_body, assumptions)
         }
+        // Separations compare part-wise; the work lives in a never-inlined
+        // helper because this function participates in deep proposition
+        // recursion where added frame bytes overflow the stack.
+        (
+            left @ Proposition::CResourceSeparate { .. },
+            right @ Proposition::CResourceSeparate { .. },
+        ) => separations_equal_modulo_proven_snapshots(left, right, assumptions),
         _ => false,
     }
 }
@@ -589,6 +632,46 @@ fn propositions_equal_modulo_proven_snapshots(
 /// condition terms and pointer offsets, never descending into embedded
 /// memory snapshots. The full resolver walks whole snapshots and is far too
 /// expensive for per-candidate comparison paths.
+fn resolve_canonical_bitvector_shallow(bits: &Bitvector32Term) -> Bitvector32Term {
+    match bits {
+        Bitvector32Term::Variable(variable)
+            if crate::kernel::is_canonical_load_variable(variable) =>
+        {
+            match crate::kernel::registered_canonical_load(variable) {
+                Some((memory, pointer)) => Bitvector32Term::MemoryLoad(memory, Box::new(pointer)),
+                None => bits.clone(),
+            }
+        }
+        Bitvector32Term::Add(left, right) => Bitvector32Term::Add(
+            Box::new(resolve_canonical_bitvector_shallow(left)),
+            Box::new(resolve_canonical_bitvector_shallow(right)),
+        ),
+        Bitvector32Term::Subtract(left, right) => Bitvector32Term::Subtract(
+            Box::new(resolve_canonical_bitvector_shallow(left)),
+            Box::new(resolve_canonical_bitvector_shallow(right)),
+        ),
+        Bitvector32Term::Multiply(left, right) => Bitvector32Term::Multiply(
+            Box::new(resolve_canonical_bitvector_shallow(left)),
+            Box::new(resolve_canonical_bitvector_shallow(right)),
+        ),
+        _ => bits.clone(),
+    }
+}
+
+fn resolve_canonical_offset_shallow(value: &PointerOffsetTerm) -> PointerOffsetTerm {
+    match value {
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::Int32Scaled {
+            value: Box::new(resolve_canonical_bitvector_shallow(value)),
+            byte_width: *byte_width,
+        },
+        PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::Add(
+            Box::new(resolve_canonical_offset_shallow(left)),
+            Box::new(resolve_canonical_offset_shallow(right)),
+        ),
+        _ => value.clone(),
+    }
+}
+
 fn resolve_canonical_names_shallow(proposition: &Proposition) -> Proposition {
     fn term(bits: &Bitvector32Term) -> Bitvector32Term {
         match bits {
@@ -696,6 +779,11 @@ pub(super) fn snapshot_bridged_fact_is_available_under(
     assumptions: &PureFactContext,
     framing: &[ExecutionPureFact],
 ) -> bool {
+    // Separations bridge part-wise through the modulo-snapshot relation;
+    // the condition-term candidate machinery below does not apply to them.
+    if matches!(required, Proposition::CResourceSeparate { .. }) {
+        return separation_bridged_available(required, available, assumptions, framing);
+    }
     let Some((required_spellings, candidates)) = snapshot_blind_candidates(required, available)
     else {
         return false;
@@ -1898,7 +1986,11 @@ pub(super) fn assumptions_for_direct_fact_transport(
             Proposition::ConditionIs(_, _)
             | Proposition::CMemoryEffectSummary { .. }
             | Proposition::CHeapLifetimeRetired { .. }
-            | Proposition::CResourceSeparate { .. } => facts.push(proposition.clone()),
+            | Proposition::CResourceSeparate { .. }
+            // Owned ranges in one composition are pairwise separate; the
+            // effect-disjointness legs of direct transport need that
+            // separation when no explicit separate(...) fact spells it.
+            | Proposition::CResourceComposition(_) => facts.push(proposition.clone()),
             Proposition::And(left, right) => {
                 collect(left, facts);
                 collect(right, facts);
@@ -2439,4 +2531,86 @@ pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain(
         }
     }
     false
+}
+
+/// The separation branch of bridged availability, never inlined to keep the
+/// caller's frame lean.
+#[inline(never)]
+fn separation_bridged_available(
+    required: &Proposition,
+    available: &[Proposition],
+    assumptions: &PureFactContext,
+    framing: &[ExecutionPureFact],
+) -> bool {
+    let assumptions = framing
+        .iter()
+        .fold(assumptions.clone(), |assumptions, fact| {
+            assumptions.assume_proposition(fact.proposition().clone())
+        });
+    available.iter().any(|candidate| {
+        matches!(candidate, Proposition::CResourceSeparate { .. })
+            && propositions_equal_modulo_proven_snapshots(candidate, required, &assumptions)
+    })
+}
+
+/// Whether two separations denote the same fact modulo canonical names and
+/// proven snapshots: each range's base offset and extent terms compare with
+/// canonical names resolved shallowly and load atoms bridged across proven
+/// snapshots — the relation the condition arm uses, applied to the terms a
+/// separation is made of. Separation is symmetric, so both pairings are
+/// tried. Never inlined: callers sit in deep proposition recursion.
+#[inline(never)]
+fn separations_equal_modulo_proven_snapshots(
+    left: &Proposition,
+    right: &Proposition,
+    assumptions: &PureFactContext,
+) -> bool {
+    let (
+        Proposition::CResourceSeparate {
+            left: CResource::Memory(left_a),
+            right: CResource::Memory(left_b),
+        },
+        Proposition::CResourceSeparate {
+            left: CResource::Memory(right_a),
+            right: CResource::Memory(right_b),
+        },
+    ) = (left, right)
+    else {
+        return false;
+    };
+    let ranges_equal = |left: &CMemoryRange, right: &CMemoryRange| {
+        left.base().block == right.base().block
+            && assumptions.conditions_equal_modulo_proven_snapshots(
+                &ConditionTerm::PointerOffsetEqual(
+                    Box::new(resolve_canonical_offset_shallow(&left.base().offset)),
+                    Box::new(PointerOffsetTerm::Constant(0)),
+                ),
+                &ConditionTerm::PointerOffsetEqual(
+                    Box::new(resolve_canonical_offset_shallow(&right.base().offset)),
+                    Box::new(PointerOffsetTerm::Constant(0)),
+                ),
+            )
+            && assumptions.conditions_equal_modulo_proven_snapshots(
+                &ConditionTerm::Bitvector32Equal(
+                    Box::new(resolve_canonical_bitvector_shallow(left.start())),
+                    Box::new(Bitvector32Term::Constant(0)),
+                ),
+                &ConditionTerm::Bitvector32Equal(
+                    Box::new(resolve_canonical_bitvector_shallow(right.start())),
+                    Box::new(Bitvector32Term::Constant(0)),
+                ),
+            )
+            && assumptions.conditions_equal_modulo_proven_snapshots(
+                &ConditionTerm::Bitvector32Equal(
+                    Box::new(resolve_canonical_bitvector_shallow(left.end())),
+                    Box::new(Bitvector32Term::Constant(0)),
+                ),
+                &ConditionTerm::Bitvector32Equal(
+                    Box::new(resolve_canonical_bitvector_shallow(right.end())),
+                    Box::new(Bitvector32Term::Constant(0)),
+                ),
+            )
+    };
+    ranges_equal(left_a, right_a) && ranges_equal(left_b, right_b)
+        || ranges_equal(left_a, right_b) && ranges_equal(left_b, right_a)
 }

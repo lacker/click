@@ -605,22 +605,6 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches_through(
     if certified_fact_transport_reaches(source, target, after, assumptions) {
         return true;
     }
-    // Canonical load variables hide the load spellings the store rewrite
-    // works over; retry once with the internal names resolved through the
-    // registry so certified stores connect the same facts they always did.
-    let resolved_source = crate::kernel::resolve_canonical_load_variables_from_registry(source);
-    let resolved_target = crate::kernel::resolve_canonical_load_variables_from_registry(target);
-    if (&resolved_source != source || &resolved_target != target)
-        && certified_fact_transport_reaches_through(
-            &resolved_source,
-            &resolved_target,
-            after,
-            assumptions,
-            transitions,
-        )
-    {
-        return true;
-    }
     let rewritten = crate::kernel::rewrite_condition_through_certified_stores(source, transitions);
     if &rewritten == source {
         return false;

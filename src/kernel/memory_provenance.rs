@@ -2244,18 +2244,89 @@ fn prove_c_condition_fact_transport_with_assumptions(
     after: &CMemory,
     assumptions: Option<(&PureFactContext, bool)>,
 ) -> Option<Theorem> {
-    let Proposition::ConditionIs(condition, value) = fact else {
-        return None;
-    };
-    let transported = transport_framed_atomic_condition(condition, after, assumptions)?;
-    if &transported == condition {
-        return None;
+    // Per-arm returns, no shared conclusion local: this function sits in
+    // transport recursion, and a by-value `Proposition` local overflows the
+    // expansion stack.
+    match fact {
+        Proposition::ConditionIs(condition, value) => {
+            let transported = transport_framed_atomic_condition(condition, after, assumptions)?;
+            if &transported == condition {
+                return None;
+            }
+            Some(Theorem::new(Proposition::Implies(
+                Box::new(fact.clone()),
+                Box::new(Proposition::ConditionIs(transported, *value)),
+            )))
+        }
+        _ => None,
     }
-    let conclusion = Proposition::ConditionIs(transported, *value);
+}
+
+/// Builds the separation-transport theorem outside the caller's frame; see
+/// [`transport_framed_separation`].
+#[allow(dead_code)]
+#[inline(never)]
+fn transport_framed_separation_theorem(
+    fact: &Proposition,
+    after: &CMemory,
+    assumptions: Option<(&PureFactContext, bool)>,
+) -> Option<Theorem> {
+    let conclusion = transport_framed_separation(fact, after, assumptions)?;
     Some(Theorem::new(Proposition::Implies(
         Box::new(fact.clone()),
         Box::new(conclusion),
     )))
+}
+
+/// A separation names two memory regions through address and extent terms;
+/// respelling those terms at the post-effect snapshot under the same frame
+/// evidence preserves the denoted regions, so the separation transports
+/// exactly as a condition fact does. Never inlined: the caller participates
+/// in transport recursion.
+#[allow(dead_code)]
+#[inline(never)]
+fn transport_framed_separation(
+    fact: &Proposition,
+    after: &CMemory,
+    assumptions: Option<(&PureFactContext, bool)>,
+) -> Option<Proposition> {
+    let Proposition::CResourceSeparate {
+        left: CResource::Memory(left),
+        right: CResource::Memory(right),
+    } = fact
+    else {
+        return None;
+    };
+    let transported_left = transport_framed_atomic_memory_range(left, after, assumptions)?;
+    let transported_right = transport_framed_atomic_memory_range(right, after, assumptions)?;
+    if &transported_left == left && &transported_right == right {
+        return None;
+    }
+    Some(Proposition::CResourceSeparate {
+        left: CResource::Memory(transported_left),
+        right: CResource::Memory(transported_right),
+    })
+}
+
+#[allow(dead_code)]
+#[inline(never)]
+fn transport_framed_atomic_memory_range(
+    range: &CMemoryRange,
+    after: &CMemory,
+    assumptions: Option<(&PureFactContext, bool)>,
+) -> Option<CMemoryRange> {
+    Some(CMemoryRange::new(
+        Pointer {
+            block: range.base().block.clone(),
+            offset: transport_framed_atomic_pointer_offset(
+                &range.base().offset,
+                after,
+                assumptions,
+            )?,
+        },
+        transport_framed_atomic_bitvector(range.start(), after, assumptions)?,
+        transport_framed_atomic_bitvector(range.end(), after, assumptions)?,
+    ))
 }
 
 /// Rewrites subterms of a condition fact that equal a certified store's
