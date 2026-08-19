@@ -717,3 +717,49 @@ Fix directions for a fresh session, in preference order:
 
 leaf_flag (the other residue) is independent: a false-goal certificate
 arm for path-infeasible ensures in the grouped planner.
+
+## The composite-opacity fix direction is RULED OUT as designed (2026-08-19)
+
+Publishing definitionally expanded composition facts into the ambient
+fact set (fix direction 1 from the previous entry) makes input-cursor,
+owned-segmented-buffer and owned-string verify — but it regresses
+`mdtests/composite_resource_nested_observe_not_automatic.md`, which
+pins a deliberate language boundary: direct hidden contained owned
+memory exposes folded `separate(...)` facts, while `auto` does NOT
+recursively observe NESTED composites. The publication crosses exactly
+that line, so it is not landable; it was reverted rather than adjusted,
+per the rule that a true-but-unprovable claim is a gap, not permission
+to weaken an invariant.
+
+What this rules in: the knowledge input-cursor needs (a call's mutable
+range disjoint from a pointer inside a nested composite's footprint) is
+not missing — it is behind the observe boundary. Two honest options,
+and the choice is a design decision, not a mechanical fix:
+
+(a) The example writes the explicit `observe(...)` chain the language
+    documents for nested composites (the mdtest names a positive
+    example that does exactly this). Cost: input-cursor previously
+    verified without it, because the pre-canonicalization path found
+    the same disjointness through whole-snapshot alias search — the
+    expensive recursion this campaign removed. So this is admitting the
+    proof script must now say what it always semantically needed.
+
+(b) Narrow the boundary crossing to internal frame evidence only:
+    expand nested composites inside the load-preservation disjointness
+    queries (`c_memory_load_is_unchanged`, DAG store/havoc edges)
+    WITHOUT publishing anything into the ambient fact set. Separation
+    is a property, not an authority grant, so this never makes a
+    user-goal `separate(...)` provable and the observe boundary for
+    resource use is untouched. This is the more principled option and
+    keeps the example unchanged, but it needs composite definitions
+    threaded into those query paths.
+
+Landed green alongside this finding: canonical-name matching in the
+`assumption` availability check and in `rewrite` occurrence matching
+(both term and pointer-offset positions). Those are the same family as
+the already-landed matchers — any consumer comparing terms must see
+through kernel-internal names — and they were exercised by the reverted
+experiment; they remain because the eventual fix needs them.
+
+Branch state at this commit: lib 1062/1062; mdtests 396/397 (leaf_flag,
+independent); examples red on input-cursor only.

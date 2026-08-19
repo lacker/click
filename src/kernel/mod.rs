@@ -25,10 +25,12 @@ pub(crate) use assumptions::{
 pub(crate) use eval::canonical_load_variable_for_term;
 pub(crate) use eval::is_canonical_load_defining_fact;
 pub(crate) use eval::is_canonical_load_variable;
+pub(crate) use eval::offsets_match_modulo_canonical_names;
 pub(crate) use eval::proposition_mentions_registered_canonical_load;
 pub(crate) use eval::registered_canonical_load;
 pub(crate) use eval::registered_canonical_load_origin;
 pub(crate) use eval::resolve_pending_heap_allocations;
+pub(crate) use eval::terms_match_modulo_canonical_names;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub(crate) use memory_provenance::c_memory_load_is_unchanged;
 pub use memory_provenance::*;

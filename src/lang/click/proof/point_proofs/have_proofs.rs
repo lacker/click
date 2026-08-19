@@ -1624,6 +1624,15 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             // snapshot bridge's framing proof rather than by
                             // spelling coincidence.
                             && !snapshot_bridged_fact_is_available(&unfolded_goal, &available, &[])
+                            // Canonical load variables are kernel-internal
+                            // names; recorded equalities chained through one,
+                            // including the bounded origins bridge, are the
+                            // same user-level fact.
+                            && !super::super::fact_reasoning::premise_bridged_by_canonical_name_chain_with_origins(
+                                &unfolded_goal,
+                                &available,
+                                &assumptions_from_propositions(&available),
+                            )
                             // A separation goal is served by the compact
                             // carrier projection, not by a materialized pair
                             // proposition; ask the prover directly.

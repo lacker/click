@@ -239,6 +239,9 @@ fn rewrite_atomic_proposition_by_exact_equality(
         ) -> PointerOffsetTerm {
             if offset == left
                 || normalize_direct_atomic_pointer_offset_loads(offset) == *normalized_left
+                // Canonical load names and load spellings of one atom are
+                // the same occurrence.
+                || crate::kernel::offsets_match_modulo_canonical_names(offset, left)
             {
                 return right.clone();
             }
@@ -611,6 +614,9 @@ fn rewrite_atomic_proposition_by_exact_equality(
         if term == from
             || normalize_direct_atomic_memory_load(term)
                 == normalize_direct_atomic_memory_load(from)
+            // Canonical load names and load spellings of one atom are the
+            // same occurrence.
+            || crate::kernel::terms_match_modulo_canonical_names(term, from)
         {
             return to.clone();
         }
