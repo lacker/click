@@ -314,3 +314,27 @@ largest classes (predicate-call goals, then result comparisons),
 extend try_direct_logical_closure / try_simp_closure or add a
 structured nested-have builder on the scope, one gated commit per
 class.
+
+## Predicate-call arm landed; grouped planner-candidate attempt reverted (2026-08-19)
+
+`try_structural_simp_closure` gained a predicate-call arm (unfold the
+goal once, refuse repeat unfolds, recurse) — gate green, converts a few
+simple predicate goals; the big predicate classes (permutation etc.)
+still miss because their unfolded bodies exceed the closure vocabulary.
+
+A second attempt wired `certify_outcome_simp_have` (the legacy grouped
+nested-have planner) into the grouped direct attempt as a checked
+candidate per scope. Two findings before reverting to green:
+(1) the planner's tactics establish the goal as a fact — a trailing
+`Assumption` is needed to close the scope, mirroring the legacy
+transition's per-claim closers; with it the nested proof completes.
+(2) the resulting grouped surface script then fails COMPLETE replay
+("`explicit proof script` surface certificate failed complete replay")
+— the direct certificate's tactic stream, recorded into
+path_grouped_surface_closers, does not replay at its position in the
+explicit whole-contract script the way the legacy transition's stream
+does. Next session: diff the two tactic streams for
+drop_one.contract (legacy vs direct-with-planner) and align the
+recorded form; the pinned test
+outcome_predecessor_upper_bound_spells_a_rewritten_nonnegative_leg is
+the reproduction.

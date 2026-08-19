@@ -6534,6 +6534,20 @@ impl<'a> Proof<'a> {
                 };
                 attempt::candidate_outcome(joined.apply_step(SimpleProofStep::Split))
             }
+            // A predicate-call goal unfolds to its body, which the
+            // structural arms and logical closers then work over. Repeat
+            // unfolds are refused so recursive predicate bodies cannot loop
+            // the search.
+            (ClickProposition::PredicateCall { name, .. }, _)
+                if !self.focused_goal_unfolds().contains(name) =>
+            {
+                match attempt::candidate_outcome(
+                    self.apply_step(SimpleProofStep::UnfoldPredicate(name.clone())),
+                )? {
+                    Some(unfolded) => unfolded.try_simp_closure(),
+                    None => Ok(None),
+                }
+            }
             (ClickProposition::Or(surface_left, surface_right), Proposition::Or(_, _)) => {
                 for (surface, closer) in [
                     (surface_left.as_ref(), SimpleProofStep::Left),
