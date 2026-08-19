@@ -1075,6 +1075,22 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 drop(target_timing);
                 if !exact_fact_is_available(&target, &available)
                     && materialization_equivalent_available_fact(&target, &available).is_none()
+                    // Canonical-name and snapshot respellings of an
+                    // available fact transport trivially. The bridge reasons
+                    // under the selected premises plus the recorded
+                    // transitions, the same context the reachability walk
+                    // gets below.
+                    && !snapshot_bridged_fact_is_available_under(
+                        &target,
+                        &available,
+                        &transition_facts.iter().fold(
+                            selected_assumptions.clone().assume_proposition(source.clone()),
+                            |assumptions, fact| {
+                                assumptions.assume_proposition(fact.proposition().clone())
+                            },
+                        ),
+                        transition_facts,
+                    )
                 {
                     // The effect-window selection keys on the memories the
                     // source names; a canonical-variable spelling names its

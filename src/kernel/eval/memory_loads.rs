@@ -617,6 +617,45 @@ pub(crate) fn viewed_as_memory_load(term: &Bitvector32Term) -> Option<Bitvector3
     }
 }
 
+/// Whether a proposition mentions any registered canonical load variable.
+/// Cross-effect fact transport uses this to include canonical-spelled facts
+/// in respelling, exactly as load-spelled facts are included by mentioning
+/// their snapshots.
+pub(crate) fn proposition_mentions_registered_canonical_load(proposition: &Proposition) -> bool {
+    let mut variables = std::collections::BTreeSet::new();
+    crate::kernel::reasoning::variable_collection::collect_proposition_bitvector_variables(
+        proposition,
+        &mut variables,
+    );
+    variables.iter().any(|variable| {
+        is_canonical_load_variable(variable) && registered_canonical_load(variable).is_some()
+    })
+}
+
+/// Whether two registered canonical load variables name the same cell in
+/// snapshots that match for that load (assumption-free): bookkeeping-only
+/// snapshot drift (materialized cells, recorded locals) yields distinct
+/// content hashes and therefore distinct names for what is one load
+/// identity, and this check connects exactly those.
+pub(crate) fn canonical_load_variables_name_matching_loads(
+    left: &Variable,
+    right: &Variable,
+) -> bool {
+    let (Some((left_memory, left_pointer)), Some((right_memory, right_pointer))) = (
+        registered_canonical_load(left),
+        registered_canonical_load(right),
+    ) else {
+        return false;
+    };
+    left_pointer == right_pointer
+        && crate::kernel::reasoning::memory_resolution::memories_match_for_pointer_load_under_assumptions(
+            &left_memory,
+            &right_memory,
+            &left_pointer,
+            &PureFactContext::new(),
+        )
+}
+
 /// The canonical verification variable naming one load identity: the pair of
 /// a memory snapshot (by content) and a loaded pointer. The id is derived
 /// deterministically by hashing that identity into a reserved id space, so
@@ -627,6 +666,12 @@ pub(crate) fn viewed_as_memory_load(term: &Bitvector32Term) -> Option<Bitvector3
 /// stops verification loudly instead of silently conflating them.
 pub(crate) fn canonical_load_variable(memory: &SharedCMemory, pointer: &Pointer) -> Variable {
     use std::hash::{Hash, Hasher};
+    // Name by the cell's DAG epoch when one is recorded: snapshots that
+    // differ only by effects provably disjoint from this cell then share
+    // the name, so bookkeeping drift and unrelated stores do not mint new
+    // identities for one load.
+    let epoch = crate::kernel::memory_provenance::cell_epoch_for_canonical_naming(memory, pointer);
+    let memory = epoch.as_ref().unwrap_or(memory);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     memory.hash(&mut hasher);
     pointer.hash(&mut hasher);

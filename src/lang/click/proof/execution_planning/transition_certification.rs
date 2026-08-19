@@ -926,7 +926,9 @@ fn certified_transitions_from_execution(
                         successor_facts.clone()
                     };
                     for fact in automatic_sources {
-                        if !c_condition_fact_has_memory(&fact) {
+                        if !c_condition_fact_has_memory(&fact)
+                            && !crate::kernel::proposition_mentions_registered_canonical_load(&fact)
+                        {
                             continue;
                         }
                         let statement_local =

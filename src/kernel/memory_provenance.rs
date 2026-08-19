@@ -1326,6 +1326,25 @@ fn typed_ranges_disjoint_from_pointer_evidence(
         .collect()
 }
 
+/// The DAG epoch of one cell for canonical load naming: the snapshot at
+/// which the loaded cell was last written or entered the world, walked
+/// assumption-free over recorded edges. Snapshots that differ only by
+/// effects the DAG proves disjoint from the cell share an epoch, so
+/// canonical names stay stable across them.
+pub(crate) fn cell_epoch_for_canonical_naming(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+) -> Option<SharedCMemory> {
+    if memory_dag_disabled() {
+        return None;
+    }
+    with_cell_lookup_depth(|| {
+        memory_dag_cell_source(memory, pointer, &PureFactContext::new())
+            .node()
+            .clone()
+    })
+}
+
 fn memory_dag_cell_source(
     memory: &SharedCMemory,
     pointer: &Pointer,
@@ -2848,7 +2867,55 @@ fn transport_framed_atomic_bitvector(
         return None;
     }
     Some(match term {
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
+        Bitvector32Term::Constant(_) => term.clone(),
+        Bitvector32Term::Variable(variable) => {
+            // A canonical load variable transports as the load it names:
+            // when frame evidence rewrites that load to the post-effect
+            // snapshot, the fact is respelled with the post-point canonical
+            // name — the content-addressed mint gives the same name any
+            // later lowering at that snapshot produces. A defining equation
+            // in the ambient assumptions carries the mint-time spelling,
+            // whose live snapshot the frame checks can actually relate to
+            // `after`; the registry's canonicalized spelling is the
+            // fallback.
+            let named_load = assumptions
+                .and_then(|(assumptions, _)| {
+                    assumptions.prop_facts.iter().find_map(|fact| {
+                        let Proposition::ConditionIs(
+                            ConditionTerm::Bitvector32Equal(left, right),
+                            true,
+                        ) = fact
+                        else {
+                            return None;
+                        };
+                        match (left.as_ref(), right.as_ref()) {
+                            (
+                                Bitvector32Term::Variable(defined),
+                                load @ Bitvector32Term::MemoryLoad(_, _),
+                            ) if defined == variable => Some(load.clone()),
+                            _ => None,
+                        }
+                    })
+                })
+                .or_else(|| {
+                    crate::kernel::eval::registered_canonical_load(variable).map(
+                        |(memory, pointer)| Bitvector32Term::MemoryLoad(memory, Box::new(pointer)),
+                    )
+                });
+            if let Some(load) = named_load {
+                let transported = transport_framed_atomic_bitvector(&load, after, assumptions)?;
+                if transported != load
+                    && let Some((renamed, _)) =
+                        crate::kernel::eval::canonical_load_variable_for_term(&transported)
+                {
+                    Bitvector32Term::Variable(renamed)
+                } else {
+                    term.clone()
+                }
+            } else {
+                term.clone()
+            }
+        }
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             let transported_pointer = Pointer {
                 block: pointer.block.clone(),

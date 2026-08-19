@@ -320,3 +320,44 @@ re-spelled fact) into the introduced fact set. Supporting changes kept
 on this branch (all lib-green): canonical chain closure in the have
 transport reachability, effect-window keyed on the registry-resolved
 source, and the resolved-source assumption.
+
+## Cross-effect respelling: binary-tree recovered, input-cursor remains
+
+Session findings, all lib-green (1062/1062):
+
+- The cross-statement automatic fact transport (transition_certification)
+  now includes canonical-spelled facts (gate widened with
+  `proposition_mentions_registered_canonical_load`), and
+  `transport_framed_atomic_bitvector` transports a canonical variable as
+  the load it names — resolving through a defining equation in the
+  ambient assumptions first (mint-time spelling, live snapshot), falling
+  back to the registry (canonicalized spelling).
+- The snapshot-blind fact key now keys a canonical variable as
+  `Load(registered pointer)` — one O(1) registry lookup, no snapshot in
+  the key — so canonical spellings bucket with load spellings of the
+  same cell. The candidate comparison resolves canonical names
+  shallowly (term positions only, never walking embedded snapshots).
+  IMPORTANT perf lesson: the first cut resolved with the full
+  substitution walk per key/per candidate, and
+  `collect_proposition_bitvector_variables` descends into embedded
+  snapshot CELLS — that made a binary-tree `have` take 15s of unmetered
+  wall time on ~1 deterministic unit. Anything walking whole snapshots
+  is off-limits on these paths.
+- A pairwise implicit-edge variant of the chain closure
+  (memories-match per candidate pair per BFS node) blew binary-tree's
+  5s simple-step budget and was removed.
+- binary-tree, detachable-buffer, allocated-linked-list now pass.
+
+input-cursor still fails (have proof 10 explicit transport). Latest
+probe state: the introduction-loop transport for
+`PointerOffsetEqual(scaled(v1406...), scaled(v100002))` still returns
+ok=false even with defining-fact resolution in the hook — either no
+defining fact for that variable is present in those assumptions, or the
+resolved load's transport itself fails
+(`memories_match_for_pointer_load` false for the mint-time snapshot vs
+the post-call memory, and the directly-unchanged check too weak for the
+call effect). Next: probe INSIDE the hook which alternative resolved and
+why the load transport failed; if it is the directly-unchanged check,
+compare against what base did for the same load spelling (base
+transported these, so the same evidence must suffice — find which arm
+accepted it at base).

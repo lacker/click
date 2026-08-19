@@ -395,6 +395,19 @@ fn snapshot_blind_bitvector_key(term: &Bitvector32Term) -> SnapshotBlindBitvecto
         Bitvector32Term::MemoryLoad(_, pointer) => {
             SnapshotBlindBitvectorKey::Load(Box::new(snapshot_blind_pointer_key(pointer)))
         }
+        // A canonical load variable keys as the load it names: one O(1)
+        // registry lookup, no snapshot in the key, and canonical spellings
+        // bucket with the load spellings of the same cell.
+        Bitvector32Term::Variable(variable)
+            if crate::kernel::is_canonical_load_variable(variable) =>
+        {
+            match crate::kernel::registered_canonical_load(variable) {
+                Some((_, pointer)) => {
+                    SnapshotBlindBitvectorKey::Load(Box::new(snapshot_blind_pointer_key(&pointer)))
+                }
+                None => SnapshotBlindBitvectorKey::Exact(term.clone()),
+            }
+        }
         Bitvector32Term::Add(left, right) => SnapshotBlindBitvectorKey::Add(
             Box::new(snapshot_blind_bitvector_key(left)),
             Box::new(snapshot_blind_bitvector_key(right)),
@@ -572,6 +585,79 @@ fn propositions_equal_modulo_proven_snapshots(
 /// Proves that one already-selected structural candidate is the same fact as
 /// `required` across certified memory snapshots. Candidate selection remains
 /// the caller's responsibility; this operation never searches a context.
+/// Resolves canonical load variables in comparison term positions only:
+/// condition terms and pointer offsets, never descending into embedded
+/// memory snapshots. The full resolver walks whole snapshots and is far too
+/// expensive for per-candidate comparison paths.
+fn resolve_canonical_names_shallow(proposition: &Proposition) -> Proposition {
+    fn term(bits: &Bitvector32Term) -> Bitvector32Term {
+        match bits {
+            Bitvector32Term::Variable(variable)
+                if crate::kernel::is_canonical_load_variable(variable) =>
+            {
+                match crate::kernel::registered_canonical_load(variable) {
+                    Some((memory, pointer)) => {
+                        Bitvector32Term::MemoryLoad(memory, Box::new(pointer))
+                    }
+                    None => bits.clone(),
+                }
+            }
+            Bitvector32Term::Add(left, right) => {
+                Bitvector32Term::Add(Box::new(term(left)), Box::new(term(right)))
+            }
+            Bitvector32Term::Subtract(left, right) => {
+                Bitvector32Term::Subtract(Box::new(term(left)), Box::new(term(right)))
+            }
+            Bitvector32Term::Multiply(left, right) => {
+                Bitvector32Term::Multiply(Box::new(term(left)), Box::new(term(right)))
+            }
+            _ => bits.clone(),
+        }
+    }
+    fn offset(value: &PointerOffsetTerm) -> PointerOffsetTerm {
+        match value {
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(term(value)),
+                    byte_width: *byte_width,
+                }
+            }
+            PointerOffsetTerm::Add(left, right) => {
+                PointerOffsetTerm::Add(Box::new(offset(left)), Box::new(offset(right)))
+            }
+            _ => value.clone(),
+        }
+    }
+    let Proposition::ConditionIs(condition, truth) = proposition else {
+        return proposition.clone();
+    };
+    let resolved = match condition {
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            ConditionTerm::Bitvector32Equal(Box::new(term(left)), Box::new(term(right)))
+        }
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            ConditionTerm::Bitvector32SignedLessThan(Box::new(term(left)), Box::new(term(right)))
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            ConditionTerm::Bitvector32SignedLessEqual(Box::new(term(left)), Box::new(term(right)))
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            ConditionTerm::Bitvector32SignedGreaterThan(Box::new(term(left)), Box::new(term(right)))
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(term(left)),
+                Box::new(term(right)),
+            )
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            ConditionTerm::PointerOffsetEqual(Box::new(offset(left)), Box::new(offset(right)))
+        }
+        _ => condition.clone(),
+    };
+    Proposition::ConditionIs(resolved, *truth)
+}
+
 pub(super) fn proposition_candidate_equals_modulo_proven_snapshots(
     candidate: &Proposition,
     required: &Proposition,
@@ -583,7 +669,12 @@ pub(super) fn proposition_candidate_equals_modulo_proven_snapshots(
         .fold(assumptions.clone(), |assumptions, fact| {
             assumptions.assume_proposition(fact.proposition().clone())
         });
-    propositions_equal_modulo_proven_snapshots(candidate, required, &assumptions)
+    // Canonical names resolve to their loads so the snapshot-modulo
+    // comparison sees the spellings it was built for. Shallow: term
+    // positions only, never walking embedded snapshots.
+    let candidate = resolve_canonical_names_shallow(candidate);
+    let required = resolve_canonical_names_shallow(required);
+    propositions_equal_modulo_proven_snapshots(&candidate, &required, &assumptions)
 }
 
 fn normalize_condition_modulo_memories(condition: &ConditionTerm) -> ConditionTerm {
