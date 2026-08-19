@@ -1448,6 +1448,7 @@ fn outcome_instantiate_uses_the_checked_proof_path() {
                 instantiate(forall (k: int32) {
                     0 <= k and k < 3 implies k <= value
                 }, 2) using {}
+                assumption();
             }
             assumption();
         }

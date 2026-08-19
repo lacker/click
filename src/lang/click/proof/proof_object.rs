@@ -1035,6 +1035,10 @@ struct FrontierGoal {
 struct PropositionGoal {
     kernel: Arc<Proposition>,
     surface: Option<Arc<ClickProposition>>,
+    /// Surface names introduced while refining this exact proposition goal.
+    /// Universal binders are goal-local: sibling goals share the persistent
+    /// map root at a split, then refine independently without leaking names.
+    surface_bindings: PersistentMap<String, ContractExpression>,
     /// The judgment's path-local facts plus, when stated at an execution
     /// point, the immutable snapshot borrowed by identity from the frontier
     /// that stated it. A proposition goal can never publish a changed
@@ -1052,6 +1056,7 @@ impl Goal {
         Self::Proposition(PropositionGoal {
             kernel: Arc::new(kernel),
             surface: None,
+            surface_bindings: PersistentMap::default(),
             context,
             outcome: None,
         })
@@ -1065,6 +1070,7 @@ impl Goal {
         Self::Proposition(PropositionGoal {
             kernel: Arc::new(kernel),
             surface: Some(Arc::new(surface)),
+            surface_bindings: PersistentMap::default(),
             context,
             outcome: None,
         })
@@ -1081,6 +1087,7 @@ impl Goal {
         Self::Proposition(PropositionGoal {
             kernel: Arc::new(kernel),
             surface: Some(Arc::new(surface)),
+            surface_bindings: PersistentMap::default(),
             context,
             outcome: Some(outcome),
         })
@@ -1099,6 +1106,7 @@ impl Goal {
             Self::Proposition(goal) => Self::Proposition(PropositionGoal {
                 kernel: goal.kernel.clone(),
                 surface: goal.surface.clone(),
+                surface_bindings: goal.surface_bindings.clone(),
                 context,
                 outcome: goal.outcome.clone(),
             }),
@@ -1881,6 +1889,10 @@ impl<'a> Proof<'a> {
         Goal::Proposition(PropositionGoal {
             kernel: Arc::new(kernel),
             surface: surface.map(Arc::new),
+            surface_bindings: match self.focused_goal() {
+                Some(Goal::Proposition(goal)) => goal.surface_bindings.clone(),
+                _ => PersistentMap::default(),
+            },
             context,
             outcome,
         })
@@ -1988,6 +2000,7 @@ impl<'a> Proof<'a> {
                     Goal::Proposition(PropositionGoal {
                         kernel: Arc::new(goal),
                         surface: surface_goal.map(Arc::new),
+                        surface_bindings: PersistentMap::default(),
                         context,
                         outcome,
                     })
@@ -2795,19 +2808,43 @@ impl<'a> Proof<'a> {
 
     #[inline(never)]
     fn apply_intro(&self) -> Result<ProofState, ClickError> {
-        let surface_goal = match self.surface_goal() {
-            Some(ClickProposition::Implies(_, consequent)) => Some(consequent.as_ref().clone()),
-            _ => None,
-        };
         let goal = self
             .proposition_goal("`intro` requires a proposition goal")?
             .clone();
-        let (goal, introduced) = match goal {
-            Proposition::Implies(antecedent, consequent) => (*consequent, Some(*antecedent)),
-            Proposition::ForAll { body, .. } => (*body, None),
+        let mut surface_bindings = match self.focused_goal() {
+            Some(Goal::Proposition(goal)) => goal.surface_bindings.clone(),
+            _ => PersistentMap::default(),
+        };
+        let (goal, introduced, surface_goal) = match goal {
+            Proposition::Implies(antecedent, consequent) => (
+                *consequent,
+                Some(*antecedent),
+                match self.surface_goal() {
+                    Some(ClickProposition::Implies(_, consequent)) => {
+                        Some(consequent.as_ref().clone())
+                    }
+                    _ => None,
+                },
+            ),
+            Proposition::ForAll { var, body, .. } => {
+                let surface_goal = match self.surface_goal() {
+                    Some(ClickProposition::ForAll { name, body, .. }) => {
+                        surface_bindings = surface_bindings.with_inserted(
+                            name.clone(),
+                            ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                                Bitvector32Term::Variable(var),
+                            ))),
+                        );
+                        Some(body.as_ref().clone())
+                    }
+                    _ => None,
+                };
+                (*body, None, surface_goal)
+            }
             Proposition::Not(body) => (
                 Proposition::ConditionIs(ConditionTerm::Constant(false), true),
                 Some(*body),
+                None,
             ),
             other => {
                 return Err(self.step_error(format!(
@@ -2825,7 +2862,12 @@ impl<'a> Proof<'a> {
 
             goals: self.state.goals.replace_at(self.focused, {
                 let context = self.refined_context(facts);
-                self.refined_proposition(context, goal, surface_goal)
+                let mut refined = self.refined_proposition(context, goal, surface_goal);
+                let Goal::Proposition(refined_goal) = &mut refined else {
+                    unreachable!("intro always refines a proposition goal")
+                };
+                refined_goal.surface_bindings = surface_bindings;
+                refined
             }),
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
@@ -2969,6 +3011,7 @@ impl<'a> Proof<'a> {
             Goal::Proposition(PropositionGoal {
                 kernel: goal.kernel.clone(),
                 surface: goal.surface.clone(),
+                surface_bindings: goal.surface_bindings.clone(),
                 context: GoalContext {
                     facts: goal.context.facts.with_fact(disjunct),
                     unfolded_predicates: goal.context.unfolded_predicates.clone(),
@@ -3026,6 +3069,7 @@ impl<'a> Proof<'a> {
             Goal::Proposition(PropositionGoal {
                 kernel: goal.kernel.clone(),
                 surface: goal.surface.clone(),
+                surface_bindings: goal.surface_bindings.clone(),
                 context: GoalContext {
                     facts: goal.context.facts.with_fact(fact),
                     unfolded_predicates: goal.context.unfolded_predicates.clone(),
@@ -3553,7 +3597,7 @@ impl<'a> Proof<'a> {
         // outcome's result-aware point data the same way. The nested goal
         // cannot publish a changed frontier or outcome: `join` restores the
         // exact root state and exposes only the stated proposition.
-        let body_goal = match self.focused_outcome_point() {
+        let mut body_goal = match self.focused_outcome_point() {
             Some(point) => Goal::surface_proposition_at_outcome(
                 body_context,
                 point.clone(),
@@ -3562,6 +3606,11 @@ impl<'a> Proof<'a> {
             ),
             None => Goal::surface_proposition_in(body_context, kernel.clone(), proposition.clone()),
         };
+        if let (Some(Goal::Proposition(parent)), Goal::Proposition(body)) =
+            (self.focused_goal(), &mut body_goal)
+        {
+            body.surface_bindings = parent.surface_bindings.clone();
+        }
         let body = Proof {
             context: self.context.clone(),
             state: Arc::new(ProofState {
@@ -6040,13 +6089,16 @@ impl<'a> Proof<'a> {
         &self,
         names: impl IntoIterator<Item = String>,
     ) -> BTreeMap<String, ContractExpression> {
+        let surface_bindings = match self.focused_goal() {
+            Some(Goal::Proposition(goal)) => Some(&goal.surface_bindings),
+            _ => None,
+        };
         names
             .into_iter()
             .filter_map(|name| {
-                self.state
-                    .locals
-                    .values
-                    .get(&name)
+                surface_bindings
+                    .and_then(|bindings| bindings.get(&name))
+                    .or_else(|| self.state.locals.values.get(&name))
                     .cloned()
                     .map(|value| (name, value))
             })
@@ -6477,6 +6529,12 @@ impl<'a> Proof<'a> {
                 .flatten()
                 .or_else(|| self.try_single_selected_equality_rewrite_closure(&premise_pairs))
                 .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
+                .or_else(|| {
+                    self.surface_goal().and_then(|surface_goal| {
+                        self.try_selected_forall_goal(&goal, surface_goal, &premise_pairs)
+                    })
+                })
+                .or_else(|| self.try_selected_forall_instantiation(&goal, &premise_pairs))
                 .or_else(|| self.try_selected_disjunction_cases(&premise_pairs))
         })();
         if let Some(atomic) = atomic {
@@ -6503,6 +6561,12 @@ impl<'a> Proof<'a> {
             return Ok(None);
         };
         match (surface_goal, goal) {
+            (ClickProposition::ForAll { .. }, Proposition::ForAll { .. }) => {
+                match attempt::candidate_outcome(self.apply_step(SimpleProofStep::Intro))? {
+                    Some(introduced) => introduced.try_simp_closure(),
+                    None => Ok(None),
+                }
+            }
             (ClickProposition::Implies(_, _), Proposition::Implies(_, _)) => {
                 match attempt::candidate_outcome(self.apply_step(SimpleProofStep::Intro))? {
                     Some(introduced) => introduced.try_simp_closure(),
@@ -6846,6 +6910,36 @@ impl<'a> Proof<'a> {
             }
         }
         None
+    }
+
+    /// Specializes one replayable universal premise selected by the atomic
+    /// decision at the current goal. Planning only chooses the explicit
+    /// quantified fact, argument, and guards; the returned descendant exists
+    /// only if the ordinary certificate checker accepts `InstantiateUsing`.
+    fn try_selected_forall_instantiation(
+        &self,
+        goal: &Proposition,
+        premise_pairs: &[(Proposition, ClickProposition)],
+    ) -> Option<Self> {
+        let tactics = plan_explicit_forall_instantiation(goal, premise_pairs)?;
+        let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
+        let checked = self.check_certificate(&candidate).ok()?;
+        checked.is_complete().then_some(checked)
+    }
+
+    /// Builds the binder-introduction chain from only the universal premises
+    /// selected by the atomic decision. The planner never scans the ambient
+    /// fact set; the ordinary checker owns every resulting refinement.
+    fn try_selected_forall_goal(
+        &self,
+        goal: &Proposition,
+        surface_goal: &ClickProposition,
+        premise_pairs: &[(Proposition, ClickProposition)],
+    ) -> Option<Self> {
+        let tactics = plan_explicit_forall_goal_from_premises(goal, surface_goal, premise_pairs)?;
+        let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
+        let checked = self.check_certificate(&candidate).ok()?;
+        checked.is_complete().then_some(checked)
     }
 
     fn try_typed_atomic_simp_closure(&self) -> Option<Self> {
@@ -8958,15 +9052,11 @@ impl<'a> Proof<'a> {
                 .map_err(|message| self.step_error(format!("`instantiate` failed: {message}")))?;
         let added = !self.facts().contains_top_level(&conclusion);
         let facts = self.facts().with_fact(conclusion.clone());
-        let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         let added_facts = added.then_some(conclusion).into_iter().collect::<Vec<_>>();
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self
-                .state
-                .goals
-                .discharged_if_at(self.focused, complete, facts),
+            goals: self.state.goals.with_facts_at(self.focused, facts),
             added_facts: Arc::new(added_facts.clone()),
             checked_facts: Arc::new(added_facts),
         })
@@ -9110,7 +9200,9 @@ impl<'a> Proof<'a> {
     }
 
     fn apply_extract(&self, surface: &ClickProposition) -> Result<ProofState, ClickError> {
-        if matches!(self.context.as_ref(), ProofContext::Execution(_)) {
+        if matches!(self.context.as_ref(), ProofContext::Execution(_))
+            && self.focused_outcome_point().is_none()
+        {
             return Err(self.step_error("`extract` requires a proposition proof"));
         }
         let proposition = self.lower_surface_proposition(surface, "`extract` proposition")?;
@@ -12366,6 +12458,96 @@ mod tests {
     }
 
     #[test]
+    fn universal_intro_binding_is_local_to_its_focused_sibling_goal() {
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test function should parse");
+        let state = CState::new();
+        let program_point_states = ProgramPointStates::new();
+        let surface_propositions = SurfacePropositionMap::default();
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let binder = "k".to_string();
+        let binder_expression =
+            ContractExpression::CFragment(CExpression::Variable(binder.clone()));
+        let constant = |value| ContractExpression::CFragment(CExpression::Value(int32(value)));
+        let surface_goal = ClickProposition::ForAll {
+            c_type: C0Type::Int32,
+            name: binder.clone(),
+            body: Box::new(ClickProposition::Comparison {
+                left: binder_expression.clone(),
+                operator: ComparisonOperator::Equal,
+                right: binder_expression,
+            }),
+        };
+        let disjunction = ClickProposition::Or(
+            Box::new(ClickProposition::Comparison {
+                left: constant(0),
+                operator: ComparisonOperator::Equal,
+                right: constant(0),
+            }),
+            Box::new(ClickProposition::Comparison {
+                left: constant(1),
+                operator: ComparisonOperator::Equal,
+                right: constant(1),
+            }),
+        );
+        let lower = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &[],
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("test proposition should lower")
+        };
+        let kernel_goal = lower(&surface_goal);
+        let kernel_disjunction = lower(&disjunction);
+        let available = [kernel_disjunction];
+        let root = Proof::for_point_surface_goal(
+            "goal-local forall binder",
+            0,
+            &available,
+            kernel_goal,
+            surface_goal,
+            parsed_function.parameters(),
+            &[],
+            &state,
+            &state,
+            &program_point_states,
+            &surface_propositions,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+            &[],
+            &[],
+        );
+        let (split, _, ids) = root
+            .split_focused_cases(disjunction)
+            .expect("the exact disjunction should open sibling goals");
+        let introduced = split
+            .focus(ids[0])
+            .expect("the first sibling should be focusable")
+            .apply_step(SimpleProofStep::Intro)
+            .expect("the universal binder should refine the first sibling");
+
+        let binding_count = |id| match introduced.state.goals.get(id) {
+            Some(Goal::Proposition(goal)) => goal.surface_bindings.len(),
+            _ => panic!("the split should retain proposition siblings"),
+        };
+        assert_eq!(binding_count(ids[0]), 1);
+        assert_eq!(binding_count(ids[1]), 0);
+        assert!(root.state.locals.values.is_empty());
+        assert!(introduced.state.locals.values.is_empty());
+    }
+
+    #[test]
     fn point_choose_uses_indexed_requirement_and_persistent_local_bindings() {
         let click_file = crate::lang::click::parse(
             r#"
@@ -13114,11 +13296,19 @@ mod tests {
                 allocations <= allocation_bound,
                 "size {size} instantiate allocated {allocations} persistent nodes (bound {allocation_bound})"
             );
-            assert!(instantiated.is_complete());
-            assert_eq!(instantiated.certificate().steps(), &[step]);
+            assert!(!instantiated.is_complete());
+            assert_eq!(instantiated.certificate().steps(), &[step.clone()]);
             assert_eq!(
                 instantiated.added_facts(),
                 std::slice::from_ref(&kernel_goal)
+            );
+            let completed = instantiated
+                .apply_step(SimpleProofStep::Assumption)
+                .expect("the specialized exact fact should close by assumption");
+            assert!(completed.is_complete());
+            assert_eq!(
+                completed.certificate().steps(),
+                &[step, SimpleProofStep::Assumption]
             );
             assert!(root.certificate().steps().is_empty());
         }

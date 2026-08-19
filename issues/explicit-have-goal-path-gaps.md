@@ -482,8 +482,12 @@ both design-scale.
 The typed outcome proposition path now checks explicit `InstantiateUsing`
 steps through its result-aware point view, and a source-level regression
 forbids post-execution simple-have replay. This removes the context rejection
-for already-ground arguments. Binder-aware generated certificates remain in
-the residue: `intro` must retain the Surface universal binder in goal-local
-state before a later instantiation or transport can lower that name. It must
-not be inserted into the lineage-wide proof-local map, where it could leak to
-a sibling goal.
+for already-ground arguments.
+
+The binder-aware follow-up is also complete. Universal `intro` retains its
+Surface name in a persistent map owned by the focused proposition goal;
+sibling goals fork independently, and nested haves inherit the binding. The
+typed `simp` query selects universal-goal and instantiation candidates from
+its indexed decision premises, then checks the resulting
+`Intro`/`InstantiateUsing` certificate on `Proof` without compatibility
+construction. The quantified outcome and bubble-pass regressions are green.

@@ -2779,9 +2779,10 @@ fn contract_expression_for_instantiation_value(
 
 /// Plans an explicit universal-instantiation certificate: one listed
 /// universal premise, specialized at an explicit constant, proves the goal
-/// after its guards discharge from the remaining listed premises. Emits the
-/// named `instantiate ... using` rule and closes by assumption.
-fn plan_explicit_forall_instantiation(
+/// after its guards discharge from the remaining listed premises. The named
+/// `instantiate ... using` step adds the specialized fact and `assumption`
+/// closes the exact goal, matching independent simple-step replay.
+pub(super) fn plan_explicit_forall_instantiation(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
@@ -2836,14 +2837,11 @@ fn plan_explicit_forall_instantiation(
 }
 
 /// Plans an explicit certificate for a universal goal: introduce the binder
-/// (and implication antecedent), specialize one listed universal premise at
-/// the introduced binder, and close by assumption. The instantiated guards
-/// discharge from the introduced antecedent plus the remaining listed
-/// premises.
-/// One explicit `instantiate ... using` (plus its optional closing transport
-/// and `assumption`) that discharges `goal_conclusion` from a universal
-/// premise at the given argument. Shared between the binder-introduction
-/// forall-goal chain and spelled finite-enumeration instances.
+/// (and implication antecedent), then specialize one listed universal premise
+/// at the introduced binder. Instantiation adds the specialized fact; an
+/// optional transport adds its target, and `assumption` closes the exact goal.
+/// The instantiated guards discharge from the introduced antecedent plus the
+/// remaining listed premises.
 #[allow(clippy::too_many_arguments)]
 fn plan_explicit_universal_conclusion_discharge(
     premise_kernel: &Proposition,
@@ -2941,13 +2939,10 @@ fn plan_explicit_universal_conclusion_discharge(
     Some(tactics)
 }
 
-fn plan_explicit_forall_goal(
+pub(super) fn plan_explicit_forall_goal_from_premises(
     goal: &Proposition,
     surface_goal: &ClickProposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    available: &[Proposition],
-    effect_facts: &[ExecutionPureFact],
-    post_state: &CState,
 ) -> Option<Vec<ProofTactic>> {
     let Proposition::ForAll {
         var: goal_var,
@@ -3011,6 +3006,46 @@ fn plan_explicit_forall_goal(
         tactics.append(&mut body_tactics);
         return Some(tactics);
     }
+    None
+}
+
+fn plan_explicit_forall_goal(
+    goal: &Proposition,
+    surface_goal: &ClickProposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    available: &[Proposition],
+    effect_facts: &[ExecutionPureFact],
+    post_state: &CState,
+) -> Option<Vec<ProofTactic>> {
+    if let Some(tactics) =
+        plan_explicit_forall_goal_from_premises(goal, surface_goal, premise_pairs)
+    {
+        return Some(tactics);
+    }
+    let Proposition::ForAll {
+        body: goal_body, ..
+    } = goal
+    else {
+        return None;
+    };
+    let ClickProposition::ForAll {
+        body: surface_body, ..
+    } = surface_goal
+    else {
+        return None;
+    };
+    let (antecedent, goal_conclusion, surface_antecedent) =
+        match (goal_body.as_ref(), surface_body.as_ref()) {
+            (
+                Proposition::Implies(antecedent, conclusion),
+                ClickProposition::Implies(surface_antecedent, _),
+            ) => (
+                Some(antecedent.as_ref().clone()),
+                conclusion.as_ref(),
+                Some(surface_antecedent.as_ref().clone()),
+            ),
+            (body, _) => (None, body, None),
+        };
     // Without a universal premise the body may still be a preserved load:
     // discharge it point-wise with the explicit unchanged-load transport
     // under the same binder introduction.

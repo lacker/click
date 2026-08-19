@@ -3653,12 +3653,31 @@ the checked successor retains the `InstantiateUsing` node without entering
 the post-execution simple-have replay. An end-to-end regression observes that
 no compatibility operation runs during ordinary source verification.
 
-This closes the ground-instantiation context gap. Universal-goal planning is
-still separate: after `intro`, the Surface binder must be represented in
-goal-local proof state so it cannot leak into a sibling goal. The current
-lineage-wide proof-local map is appropriate for `choose` scopes but is not a
-sound substitute for that binder scope; the binder-aware planner residue
-therefore remains open rather than being hidden in that map.
+This closes the ground-instantiation context gap. Universal-goal planning was
+the next separate slice because its Surface binder needed goal-local state;
+the progress note below records that completed follow-up.
+
+### Progress (2026-08-19: universal binders and selected instantiation stay on Proof)
+
+`PropositionGoal` now owns a persistent Surface-binding map. `intro` retains
+the exact kernel variable under the Surface universal name, refinements and
+nested `have` scopes inherit it, and sibling goals fork the map before either
+arm changes. A focused split regression pins that one arm's binder never
+enters its sibling or the lineage-wide `choose` locals.
+
+Structural `simp` now introduces universal goals directly, and its atomic
+decision can select a bounded universal-goal or ground-instantiation candidate
+from only the indexed premise spellings the decision named. Candidate planning
+does not scan or clone the ambient fact set; `Proof::check_certificate` remains
+the sole mutation boundary. `extract` likewise accepts an outcome-stated
+proposition judgment. `InstantiateUsing` now has the same semantics on both
+checkers: it adds the specialized fact and the retained `Assumption` closes
+the goal, so independently replayed expansion is identical to ordinary
+verification.
+
+A quantified post-execution regression observes no outcome compatibility
+construction, expands to `Intro`/`InstantiateUsing`, and independently
+reverifies; the canonical bubble-pass mdtest remains green.
 
 ## Acceptance criteria
 

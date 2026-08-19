@@ -7782,6 +7782,63 @@ fn explicit_post_execution_have_uses_the_checked_outcome_proof_path() {
 }
 
 #[test]
+fn quantified_outcome_simp_keeps_its_binder_on_the_checked_goal() {
+    let c_source = r#"
+            int32 bounded(int32 value) {
+                return value;
+            }
+        "#;
+    let click_source = r#"
+            verifying "bounded.c";
+
+            int32 bounded(int32 value) {
+                requires wide: forall (k: int32) {
+                    0 <= k and k < 3 implies k <= value
+                };
+                ensures narrow: forall (k: int32) {
+                    0 <= k and k < 2 implies k <= value
+                };
+            } by {
+                execute();
+                simp();
+            }
+        "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("bounded.c", c_source)])
+    });
+    verified.expect("the quantified outcome should verify through Proof");
+    let source_verification_events = events.iter().take_while(|event| {
+        !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "whole-contract certificate construction"
+        )
+    });
+    assert!(
+        source_verification_events
+            .into_iter()
+            .all(|event| !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "outcome simp compatibility construction"
+            )),
+        "the binder-aware outcome certificate must not use compatibility construction: {events:#?}"
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("bounded.c", c_source)],
+        "bounded",
+        CProofClaim::Grouped,
+    )
+    .expect("the quantified outcome proof should expand");
+    assert!(expanded.contains("intro();"), "{expanded}");
+    assert!(expanded.contains("instantiate("), "{expanded}");
+    verify_c0_sources(&expanded, &[("bounded.c", c_source)])
+        .expect("the retained binder-aware certificate should replay");
+}
+
+#[test]
 fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {
