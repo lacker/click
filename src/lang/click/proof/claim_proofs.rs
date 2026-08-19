@@ -3608,6 +3608,13 @@ pub(super) fn finish_ordered_proof_replay(
                                     // existence tactics; ungrouped proofs apply
                                     // them inside the checked obligation scope.
                                     let mut direct_claims = Vec::new();
+                                    // Ungrouped resource ensures close on the
+                                    // direct path with the same bounded
+                                    // production check and Assumption
+                                    // certificate the legacy closer uses;
+                                    // grouped sets stay legacy until the
+                                    // grouped transition builder migrates.
+                                    let mut direct_resource_claims = Vec::new();
                                     let mut direct_supported = true;
                                     for (claim_index, claim) in claims.iter().enumerate() {
                                         if closures[claim_index].is_closed() {
@@ -3631,9 +3638,13 @@ pub(super) fn finish_ordered_proof_replay(
                                                                 .clone(),
                                                         ));
                                                     }
-                                                    Ensure::Resource(_) => {
-                                                        direct_supported = false;
-                                                        break;
+                                                    Ensure::Resource(resource) => {
+                                                        if replay.grouped_contract {
+                                                            direct_supported = false;
+                                                            break;
+                                                        }
+                                                        direct_resource_claims
+                                                            .push((claim_index, resource.clone()));
                                                     }
                                                 }
                                             }
@@ -3656,6 +3667,33 @@ pub(super) fn finish_ordered_proof_replay(
                                             }
                                         }
                                     };
+                                    if direct_supported && !direct_resource_claims.is_empty() {
+                                        let CFunctionOutcome::Return { .. } = &outcome else {
+                                            unreachable!("gated on a return outcome above");
+                                        };
+                                        for (claim_index, resource) in &direct_resource_claims {
+                                            let claim_label = function_claim_label(
+                                                function_block.signature().name(),
+                                                &claims[*claim_index],
+                                            );
+                                            if crate::lang::click::checking::prove_ensure_resource(
+                                                &claim_label,
+                                                path_index,
+                                                &path.execution_facts(),
+                                                &path_requirements,
+                                                resource,
+                                                parsed_function.parameters(),
+                                                arguments,
+                                                pre_state,
+                                                &outcome,
+                                            )
+                                            .is_err()
+                                            {
+                                                direct_supported = false;
+                                                break;
+                                            }
+                                        }
+                                    }
                                     if direct_supported && !direct_claims.is_empty() {
                                         let direct_certificate =
                                             crate::kernel::with_search_attempt_rollback(|| {
@@ -3868,6 +3906,30 @@ pub(super) fn finish_ordered_proof_replay(
                                                         ClaimClosure::by_checked_certificate(
                                                             &certificate,
                                                         );
+                                                }
+                                                // Resource productions were checked
+                                                // before the attempt; their surface
+                                                // certificate is the same trivial
+                                                // Assumption the legacy closer
+                                                // records — kernel certification
+                                                // remains the resource authority.
+                                                if !direct_resource_claims.is_empty() {
+                                                    let assumption_certificate =
+                                                        ProofCertificate::from_proof_tactics(&[
+                                                            ProofTactic::Assumption,
+                                                        ])
+                                                        .map_err(|error| {
+                                                            ClickError::new(format!(
+                                                                "`{proof_label}` path {path_index}, tactic {tactic_index}: resource `simp` produced an invalid surface certificate: {error:?}"
+                                                            ))
+                                                        })?;
+                                                    for (claim_index, _) in &direct_resource_claims
+                                                    {
+                                                        closures[*claim_index] =
+                                                            ClaimClosure::by_checked_certificate(
+                                                                &assumption_certificate,
+                                                            );
+                                                    }
                                                 }
                                                 if capturing_this_tactic {
                                                     path_deferred_capture_tactics
