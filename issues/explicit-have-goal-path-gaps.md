@@ -48,6 +48,25 @@ compare the two views' input sizes at the slow have and bound or index
 the transport's candidate enumeration (exact-first, alias-bounded), per
 the complexity contract.
 
+## Reduction (2026-08-18, third pass)
+
+The input-size hypothesis is dead: at every explicit have in the
+reproducing mdtest, the goal-path scope's fact context is identical to
+the legacy `certificate_available` (43–46 facts, equal counts), the
+transport view already supplies Path effect facts, and both paths end in
+the same checker. Two certificates of the identical `[Have,
+TransportUsing, Assumption]` shape with near-identical inputs cost 3
+milliseconds and 19 seconds respectively — so the divergence is inside
+lowering/matching for the specific propositions, not input volume. The
+working theory is the recorded-versus-fresh lowering asymmetry the API
+doc documents elsewhere: the legacy drain replay leans on recorded
+surface lowerings (cheap membership at the cost of snapshot anchoring),
+while the strict scope check re-derives the transport lowering and pays
+full kernel general-alias cost on this test's byte-granular memory. If
+so, the honest fix is kernel-side: bound or index the general-alias
+range queries the fresh lowering performs (the attribution shows 1.34M
+units there), not a return to recorded-lowering shortcuts.
+
 ## Intended regression
 
 - A deterministic curve comparing goal-path versus legacy explicit-have
