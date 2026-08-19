@@ -3752,6 +3752,16 @@ the production case. The newly named `outcome simp legacy exit planning`
 instrumentation span makes the remaining fallback population directly
 auditable while it is being retired.
 
+### Progress (2026-08-19: frame-certified outcome claims enter the direct Proof path)
+
+The direct outcome collector no longer rejects an ensure solely because
+`frame(loop(...))` already certified its kernel goal. That goal is present in
+the evolving outcome facts, so the ordinary Proof scope checks the matching
+Surface ensure by assumption and retains the resulting certificate. The
+symbolic preserved-index loop regression observes no legacy exit-planning
+span, expands, and independently reverifies. This removes the sole
+frame-certified entry from the measured fixture fallback census.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

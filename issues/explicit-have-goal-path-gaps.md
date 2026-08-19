@@ -552,3 +552,13 @@ otherwise-observable one-assumption mismatch.
 This converts the resource-count predicate class. Statement/effect equations,
 existence paths, frame-certified routing, richer separation derivations, and
 the all-or-nothing sibling abort remain migration work.
+
+## Frame-certified outcome routing landed (2026-08-19)
+
+An ensure already certified by qualified `frame(loop(...))` now enters the
+direct outcome Proof collector instead of failing its shape gate. Its checked
+kernel goal is already in the evolving fact context; the Proof scope accepts
+the matching Surface claim and retains the closer. The symbolic-index loop
+fixture forbids the legacy exit-planning span and independently replays its
+expansion. The single frame-certified census entry is gone; existence routing,
+statement/effect derivations, richer separation, and sibling aborts remain.

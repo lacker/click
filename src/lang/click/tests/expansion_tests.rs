@@ -7969,6 +7969,85 @@ fn outcome_predicate_unfold_relowers_resource_counts_on_the_checked_proof() {
 }
 
 #[test]
+fn frame_certified_outcome_claim_closes_on_the_checked_proof() {
+    let c_source = r#"
+        int32 preserve_after_loop(int32 p[], int32 n) {
+            int32 i;
+            i = 0;
+            while (i < n) {
+                p[i] = i;
+                i = i + 1;
+            }
+            return i;
+        }
+    "#;
+    let click_source = r#"
+        verifying "preserve.c";
+
+        int32 preserve_after_loop(int32 p[], int32 n) {
+            requires n >= 0;
+            requires n <= 100;
+            requires loadable(p[0..n + 1]);
+            consumes p[0..n + 1];
+            ensures preserved: p[n] == old(p[n]);
+        } by {
+            step();
+            step();
+            loop {
+                invariant i >= 0;
+                invariant i <= n;
+                mutable p[0..n] by frame;
+                initialize by simp;
+                preserve by {
+                    step();
+                    step();
+                    close_invariants();
+                }
+            }
+            step();
+            frame(loop(0));
+            simp();
+        }
+    "#;
+    let sources = [("preserve.c", c_source)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the frame-certified ensure should close through Proof");
+    let compatibility_events = events
+        .iter()
+        .take_while(|event| {
+            !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "whole-contract certificate construction"
+            )
+        })
+        .filter(|event| {
+            matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "outcome simp legacy exit planning"
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        compatibility_events.is_empty(),
+        "a checked frame goal must not enter legacy exit planning: {compatibility_events:#?}"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "preserve_after_loop",
+        CProofClaim::Grouped,
+    )
+    .expect("the frame-certified outcome should expand");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the frame-certified expansion should replay independently");
+}
+
+#[test]
 fn outcome_simp_transports_loadability_on_the_checked_proof() {
     let summarize_c = r#"
         int32 summarize(int32* p) {

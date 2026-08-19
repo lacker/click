@@ -3686,10 +3686,7 @@ pub(super) fn finish_ordered_proof_replay(
                                             continue;
                                         }
                                         match claim {
-                                            FunctionClaimRef::Ensure(_, ensure_clause)
-                                                if frame_certified_claim_goals[claim_index]
-                                                    .is_none() =>
-                                            {
+                                            FunctionClaimRef::Ensure(_, ensure_clause) => {
                                                 match ensure_clause.ensure() {
                                                     Ensure::Proposition(surface_goal) => {
                                                         // A rewritten claim proves the
