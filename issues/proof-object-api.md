@@ -3495,6 +3495,36 @@ the acceptance criteria are in `issues/explicit-have-goal-path-gaps.md`;
 the drain's smart-`have` fallback and `Simp` escape remain load-bearing
 until it lands.
 
+### The `Simp` escape, scoped (2026-08-18)
+
+A route census over both fixture gates dissolves the roadmap's wildcard.
+The drain's `Simp` arm already contains a working goal-based direct path
+(open each claim as a `have` on the evolving outcome proof; close by
+direct logical closure, simp closure, or a planner-generated certificate
+checked on the scope), and the census splits its ~550 measured entries
+into three migration chunks:
+
+1. **Widen the entry gate** (362 mdtest entries, 66%): the direct path
+   currently admits only grouped-without-existence and
+   ungrouped-with-existence claims; plain ungrouped claims — the most
+   common shape — never enter and go straight to the legacy closer.
+   Flipping the gate reuses the existing all-or-nothing protection
+   (unsupported or failed claims fall back unchanged), so this chunk is
+   gate-widening plus fallout, not new vocabulary.
+2. **Unsupported claim shapes** (95 + 50 entries): resource `ensures`,
+   rewritten claim goals, and frame-certified goals need direct-path
+   vocabulary. This is the substantive remainder.
+3. **Direct-path misses** (14 entries): individual diagnosis after 1
+   and 2 shrink the population.
+
+Per-claim closure stats confirm the direct machinery carries real load
+already (direct-logical 86, simp-closure 25) and the legacy
+planner-as-oracle compatibility route is nearly dead (1 success, 6
+failures corpus-wide) — it is a deletion candidate during chunk 1. The
+legacy `ExitClaimContext` closer machinery deletes when the three chunks
+land, which retires the `Simp` dirty-flag site; the smart-`have` miss
+fallback then remains the drain's only legacy escape.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
