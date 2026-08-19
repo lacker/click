@@ -43,7 +43,11 @@ int32 vector_push(struct vector* owner, int32 value) {
             at(statement(5).entry, owner->len) < at(statement(5).entry, (owner->len + 1));
         }
     }
-    have owner->len <= owner->cap by simp;
+    have owner->len <= owner->cap by {
+        simp() using {
+            at(statement(5).entry, owner->len) < at(statement(5).entry, owner->cap);
+        }
+    }
     have separate(memory(object(owner)), memory(owner->data[0..owner->cap])) by simp;
     fold(nonempty_vector(owner));
     have at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->len) by {
