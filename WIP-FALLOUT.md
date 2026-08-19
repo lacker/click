@@ -545,3 +545,34 @@ recovers most of the cost across all three burn sites — measure first
 whether the id computation cost is acceptable, per the memo-id comment
 in resolution_query_memo_id). Acceptance stays: metadata-write mdtest
 under budget, input-cursor within 30s, full check.sh.
+## Store-edge burn eliminated; the final membership gap located (2026-08-19)
+
+Landed this pass (suite green): the PointerRangeDisjoint resolution-query
+memo variant; a direct-only `pointers_directly_disjoint_by_range`
+(indexed separation candidates + range membership, NO derived-separation
+fallback) used by the DAG store edge, which cut the walk's cost from
+1.99M units to ~1.2k — per-edge work is now genuinely bounded; and the
+`nonnegative_successor_by_exact_facts` rule in `pointer_in_range`
+(0 <= t+1 from exact 0 <= t plus any exact strict upper bound as the
+no-overflow witness), with dual raw/canonical spelling lookup.
+
+Probes then located the exact remaining gap at the blocking store edge
+(write = data[len+1], loaded = owner->data): of 61 edge queries, 42 run
+under an EMPTY assumption context (c_memory_load_is_unchanged callers
+passing PureFactContext::new() — those can never decide and should
+skip the edge fast), and the 19 real ones carry 21 facts / 9 candidates
+whose ordering facts spell load atoms at STATEMENT-ENTRY memories while
+the write's index spells the EMPTY-PLACEHOLDER load — exact mismatch.
+Both sides canonicalize to the same name (placeholder-cell
+materialization), so the fix is: in the successor rule and/or the
+membership ordering lookups, normalize the FACT'S load atoms to
+canonical names too (the index side already tries its canonical name),
+i.e. compare orderings with both atoms canonicalized. Bounded: per
+fact-atom canonicalize is memoized and the fact set is small.
+
+Remaining burn after that: the pre-walk whole-snapshot alias comparison
+(1.57M units under "snapshot comparison: general alias") still runs
+when the walk fails; once the walk decides, it never fires for this
+case. If it still burns for other pairs, the same
+canonicalize-then-compare discipline applies to its per-cell
+membership checks.

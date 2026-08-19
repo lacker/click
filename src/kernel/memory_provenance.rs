@@ -666,7 +666,13 @@ fn memory_derivations_reach(
                         || {
                             crate::kernel::reasoning::with_isolated_memory_resolution_fuel(
                                 8_000,
-                                || assumptions.pointers_proven_disjoint_by_range(write, pointer),
+                                || {
+                                    crate::kernel::reasoning::pointers_disjoint_by_range_memoized(
+                                        write,
+                                        pointer,
+                                        assumptions,
+                                    )
+                                },
                             )
                         },
                     )

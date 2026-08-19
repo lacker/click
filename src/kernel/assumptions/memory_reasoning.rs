@@ -481,6 +481,49 @@ impl PureFactContext {
         false
     }
 
+    /// The indexed-candidates leg of [`Self::pointers_proven_disjoint_by_range`]
+    /// alone: separation facts plus range membership, no derived-separation
+    /// fallback. Per-edge callers (the memory-DAG walk) use this so an
+    /// undecided edge fails prompt instead of paying the composition-backed
+    /// search per hop.
+    pub(in crate::kernel) fn pointers_directly_disjoint_by_range(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+    ) -> bool {
+        let direct = self
+            .memory_separation_candidates(&left.block, &right.block)
+            .find_map(|(proposition, left_range, right_range)| {
+                (self.pointer_in_range(
+                    left,
+                    left_range.base(),
+                    left_range.start(),
+                    left_range.end(),
+                ) && self.pointer_in_range(
+                    right,
+                    right_range.base(),
+                    right_range.start(),
+                    right_range.end(),
+                ) || self.pointer_in_range(
+                    right,
+                    left_range.base(),
+                    left_range.start(),
+                    left_range.end(),
+                ) && self.pointer_in_range(
+                    left,
+                    right_range.base(),
+                    right_range.start(),
+                    right_range.end(),
+                ))
+                .then_some(proposition)
+            });
+        if let Some(proposition) = direct {
+            record_implicit_reasoning_provenance(self, proposition);
+            return true;
+        }
+        false
+    }
+
     pub(in crate::kernel) fn pointers_proven_disjoint_by_range(
         &self,
         left: &Pointer,
@@ -923,9 +966,9 @@ impl PureFactContext {
         end: &Bitvector32Term,
     ) -> bool {
         let proves = |condition: ConditionTerm| {
-            self.exact_condition_value(&condition)
-                .or_else(|| self.decide(&condition))
-                == Some(true)
+            self.exact_condition_value(&condition) == Some(true)
+                || self.nonnegative_successor_by_exact_facts(&condition)
+                || self.decide(&condition) == Some(true)
         };
         let range_base = base.offset_by_int32_elements(start.clone());
         if let Some(index) = self.pointer_element_index_from_base(pointer, &range_base) {
@@ -946,6 +989,53 @@ impl PureFactContext {
             start.clone(),
             index.clone(),
         )) && proves(ConditionTerm::signed_less_than(index, end.clone()))
+    }
+
+    /// Proves `0 <= t + 1` from two exact facts: `0 <= t` and any exact
+    /// strict upper bound `t < u`. The upper bound is the no-overflow
+    /// witness — a signed int32 strictly below another cannot be the
+    /// maximum, so its successor does not wrap. Exact-fact-only, so range
+    /// membership over successor indices (`data[len + 1]` under
+    /// `0 <= len` and `len < cap` requires) decides without the general
+    /// prover.
+    fn nonnegative_successor_by_exact_facts(&self, condition: &ConditionTerm) -> bool {
+        let ConditionTerm::Bitvector32SignedLessEqual(low, sum) = condition else {
+            return false;
+        };
+        if !matches!(low.as_ref(), Bitvector32Term::Constant(0)) {
+            return false;
+        }
+        let Bitvector32Term::Add(term, one) = sum.as_ref() else {
+            return false;
+        };
+        if !matches!(one.as_ref(), Bitvector32Term::Constant(1)) {
+            return false;
+        }
+        // Facts may spell the load atom by its canonical name while the
+        // index carries the raw load (or vice versa); try both spellings.
+        let mut spellings = vec![term.as_ref().clone()];
+        if let Some((variable, _)) =
+            crate::kernel::eval::canonical_load_variable_for_term(term.as_ref())
+        {
+            let named = Bitvector32Term::Variable(variable);
+            if !spellings.contains(&named) {
+                spellings.push(named);
+            }
+        }
+        spellings.iter().any(|spelling| {
+            self.exact_condition_value(&ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(0),
+                spelling.clone(),
+            )) == Some(true)
+                && self.condition_facts.iter().any(|(fact, value)| {
+                    *value
+                        && matches!(
+                            fact,
+                            ConditionTerm::Bitvector32SignedLessThan(left, _)
+                                if left.as_ref() == spelling
+                        )
+                })
+        })
     }
 
     pub(in crate::kernel) fn proves_memory_disjoint(
