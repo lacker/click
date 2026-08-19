@@ -10,6 +10,7 @@ use std::cell::{Cell, RefCell};
 
 mod condition_reasoning;
 mod memory_reasoning;
+pub(crate) use memory_reasoning::arm_frame_composite_definitions;
 mod proposition_reasoning;
 
 pub(crate) use proposition_reasoning::finite_forall_goal_instances;

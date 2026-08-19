@@ -80,6 +80,9 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
     equality: &Proposition,
     available: &[Proposition],
 ) -> Result<Proposition, String> {
+    if equality_is_vacuous(equality) {
+        return Ok(goal.clone());
+    }
     enum RewriteTask<'a> {
         Visit(&'a Proposition),
         BuildAnd,
@@ -201,6 +204,31 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
         .ok_or_else(|| "`rewrite` equality does not occur in the current goal".to_string());
 }
 
+/// Whether rewriting by this equality cannot change any goal: it states
+/// that a term equals itself, or it has already simplified to `true`.
+///
+/// Both arise when the prover resolves two spellings a proof script still
+/// distinguishes. The step is then vacuous rather than wrong, so it must not
+/// be reported as a missing occurrence or an unsupported equality shape.
+fn equality_is_vacuous(equality: &Proposition) -> bool {
+    if matches!(
+        equality,
+        Proposition::ConditionIs(ConditionTerm::Constant(true), true)
+    ) {
+        return true;
+    }
+    match equality {
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
+            left == right
+        }
+        Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) => {
+            left == right
+        }
+        Proposition::ConditionIs(ConditionTerm::PointerEqual(left, right), true) => left == right,
+        _ => false,
+    }
+}
+
 fn rewrite_atomic_proposition_by_exact_equality(
     goal: &Proposition,
     equality: &Proposition,
@@ -209,6 +237,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
     let is_available = |fact: &Proposition| {
         available.contains(fact)
             || materialization_equivalent_available_fact(fact, available).is_some()
+
             // Canonical load variables are kernel-internal names; recorded
             // equalities chained through one are the same user-level fact.
             || crate::lang::click::proof::fact_reasoning::premise_bridged_by_canonical_name_chain(

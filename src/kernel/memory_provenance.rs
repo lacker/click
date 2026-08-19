@@ -706,9 +706,8 @@ fn memory_derivations_reach(
                                 assumptions,
                             ))
                 }
-                CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
-                    assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
-                }
+                CMemoryDerivation::CallHavoc { mutable_ranges, .. } => assumptions
+                    .ranges_proven_disjoint_from_pointer_for_frame(mutable_ranges, pointer),
                 // Loop havoc may write anything the body can reach.
                 CMemoryDerivation::LoopHavoc { .. } => false,
             },

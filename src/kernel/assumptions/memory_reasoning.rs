@@ -5,6 +5,53 @@ thread_local! {
     static PROOF_AWARE_POINTER_INDEX_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+thread_local! {
+    /// Composite resource definitions available to internal frame evidence.
+    ///
+    /// Frame reasoning asks whether a call's mutable ranges or a store's
+    /// written cell can touch a loaded pointer. When the pointer sits inside
+    /// a composite's footprint, answering needs the composite's definition —
+    /// but publishing that expansion as an ambient fact would also make a
+    /// user's `separate(...)` goal provable without the `observe(...)` chain
+    /// the language requires for nested composites (pinned by
+    /// `mdtests/composite_resource_nested_observe_not_automatic.md`).
+    ///
+    /// Separation is a property, not an authority grant: consulting the
+    /// definitions here decides disjointness for framing without making any
+    /// resource usable, so this channel is deliberately readable only by the
+    /// frame-evidence prover in this module.
+    static FRAME_COMPOSITE_DEFINITIONS: std::cell::RefCell<
+        Vec<std::sync::Arc<Vec<CCompositeResourceDefinition>>>,
+    > = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Arms [`FRAME_COMPOSITE_DEFINITIONS`] for the guard's lifetime. Definitions
+/// are file-global, so one guard covers a whole verification.
+#[must_use = "definitions stay armed only while the guard is alive"]
+pub struct FrameCompositeDefinitionsGuard {
+    _private: (),
+}
+
+impl Drop for FrameCompositeDefinitionsGuard {
+    fn drop(&mut self) {
+        FRAME_COMPOSITE_DEFINITIONS.with(|definitions| {
+            definitions.borrow_mut().pop();
+        });
+    }
+}
+
+pub fn arm_frame_composite_definitions(
+    definitions: Vec<CCompositeResourceDefinition>,
+) -> FrameCompositeDefinitionsGuard {
+    FRAME_COMPOSITE_DEFINITIONS
+        .with(|armed| armed.borrow_mut().push(std::sync::Arc::new(definitions)));
+    FrameCompositeDefinitionsGuard { _private: () }
+}
+
+fn frame_composite_definitions() -> Option<std::sync::Arc<Vec<CCompositeResourceDefinition>>> {
+    FRAME_COMPOSITE_DEFINITIONS.with(|definitions| definitions.borrow().last().cloned())
+}
+
 impl PureFactContext {
     #[cfg(test)]
     pub(crate) fn reset_proof_aware_pointer_index_queries() {
@@ -1578,6 +1625,46 @@ impl PureFactContext {
         false
     }
 
+    /// [`Self::ranges_proven_disjoint_from_pointer`] for internal frame
+    /// evidence, which may also look through composite definitions.
+    ///
+    /// A pointer inside a composite's footprint is invisible to the ordinary
+    /// prover, because a composite own carries no memory range of its own.
+    /// Framing may consult the definition to decide the disjointness;
+    /// nothing is published, so a user's `separate(...)` goal over a nested
+    /// composite still needs its `observe(...)` chain. Deliberately kept off
+    /// the ordinary prover, whose per-cell store-drop callers must not pay
+    /// for an expansion they never need.
+    pub(in crate::kernel) fn ranges_proven_disjoint_from_pointer_for_frame(
+        &self,
+        ranges: &[CMemoryRange],
+        pointer: &Pointer,
+    ) -> bool {
+        if self.ranges_proven_disjoint_from_pointer(ranges, pointer) {
+            return true;
+        }
+        let expanded = self.frame_expanded_compositions();
+        if expanded.is_empty() {
+            return false;
+        }
+        ranges.iter().all(|range| {
+            expanded.iter().any(|resources| {
+                resources.proves_owned_range_separate_from_pointer_shallow(
+                    range,
+                    pointer,
+                    |pointer, available| {
+                        self.pointer_in_range_by_shallow_fact_graph(
+                            pointer,
+                            available.base(),
+                            available.start(),
+                            available.end(),
+                        ) || self.pointer_directly_in_memory_range(pointer, available)
+                    },
+                )
+            })
+        })
+    }
+
     pub(in crate::kernel) fn ranges_proven_disjoint_from_pointer(
         &self,
         ranges: &[CMemoryRange],
@@ -1740,6 +1827,77 @@ impl PureFactContext {
         bitvector_index_in_range_shallow(&index, &range.start, &range.end, self)
     }
 
+    /// The armed compositions with their composites definitionally expanded,
+    /// for frame evidence only.
+    ///
+    /// Expansion is definitional and runs against no assumptions, so it
+    /// cannot re-enter the prover that called it, and its result is a pure
+    /// function of the composition and the armed definitions — memoized per
+    /// thread. Composite bodies are evaluated over an empty snapshot: the
+    /// segments this answers for are the ones whose addresses do not depend
+    /// on field values, and a body that needs a live snapshot simply does
+    /// not expand here.
+    fn frame_expanded_compositions(&self) -> Vec<ResourceContext> {
+        // Cheap gates first: this runs on the store cell-drop path, so a
+        // composition with nothing composite to look through must cost a
+        // scan of its own facts and no more.
+        if self.resource_compositions.is_empty() {
+            return Vec::new();
+        }
+        let has_composite_own = self.resource_compositions.iter().any(|composition| {
+            composition
+                .facts()
+                .iter()
+                .any(|fact| fact.is_own() && matches!(fact.resource(), CResource::Composite { .. }))
+        });
+        if !has_composite_own {
+            return Vec::new();
+        }
+        let Some(definitions) = frame_composite_definitions() else {
+            return Vec::new();
+        };
+        if definitions.is_empty() {
+            return Vec::new();
+        }
+        // Keyed by the composition's storage identity, not its contents: a
+        // structural key would re-walk the whole context on every query, and
+        // this runs on the store cell-drop path. Retaining the keyed context
+        // keeps its allocation alive, so an address cannot be recycled under
+        // a stale entry.
+        thread_local! {
+            static EXPANSION_MEMO: std::cell::RefCell<
+                std::collections::HashMap<usize, (ResourceContext, Option<ResourceContext>)>,
+            > = std::cell::RefCell::new(std::collections::HashMap::new());
+        }
+        const EXPANSION_MEMO_LIMIT: usize = 10_000;
+        let mut expanded = Vec::new();
+        for composition in self.resource_compositions.iter() {
+            let key = std::sync::Arc::as_ptr(&composition.storage) as usize;
+            if let Some(hit) =
+                EXPANSION_MEMO.with(|memo| memo.borrow().get(&key).map(|(_, value)| value.clone()))
+            {
+                expanded.extend(hit);
+                continue;
+            }
+            let computed = crate::kernel::functions::expand_all_composite_resource_facts(
+                composition,
+                &definitions,
+                &CMemory::new(),
+                &PureFactContext::new(),
+            )
+            .filter(|context| context != composition);
+            EXPANSION_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= EXPANSION_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert(key, (composition.clone(), computed.clone()));
+            });
+            expanded.extend(computed);
+        }
+        expanded
+    }
+
     fn range_proven_disjoint_from_pointer(&self, range: &CMemoryRange, pointer: &Pointer) -> bool {
         if range.base.blocks_proven_distinct(pointer) {
             return true;
@@ -1747,7 +1905,7 @@ impl PureFactContext {
         if pointer_in_memory_range_shallow(pointer, range) {
             return false;
         }
-        if self.resource_compositions.iter().any(|resources| {
+        let owned_member_holds_pointer = |resources: &ResourceContext| {
             resources.proves_owned_range_separate_from_pointer_shallow(
                 range,
                 pointer,
@@ -1760,7 +1918,12 @@ impl PureFactContext {
                     ) || self.pointer_directly_in_memory_range(pointer, available)
                 },
             )
-        }) {
+        };
+        if self
+            .resource_compositions
+            .iter()
+            .any(owned_member_holds_pointer)
+        {
             return true;
         }
 

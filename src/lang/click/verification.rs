@@ -628,6 +628,12 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
         let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
         let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
         let resource_environment = ResourceEnvironment::new(&resource_definitions);
+        // Frame evidence may look through composite definitions to decide
+        // that a call's mutable ranges or a store's written cell cannot
+        // touch a loaded pointer inside a composite's footprint. Definitions
+        // are file-global, so one guard covers this verification; nothing is
+        // published, so nested composites still require `observe(...)` before
+        // a user's `separate(...)` goal can cite them.
         let built_function_environment = build_function_environment(
             &parsed_sources,
             file.function_blocks(),
@@ -718,6 +724,21 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
             theorem_environment,
         )
     };
+
+    // Frame evidence may look through composite definitions to decide that a
+    // call's mutable ranges or a store's written cell cannot touch a loaded
+    // pointer inside a composite's footprint. Definitions are file-global, so
+    // one guard covers this verification; nothing is published, so a nested
+    // composite still needs its `observe(...)` chain before a user's
+    // `separate(...)` goal can cite it.
+    let _frame_composite_definitions = crate::kernel::arm_frame_composite_definitions(
+        composite_resource_definitions(
+            &resource_environment,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .unwrap_or_default(),
+    );
     check_verification_deadline()?;
     let mut verified = Vec::new();
 

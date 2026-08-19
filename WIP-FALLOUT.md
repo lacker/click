@@ -763,3 +763,52 @@ experiment; they remain because the eventual fix needs them.
 
 Branch state at this commit: lib 1062/1062; mdtests 396/397 (leaf_flag,
 independent); examples red on input-cursor only.
+
+## Option (b) landed: frame evidence may look through composites (2026-08-19)
+
+The disjointness `input-cursor` needs now reaches frame evidence without
+crossing the observe boundary:
+
+- `arm_frame_composite_definitions` publishes the file's composite
+  definitions on a kernel-side thread-local channel that only the
+  frame-evidence prover reads. Nothing enters `prop_facts` or
+  `resource_compositions`, so no user goal can cite it.
+- `PureFactContext::frame_expanded_compositions` expands the armed
+  compositions definitionally, against no assumptions (so it cannot
+  re-enter the prover that called it) and over an empty snapshot (so it
+  answers only for segments whose addresses do not depend on field
+  values). Memoized by the composition's storage identity, retaining the
+  keyed context so an address cannot be recycled under a stale entry.
+- Only `ranges_proven_disjoint_from_pointer_for_frame` consults it, and
+  only the CallHavoc DAG edge calls that. The ordinary prover — whose
+  callers include the per-cell store drop — is untouched, so the hot path
+  pays nothing. Consulting it from the effect-summary arm as well was
+  tried and reverted: that arm is used far more widely and the extra
+  reach is not needed.
+
+`mdtests/composite_resource_nested_observe_not_automatic.md` still fails
+as it is written to, confirming the boundary holds.
+
+Also landed: `rewrite` accepts a vacuous equality (one whose sides lower
+to the same term, or which has already simplified to `true`) as a no-op
+instead of reporting a missing occurrence. Those arise when the prover
+resolves two spellings a script still distinguishes; the goal already
+states what the rewrite would produce. NOTE this is a second design call
+in the same family as the earlier dead-suffix ruling, which chose a hard
+error with an actionable message. Lenient was chosen here so a stronger
+prover does not break correct scripts; flipping it to strict is ~15
+lines plus edits to the scripts that then carry redundant rewrites.
+
+State: lib 1062/1062; mdtests 396/397 (leaf_flag, independent); examples
+17/19 verify, `owned-vector` quarantined, `owned-string` failing.
+
+`owned-string` is a PRE-EXISTING casualty, not a regression from this
+work: at the committed tip 1824e7a1 it already failed at have proof 11,
+and it fails identically with every change here disabled. The vacuous
+-rewrite acceptance carries it from proof 11 past 12 to proof 24, where
+`rewrite(at(statement(2).entry, value) == at(statement(2).exit, ...))`
+finds no available fact in any bridged form. Its script was written
+against the pre-canonicalization spellings; the honest options are to
+keep widening the matchers, or to update that script to the spellings
+the stronger prover now produces (it is proof, not C, so editing it is
+in bounds).
