@@ -78,3 +78,22 @@ whether `outcomes_match`'s definitional equality chains two equations or
 needs the defining facts normalized into direct value equalities first
 (normalize_direct_atomic_memory_loads exists nearby in the simp premise
 path and may be the intended tool).
+
+## Layer 4 infrastructure landed; the finding is fact flow
+
+Two sound mechanisms are in: mint memoization (one canonical variable
+per (snapshot arena id, pointer) — repeated loads reuse the name, so
+self-relations stay syntactic) and `resolve_minted_load_pointer`
+(range/containment provers rewrite a minted query address to its load
+spelling before matching load-spelled owned ranges; wired into
+`memory_write_range`). The decisive probe: the resolver finds ZERO
+defining-shaped facts in the write check's assumptions during kernel
+certification — the equation minted at lvalue evaluation is not in the
+statement's fact context downstream. The next thread is execution fact
+flow: where the lvalue path's facts go between evaluation and the
+store's effective assumptions in the certification pass, and whether
+defining facts need the persistent channel that certified store
+equations use rather than the per-path stream. Also noted: the index
+side of `data[len]` still embeds the raw len-load (pointer ADDITION
+builds offsets outside the canonicalized helper), so the arithmetic
+birth census needs the pointer-plus-int operator path added.

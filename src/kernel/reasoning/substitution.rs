@@ -5,6 +5,35 @@ use super::*;
 /// into the execution fact stream. Surface synthesis calls this before
 /// spelling a kernel fact, so a fact mentioning a minted variable spells as
 /// the loaded expression the source actually wrote.
+/// The pointer-level companion of [`resolve_minted_load_variables`]: rewrites
+/// kernel-minted load variables inside a pointer's offset using
+/// defining-shaped equations drawn from an assumption context. Range and
+/// containment provers call this on their query pointer so a minted address
+/// matches ranges still spelled through loads.
+pub(crate) fn resolve_minted_load_pointer(
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> Pointer {
+    let mut resolved = pointer.clone();
+    let mut defining = 0usize;
+    for fact in assumptions.prop_facts.iter() {
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = fact
+        else {
+            continue;
+        };
+        let (Bitvector32Term::Variable(variable), load @ Bitvector32Term::MemoryLoad(_, _)) =
+            (left.as_ref(), right.as_ref())
+        else {
+            continue;
+        };
+        defining += 1;
+        resolved.offset =
+            substitute_bitvector_variable_in_pointer_offset(&resolved.offset, *variable, load);
+    }
+    let _ = defining;
+    resolved
+}
+
 pub fn resolve_minted_load_variables(
     proposition: &Proposition,
     facts: &[ExecutionPureFact],

@@ -478,24 +478,60 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
         CType::UInt8Pointer => 1,
         _ => return None,
     };
-    let mut existing = std::collections::BTreeSet::new();
-    crate::kernel::reasoning::collect_bitvector_variables(bits, &mut existing);
-    let mut variables = crate::kernel::primitives::VerificationVariableGenerator::fresh_for(
-        *next_verification_variable,
-        existing,
-    );
-    let fresh = variables.next();
-    *next_verification_variable = variables.next;
+    // One canonical variable per load identity: repeated loads of the same
+    // cell from the same snapshot reuse the minted name, so relations
+    // between occurrences stay syntactic instead of demanding equation
+    // chains through the defining facts. The cache key is the snapshot's
+    // arena identity plus the loaded pointer; entries from finished
+    // executions are unreachable via their arena ids and age out at the
+    // size cap.
+    thread_local! {
+        static MINT_CACHE: std::cell::RefCell<
+            std::collections::HashMap<((u32, u32), Pointer), Variable>,
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    const MINT_CACHE_LIMIT: usize = 100_000;
+    let Bitvector32Term::MemoryLoad(loaded_memory, loaded_pointer) = bits else {
+        unreachable!("the pattern above matched a memory load");
+    };
+    let cache_key = (loaded_memory.arena_id(), loaded_pointer.as_ref().clone());
+    let cached = MINT_CACHE.with(|cache| cache.borrow().get(&cache_key).copied());
+    let fresh = if let Some(cached) = cached {
+        cached
+    } else {
+        let mut existing = std::collections::BTreeSet::new();
+        crate::kernel::reasoning::collect_bitvector_variables(bits, &mut existing);
+        let mut variables = crate::kernel::primitives::VerificationVariableGenerator::fresh_for(
+            *next_verification_variable,
+            existing,
+        );
+        let fresh = variables.next();
+        *next_verification_variable = variables.next;
+        MINT_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.len() >= MINT_CACHE_LIMIT {
+                cache.clear();
+            }
+            cache.insert(cache_key, fresh);
+        });
+        fresh
+    };
     // The defining equation is kernel-certified by construction: the fresh
     // variable is the kernel's own name for this load. It must not demand a
     // replayable assumption derivation downstream.
-    facts.push(ExecutionPureFact::certified(Proposition::ConditionIs(
+    let defining = ExecutionPureFact::certified(Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(Bitvector32Term::Variable(fresh)),
             Box::new(bits.clone()),
         ),
         true,
-    )));
+    ));
+    if !facts
+        .iter()
+        .any(|fact| fact.proposition == defining.proposition)
+    {
+        facts.push(defining);
+    }
     Some(CValue::Pointer(Pointer {
         block: pointer.block.clone(),
         offset: PointerOffsetTerm::scale_int32(

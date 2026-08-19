@@ -1035,6 +1035,10 @@ impl ResourceContext {
         byte_width: u32,
         assumptions: &PureFactContext,
     ) -> Option<&CMemoryRange> {
+        // A kernel-minted address resolves to its load spelling first, so it
+        // matches owned ranges still spelled through loads.
+        let resolved = crate::kernel::reasoning::resolve_minted_load_pointer(pointer, assumptions);
+        let pointer = &resolved;
         for resource in self.memory_block_facts(&pointer.block) {
             let CResourceFact::Own(CResource::Memory(range), _) = resource else {
                 continue;
