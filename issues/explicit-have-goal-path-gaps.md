@@ -238,3 +238,25 @@ frame-certified goal. Widening, in dependency order:
 
 Each step is gated: escape-census probe before and after, corpus parity,
 `scripts/check.sh`.
+
+## Simp chunk 2 census after step 1 (2026-08-19)
+
+Rewritten claim goals are admitted to the direct path (landed 01dcd708,
+gate green). A classifier census over both fixture corpora
+(CLICK_CENSUS probe at the direct gate, --nocapture) counts the
+remaining escapes to the legacy exit closer:
+
+- resource-ensure: 191 (141 mdtests + 50 examples)
+- frame-certified: 1 (single mdtest)
+- non-ensure claims: 0
+
+The typed resource-production goal (step 3) is therefore nearly the
+whole remaining vocabulary; a claim set containing one resource ensure
+keeps every claim on the legacy path today. Frame-certified admission
+is a single-site follow-up. Design starting point for the resource
+goal: `discharge_exit_simp_claim`'s grouped arm treats
+`Ensure::Resource` as joining the grouped transition with no
+proposition goal — the direct path needs the substrate-4 typed
+function-outcome goal extended with a resource-production form whose
+discharge runs the same fold/consume machinery
+`resource_context_satisfies_definitional_fact` uses at certification.
