@@ -116,6 +116,25 @@ load-in-offset shapes directly (provenance canonicalization, DAG
 equality evidence) must find the same information through the defining
 fact instead.
 
+## Wrinkle (2026-08-18): two birth contexts, and the spec one is operative
+
+`symbolic_pointer_value_from_int_cell` has callers in two worlds: the
+execution evaluator (`eval/memory_loads.rs`, four sites — `facts` in
+hand, budget one signature away) and **contract lowering**
+(`spec.rs` ~1101), which has no execution budget at all. The reproducing
+trace's offending offsets carried near-empty snapshots
+(`MemoryLoad(CMemory { blocks: {}, .. })`), which points at the
+spec-side birth — contract expressions like a range bound over a loaded
+field, lowered at a synthetic memory — as the operative one for the
+metadata-write have. Implementation must therefore decide allocator
+provenance for spec-side minting (the replay's
+`next_verification_variable` is the natural source, threaded into
+lowering, with the defining fact joining the lowered proposition's
+premises) before the eval-side threading, and verify with the trace
+which birth the reproduction actually exercises. Both births get the
+same canonicalization; the assertion in the acceptance criteria covers
+whichever remains.
+
 ## Intended regression
 
 - The metadata-write mdtest's `owner->data` have strict-checks within the
