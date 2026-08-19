@@ -3091,13 +3091,18 @@ containers accumulate at apply time so joins merge output-sensitively
 instead of diffing whole contexts. The in-`Proof` form keeps that contract
 by the established principle that path-local semantics live on the goal:
 
-1. **Goal-owned introduction deltas.** `GoalContext` gains persistent
-   insertion-ordered `introduced` sequences (facts now; effect facts,
-   prerequisites, derivations as the execution split needs them). Every
-   fact successor records its additions; splits create children with empty
-   deltas; joins read each sibling's delta directly — O(arm delta), never a
-   context diff. The unfold delta already lives on the goal and is the
-   model.
+1. **Derived introduction deltas.** Superseding this plan's first draft:
+   no new goal-context sequences are needed. Both `ProofFacts` stores — the
+   append-only ordered chain and the prioritized statement batches — are
+   parent-linked, so `introduced_since(ancestor)` recovers an arm's exact
+   introduction delta by walking only the appended suffixes, with pointer
+   identity proving the shared history (landed with a 16-through-4096
+   regression covering order, dedup, identity-not-structure, and
+   divergent-fork rejection). Zero write-path overhead; joins call it
+   against the split-time base. The remaining introduced kinds
+   (prerequisites, derivations, effect facts) live in equally persistent
+   snapshot stores and get the same treatment as each join variant needs
+   them.
 2. **Frontier splits.** `split_focused_execution_branch` mirrors
    `begin_execution_branch`: kernel-feasible arms become sibling frontier
    goals in one state, each with its arm snapshot, path facts, and

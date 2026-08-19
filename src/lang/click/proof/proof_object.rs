@@ -10677,6 +10677,37 @@ impl ProofFacts {
             || directly_conflicts_with_normalized_index(&self.normalized_exact, &normalized)
     }
 
+    /// The facts this context introduced after `ancestor`, oldest first.
+    ///
+    /// Both fact stores are parent-linked and append-only, so the delta is
+    /// recovered by walking only the appended suffixes — prioritized
+    /// statement batches first, then ordinary insertions — and pointer
+    /// identity proves the shared history. Returns `None` when `ancestor`
+    /// is not this context's ancestor. This is the output-sensitive
+    /// introduction delta the execution sibling-split joins consume.
+    pub(super) fn introduced_since(&self, ancestor: &Self) -> Option<Vec<Proposition>> {
+        let mut new_batches = Vec::new();
+        let mut current = self.prioritized.clone();
+        loop {
+            match (&current, &ancestor.prioritized) {
+                (Some(node), Some(ancestor_head)) if Arc::ptr_eq(node, ancestor_head) => break,
+                (None, None) => break,
+                (Some(node), _) => {
+                    new_batches.push(node.facts.clone());
+                    current = node.parent.clone();
+                }
+                (None, Some(_)) => return None,
+            }
+        }
+        let ordered_suffix = self.ordered.suffix_since(&ancestor.ordered)?;
+        let mut introduced = Vec::new();
+        for batch in new_batches.iter().rev() {
+            introduced.extend(batch.iter().cloned());
+        }
+        introduced.extend(ordered_suffix);
+        Some(introduced)
+    }
+
     pub(super) fn to_vec(&self) -> Vec<Proposition> {
         let mut ordered = Vec::new();
         let mut seen = BTreeSet::new();
@@ -11634,6 +11665,39 @@ mod tests {
             ));
             assert!(proof.certificate().steps().is_empty());
             assert_eq!(complete.certificate().steps().len(), 1);
+        }
+    }
+
+    #[test]
+    fn introduced_since_recovers_only_the_appended_delta() {
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let ancestor_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            let ancestor = ProofFacts::from_ordered(&ancestor_facts);
+
+            // A fork that adds two ordinary facts reports exactly those, in
+            // insertion order, regardless of the shared ancestor's size.
+            let first = indexed_fact(size + 1);
+            let second = indexed_fact(size + 2);
+            let fork = ancestor.with_fact(first.clone()).with_fact(second.clone());
+            assert_eq!(
+                fork.introduced_since(&ancestor),
+                Some(vec![first.clone(), second.clone()])
+            );
+
+            // A duplicate insertion introduces nothing.
+            let unchanged = ancestor.with_fact(indexed_fact(0));
+            assert_eq!(unchanged.introduced_since(&ancestor), Some(Vec::new()));
+
+            // The ancestor itself is a trivial delta, and identity — not
+            // structure — proves the shared history: an equal-content
+            // context built independently is not an ancestor.
+            assert_eq!(ancestor.introduced_since(&ancestor), Some(Vec::new()));
+            let rebuilt = ProofFacts::from_ordered(&ancestor_facts);
+            assert_eq!(fork.introduced_since(&rebuilt), None);
+
+            // Divergent forks are not each other's ancestors.
+            let sibling = ancestor.with_fact(indexed_fact(size + 3));
+            assert_eq!(sibling.introduced_since(&fork), None);
         }
     }
 

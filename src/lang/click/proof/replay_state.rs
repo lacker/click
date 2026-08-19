@@ -292,6 +292,32 @@ impl<T> PersistentSequence<T> {
         self.iter().cloned().collect()
     }
 
+    /// The entries appended after `ancestor`'s tail, oldest first.
+    ///
+    /// Returns `None` when `ancestor` is not a prefix of this sequence by
+    /// identity — pointer identity, not structural equality, proves the
+    /// shared history — and visits only the appended suffix.
+    pub(super) fn suffix_since(&self, ancestor: &Self) -> Option<Vec<T>>
+    where
+        T: Clone,
+    {
+        let mut suffix = Vec::with_capacity(self.len.saturating_sub(ancestor.len));
+        let mut current = self.tail.clone();
+        loop {
+            match (&current, &ancestor.tail) {
+                (Some(node), Some(ancestor_tail)) if Arc::ptr_eq(node, ancestor_tail) => break,
+                (None, None) => break,
+                (Some(node), _) => {
+                    suffix.push(node.value.clone());
+                    current = node.parent.clone();
+                }
+                (None, Some(_)) => return None,
+            }
+        }
+        suffix.reverse();
+        Some(suffix)
+    }
+
     pub(super) fn shares_tail_with(&self, other: &Self) -> bool {
         match (&self.tail, &other.tail) {
             (Some(left), Some(right)) => Arc::ptr_eq(left, right),
