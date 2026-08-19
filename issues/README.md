@@ -34,6 +34,15 @@ when evidence exposes one.
   77% of smart-have fallbacks are searchless scripts the goal path
   declines by design; landing the certificate branch is blocked on a
   suffix-strictness decision and a checker performance gap.
+- [Expansion replay recursion exhausts the stack](expansion-replay-recursion-exhausts-the-stack.md):
+  ordinary edits — a local, a closure, an unboxed enum payload — abort an
+  unrelated expansion test with a stack overflow and no backtrace; the
+  depth is unbounded and unmeasured, and `#[inline(never)]` adapters are
+  holding it back.
+- [Fixture gates decide green from wall clock](fixture-gates-decide-green-from-wall-clock.md):
+  the mdtest and example harnesses enforce real-time limits, so machine
+  load flips `scripts/check.sh`'s verdict on an unchanged tree; the
+  verifier already has load-independent unit budgets to decide with.
 - [Proof object API](proof-object-api.md): smart tactics need one immutable,
   cheaply forkable checked `Proof` interface where applying a
   `SimpleProofStep` atomically advances semantic state and retains the exact
