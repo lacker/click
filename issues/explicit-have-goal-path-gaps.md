@@ -296,3 +296,21 @@ special cases. The remaining chunk items: strengthen the direct
 closures against the 71 (measure which closure step fails), the single
 frame-certified admission, then retire the legacy closer for the
 converted classes.
+
+## Attempt-miss breakdown (2026-08-19, post resource vocabulary)
+
+The 71 direct-attempt failures split 38 ungrouped / 24 grouped (mdtests;
+plus 7 examples-side, unclassified) with a diverse goal tail: predicate
+calls needing scope-level unfold reasoning (permutation x15, valid_pool,
+valid_capacity, sorted, sorted_pair), separation goals, plain result
+comparisons (result >= 0, == 7 — likely needing outcome-value
+substitution the compatibility lowering used to supply), and chained
+implications. The grouped 24 are sets my compatibility gate now sends
+to the legacy certifier — reclaiming them means teaching the direct
+scope closures the nested-have spelling the legacy
+certify_outcome_simp_have produces, which is the same work as the
+ungrouped tail. This is incremental closure-vocabulary growth: pick the
+largest classes (predicate-call goals, then result comparisons),
+extend try_direct_logical_closure / try_simp_closure or add a
+structured nested-have builder on the scope, one gated commit per
+class.
