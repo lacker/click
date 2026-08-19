@@ -417,3 +417,19 @@ tactics/divergent outcomes; grouped planner-misses and gate-bailed
 special cases. Each further conversion is now strictly a
 prover-capability question (the routing surface is fully migrated for
 proposition and resource claims in both modes).
+
+## Divergent fast path; arm-level census (2026-08-19, c3027aff)
+
+Divergent-path ensures close directly with the legacy-identical
+Normalize certificate; census 56 -> 53 legacy entries. Arm-level
+census of the claims those entries close: 96 plain-simp (24 ungrouped
++ 72 grouped), 1 existence, 1 frame-certified. Since the direct
+attempts run the same ambient check and certifiers, the plain-simp
+population is dominated by SIBLING claims swept to legacy by the
+all-or-nothing abort: one hard claim in a set sends every sibling to
+the legacy closer. The next structural lever is partial-set success —
+close the claims that succeed on the direct path and leave only the
+genuinely failing ones to legacy — which requires per-claim rollback
+boundaries instead of the single with_search_attempt_rollback around
+the whole set. That is a deliberate design change to the attempt
+protocol; note it for discussion rather than landing it overnight.
