@@ -1021,8 +1021,11 @@ impl PureFactContext {
                 ) => (left, right),
                 _ => return false,
             };
-            crate::kernel::eval::terms_match_modulo_canonical_names(query.0, operands.0)
-                && crate::kernel::eval::terms_match_modulo_canonical_names(query.1, operands.1)
+            let left_match =
+                crate::kernel::eval::terms_match_modulo_canonical_names(query.0, operands.0);
+            let right_match =
+                crate::kernel::eval::terms_match_modulo_canonical_names(query.1, operands.1);
+            left_match && right_match
         })
     }
 

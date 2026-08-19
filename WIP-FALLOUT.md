@@ -637,3 +637,27 @@ than condition_facts. Once those two orderings reach the context, the
 membership decides, the store edge crosses, the walk connects the
 origins, and the name bridge proves — the entire chain is otherwise
 verified working by probes.
+
+## The bridge's last inch: canonicalize does not resolve the post-store len (2026-08-19)
+
+Ambient certified condition facts now feed the have-body transport
+chain's frame evidence (fact_transport chain_assumptions — frame
+justification is contract context, not a tactic premise). Probes then
+walked the failure to a single comparison: the query's low bound
+`0 <= Add(load(placeholder, len), 1)` against the ambient fact
+`0 <= load(m_post4, len)` — semantically identical (the store wrote
+len := len + 1), but `canonicalize_atomic_loads` does NOT resolve the
+fact's load to the stored value: its canonical form is still a LOAD
+over a canonical memory whose cells retain the data-array cell (the
+kept not-provably-disjoint neighbor), meaning the len cell either was
+dropped from that snapshot or the canonical projection's resolution
+did not fire for it. Exact next probe: print
+`m_post4.known_value(len_ptr)` and the canonical projection of that
+memory for len_ptr — if the cell is present, the resolution miss is in
+canonicalize_atomic_loads' load arm (likely the canonical_pointer
+recomputation shifting the key); if absent, the store's
+without_possible_aliasing_cells dropped the store's own written cell
+(a probable bug — the store should retain what it wrote).
+
+Everything else in the bridge is probe-verified working; this one
+resolution turns the metadata-write acceptance green.

@@ -336,10 +336,22 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
             chain_facts.push(source.clone());
             chain_facts
         };
+        // The origins-unchanged frame evidence may consult every certified
+        // ambient condition fact (requirement orderings above all): frame
+        // justification is contract-level context, not a proof premise the
+        // tactic must list. The restricted premise contract still governs
+        // what proves the target; this context only decides whether two
+        // canonical names denote one unchanged cell.
+        let chain_assumptions = chain_facts
+            .iter()
+            .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
+            .fold(transport_assumptions.clone(), |assumptions, fact| {
+                assumptions.assume_proposition(fact.clone())
+            });
         if super::super::fact_reasoning::premise_bridged_by_canonical_name_chain_with_origins(
             &target,
             &chain_facts,
-            &transport_assumptions,
+            &chain_assumptions,
         ) {
             return Ok(CheckedPointFactTransport { source, target });
         }
