@@ -7725,6 +7725,63 @@ fn explicit_linear_point_have_uses_the_checked_proof_path() {
 }
 
 #[test]
+fn explicit_post_execution_have_uses_the_checked_outcome_proof_path() {
+    let c_source = r#"
+            int32 identity(int32 value) {
+                return value;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 value) {
+                requires value >= 0;
+                ensures result >= 0;
+            } by {
+                execute();
+                have result >= 0 by {
+                    assumption();
+                }
+                assumption();
+            }
+        "#;
+
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("explicit post-execution have should advance through its outcome Proof");
+    let source_verification_events = events.iter().take_while(|event| {
+        !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "whole-contract certificate construction"
+        )
+    });
+    assert!(
+        source_verification_events
+            .into_iter()
+            .all(|event| !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name.starts_with("post-execution simple have replay")
+            )),
+        "the explicit outcome have must retain its checked Proof without legacy replay: {events:#?}"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("identity.c", c_source)],
+        "identity",
+        CProofClaim::Grouped,
+    )
+    .expect("explicit checked outcome have should remain expandable");
+    assert!(expanded.contains("have result >= 0 by {"), "{expanded}");
+    assert!(expanded.matches("assumption();").count() >= 2, "{expanded}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("expanded explicit outcome have should independently replay");
+}
+
+#[test]
 fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {

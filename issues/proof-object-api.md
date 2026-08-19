@@ -3624,6 +3624,25 @@ Separately, the load-canonicalization campaign (its own branch) is
 green on the lib suite with the remaining gate failures reduced to one
 filed design issue (`canonical-name-transport-across-effects.md`).
 
+### Progress (2026-08-19: searchless outcome haves check their certificates in Proof)
+
+The drain's post-execution `have` arm no longer sends searchless explicit
+scripts directly to `checked_have_with_proof`. After opening the typed outcome
+goal as a `ProofScope`, it runs smart scripts through the bounded proposition
+driver and checks already-simple scripts through `ProofScope::check_certificate`.
+Accepted scripts join the evolving outcome `Proof` and retain their exact
+certificate; ordinary verification performs no separate simple-have replay.
+
+The canonical metadata-write reproduction exposed two final legacy certificate
+conventions rather than a checker budget problem: source scripts and the
+increment-lower-bound transport planner retained `assumption` after steps that
+already close point goals. The source suffixes are deleted, the planner now
+emits only the goal-closing theorem and transport steps, and focused regressions
+pin both direct retention and independent expansion. `scripts/check.sh` is
+green. Residual drain misses are smart `simp`/exit-planner certificates whose
+binder, rewrite, or loadability shapes still need the outcome-closer migration;
+they are no longer searchless source-script dispatch gaps.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

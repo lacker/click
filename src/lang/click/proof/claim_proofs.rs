@@ -2232,7 +2232,19 @@ pub(super) fn finish_ordered_proof_replay(
                                                 SmartTactic::Auto | SmartTactic::Simp,
                                             ) => scope.try_simp_closure()?,
                                             SourceProof::Script(tactics) => {
-                                                scope.try_linear_smart_script(tactics)?
+                                                match scope.try_linear_smart_script(tactics)? {
+                                                    Some(selected) => Some(selected),
+                                                    None => {
+                                                        let Ok(certificate) =
+                                                            ProofCertificate::from_proof_tactics(
+                                                                tactics,
+                                                            )
+                                                        else {
+                                                            return Ok(None);
+                                                        };
+                                                        scope.check_certificate(&certificate).ok()
+                                                    }
+                                                }
                                             }
                                             SourceProof::Tactic(SmartTactic::Frame) => None,
                                         };

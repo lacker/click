@@ -157,7 +157,6 @@ int32 buffer_push(struct buffer* owner, int32 value) {
             separate(memory(owner[0..4]), memory(owner->data[0..owner->cap]));
             owner->cap == old(owner->cap);
         }
-        assumption();
     }
     fold(owned_buffer(owner));
     frame();
@@ -208,7 +207,6 @@ int32 buffer_push_preserves_first(
             at(statement(1).entry, owner->len) < at(statement(1).entry, owner->cap);
             0 <= owner->len;
         }
-        assumption();
     }
     assumption();
     assumption();

@@ -208,6 +208,34 @@ checking mode.
 - The sound-probe have-miss count over the gates drops accordingly; the
   remaining misses are genuinely searching scripts.
 
+## Progress (2026-08-19: searchless explicit haves dispatch through Proof)
+
+The post-execution drain now gives every script the same two checked routes
+as the recursive proposition driver: scripts containing smart search run the
+bounded search driver, while an already-simple script is parsed as a
+`ProofCertificate` and checked directly inside the open `have` scope. A
+successful certificate joins the evolving outcome `Proof` and contributes
+its retained certificate without the legacy point replay.
+
+The metadata-write reproduction passes with unchanged budgets after deleting
+the two remaining source-level assumptions that followed goal-closing
+transports. Its generated increment-lower-bound transport also stopped
+emitting legacy-style assumptions after the nested theorem application and
+the final transport; a focused shape regression pins those point-closing
+steps. A post-execution expansion regression observes no ordinary simple-have
+replay, expands the retained certificate, and independently reverifies it.
+The complete `scripts/check.sh` gate is green.
+
+A panic-based corpus probe showed that the remaining rejected certificate
+shapes come from smart `simp`/exit planning after those smart operations have
+already been rendered as scripts (quantified instantiation, binder-aware
+transport, rewrite/normalize, and loadability cases). They are the smart
+planner residue tracked below, not searchless source scripts. The explicit
+`have` dispatch and its two original blockers are therefore resolved; this
+file remains open only because it also carries the outcome-`simp` retirement
+journal below, which should move to its own issue when that retirement is
+split.
+
 ## Simp chunk 2 scoping (2026-08-19)
 
 The direct Simp path (claim_proofs.rs ~3585) admits a claim set only when

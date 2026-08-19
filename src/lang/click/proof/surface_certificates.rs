@@ -2667,23 +2667,19 @@ fn plan_explicit_increment_lower_bound_transport(
             return Some(vec![
                 ProofTactic::Have(ProofHave {
                     proposition: intermediate_surface.clone(),
-                    proof: SourceProof::Script(vec![
-                        ProofTactic::ApplyTheoremUsing {
-                            application: TheoremApplication {
-                                name: "int32_increment_lower_bound".to_string(),
-                                arguments: vec![surface_base, surface_lower, surface_upper],
-                            },
-                            premises: vec![lower_surface.clone(), upper_surface.clone()],
+                    proof: SourceProof::Script(vec![ProofTactic::ApplyTheoremUsing {
+                        application: TheoremApplication {
+                            name: "int32_increment_lower_bound".to_string(),
+                            arguments: vec![surface_base, surface_lower, surface_upper],
                         },
-                        ProofTactic::Assumption,
-                    ]),
+                        premises: vec![lower_surface.clone(), upper_surface.clone()],
+                    }]),
                 }),
                 ProofTactic::TransportUsing {
                     source: intermediate_surface.clone(),
                     target: surface_goal.clone(),
                     premises: vec![intermediate_surface],
                 },
-                ProofTactic::Assumption,
             ]);
         }
     }
@@ -2751,10 +2747,22 @@ fn increment_lower_bound_transport_matches_source_anchored_constant() {
         ),
     ];
 
+    let tactics =
+        plan_explicit_increment_lower_bound_transport(&kernel_goal, &goal, &premise_pairs).expect(
+            "source-site annotation on the constant must not hide the increment certificate",
+        );
     assert!(
-        plan_explicit_increment_lower_bound_transport(&kernel_goal, &goal, &premise_pairs)
-            .is_some(),
-        "source-site annotation on the constant must not hide the increment certificate"
+        matches!(
+            tactics.as_slice(),
+            [
+                ProofTactic::Have(ProofHave {
+                    proof: SourceProof::Script(body),
+                    ..
+                }),
+                ProofTactic::TransportUsing { .. }
+            ] if matches!(body.as_slice(), [ProofTactic::ApplyTheoremUsing { .. }])
+        ),
+        "point-closing theorem and transport steps must not retain dead assumptions: {tactics:?}"
     );
 }
 
