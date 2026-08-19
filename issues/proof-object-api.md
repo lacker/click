@@ -3459,6 +3459,24 @@ staying green with those arms as hard errors. Probe rule going forward:
 reachability probes must panic or run under `--nocapture`; silent
 `eprintln!` under a passing test proves nothing.
 
+### Progress (2026-08-18: the sound reachability map)
+
+A `--nocapture` probe over both fixture gates gives the true picture,
+inverting the capture-blind one completely: every surviving legacy arm
+is heavily exercised. Per full-gate run: the `Fold` projection arm fires
+224 times, `CloseOpen` 24, the region-frame certifier 2, the `Simp`
+planner escape 629 — and the goal-based smart-`have` misses 1023 times,
+falling back to the legacy checker each time. Consequences: the
+immediate re-import conversions are corpus-validated at those volumes
+under green gates; the coverage issue's criteria are met and it closes;
+and the working-set inversion's true frontier is now precise — the
+smart-`have` miss rate says the goal-based have search declines the
+overwhelming majority of real `have`s (worth understanding before any
+further migration: is the goal path's search shallower than the legacy
+checker's, or are these expected declines?), and the `Simp` escape is a
+constantly-exercised production path, not a residue. The vector stays
+load-bearing until those two paths write through goals on their own.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
