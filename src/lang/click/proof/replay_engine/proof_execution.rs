@@ -474,7 +474,7 @@ fn advance_focused_execution_arm<'a>(
             indexed.tactic,
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
         ) {
-            let Some(next) = try_execute_focused_arm_to_exit(proof)? else {
+            let Some(next) = proof.try_focused_execute_to_exit()? else {
                 return Ok(None);
             };
             proof = next;
@@ -483,44 +483,6 @@ fn advance_focused_execution_arm<'a>(
         }
     }
     Ok(Some(proof))
-}
-
-/// Runs the narrow statement selector on the focused sibling arm until it
-/// reaches function exit. A nested C `if` frontier recurses through another
-/// in-`Proof` split; any other structural frontier is a search miss.
-fn try_execute_focused_arm_to_exit<'a>(
-    mut proof: Proof<'a>,
-) -> Result<Option<Proof<'a>>, ClickError> {
-    loop {
-        if proof.is_at_function_exit() {
-            return Ok(Some(proof));
-        }
-        if let Some(next) = proof.try_indexed_execute_step()? {
-            proof = next;
-            continue;
-        }
-        if !proof.is_at_execution_branch()? {
-            return Ok(None);
-        }
-        let (split, record) = proof.split_focused_execution_branch()?;
-        let mut advanced = split;
-        for take_then in [true, false] {
-            if record.arm_id(take_then).is_none() {
-                continue;
-            }
-            let Some(next) =
-                try_execute_focused_arm_to_exit(advanced.focus_split_arm(&record, take_then)?)?
-            else {
-                return Ok(None);
-            };
-            advanced = next;
-        }
-        proof = if record.sole_feasible_arm().is_some() {
-            advanced.finish_focused_execution_decided(&record)?
-        } else {
-            advanced.join_focused_execution_terminal(&record)?
-        };
-    }
 }
 
 fn linear_execution_certificate(node: &InternalProofNode) -> Option<ProofCertificate> {
@@ -762,8 +724,9 @@ fn advance_checked_open_scope<'a>(
                 )))
     {
         let checkpoint = scope.checkpoint();
-        let mut branches = scope.begin_execution_branch()?;
-        if let Some(take_then) = branches.sole_feasible_arm() {
+        let (split, record) = scope.split_execution_branch()?;
+        let mut advanced = split;
+        if let Some(take_then) = record.sole_feasible_arm() {
             let (selected, impossible) = if take_then {
                 (&then_proof, &else_proof)
             } else {
@@ -774,7 +737,8 @@ fn advance_checked_open_scope<'a>(
             {
                 return Ok(None);
             }
-            branches = branches.check_logical_arm_certificate(take_then, selected)?;
+            advanced =
+                advanced.check_focused_logical_arm_certificate(&record, take_then, selected)?;
         } else {
             if !matches!(
                 then_proof.steps().last(),
@@ -785,10 +749,12 @@ fn advance_checked_open_scope<'a>(
             ) {
                 return Ok(None);
             }
-            branches = branches.check_logical_arm_certificate(true, &then_proof)?;
-            branches = branches.check_logical_arm_certificate(false, &else_proof)?;
+            advanced =
+                advanced.check_focused_logical_arm_certificate(&record, true, &then_proof)?;
+            advanced =
+                advanced.check_focused_logical_arm_certificate(&record, false, &else_proof)?;
         }
-        let scope = scope.join_execution_branch(branches, false, None)?;
+        let scope = scope.join_execution_split(&advanced, &record, false, None)?;
         let actual = scope.certificate_since(&checkpoint)?;
         let expected = ProofCertificate::from_steps(vec![SimpleProofStep::If {
             condition: condition.clone(),

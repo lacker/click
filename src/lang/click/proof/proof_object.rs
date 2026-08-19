@@ -5008,10 +5008,25 @@ impl<'a> Proof<'a> {
                 record.split
             ))
         };
-        let introduced_facts = frontier
+        // Fact introductions are measured against the PARENT facts, not the
+        // arm's split-time base: the container seeded each arm's record with
+        // the prepared introduction set, so an arm's path facts count as
+        // introduced and flow into its retained outcome paths. The replay
+        // stores below instead diff against the arm base, matching the
+        // container's empty per-arm records. The base ancestry check keeps
+        // the arm honest about deriving from this exact split.
+        if frontier
             .context
             .facts
             .introduced_since(base_facts)
+            .is_none()
+        {
+            return Err(not_descended());
+        }
+        let introduced_facts = frontier
+            .context
+            .facts
+            .introduced_since(&record.parent_facts)
             .ok_or_else(not_descended)?;
         let introduced_effect_facts = execution
             .replay
@@ -5187,6 +5202,99 @@ impl<'a> Proof<'a> {
             checked_facts: Arc::new(path_facts),
         });
         Ok(focused)
+    }
+
+    /// Runs the narrow statement selector on this focused frontier until it
+    /// reaches function exit. A nested C `if` recurses through an in-`Proof`
+    /// split whose arms are focused runs of this same search; any other
+    /// structural frontier is a search miss.
+    pub(super) fn try_focused_execute_to_exit(&self) -> Result<Option<Self>, ClickError> {
+        let mut proof = self.clone();
+        loop {
+            if proof.is_at_function_exit() {
+                return Ok(Some(proof));
+            }
+            if let Some(next) = proof.try_indexed_execute_step()? {
+                proof = next;
+                continue;
+            }
+            if !proof.is_at_execution_branch()? {
+                return Ok(None);
+            }
+            let (split, record) = proof.split_focused_execution_branch()?;
+            let mut advanced = split;
+            for take_then in [true, false] {
+                if record.arm_id(take_then).is_none() {
+                    continue;
+                }
+                let Some(next) = advanced
+                    .focus_split_arm(&record, take_then)?
+                    .try_focused_execute_to_exit()?
+                else {
+                    return Ok(None);
+                };
+                advanced = next;
+            }
+            proof = if record.sole_feasible_arm().is_some() {
+                advanced.finish_focused_execution_decided(&record)?
+            } else {
+                advanced.join_focused_execution_terminal(&record)?
+            };
+        }
+    }
+
+    /// Re-derives one logical sibling arm from its retained Surface
+    /// certificate. Terminal and decided branches record one synthetic
+    /// branch-entry `step using` (two for an empty C arm); those structural
+    /// entry steps are validated and skipped because the split already
+    /// performed them, and the body steps apply on the focused sibling.
+    pub(super) fn check_focused_logical_arm_certificate(
+        &self,
+        record: &ExecutionSplit<'a>,
+        take_then: bool,
+        certificate: &ProofCertificate,
+    ) -> Result<Self, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            unreachable!("execution branch retained a non-execution context")
+        };
+        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+            &record.parent_execution.replay,
+            &record.parent_execution.state,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "terminal branch certificate",
+        )?;
+        let CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } = statement
+        else {
+            return Err(self.step_error("terminal branch certificate root is not a C `if`"));
+        };
+        let source_arm = if take_then {
+            then_branch.as_ref()
+        } else {
+            else_branch.as_ref()
+        };
+        let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
+        if certificate.steps().len() < entry_steps
+            || !certificate.steps()[..entry_steps]
+                .iter()
+                .all(|step| matches!(step, SimpleProofStep::StepUsing(_)))
+        {
+            return Err(self.step_error(format!(
+                "logical execution {} certificate does not begin with its {entry_steps} checked branch-entry step(s)",
+                if take_then { "then" } else { "else" },
+            )));
+        }
+        let mut proof = self.focus_split_arm(record, take_then)?;
+        for step in &certificate.steps()[entry_steps..] {
+            proof = proof.apply_step(step.clone())?;
+        }
+        Ok(proof)
     }
 
     /// Enforces the source `branch` body's boundary on the focused sibling
@@ -7732,21 +7840,10 @@ impl<'a> Proof<'a> {
                 if !proof.is_at_execution_branch()? {
                     return Ok(None);
                 }
-                let branches = proof.begin_execution_branch()?;
-                if let Some(take_then) = branches.sole_feasible_arm() {
-                    let Some(branches) = branches.try_execute_arm_to_exit(take_then)? else {
-                        return Ok(None);
-                    };
-                    branches.finish_decided()?
-                } else {
-                    let Some(branches) = branches.try_execute_arm_to_exit(true)? else {
-                        return Ok(None);
-                    };
-                    let Some(branches) = branches.try_execute_arm_to_exit(false)? else {
-                        return Ok(None);
-                    };
-                    branches.join_terminal()?
-                }
+                let Some(next) = proof.try_focused_execute_to_exit()? else {
+                    return Ok(None);
+                };
+                next
             };
             for fact in next.added_facts() {
                 if !introduced_facts.contains(fact) {

@@ -3286,6 +3286,27 @@ that container arm wrappers were not pure delegation: each must be checked
 for guards it had fused with the arm bookkeeping before its focused
 replacement is accepted.
 
+### Progress (2026-08-18: the last container consumers flip; the container is production-dead)
+
+The terminal-expansion path re-derives logical arms through
+`check_focused_logical_arm_certificate` (entry steps validated and
+skipped, body steps applied on the focused sibling), and the drain's
+execute-to-exit (`try_linear_execute_descendant`) consumes
+`Proof::try_focused_execute_to_exit` — the one implementation of the
+nested-branch execution recursion, which the linear drivers now also
+delegate to. This flip exposed a third fused-bookkeeping seam: arm *fact*
+introductions are parent-relative in the container (each arm record was
+seeded with the prepared introduction set, so path-condition facts count
+as introduced and flow into that arm's retained outcome paths, where
+sibling-path exclusion under proof-case assumptions depends on them),
+while the replay-store deltas are arm-relative (their per-arm records
+started empty). `sibling_execution_arm_view` now diffs facts against the
+recorded parent base and keeps the replay stores on the arm base, with
+the arm-base ancestry check retained. Every `ExecutionProofBranches`
+entrypoint is now production-dead: the container survives only in its
+regressions until they migrate to split equivalents, and then it is
+deleted with its curves at unchanged bounds.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
