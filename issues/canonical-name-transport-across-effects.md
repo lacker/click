@@ -1,5 +1,14 @@
 # Canonical load names do not connect across effects in explicit transports
 
+> STATUS (2026-08-19): the connect mechanism LANDED on master at 7c9f6553
+> and both reproductions verify under a green `scripts/check.sh`. What
+> keeps this file open is the second acceptance criterion: there is no
+> deterministic regression that fails if a general load-alias search
+> re-enters the transport path. The bounds themselves are in place
+> (`with_isolated_memory_resolution_fuel`, `with_bounded_snapshot_comparison`,
+> the frame-only composite channel) and documented at their sites; they are
+> simply not pinned by a test.
+
 ## Violated invariant
 
 An explicit `transport(at(P, e) == X, e == X) using { ... }` with correct

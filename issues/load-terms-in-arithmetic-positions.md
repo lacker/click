@@ -1,5 +1,14 @@
 # Load terms in arithmetic positions make simple checks recursive
 
+> STATUS (2026-08-19): the canonicalization LANDED on master at 7c9f6553
+> with a green `scripts/check.sh`. The motivating reproduction
+> (`field_derived_precise_effect_after_metadata_write`) verifies with
+> HEALTHY VOLUME diagnostics rather than exhausting its budget. Still open,
+> all of it verification of the property rather than the fix: the position
+> assertion (no `MemoryLoad` reachable inside `PointerOffsetTerm`), the
+> pinned deterministic budget on that have, the multi-size scaling curve,
+> the owned-vector quarantine, and the have dispatch.
+
 ## Violated invariant
 
 Simple steps must be fast to analyze, so memory snapshots must be treated
