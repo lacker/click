@@ -75,6 +75,30 @@ execution paths that compute element addresses from loaded indices (to
 be enumerated when implementation starts; the census above lists every
 file touching the term).
 
+## Implementation census (2026-08-18)
+
+`PointerOffsetTerm::scale_int32` is the sole constructor of scaled
+offsets (constants fold; symbolic values embed). Its callers split
+cleanly:
+
+- **The birth site**: `src/kernel/eval/memory_loads.rs` (~448) — C
+  pointer arithmetic (`ptr + index`) during execution scales an
+  arbitrary `Bitvector32Term`, and when the index was itself loaded from
+  memory (`data[owner->len]`), the `MemoryLoad` term enters the offset
+  here. `functions.rs` scales only constants; `memory_state.rs` and
+  `term_operations.rs` sites need one-line audits.
+- **Analysis-side callers** (`memory_resolution`, `order_paths`,
+  `memory_provenance`): re-scale terms that already exist. Once the
+  birth site canonicalizes, no load term reaches them through offsets,
+  and they need no changes.
+
+The remaining implementation question is variable-allocation plumbing:
+the canonicalization at the birth site needs a fresh kernel variable
+plus a defining pure fact (`var == load(snapshot, ptr)`) emitted into
+the execution's fact stream, so the next step is locating how execution
+mints fresh variables today (abstract calls and havoc already do) and
+whether the defining fact rides the existing effect-fact channel.
+
 ## Intended regression
 
 - The metadata-write mdtest's `owner->data` have strict-checks within the
