@@ -486,7 +486,10 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
     );
     let fresh = variables.next();
     *next_verification_variable = variables.next;
-    facts.push(ExecutionPureFact::new(Proposition::ConditionIs(
+    // The defining equation is kernel-certified by construction: the fresh
+    // variable is the kernel's own name for this load. It must not demand a
+    // replayable assumption derivation downstream.
+    facts.push(ExecutionPureFact::certified(Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(Bitvector32Term::Variable(fresh)),
             Box::new(bits.clone()),
