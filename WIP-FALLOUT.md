@@ -517,3 +517,31 @@ ordering, decidable from exact requires facts once their spellings
 normalize (at-spelling vs live). Option (b) is the semantics the case
 actually needs; (a) is the general hygiene both the scalability
 contract and this walk want anyway.
+
+## Scan-burn diagnosis complete (2026-08-19, handoff)
+
+Two compounding causes behind the store-edge burn, both now located:
+
+1. `pointer_in_range` (memory_reasoning.rs:918) falls from
+   `exact_condition_value` to full `decide` per ordering, and
+   `memory_separation_candidates` includes DERIVED candidates whose
+   construction ("range disjointness: derived separation", 1.57M units)
+   scans composition members pairwise — the eager-pairwise pattern the
+   efficiency contract forbids on hot paths.
+2. Every ad-hoc assumption context (the chain's fold-built
+   chain_assumptions, transport_assumptions) has NO ambient memo id, so
+   ALL the memoized provers (`c_memory_load_is_unchanged`'s memo,
+   resolution-query memos) run COLD on every call from those sites —
+   the walk re-pays full price per edge per caller.
+
+Fresh-session plan, in order: (a) give `pointers_proven_disjoint_by_range`
+its own resolution-query memo variant (new PointerRangeDisjoint key —
+do NOT reuse PointerDistinct, the semantics differ on negatives);
+(b) make the derived-separation candidate construction lazy/output-
+bounded, or precede it with the exact-fact candidates only for the
+store-edge caller; (c) consider content-hashing ad-hoc assumption
+contexts so the existing memos engage (this single change likely
+recovers most of the cost across all three burn sites — measure first
+whether the id computation cost is acceptable, per the memo-id comment
+in resolution_query_memo_id). Acceptance stays: metadata-write mdtest
+under budget, input-cursor within 30s, full check.sh.
