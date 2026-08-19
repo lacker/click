@@ -3721,6 +3721,37 @@ transport explicitly, and independently reverifies it. Remaining effect-facing
 residue centers on statement/effect equations and richer predicate/resource
 derivations rather than this component-old equality class.
 
+### Progress (2026-08-19: outcome predicate unfolding keeps the live resource snapshot)
+
+The function-outcome adapter now moves the current persistent `CState` root
+and result together with each legacy fact-set re-import. Previously `fold` and
+`close` updated the drain's outcome resources but refreshed only the Proof's
+facts, leaving its result-aware point view anchored to the pre-fold resource
+snapshot. A later checked `UnfoldPredicate` consequently lowered `count(...)`
+against stale populations and rejected certificates that independent replay
+accepted against the live outcome.
+
+Point and outcome predicate unfolding now re-lowers the retained unfolded
+Surface body against the checked successor facts in the current point view,
+matching explicit-certificate replay in the audited `UnfoldPredicate`
+transition itself. A resource-count predicate regression retains
+`UnfoldPredicate` plus `Normalize` on the evolving Proof, observes neither
+outcome compatibility construction nor legacy exit planning during ordinary
+verification, expands, and independently reverifies. The pass-only
+`bounded-pool` example's four predicate-goal escapes move onto this path.
+When a predicate was already unfolded before execution, the direct grouped
+certificate states its nested have at that unfolded Surface level. This keeps
+the retained claim closer aligned with whole-contract replay; spelling the
+same predicate call as the open claim would close it early and leave one
+resource-padding assumption unmatched. The resource-pattern expansion fixture
+pins the independently replayed form.
+
+A final `simp` with no open ensure claims is now the empty transition rather
+than an entry into the legacy exit planner; `refcount`'s final-release proof is
+the production case. The newly named `outcome simp legacy exit planning`
+instrumentation span makes the remaining fallback population directly
+auditable while it is being retired.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

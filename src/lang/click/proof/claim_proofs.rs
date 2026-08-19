@@ -1807,7 +1807,9 @@ pub(super) fn finish_ordered_proof_replay(
                         outcome_substrate.as_ref().and_then(|(substrate, _)| {
                             let goal = substrate.outcome_goal_for_path(path_index)?;
                             let focused = substrate.focus(goal).ok()?;
-                            focused.with_drained_outcome_facts(&path_requirements).ok()
+                            focused
+                                .with_drained_outcome(&outcome, &path_requirements)
+                                .ok()
                         });
                     // Set by any arm that mutates the legacy working set
                     // without writing through the outcome goal; the end of
@@ -1898,7 +1900,8 @@ pub(super) fn finish_ordered_proof_replay(
                                 // outcome goal stays authoritative.
                                 if let Some(evolving) = outcome_proof.take() {
                                     outcome_proof = Some(
-                                        evolving.with_drained_outcome_facts(&path_requirements)?,
+                                        evolving
+                                            .with_drained_outcome(&outcome, &path_requirements)?,
                                     );
                                 }
                                 record_post_execution_surface_tactic(
@@ -1951,7 +1954,8 @@ pub(super) fn finish_ordered_proof_replay(
                                 // outcome goal stays authoritative.
                                 if let Some(evolving) = outcome_proof.take() {
                                     outcome_proof = Some(
-                                        evolving.with_drained_outcome_facts(&path_requirements)?,
+                                        evolving
+                                            .with_drained_outcome(&outcome, &path_requirements)?,
                                     );
                                 }
                             }
@@ -2218,8 +2222,10 @@ pub(super) fn finish_ordered_proof_replay(
                                         Option<(Proof<'_>, Proposition, ProofCertificate)>,
                                         ClickError,
                                     > {
-                                        let resynced = evolving
-                                            .with_drained_outcome_facts(&certificate_available)?;
+                                        let resynced = evolving.with_drained_outcome(
+                                            &outcome,
+                                            &certificate_available,
+                                        )?;
                                         let before = resynced.checkpoint();
                                         let Ok(scope) =
                                             resynced.begin_have(have.proposition.clone())
@@ -2778,7 +2784,7 @@ pub(super) fn finish_ordered_proof_replay(
                                     // records the checked lowerings on the
                                     // goal atomically.
                                     let resynced = evolving
-                                        .with_drained_outcome_facts(&transport_available)?;
+                                        .with_drained_outcome(&outcome, &transport_available)?;
                                     let before = resynced.checkpoint();
                                     let transported = if let Some(premises) = premises {
                                         resynced.apply_step(SimpleProofStep::TransportUsing {
@@ -3285,7 +3291,8 @@ pub(super) fn finish_ordered_proof_replay(
                                 // outcome goal stays authoritative.
                                 if let Some(evolving) = outcome_proof.take() {
                                     outcome_proof = Some(
-                                        evolving.with_drained_outcome_facts(&path_requirements)?,
+                                        evolving
+                                            .with_drained_outcome(&outcome, &path_requirements)?,
                                     );
                                 }
                             }
@@ -3629,6 +3636,19 @@ pub(super) fn finish_ordered_proof_replay(
                                     }
                                     continue;
                                 }
+                                // A trailing `simp` after execution may have
+                                // no contract work left (for example, a
+                                // resource-only release whose `frame` already
+                                // discharged every obligation).  Treat that as
+                                // the empty Proof transition instead of
+                                // constructing a legacy exit context solely to
+                                // discover an empty pending set.
+                                if claims.iter().enumerate().all(|(claim_index, claim)| {
+                                    closures[claim_index].is_closed()
+                                        || !matches!(claim, FunctionClaimRef::Ensure(_, _))
+                                }) {
+                                    continue;
+                                }
                                 // Grouped proofs forbid top-level existence
                                 // tactics, so the direct path admits every
                                 // grouped claim without them and every
@@ -3838,8 +3858,29 @@ pub(super) fn finish_ordered_proof_replay(
                                         let mut planner_closed: Vec<usize> = Vec::new();
                                         let mut selected = true;
                                         for (_, surface_goal, equalities) in &direct_claims {
+                                            // In a grouped set with resource
+                                            // padding, whole-contract replay
+                                            // already carries pre-execution
+                                            // predicate unfolds. Spell the
+                                            // nested have at that structural
+                                            // level: a have identical to the
+                                            // current proposition claim would
+                                            // close it early and shift the
+                                            // trailing resource closers.
+                                            let scope_surface_goal = if replay.grouped_contract
+                                                && !direct_resource_claims.is_empty()
+                                            {
+                                                unfold_structural_invariant_proposition(
+                                                    predicate_environment,
+                                                    surface_goal,
+                                                    &unfolded_predicates,
+                                                )
+                                                .map_err(ClickError::new)?
+                                            } else {
+                                                surface_goal.clone()
+                                            };
                                             let Ok(mut scope) =
-                                                direct_proof.begin_have(surface_goal.clone())
+                                                direct_proof.begin_have(scope_surface_goal)
                                             else {
                                                 check_verification_deadline()?;
                                                 selected = false;
@@ -4304,6 +4345,12 @@ pub(super) fn finish_ordered_proof_replay(
                                         }
                                     }
                                 }
+                                let _legacy_exit_timing =
+                                    crate::instrumentation::OperationTiming::new(
+                                        function_block.signature().name(),
+                                        &proof_label,
+                                        "outcome simp legacy exit planning",
+                                    );
                                 // Claims this `simp` discharges. A grouped contract
                                 // certifies all of them with one transition, so they
                                 // stay pending until it is built and replayed;
@@ -4559,8 +4606,9 @@ pub(super) fn finish_ordered_proof_replay(
                             // re-import restores the write-through invariant
                             // for the next tactic.
                             if let Some(evolving) = outcome_proof.take() {
-                                outcome_proof =
-                                    Some(evolving.with_drained_outcome_facts(&path_requirements)?);
+                                outcome_proof = Some(
+                                    evolving.with_drained_outcome(&outcome, &path_requirements)?,
+                                );
                             }
                             working_set_dirty = false;
                         }

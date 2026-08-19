@@ -532,3 +532,23 @@ transport and theorem application, and independent replay is green.
 This removes the component-level `old(...)` class from the residue. Certified
 statement/effect equations, predicate/resource derivations, existence paths,
 and the all-or-nothing legacy exit routing remain.
+
+## Resource-backed predicate outcome closure landed (2026-08-19)
+
+The result-aware outcome point now tracks the live persistent state snapshot
+when post-execution resource folds update the legacy drain. Checked predicate
+unfolding re-lowers its retained Surface body against that snapshot and the
+step's successor facts, so resource populations resolve identically during
+ordinary Proof construction and independent certificate replay. A focused
+`valid_pool` regression forbids both compatibility construction and the named
+legacy exit-planning span; the bounded-pool examples verify without their four
+former predicate-goal escapes. Empty final `simp` transitions also bypass the
+planner, removing the resource-only final-release routing artifact.
+For predicates unfolded before execution, the grouped certificate retains an
+unfolded nested-have spelling so its trailing claim and resource closers match
+whole-contract replay; the resource-pattern expansion regression covers the
+otherwise-observable one-assumption mismatch.
+
+This converts the resource-count predicate class. Statement/effect equations,
+existence paths, frame-certified routing, richer separation derivations, and
+the all-or-nothing sibling abort remain migration work.

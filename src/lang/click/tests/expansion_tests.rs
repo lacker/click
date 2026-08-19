@@ -7839,6 +7839,136 @@ fn quantified_outcome_simp_keeps_its_binder_on_the_checked_goal() {
 }
 
 #[test]
+fn outcome_simp_with_no_open_claims_is_an_empty_proof_transition() {
+    let c_source = r#"
+        struct object { int32 refs; };
+
+        void release(struct object* obj) {
+            obj->refs = 0;
+        }
+    "#;
+    let click_source = r#"
+        resource object_ref(obj: struct object*) {
+            owns object(obj);
+            fact obj->refs == count(object_ref(obj));
+        }
+
+        verifying "release.c";
+
+        void release(struct object* obj) {
+            requires obj->refs == 1;
+            consumes object_ref(obj);
+            mutable obj->refs;
+        } by {
+            unfold(object_ref(obj));
+            execute();
+            frame();
+            simp();
+        }
+    "#;
+    let sources = [("release.c", c_source)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("a final simp with no open claims should be a no-op");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp legacy exit planning"
+        )),
+        "an empty claim set must not enter legacy exit planning: {events:#?}"
+    );
+    let expanded = expand_c0_claim_source(click_source, &sources, "release", CProofClaim::Grouped)
+        .expect("the empty outcome transition should expand");
+    let release_proof = expanded
+        .split("void release")
+        .nth(1)
+        .expect("expanded release proof should exist");
+    assert!(!release_proof.contains("simp();"), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the expansion without the empty simp should replay");
+}
+
+#[test]
+fn outcome_predicate_unfold_relowers_resource_counts_on_the_checked_proof() {
+    let c_source = r#"
+        struct pool { int32 checked_out; int32 capacity; };
+
+        void init(struct pool* pool, int32 capacity) {
+            pool->checked_out = 0;
+            pool->capacity = capacity;
+        }
+    "#;
+    let click_source = r#"
+        resource pool_object(pool: struct pool*) {}
+
+        resource pool_slot(pool: struct pool*) {
+            views object(pool);
+        }
+
+        predicate valid_pool(pool: struct pool*) {
+            0 <= pool->checked_out and
+            pool->checked_out == count(pool_object(pool)) and
+            pool->capacity == pool->checked_out + count(pool_slot(pool))
+        }
+
+        verifying "init.c";
+
+        void init(struct pool* pool, int32 capacity) {
+            requires 0 < capacity;
+            owns object(pool);
+            mutable pool->checked_out, pool->capacity;
+            produces capacity of pool_slot(pool);
+            ensures valid_pool(pool);
+        } by {
+            execute();
+            fold(capacity of pool_slot(pool));
+            frame();
+            simp();
+        }
+    "#;
+    let sources = [("init.c", c_source)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the unfolded resource-count goal should close through Proof");
+    let compatibility_events = events
+        .iter()
+        .take_while(|event| {
+            !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "whole-contract certificate construction"
+            )
+        })
+        .filter(|event| {
+            matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "outcome simp legacy exit planning"
+                        || name == "outcome simp compatibility construction"
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        compatibility_events.is_empty(),
+        "predicate closure must not enter outcome compatibility planning: {compatibility_events:#?}"
+    );
+
+    let expanded = expand_c0_claim_source(click_source, &sources, "init", CProofClaim::Grouped)
+        .expect("the retained predicate closure should expand");
+    assert!(
+        expanded.contains("have valid_pool(pool) by {"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("unfold(valid_pool);"), "{expanded}");
+    assert!(expanded.contains("normalize();"), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the retained predicate closure should replay independently");
+}
+
+#[test]
 fn outcome_simp_transports_loadability_on_the_checked_proof() {
     let summarize_c = r#"
         int32 summarize(int32* p) {

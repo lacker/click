@@ -6207,14 +6207,6 @@ impl<'a> Proof<'a> {
         )?;
         let goal = match self.focused_goal() {
             Some(Goal::Proposition(goal)) => {
-                let kernel = unfold_predicates_in_proposition(
-                    predicate_environment,
-                    click_function_environment,
-                    std::slice::from_ref(name),
-                    &goal.kernel,
-                    checked.facts.assumptions(),
-                )
-                .map_err(|message| self.step_error(message))?;
                 let surface = match &goal.surface {
                     Some(surface) => Some(
                         unfold_structural_invariant_proposition(
@@ -6225,6 +6217,60 @@ impl<'a> Proof<'a> {
                         .map_err(|message| self.step_error(message))?,
                     ),
                     None => None,
+                };
+                // Point and outcome certificates replay `unfold` from its
+                // retained Surface spelling.  Re-lower that unfolded body
+                // against the checked successor facts as part of this same
+                // audited step, so resource counts and current memory loads
+                // resolve exactly as they do during independent replay.
+                // Unfolding only the already-lowered kernel predicate leaves
+                // those expressions stranded in the older lowering context.
+                let kernel = match (&surface, self.context.as_ref()) {
+                    (Some(surface), ProofContext::Point(context)) => {
+                        let surface = self.substitute_point_locals_in_proposition(surface)?;
+                        lower_point_proposition_with_assumptions(
+                            &surface,
+                            checked.facts.assumptions(),
+                            context.parameters,
+                            context.arguments,
+                            context.pre_state,
+                            context.state,
+                            context.result,
+                            context.program_point_states,
+                            context.predicate_environment,
+                            context.click_function_environment,
+                        )
+                        .map_err(|message| self.step_error(message))?
+                    }
+                    (Some(surface), ProofContext::Execution(_))
+                        if self.focused_outcome_point().is_some() =>
+                    {
+                        let view = self
+                            .outcome_point_view()
+                            .expect("a focused outcome judgment resolves its point view");
+                        let surface = self.substitute_point_locals_in_proposition(surface)?;
+                        lower_point_proposition_with_assumptions(
+                            &surface,
+                            checked.facts.assumptions(),
+                            view.parameters,
+                            view.arguments,
+                            view.pre_state,
+                            view.state,
+                            view.result,
+                            view.program_point_states,
+                            view.predicate_environment,
+                            view.click_function_environment,
+                        )
+                        .map_err(|message| self.step_error(message))?
+                    }
+                    _ => unfold_predicates_in_proposition(
+                        predicate_environment,
+                        click_function_environment,
+                        std::slice::from_ref(name),
+                        &goal.kernel,
+                        checked.facts.assumptions(),
+                    )
+                    .map_err(|message| self.step_error(message))?,
                 };
                 self.refined_proposition(
                     self.refined_context(checked.facts.clone()),
@@ -7755,12 +7801,16 @@ impl<'a> Proof<'a> {
     /// legacy vector, so a migrated tactic re-imports the current set before
     /// its checked step. Every resync disappears as the remaining kinds
     /// migrate, and the adapter dies with the drain migration's final slice.
-    pub(super) fn with_drained_outcome_facts(
+    pub(super) fn with_drained_outcome(
         &self,
+        outcome: &CFunctionOutcome,
         facts: &[Proposition],
     ) -> Result<Self, ClickError> {
         let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
             return Err(self.step_error("the drain adapter requires a focused outcome goal"));
+        };
+        let CFunctionOutcome::Return { value, state } = outcome else {
+            return Err(self.step_error("the drain adapter requires a return outcome"));
         };
         // The requirement-fact prefix must track the drain's live working
         // set: path preparation unfolds predicate requirements in place, so
@@ -7771,6 +7821,15 @@ impl<'a> Proof<'a> {
             _ => 0,
         };
         let mut point = (*goal.point).clone();
+        // Resource-producing post-execution tactics replace the legacy
+        // outcome state after this goal was derived. Carry that persistent
+        // snapshot root together with the re-imported facts; otherwise later
+        // checked point operations lower resource counts against the stale
+        // pre-fold state. CState's components are shared immutable roots, so
+        // this update is constant-size rather than a resource/history
+        // materialization.
+        point.result = Arc::new(value.clone());
+        point.state = state.clone().into();
         point.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
         let mut updated = goal.clone();
         updated.point = Arc::new(point);
