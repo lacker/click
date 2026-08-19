@@ -867,3 +867,25 @@ nothing.
 Verified: lib 1062/1062, mdtests 396/397 (leaf_flag, independent),
 examples unchanged with input-cursor still verifying and the observe
 boundary intact.
+
+## owned-string is not an origins case after all (2026-08-19)
+
+With the generalised bridge in place, the failing pair is identified
+correctly: the query's named load and one recorded endpoint carry the
+SAME pointer. The unchanged proof still fails — and rightly so. Probed
+both ways, `c_memory_load_is_unchanged` returns false bounded AND
+unbounded, because the cell in question is the one the store wrote. The
+two names denote that cell before and after the write; they are not one
+unchanged cell, so no origins argument can connect them and none should.
+
+What proof 24 actually needs is the recorded store equation transported
+to the query's snapshot: `value == load(m_fact, p)` is available and the
+query is `value == load(m_query, p)`, with both true because the store
+wrote `value` there. That is fact transport across effects — the
+machinery `step() using` has through
+`ProofFacts::replay_available_across_effects` — and `rewrite`'s
+availability check receives only a `&[Proposition]`, with no effect
+facts and no ProofFacts, so it cannot reach it. Closing owned-string
+means giving the rewrite premise check that context, which is a
+signature change through the simp checking surface rather than another
+matcher.
