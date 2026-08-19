@@ -380,3 +380,25 @@ teach the scope closures / planner the residual goal classes, and
 admit ungrouped attempt-misses through certify_outcome_simp the same
 way if retiring the legacy loop entirely is wanted before the drain
 escape retirement.
+
+## Ungrouped per-claim mirror round (2026-08-19, reverted, evidence banked)
+
+Routing ungrouped scope failures through the legacy per-claim pipeline
+(check_function_claim_by_simp, then certify_outcome_simp against the
+legacy certificate_facts context, closures applied only after attempt
+success) breaks three expansion fixtures: the captured per-claim
+certificate fails ITS OWN replay at "tactic 3: assumption did not match
+any current proposition goal" (restricted_simp_rewrites_a_named_successor
+_before_increment_order and two branch-arm expansion tests). Matching
+the legacy certificate_replay exactly — including retaining
+deferred_tactic_capture — did not fix it, so the difference is in how
+the captured stream is assembled for expansion, not in the certificate
+construction context: the legacy loop records per-claim closures via
+ClaimClosure::claim_tactics() at the newly_closed capture site, while
+the direct path splices per-claim certificates and the shared attempt
+certificate into path_deferred_capture_tactics in a different shape.
+Next session: capture the legacy vs direct expanded source for
+named_successor (the reproduction is fast) and diff the tactic
+streams, then either reproduce claim_tactics()' framing or hand the
+per-claim closures through the same newly_closed bookkeeping the
+legacy loop uses.
