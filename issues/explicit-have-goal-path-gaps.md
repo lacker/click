@@ -142,6 +142,28 @@ containment proving (`proves_resource_contains_inner` twice per indexed
 candidate) and the composition/coverage sweeps, not the enumeration. The
 next profiling round should sub-attribute inside those.
 
+## Leaf attribution (2026-08-18, final autonomous pass)
+
+With the scan indexed, the remaining ~900K derived-separation units per
+run split into two leaves: **indexed containment** (~492K — the same
+block-pair candidates the caller already `pointer_in_range`-checked,
+re-proven with the generalized containment machinery whose added power
+over in-range is base-shift normalization) and **coverage** (~407K —
+`range_covered_by_resource_separate_ranges`), with the fact scan and
+compositions negligible. All of this is failing search: every one of the
+166 distinctness queries returns false, inside a transport lowering the
+legacy path serves from recorded lowerings. The remaining cut is a
+design choice, not a mechanical one: either a bounded
+snapshot-comparison mode for certificate-check lowering (skip
+derived-separation retries whose cheap form already failed, noting a
+truncation — weakens the strict checker exactly where the legacy checker
+never searched at all), or kernel-side arithmetic speedups inside
+generalized containment and coverage. The first preserves the
+complexity contract by construction; the second preserves full search
+power. Worth deciding together with the suffix-strictness question,
+since both trade strict-path completeness against cost on the same
+certificate shapes.
+
 ## Intended regression
 
 - A deterministic curve comparing goal-path versus legacy explicit-have
