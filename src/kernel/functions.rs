@@ -1517,16 +1517,6 @@ fn prepare_function_resource_transfer(
             caller_state.memory(),
             assumptions,
         ) else {
-            if std::env::var("CLICK_PROBE").is_ok() {
-                eprintln!("PROBE required: {resource:?}");
-                eprintln!("PROBE held: {return_resources:?}");
-                for fact in assumptions.prop_facts.iter() {
-                    let text = format!("{fact:?}");
-                    if text.contains("Variable(1000000)") || text.contains("MemoryLoad") {
-                        eprintln!("PROBE fact: {}", &text[..text.len().min(300)]);
-                    }
-                }
-            }
             return Ok(Err(CRuntimeError::MissingResource {
                 resource: resource.clone(),
             }));
@@ -3144,21 +3134,6 @@ pub(super) fn resource_context_satisfies_definitional_fact(
     };
     required.facts().iter().all(|fact| {
         let satisfied = available.satisfies_fact(fact, assumptions);
-        if !satisfied && std::env::var("CLICK_PROBE").is_ok() {
-            eprintln!("PROBE definitional expanded-required miss: {fact:?}");
-            eprintln!("PROBE definitional expanded-available: {available:?}");
-            for id in [1570448282180_u64, 1672492422020] {
-                let known = crate::kernel::eval::registered_canonical_load(&Variable(id));
-                eprintln!(
-                    "PROBE registry {id}: {}",
-                    match &known {
-                        Some((memory, pointer)) =>
-                            format!("load(arena={:?}, ptr={pointer:?})", memory.arena_id()),
-                        None => "UNREGISTERED".to_string(),
-                    }
-                );
-            }
-        }
         satisfied
     })
 }

@@ -1049,26 +1049,11 @@ impl ResourceContext {
                 return Some(range);
             }
         }
-        let fallback = self.iter().find_map(|resource| {
+        self.iter().find_map(|resource| {
             memory_resource_fact_permits_write(resource, pointer, byte_width, assumptions)
                 .then(|| resource.memory_own_range())
                 .flatten()
-        });
-        if fallback.is_none() && std::env::var("CLICK_PROBE").is_ok() {
-            eprintln!("PROBE write miss: pointer={pointer:?}");
-            for resource in self.iter() {
-                if let Some(range) = resource.memory_own_range() {
-                    eprintln!("PROBE owned range: {range:?}");
-                }
-            }
-            for fact in assumptions.prop_facts.iter() {
-                let text = format!("{fact:?}");
-                if text.contains("MemoryLoad") || text.contains("Variable(1000000)") {
-                    eprintln!("PROBE fact: {}", &text[..text.len().min(400)]);
-                }
-            }
-        }
-        fallback
+        })
     }
 
     pub fn without_fact(self, fact: &CResourceFact, assumptions: &PureFactContext) -> Option<Self> {

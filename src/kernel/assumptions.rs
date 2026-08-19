@@ -642,7 +642,7 @@ pub(super) fn note_search_truncation() {
 /// The running count of ambient search truncations on this thread. Memo
 /// layers compare the count around a query to tell a pure negative answer
 /// (cacheable) from one whose search was cut short (path-dependent).
-pub(super) fn search_truncations() -> u64 {
+pub(crate) fn search_truncations() -> u64 {
     SEARCH_TRUNCATIONS.with(Cell::get)
 }
 

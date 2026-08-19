@@ -577,9 +577,6 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                             &effective_assumptions,
                         ));
                 if is_external && !has_external_read_resource {
-                    if std::env::var("CLICK_PROBE").is_ok() {
-                        eprintln!("PROBE MissingResource expression.rs:581");
-                    }
                     return vec![CExpressionPath {
                         outcome: CExpressionOutcome::RuntimeError(CRuntimeError::MissingResource {
                             resource: CResourceFact::view_memory(CMemoryRange::new(

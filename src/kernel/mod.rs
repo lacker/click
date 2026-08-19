@@ -17,6 +17,7 @@ mod spec;
 mod termination;
 
 pub use api::*;
+pub(crate) use assumptions::search_truncations;
 pub(crate) use assumptions::{
     PureFactContextIdScope, collect_reasoning_provenance, conditions_equal_ignoring_memories,
     finite_forall_goal_instances, record_implicit_reasoning_provenance,

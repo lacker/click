@@ -278,3 +278,45 @@ time back to ~18s. Remaining before integration: strip probes and
 bisection gates, run scripts/check.sh, the metadata-write budget
 regression, and the position assertion from the issue's acceptance
 criteria.
+
+## Gate frontier: input-cursor example (lib suite green, examples gate red)
+
+scripts/check.sh reached the examples gate; `examples/input-cursor` fails
+at `input_cursor_shared_pipeline.contract` have proof 10: `transport(
+at(statement(4).entry, left->data) == data, left->data == data)` finds no
+certified connection. Grounded findings:
+
+- At the base commit the reaches machinery never even ran for this
+  transport (a base-worktree probe showed no load-shaped
+  PointerOffsetEqual sources) — the target `left->data == data` at the
+  current point was EXACTLY available in the fact set.
+- On the WIP branch, `available` holds `v1406 == v100002` and
+  `v1840 == v100002` but NO fact mentioning v1810, the canonical name of
+  left->data at the current point. Three canonical names exist for the
+  same cell at different effect points (their snapshots differ by
+  call-havoc markers — correctly distinct, since equality across a call
+  needs frame evidence).
+- The regression is therefore in fact RESPELLING across effects: the old
+  flow re-spelled load(m_pre, p) facts to load(m_post, p) under frame
+  evidence as they crossed call statements, keeping current-point
+  spellings available. Canonical-variable facts cross effects unchanged,
+  so the current-point name is never connected.
+- A transport hook in `transport_framed_atomic_bitvector`'s Variable arm
+  (transport the registered load, re-canonicalize at the post snapshot)
+  did NOT fix the example and DID break box_pipeline's step()-using
+  premise — wrong site; reverted. The respelling that matters happens
+  where step introductions/postcondition facts are carried across the
+  statement boundary (check_step_using_facts' introduced-facts path or
+  the kernel drain's cross-statement fact transport), not in that
+  helper.
+
+Next session: find where a `step() using`'s introduced facts and call
+postconditions get re-spelled to the post-statement snapshot at base
+(search for the old load-respelling on the introduction path, e.g.
+`replay_available_across_effects` / drain transported facts), and add
+the canonical-name analogue THERE: when the frame evidence rewrites the
+underlying load, emit the bridging equality `v_pre == v_post` (or the
+re-spelled fact) into the introduced fact set. Supporting changes kept
+on this branch (all lib-green): canonical chain closure in the have
+transport reachability, effect-window keyed on the registry-resolved
+source, and the resolved-source assumption.

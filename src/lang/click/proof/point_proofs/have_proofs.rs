@@ -1076,14 +1076,24 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 if !exact_fact_is_available(&target, &available)
                     && materialization_equivalent_available_fact(&target, &available).is_none()
                 {
+                    // The effect-window selection keys on the memories the
+                    // source names; a canonical-variable spelling names its
+                    // memory only through the registry, so resolve before
+                    // selecting the window.
+                    let window_source =
+                        crate::kernel::resolve_canonical_load_variables_from_registry(&source);
                     let transition_facts =
-                        fact_transport_transition_facts(transition_facts, &source);
+                        fact_transport_transition_facts(transition_facts, &window_source);
                     let transport_assumptions = transition_facts
                         .iter()
                         .fold(selected_assumptions, |assumptions, fact| {
                             assumptions.assume_proposition(fact.proposition().clone())
                         })
-                        .assume_proposition(source.clone());
+                        .assume_proposition(source.clone())
+                        // The resolved spelling is the same assumed fact
+                        // seen through the registry; the load-spelled
+                        // reachability path needs it in this form.
+                        .assume_proposition(window_source.clone());
                     let reaches = crate::instrumentation::measure_operation(
                         profile_function,
                         claim_label,
@@ -1098,6 +1108,17 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             )
                         },
                     );
+                    // Canonical load variables are kernel-internal names;
+                    // with the source assumed, the target may follow from
+                    // recorded equalities chained through them.
+                    let reaches = reaches || {
+                        let mut chain_facts = available.clone();
+                        chain_facts.push(source.clone());
+                        super::super::fact_reasoning::premise_bridged_by_canonical_name_chain(
+                            &target,
+                            &chain_facts,
+                        )
+                    };
                     if !reaches {
                         let internal = std::env::var_os(FULL_DIAGNOSTICS_ENV).is_some().then(|| {
                             format!(

@@ -1621,8 +1621,7 @@ pub(super) fn append_simple_proof_step_for_operation(
             // with no user-visible spelling; its transported form at the new
             // snapshot is itself certified by construction, so expansion
             // needs no explicit step for it.
-            if !std::env::var("CLICK_DISABLE_TSKIP").is_ok()
-                && crate::kernel::is_canonical_load_defining_fact(source)
+            if crate::kernel::is_canonical_load_defining_fact(source)
                 && crate::kernel::is_canonical_load_defining_fact(target)
             {
                 return;
