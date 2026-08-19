@@ -170,6 +170,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             value_type,
             next_verification_variable,
             &mut facts,
+            assumptions,
         ) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(value),
@@ -202,6 +203,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             value_type,
             next_verification_variable,
             &mut facts,
+            assumptions,
         ) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(value),
@@ -283,6 +285,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             value_type,
             next_verification_variable,
             &mut facts,
+            assumptions,
         ) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(value),
@@ -350,6 +353,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 value_type,
                 next_verification_variable,
                 &mut facts,
+                assumptions,
             ) {
                 CExpressionOutcome::Value(value)
             } else if value_type.accepts(&stored_value) {
@@ -469,6 +473,7 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
     value_type: CType,
     next_verification_variable: &mut u64,
     facts: &mut Vec<ExecutionPureFact>,
+    assumptions: &PureFactContext,
 ) -> Option<CValue> {
     let CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) = value else {
         return None;
@@ -496,8 +501,35 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
     };
     let cache_key = (loaded_memory.arena_id(), loaded_pointer.as_ref().clone());
     let cached = MINT_CACHE.with(|cache| cache.borrow().get(&cache_key).copied());
+    // Contract lowering may already have bound this exact load to a
+    // variable (an owned-range base, for example). Reusing that binding
+    // makes the executed address and the contract-spelled range coincide
+    // syntactically, so containment needs no equation chaining.
+    let ambient_binding = || {
+        assumptions.prop_facts.iter().find_map(|fact| {
+            let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = fact
+            else {
+                return None;
+            };
+            let (Bitvector32Term::Variable(variable), Bitvector32Term::MemoryLoad(memory, ptr)) =
+                (left.as_ref(), right.as_ref())
+            else {
+                return None;
+            };
+            (ptr == loaded_pointer && memory == loaded_memory).then_some(*variable)
+        })
+    };
     let fresh = if let Some(cached) = cached {
         cached
+    } else if let Some(bound) = ambient_binding() {
+        MINT_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.len() >= MINT_CACHE_LIMIT {
+                cache.clear();
+            }
+            cache.insert(cache_key, bound);
+        });
+        bound
     } else {
         let mut existing = std::collections::BTreeSet::new();
         crate::kernel::reasoning::collect_bitvector_variables(bits, &mut existing);

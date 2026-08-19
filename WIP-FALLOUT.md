@@ -97,3 +97,20 @@ equations use rather than the per-path stream. Also noted: the index
 side of `data[len]` still embeds the raw len-load (pointer ADDITION
 builds offsets outside the canonicalized helper), so the arithmetic
 birth census needs the pointer-plus-int operator path added.
+
+## Layer 4 continued: reuse-from-assumptions in, shape mismatch remains
+
+The mint now searches ambient assumptions for an existing binding of the
+same load (same pointer, same snapshot handle) and reuses that variable
+before minting — the mechanism that should make the executed address and
+the contract-spelled owned range coincide. It does not yet connect: the
+lead test still certifies to MissingResource, so the contract's
+variable-to-load linkage is not spelled as
+`ConditionIs(Bitvector32Equal(Variable, MemoryLoad))` in the write
+check's assumptions (or the snapshot handles differ between the entry
+binding and the current-memory load). Next: dump the actual proposition
+shapes mentioning the contract variable in this test's entry facts
+(grounding, not guessing — candidate shapes include `CMemoryLoads`,
+`Equal`, or a TypedLoad-anchored form), then widen the reuse match to
+that shape, bridging entry-to-current memory through the existing
+unchanged-load machinery if the handles differ.
