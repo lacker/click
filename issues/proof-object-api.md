@@ -3381,6 +3381,22 @@ therefore per-arm semantic migration, not a mechanical read swap:
    retire the no-goal fallback point roots the unconditional substrate
    made unreachable.
 
+### Refinement (2026-08-18): the dirty sites are mostly fallback entries
+
+Of the nine `working_set_dirty` sites, only three (the two resource
+projections and the region-frame certifier) mark completed mutations at
+arm end, where an immediate goal re-import can replace the deferred
+flag. The other six are *entries into no-goal fallback arms* — the
+legacy point-root paths taken when `outcome_proof` is unavailable — and
+the `Simp` legacy-planner escape; their mutations follow the flag, so
+they cannot resync at the site. The order of work is therefore: first
+make substrate derivation failure a hard error (its `.ok()` currently
+swallows errors silently — with the substrate unconditional and the
+corpus green, a derivation failure is a bug, not a routing choice) and
+delete the no-goal fallback arms; then the three arm-end sites convert
+to immediate re-imports and the flag deletes; then the vector reads flip
+to the goal and the vector, adapters, and parity assertion retire.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
