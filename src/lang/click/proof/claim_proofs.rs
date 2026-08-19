@@ -1887,9 +1887,13 @@ pub(super) fn finish_ordered_proof_replay(
                                     path_index,
                                 )?;
                                 // A legacy resource transition rewrote the
-                                // working set without writing through the
-                                // outcome goal.
-                                working_set_dirty = true;
+                                // working set; re-import immediately so the
+                                // outcome goal stays authoritative.
+                                if let Some(evolving) = outcome_proof.take() {
+                                    outcome_proof = Some(
+                                        evolving.with_drained_outcome_facts(&path_requirements)?,
+                                    );
+                                }
                                 record_post_execution_surface_tactic(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
@@ -1936,9 +1940,13 @@ pub(super) fn finish_ordered_proof_replay(
                                     path_index,
                                 )?;
                                 // A legacy resource transition rewrote the
-                                // working set without writing through the
-                                // outcome goal.
-                                working_set_dirty = true;
+                                // working set; re-import immediately so the
+                                // outcome goal stays authoritative.
+                                if let Some(evolving) = outcome_proof.take() {
+                                    outcome_proof = Some(
+                                        evolving.with_drained_outcome_facts(&path_requirements)?,
+                                    );
+                                }
                             }
                             PostExecutionTactic::UnfoldPredicate(name) => {
                                 let CFunctionOutcome::Return {
@@ -3317,9 +3325,13 @@ pub(super) fn finish_ordered_proof_replay(
                                     }
                                 }
                                 // The certified region-frame goal entered the
-                                // working set without writing through the
-                                // outcome goal.
-                                working_set_dirty = true;
+                                // working set; re-import immediately so the
+                                // outcome goal stays authoritative.
+                                if let Some(evolving) = outcome_proof.take() {
+                                    outcome_proof = Some(
+                                        evolving.with_drained_outcome_facts(&path_requirements)?,
+                                    );
+                                }
                             }
                             PostExecutionTactic::Frame => {
                                 let mut closed_effect = false;

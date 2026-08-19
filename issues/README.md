@@ -20,6 +20,10 @@ when evidence exposes one.
 
 ## Open
 
+- [Drain legacy arms are corpus-invisible](drain-legacy-arms-uncovered.md):
+  the surviving fold-at-exit projection and region-frame drain arms are
+  feature-live but exercised by no fixture; add mdtests before the
+  working-set inversion touches them.
 - [Proof object API](proof-object-api.md): smart tactics need one immutable,
   cheaply forkable checked `Proof` interface where applying a
   `SimpleProofStep` atomically advances semantic state and retains the exact

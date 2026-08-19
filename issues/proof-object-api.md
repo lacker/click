@@ -3397,6 +3397,24 @@ delete the no-goal fallback arms; then the three arm-end sites convert
 to immediate re-imports and the flag deletes; then the vector reads flip
 to the goal and the vector, adapters, and parity assertion retire.
 
+### Progress (2026-08-18: reachability probe; arm-end sites re-import immediately)
+
+An instrumented run of the whole test surface — the full lib suite and
+both fixture gates — hit none of the nine `working_set_dirty` sites: every
+legacy working-set mutation arm is corpus-unreachable today. That splits
+the retirement cleanly. The six no-goal fallback arms have live
+goal-based twins and can become prompt errors (loud, not silent, if some
+untested input ever reaches them). The projection, region-frame, and
+`Simp` legacy-planner arms are the sole implementations of their tactic
+kinds — feature-live but corpus-uncovered — so they stay; their three
+arm-end dirty sites now re-import into the outcome goal immediately
+instead of deferring to the iteration end, which keeps the goal
+authoritative continuously wherever those arms do run. The six
+fallback-entry flags (five no-goal arms and `Simp`) remain until the
+fallback deletion lands, and corpus coverage for fold-at-exit and the
+region-frame certifier is worth a follow-up fixture so those live arms
+stop being probe-invisible.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
