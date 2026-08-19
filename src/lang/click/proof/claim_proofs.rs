@@ -1815,6 +1815,12 @@ pub(super) fn finish_ordered_proof_replay(
                     // without writing through the outcome goal; the end of
                     // the iteration re-imports once.
                     let mut working_set_dirty = false;
+                    // Contract resource/population effects are applied once
+                    // at the frame that certifies them. A grouped proof sees
+                    // the effect goals directly; an isolated ensure proof
+                    // does not, but still needs the same transitioned outcome
+                    // before lowering its postcondition.
+                    let mut resource_transition_applied = false;
                     drop(_path_preparation_timing);
                     let _post_execution_timing = crate::instrumentation::OperationTiming::new(
                         function_block.signature().name(),
@@ -3320,7 +3326,12 @@ pub(super) fn finish_ordered_proof_replay(
                                     closures[claim_index] = ClaimClosure::by_exact_check();
                                     closed_effect = true;
                                 }
-                                if closed_effect {
+                                if closed_effect
+                                    || (!resource_transition_applied
+                                        && !claims.iter().any(|claim| {
+                                            matches!(claim, FunctionClaimRef::Effect(_, _))
+                                        }))
+                                {
                                     apply_checked_contract_resource_transition(
                                         &mut outcome,
                                         pre_state,
@@ -3331,6 +3342,14 @@ pub(super) fn finish_ordered_proof_replay(
                                         &proof_label,
                                         path_index,
                                     )?;
+                                    resource_transition_applied = true;
+                                    if let Some(evolving) = outcome_proof.take() {
+                                        outcome_proof =
+                                            Some(evolving.with_drained_outcome(
+                                                &outcome,
+                                                &path_requirements,
+                                            )?);
+                                    }
                                 }
                                 // The ambient frame checks against every available
                                 // fact; its replayable surface spelling is exactly
@@ -3490,7 +3509,12 @@ pub(super) fn finish_ordered_proof_replay(
                                     closures[claim_index] = ClaimClosure::by_exact_check();
                                     closed_effect = true;
                                 }
-                                if closed_effect {
+                                if closed_effect
+                                    || (!resource_transition_applied
+                                        && !claims.iter().any(|claim| {
+                                            matches!(claim, FunctionClaimRef::Effect(_, _))
+                                        }))
+                                {
                                     crate::instrumentation::measure_operation(
                                         function_block.signature().name(),
                                         &proof_label,
@@ -3508,6 +3532,14 @@ pub(super) fn finish_ordered_proof_replay(
                                             )
                                         },
                                     )?;
+                                    resource_transition_applied = true;
+                                    if let Some(evolving) = outcome_proof.take() {
+                                        outcome_proof =
+                                            Some(evolving.with_drained_outcome(
+                                                &outcome,
+                                                &path_requirements,
+                                            )?);
+                                    }
                                 }
                                 record_post_execution_surface_tactic(
                                     deferred.surface_recorded,
@@ -3567,6 +3599,13 @@ pub(super) fn finish_ordered_proof_replay(
                                         )
                                     },
                                 )?;
+                                resource_transition_applied = true;
+                                if let Some(evolving) = outcome_proof.take() {
+                                    outcome_proof = Some(
+                                        evolving
+                                            .with_drained_outcome(&outcome, &path_requirements)?,
+                                    );
+                                }
                                 if let Some(certificate) = surface_certificate {
                                     for tactic in certificate.to_proof_tactics() {
                                         record_post_execution_surface_tactic(
@@ -4057,13 +4096,13 @@ pub(super) fn finish_ordered_proof_replay(
                                                         *tactic_index,
                                                         path_index,
                                                     );
-                                                    if let Ok(tactics) = planned
+                                                    if let Ok(tactics) = &planned
                                                         && let Ok(candidate) =
                                                             ProofCertificate::from_proof_tactics(
                                                                 &tactics,
                                                             )
-                                                        && let Ok(next) =
-                                                            direct_proof.check_certificate(&candidate)
+                                                        && let Ok(next) = direct_proof
+                                                            .check_certificate(&candidate)
                                                     {
                                                         for fact in next.added_facts() {
                                                             if !direct_available.contains(fact) {
@@ -4196,13 +4235,26 @@ pub(super) fn finish_ordered_proof_replay(
                                         if !selected {
                                             return Ok(None);
                                         }
-                                        let surface_goals = direct_claims
-                                            .iter()
-                                            .filter(|(claim_index, _, _)| {
-                                                !planner_closed.contains(claim_index)
-                                            })
-                                            .map(|(_, goal, _)| goal.clone())
-                                            .collect::<Vec<_>>();
+                                        let mut surface_goals = Vec::new();
+                                        for (claim_index, goal, _) in &direct_claims {
+                                            if planner_closed.contains(claim_index) {
+                                                continue;
+                                            }
+                                            surface_goals.push(
+                                                if replay.grouped_contract
+                                                    && !direct_resource_claims.is_empty()
+                                                {
+                                                    unfold_structural_invariant_proposition(
+                                                        predicate_environment,
+                                                        goal,
+                                                        &unfolded_predicates,
+                                                    )
+                                                    .map_err(ClickError::new)?
+                                                } else {
+                                                    goal.clone()
+                                                },
+                                            );
+                                        }
                                         let completed = if surface_goals.is_empty() {
                                             direct_proof.certificate_since(&direct_base)?
                                         } else {

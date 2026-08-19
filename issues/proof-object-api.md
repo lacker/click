@@ -3762,6 +3762,26 @@ symbolic preserved-index loop regression observes no legacy exit-planning
 span, expands, and independently reverifies. This removes the sole
 frame-certified entry from the measured fixture fallback census.
 
+### Progress (2026-08-19: frame population transitions stay on the evolving Proof)
+
+Every successful post-execution frame form now applies the checked contract
+resource transition exactly once and immediately reimports the transitioned
+outcome into the evolving `Proof`. This also covers isolated ensure proofs,
+whose claim set contains no effect goal even though their postcondition must be
+lowered against the same transitioned resource population as the grouped
+contract. Outcome rewrite now uses the result-aware point view, and retained
+premise spellings prefer their explicit `at(...)`/`old(...)` source site so a
+pre-frame equality cannot be reinterpreted against the post-frame state.
+
+The remaining bounded-pool return shape also exposed two missing atomic proof
+objects. Equality-to-one paths are now retained as the evidence for predecessor
+nonnegativity/decrease, and `value - 1 == 0` has its own exact-path evidence;
+both lower to explicit ordered rewrites and normalization. The focused
+population regression and the complete bounded-pool project verify with no
+`outcome simp compatibility construction` or `outcome simp legacy exit
+planning` spans, expand, and independently replay. The full repository gate is
+green at this checkpoint.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

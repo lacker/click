@@ -485,3 +485,19 @@ logarithmic persistent allocation, ancestor isolation, and transactional
 rejection when either named source premise is omitted. This closes the new
 reproduction, not the broader issue: the remaining legacy evidence families
 and ambient reconstruction paths listed above still need migration.
+
+### Progress (2026-08-19: equality-to-one predecessor evidence)
+
+Predecessor nonnegativity and strict-decrease decisions no longer require a
+previously materialized `1 <= value` edge. When the fact index instead retains
+an exact equality path from `value` to `1`, that path is the typed evidence and
+replay validates every original equality edge. Surface lowering first proves
+the explicit `1 <= value` intermediate by ordered rewrites and normalization,
+then uses the existing named predecessor theorem chain.
+
+The adjacent equality `value - 1 == 0` now has its own typed atomic evidence,
+again retaining and replaying the exact equality-to-one path and lowering to
+rewrites plus normalization. Kernel tests cover both equality orientations and
+reject replay without the recorded source fact; pure and post-frame outcome
+expansions independently reverify. This closes the bounded-pool predecessor
+slice, not the broader inventory of untyped atomic decisions.

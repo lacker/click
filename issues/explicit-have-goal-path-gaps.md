@@ -562,3 +562,19 @@ the matching Surface claim and retains the closer. The symbolic-index loop
 fixture forbids the legacy exit-planning span and independently replays its
 expansion. The single frame-certified census entry is gone; existence routing,
 statement/effect derivations, richer separation, and sibling aborts remain.
+
+## Frame population resynchronization landed (2026-08-19)
+
+Checked `frame`, `frame using`, and qualified frame transitions now refresh the
+evolving outcome `Proof` immediately after applying their resource/population
+effect. Isolated ensures apply the same transition once even though their local
+claim set has no effect goal. Grouped resource-backed predicate goals are
+completed against their unfolded structural Surface form, matching the scope
+that actually proved them.
+
+The bounded-pool return, transfer, and destroy paths now remain on `Proof` from
+frame through final predicate closure. A timing census of that project reports
+no outcome compatibility-construction or legacy-exit-planning span, and the
+focused regression independently replays the expanded certificate. Remaining
+work is determined by the fresh repository-wide fallback census rather than
+the former bounded-pool sample.

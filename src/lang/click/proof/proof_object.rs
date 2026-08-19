@@ -6799,21 +6799,32 @@ impl<'a> Proof<'a> {
             return None;
         };
         let replayable_surface = |kernel: &Proposition| {
-            surface_facts.surfaces(kernel).find_map(|surface| {
-                let matches_kernel = |candidate: &ClickProposition| {
-                    let lowered = self
-                        .lower_surface_proposition_direct(candidate, "typed simp premise spelling")
-                        .ok()?;
-                    (lowered == *kernel || condition_polarity_equivalent(&lowered, kernel))
-                        .then_some(())
-                };
-                if matches_kernel(surface).is_some() {
-                    return Some(surface.clone());
-                }
-                let anchor = premise_anchor?;
-                let anchored = surface_with_source_site(surface, anchor).ok()?;
-                matches_kernel(&anchored).map(|()| anchored)
-            })
+            let matches_kernel = |candidate: &ClickProposition| {
+                let lowered = self
+                    .lower_surface_proposition_direct(candidate, "typed simp premise spelling")
+                    .ok()?;
+                (lowered == *kernel || condition_polarity_equivalent(&lowered, kernel))
+                    .then_some(())
+            };
+            if let Some(surface) = surface_facts.surfaces(kernel).find(|surface| {
+                (proposition_contains_at_expression(surface)
+                    || proposition_contains_old_expression(surface))
+                    && matches_kernel(surface).is_some()
+            }) {
+                return Some(surface.clone());
+            }
+            if let Some(anchor) = premise_anchor
+                && let Some(anchored) = surface_facts.surfaces(kernel).find_map(|surface| {
+                    let anchored = surface_with_source_site(surface, anchor).ok()?;
+                    matches_kernel(&anchored).map(|()| anchored)
+                })
+            {
+                return Some(anchored);
+            }
+            surface_facts
+                .surfaces(kernel)
+                .find(|surface| matches_kernel(surface).is_some())
+                .cloned()
         };
         let context_premises = derivation.context_premises();
         let premise_pairs = context_premises
@@ -7273,6 +7284,29 @@ impl<'a> Proof<'a> {
                 )?;
                 plan_recorded_int32_nonnegative_predecessor_upper_bound_for_context(
                     goal,
+                    &recorded,
+                    point_application_closes_goal,
+                )
+            })
+            .or_else(|| {
+                let recorded =
+                    recorded_int32_equal_one_predecessor_is_zero_pairs(derivation, &premise_pairs)?;
+                plan_recorded_int32_equal_one_predecessor_is_zero(goal, derivation, &recorded)
+            })
+            .or_else(|| {
+                let recorded = recorded_int32_equal_one_predecessor_is_nonnegative_pairs(
+                    derivation,
+                    &premise_pairs,
+                )
+                .or_else(|| {
+                    recorded_int32_equal_one_predecessor_strictly_decreases_pairs(
+                        derivation,
+                        &premise_pairs,
+                    )
+                })?;
+                plan_recorded_int32_equal_one_predecessor_for_context(
+                    goal,
+                    derivation,
                     &recorded,
                     point_application_closes_goal,
                 )
@@ -9229,7 +9263,15 @@ impl<'a> Proof<'a> {
     fn apply_rewrite(&self, surface_equality: &ClickProposition) -> Result<ProofState, ClickError> {
         match self.context.as_ref() {
             ProofContext::Pure(_) => self.apply_pure_rewrite(surface_equality),
-            ProofContext::Point(context) => self.apply_point_rewrite(context, surface_equality),
+            ProofContext::Point(context) => {
+                self.apply_point_rewrite(&PointOperationView::from_point(context), surface_equality)
+            }
+            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
+                let view = self
+                    .outcome_point_view()
+                    .expect("a focused outcome judgment resolves its point view");
+                self.apply_point_rewrite(&view, surface_equality)
+            }
             // A nested execution `have` is still a proposition proof. It
             // borrows the execution context only for lowering; its scope join
             // restores the exact outer frontier after this checked rewrite.
@@ -9259,14 +9301,15 @@ impl<'a> Proof<'a> {
     #[inline(never)]
     fn apply_point_rewrite(
         &self,
-        context: &PointProofContext<'_>,
+        view: &PointOperationView<'_>,
         surface_equality: &ClickProposition,
     ) -> Result<ProofState, ClickError> {
+        let unfolded_predicates = self.active_unfolded_predicates();
         let goal = Box::new(
             unfold_predicates_in_proposition(
-                context.predicate_environment,
-                context.click_function_environment,
-                context.unfolded_predicates,
+                view.predicate_environment,
+                view.click_function_environment,
+                &unfolded_predicates,
                 self.proposition_goal("`rewrite` requires a proposition goal")?,
                 self.facts().assumptions(),
             )
@@ -9274,7 +9317,7 @@ impl<'a> Proof<'a> {
                 self.step_error(format!("could not unfold `rewrite` goal: {message}"))
             })?,
         );
-        let recorded = context
+        let recorded = view
             .surface_propositions
             .available_kernel_matching(surface_equality, |kernel| {
                 self.facts().materialization_available(kernel)
@@ -9282,7 +9325,7 @@ impl<'a> Proof<'a> {
             .map(|kernel| Box::new(kernel.clone()))
             .or_else(|| {
                 let reverse = reverse_surface_equality(surface_equality)?;
-                let kernel = context
+                let kernel = view
                     .surface_propositions
                     .available_kernel_matching(&reverse, |kernel| {
                         self.facts().materialization_available(kernel)
@@ -9296,14 +9339,14 @@ impl<'a> Proof<'a> {
                 lower_point_proposition_with_assumptions(
                     surface_equality,
                     self.facts().assumptions(),
-                    context.parameters,
-                    context.arguments,
-                    context.pre_state,
-                    context.state,
-                    context.result,
-                    context.program_point_states,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    view.parameters,
+                    view.arguments,
+                    view.pre_state,
+                    view.state,
+                    view.result,
+                    view.program_point_states,
+                    view.predicate_environment,
+                    view.click_function_environment,
                 )
                 .map_err(|message| {
                     self.step_error(format!("could not lower `rewrite` equality: {message}"))
@@ -9312,9 +9355,9 @@ impl<'a> Proof<'a> {
         };
         let equality = Box::new(
             unfold_predicates_in_proposition(
-                context.predicate_environment,
-                context.click_function_environment,
-                context.unfolded_predicates,
+                view.predicate_environment,
+                view.click_function_environment,
+                &unfolded_predicates,
                 &equality,
                 self.facts().assumptions(),
             )
@@ -14627,14 +14670,14 @@ mod tests {
         let equality = ClickProposition::Comparison {
             left: expression(value.clone()),
             operator: ComparisonOperator::Equal,
-            right: expression(Bitvector32Term::Constant(1)),
+            right: expression(Bitvector32Term::Constant(2)),
         };
         let goal_surface = ClickProposition::Comparison {
             left: expression(Bitvector32Term::Constant(0)),
             operator: ComparisonOperator::LessEqual,
             right: expression(Bitvector32Term::Subtract(
                 Box::new(value),
-                Box::new(Bitvector32Term::Constant(1)),
+                Box::new(Bitvector32Term::Constant(2)),
             )),
         };
         let lower = |surface: &ClickProposition| {

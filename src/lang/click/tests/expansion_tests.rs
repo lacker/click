@@ -629,7 +629,10 @@ fn grouped_post_execution_simp_applies_planned_steps_once_through_proof() {
         position.column,
     )
     .expect("the planner-selected grouped certificate should expand");
-    assert!(expanded.contains("rewrite(x == 0);"), "{expanded}");
+    assert!(
+        expanded.contains("rewrite(at(statement(0).entry, x) == at(statement(0).entry, 0));"),
+        "{expanded}"
+    );
     assert!(expanded.contains("normalize();"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
         .expect("the retained planner-selected steps should verify independently");
@@ -679,7 +682,12 @@ fn post_execution_simp_builds_disjunction_cases_on_proof() {
     )
     .expect("the checked case split should expand");
     assert!(!expanded.contains("simp();"), "{expanded}");
-    assert!(expanded.contains("cases (x == 0 or x == 1)"), "{expanded}");
+    assert!(
+        expanded.contains(
+            "cases (at(statement(0).entry, x) == at(statement(0).entry, 0) or at(statement(0).entry, x) == at(statement(0).entry, 1))"
+        ),
+        "{expanded}"
+    );
     assert_eq!(expanded.matches("rewrite(").count(), 2, "{expanded}");
     assert_eq!(expanded.matches("normalize();").count(), 2, "{expanded}");
     verify_c0_sources(&expanded, &[("choose.c", c_source)])
@@ -3238,6 +3246,81 @@ fn restricted_simp_retains_nested_one_le_predecessor_decrease_proof() {
 }
 
 #[test]
+fn restricted_simp_retains_equal_one_predecessor_path() {
+    let click_source = r#"
+        theorem equal_one_predecessor_is_nonnegative(value: int32) {
+            requires 1 == value;
+            ensures 0 <= value - 1 by {
+                simp() using {
+                    1 == value;
+                }
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the equal-one predecessor proof should verify through the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "equal_one_predecessor_is_nonnegative.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained equal-one path must not use construction replay: {events:#?}"
+    );
+    let offset = click_source.find("simp() using").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("equal-one predecessor proof should expand");
+    assert!(expanded.contains("have 1 <= value"), "{expanded}");
+    assert!(expanded.contains("rewrite(value == 1)"), "{expanded}");
+    assert!(expanded.contains("have 0 < value"), "{expanded}");
+    assert!(
+        expanded.contains("apply(int32_positive_predecessor_is_nonnegative(value)) using"),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded equal-one predecessor proof should replay");
+}
+
+#[test]
+fn restricted_simp_retains_equal_one_predecessor_zero_path() {
+    let click_source = r#"
+        theorem equal_one_predecessor_is_zero(value: int32) {
+            requires 1 == value;
+            ensures value - 1 == 0 by {
+                simp() using {
+                    1 == value;
+                }
+            }
+        }
+    "#;
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    verified.expect("the predecessor-zero proof should verify through the pure Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "equal_one_predecessor_is_zero.ensures_0"
+                    && name == "surface certificate replay"
+        )),
+        "the retained predecessor-zero path must not use construction replay: {events:#?}"
+    );
+    let offset = click_source.find("simp() using").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("equal-one predecessor-zero proof should expand");
+    assert!(expanded.contains("rewrite(value == 1)"), "{expanded}");
+    assert!(expanded.contains("normalize()"), "{expanded}");
+    assert!(!expanded.contains("simp() using"), "{expanded}");
+    assert!(!expanded.contains("derive using"), "{expanded}");
+    verify_click_theorems(&expanded).expect("expanded predecessor-zero proof should replay");
+}
+
+#[test]
 fn restricted_simp_expands_strict_increment_to_theorem_application() {
     let click_source = r#"
             theorem increment_is_greater(value: int32, upper: int32) {
@@ -3846,9 +3929,21 @@ fn outcome_simp_consumes_its_recorded_bitvector_equality_path() {
         position.column,
     )
     .expect("the retained outcome equality path should expand");
-    assert!(expanded.contains("rewrite(first == second);"), "{expanded}");
-    assert!(expanded.contains("rewrite(second == third);"), "{expanded}");
-    assert!(expanded.contains("rewrite(third == last);"), "{expanded}");
+    assert!(
+        expanded
+            .contains("rewrite(at(statement(0).entry, first) == at(statement(0).entry, second));"),
+        "{expanded}"
+    );
+    assert!(
+        expanded
+            .contains("rewrite(at(statement(0).entry, second) == at(statement(0).entry, third));"),
+        "{expanded}"
+    );
+    assert!(
+        expanded
+            .contains("rewrite(at(statement(0).entry, third) == at(statement(0).entry, last));"),
+        "{expanded}"
+    );
     assert!(expanded.contains("normalize();"), "{expanded}");
     assert!(!expanded.contains("simp();"), "{expanded}");
     verify_c0_sources(&expanded, &[("choose_first.c", c_source)])
@@ -3899,11 +3994,15 @@ fn outcome_simp_applies_theorems_through_its_recorded_order_path() {
     )
     .expect("the retained outcome theorem path should expand");
     assert!(
-        expanded.contains("apply(int32_le_lt_transitive(first, second, third)) using"),
+        expanded.contains(
+            "apply(int32_le_lt_transitive(at(statement(0).entry, first), at(statement(0).entry, second), at(statement(0).entry, third))) using"
+        ),
         "{expanded}"
     );
     assert!(
-        expanded.contains("apply(int32_lt_le_transitive(first, third, last)) using"),
+        expanded.contains(
+            "apply(int32_lt_le_transitive(at(statement(0).entry, first), at(statement(0).entry, third), at(statement(0).entry, last))) using"
+        ),
         "{expanded}"
     );
     assert!(!expanded.contains("simp();"), "{expanded}");
@@ -8012,6 +8111,86 @@ fn outcome_predicate_unfold_relowers_resource_counts_on_the_checked_proof() {
     assert!(expanded.contains("normalize();"), "{expanded}");
     verify_c0_sources(&expanded, &sources)
         .expect("the retained predicate closure should replay independently");
+}
+
+#[test]
+fn outcome_predicate_unfold_uses_the_checked_frame_population_transition() {
+    let c_source = r#"
+        struct pool { int32 checked_out; };
+        struct object { int32 value; };
+
+        void give_back(struct pool* pool, struct object* object) {
+            pool->checked_out = pool->checked_out - 1;
+        }
+    "#;
+    let click_source = r#"
+        resource pool_object(pool: struct pool*, object: struct object*) {
+            owns object(object);
+        }
+
+        predicate valid_pool(pool: struct pool*) {
+            0 <= pool->checked_out and
+            pool->checked_out == count(pool_object(pool, _))
+        }
+
+        verifying "give_back.c";
+
+        void give_back(struct pool* pool, struct object* object) {
+            requires valid_pool(pool);
+            requires count(pool_object(pool, object)) == 1;
+            owns object(pool);
+            consumes pool_object(pool, object);
+            mutable pool->checked_out;
+            produces object(object);
+            ensures valid_pool(pool);
+        } by {
+            unfold(valid_pool);
+            unfold(pool_object(pool, object));
+            execute();
+            frame();
+            simp();
+        }
+    "#;
+    let sources = [("give_back.c", c_source)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the checked frame population transition should reach the outcome Proof");
+    let compatibility_events = events
+        .iter()
+        .take_while(|event| {
+            !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "whole-contract certificate construction"
+            )
+        })
+        .filter(|event| {
+            matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "outcome simp legacy exit planning"
+                        || name == "outcome simp compatibility construction"
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        compatibility_events.is_empty(),
+        "the live population goal must not enter outcome compatibility planning: {compatibility_events:#?}"
+    );
+
+    let expanded =
+        expand_c0_claim_source(click_source, &sources, "give_back", CProofClaim::Grouped)
+            .expect("the retained population transition should expand");
+    assert!(
+        expanded.contains(
+            "have 0 <= pool->checked_out and pool->checked_out == count(pool_object(pool, _)) by {"
+        ),
+        "{expanded}"
+    );
+    assert!(expanded.contains("unfold(valid_pool);"), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the retained population transition should replay independently");
 }
 
 #[test]

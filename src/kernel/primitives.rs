@@ -1721,6 +1721,12 @@ pub(super) struct Int32PredecessorUpperBoundEvidence {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum Int32OneLeEvidence {
+    Direct(SignedOrderDerivationStep),
+    EqualOne(Vec<BitvectorEqualityDerivationStep>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Int32NonnegativeAddWithinMaxEvidence {
     pub(super) amount_nonnegative: SignedOrderDerivationStep,
     pub(super) within_headroom: SignedOrderDerivationStep,
@@ -1777,8 +1783,9 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32PositivePredecessorIsNonnegative(SignedOrderDerivationStep),
     Int32PositivePredecessorStrictlyDecreases(SignedOrderDerivationStep),
     Int32NonnegativePredecessorUpperBound(Box<Int32PredecessorUpperBoundEvidence>),
-    Int32OneLePredecessorIsNonnegative(SignedOrderDerivationStep),
-    Int32OneLePredecessorStrictlyDecreases(SignedOrderDerivationStep),
+    Int32OneLePredecessorIsNonnegative(Int32OneLeEvidence),
+    Int32OneLePredecessorStrictlyDecreases(Int32OneLeEvidence),
+    Int32EqualOnePredecessorIsZero(Vec<BitvectorEqualityDerivationStep>),
     Int32LeAndNeqImpliesStrict(Box<Int32LeAndNeqStrictEvidence>),
     Int32LeAndNotLtImpliesEquality(Box<Int32LeAndNotLtEqualityEvidence>),
     Int32GeAndNotGtImpliesEquality(Box<Int32GeAndNotGtEqualityEvidence>),

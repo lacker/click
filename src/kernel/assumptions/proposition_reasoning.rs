@@ -15,6 +15,19 @@ fn exact_predecessor_base(term: &Bitvector32Term) -> Option<Bitvector32Term> {
     (amount.as_ref() == &Bitvector32Term::Constant(1)).then(|| value.as_ref().clone())
 }
 
+fn exact_predecessor_equal_zero_base(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> Option<Bitvector32Term> {
+    if right == &Bitvector32Term::Constant(0) {
+        exact_predecessor_base(left)
+    } else if left == &Bitvector32Term::Constant(0) {
+        exact_predecessor_base(right)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     static CONTEXT_INCONSISTENCY_FULL_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1420,10 +1433,9 @@ impl PureFactContext {
                 true,
             ) if lower.as_ref() == &Bitvector32Term::Constant(0) => {
                 exact_predecessor_base(predecessor).and_then(|value| {
-                    self.exact_direct_order_step(&Bitvector32Term::Constant(1), &value, false)
-                        .map(
-                            AtomicPropositionDerivationEvidence::Int32OneLePredecessorIsNonnegative,
-                        )
+                    self.exact_one_le_evidence(&value).map(
+                        AtomicPropositionDerivationEvidence::Int32OneLePredecessorIsNonnegative,
+                    )
                 })
             }
             _ => None,
@@ -1435,15 +1447,22 @@ impl PureFactContext {
             ) => exact_predecessor_base(predecessor)
                 .filter(|base| base == value.as_ref())
                 .and_then(|base| {
-                    self.exact_direct_order_step(
-                        &Bitvector32Term::Constant(1),
-                        &base,
-                        false,
-                    )
-                    .map(
+                    self.exact_one_le_evidence(&base).map(
                         AtomicPropositionDerivationEvidence::Int32OneLePredecessorStrictlyDecreases,
                     )
                 }),
+            _ => None,
+        };
+        let equal_one_predecessor_is_zero_evidence = match proposition {
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
+                exact_predecessor_equal_zero_base(left, right).and_then(|value| {
+                    self.exact_bitvector_equality_path_evidence(
+                        &value,
+                        &Bitvector32Term::Constant(1),
+                    )
+                    .map(AtomicPropositionDerivationEvidence::Int32EqualOnePredecessorIsZero)
+                })
+            }
             _ => None,
         };
         let result = memory_evidence
@@ -1475,6 +1494,7 @@ impl PureFactContext {
             .or(nonnegative_predecessor_upper_bound_evidence)
             .or(one_le_predecessor_is_nonnegative_evidence)
             .or(one_le_predecessor_strictly_decreases_evidence)
+            .or(equal_one_predecessor_is_zero_evidence)
             .or_else(|| {
                 let proved = if for_simp {
                     match proposition {
@@ -1536,28 +1556,7 @@ impl PureFactContext {
             else {
                 return false;
             };
-            let mut current = left.as_ref();
-            for step in path {
-                let Proposition::ConditionIs(
-                    ConditionTerm::Bitvector32Equal(premise_left, premise_right),
-                    true,
-                ) = &step.premise
-                else {
-                    return false;
-                };
-                if current != &step.source
-                    || self.exact_condition_value(&ConditionTerm::equal(
-                        premise_left.as_ref().clone(),
-                        premise_right.as_ref().clone(),
-                    )) != Some(true)
-                    || !((step.source == **premise_left && step.target == **premise_right)
-                        || (step.source == **premise_right && step.target == **premise_left))
-                {
-                    return false;
-                }
-                current = &step.target;
-            }
-            return current == right.as_ref();
+            return self.replays_exact_bitvector_equality_path(path, left, right);
         }
         if let AtomicPropositionDerivationEvidence::SignedOrderPath(path) = evidence {
             let Proposition::ConditionIs(condition, value) = proposition else {
@@ -1993,7 +1992,7 @@ impl PureFactContext {
                 && self.replays_exact_order_step(&bounds.nonnegative)
                 && self.replays_exact_order_step(&bounds.upper_bound);
         }
-        if let AtomicPropositionDerivationEvidence::Int32OneLePredecessorIsNonnegative(step) =
+        if let AtomicPropositionDerivationEvidence::Int32OneLePredecessorIsNonnegative(source) =
             evidence
         {
             let Proposition::ConditionIs(
@@ -2007,12 +2006,9 @@ impl PureFactContext {
                 return false;
             };
             return lower.as_ref() == &Bitvector32Term::Constant(0)
-                && step.lower == Bitvector32Term::Constant(1)
-                && step.upper == value
-                && !step.strict
-                && self.replays_exact_order_step(step);
+                && self.replays_one_le_evidence(source, &value);
         }
-        if let AtomicPropositionDerivationEvidence::Int32OneLePredecessorStrictlyDecreases(step) =
+        if let AtomicPropositionDerivationEvidence::Int32OneLePredecessorStrictlyDecreases(source) =
             evidence
         {
             let Proposition::ConditionIs(
@@ -2025,11 +2021,23 @@ impl PureFactContext {
             let Some(base) = exact_predecessor_base(predecessor) else {
                 return false;
             };
-            return base == **value
-                && step.lower == Bitvector32Term::Constant(1)
-                && step.upper == base
-                && !step.strict
-                && self.replays_exact_order_step(step);
+            return base == **value && self.replays_one_le_evidence(source, &base);
+        }
+        if let AtomicPropositionDerivationEvidence::Int32EqualOnePredecessorIsZero(path) = evidence
+        {
+            let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+                proposition
+            else {
+                return false;
+            };
+            let Some(value) = exact_predecessor_equal_zero_base(left, right) else {
+                return false;
+            };
+            return self.replays_exact_bitvector_equality_path(
+                path,
+                &value,
+                &Bitvector32Term::Constant(1),
+            );
         }
         if let AtomicPropositionDerivationEvidence::Int32LeAndNotLtImpliesEquality(evidence) =
             evidence
@@ -2178,6 +2186,65 @@ impl PureFactContext {
                 strict,
                 premise: Proposition::ConditionIs(condition, truth),
             })
+    }
+
+    fn exact_one_le_evidence(&self, value: &Bitvector32Term) -> Option<Int32OneLeEvidence> {
+        self.exact_bitvector_equality_path_evidence(value, &Bitvector32Term::Constant(1))
+            .map(Int32OneLeEvidence::EqualOne)
+            .or_else(|| {
+                self.exact_direct_order_step(&Bitvector32Term::Constant(1), value, false)
+                    .map(Int32OneLeEvidence::Direct)
+            })
+    }
+
+    fn replays_exact_bitvector_equality_path(
+        &self,
+        path: &[BitvectorEqualityDerivationStep],
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        let mut current = left;
+        for step in path {
+            let Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(premise_left, premise_right),
+                true,
+            ) = &step.premise
+            else {
+                return false;
+            };
+            if current != &step.source
+                || self.exact_condition_value(&ConditionTerm::equal(
+                    premise_left.as_ref().clone(),
+                    premise_right.as_ref().clone(),
+                )) != Some(true)
+                || !((step.source == **premise_left && step.target == **premise_right)
+                    || (step.source == **premise_right && step.target == **premise_left))
+            {
+                return false;
+            }
+            current = &step.target;
+        }
+        current == right
+    }
+
+    fn replays_one_le_evidence(
+        &self,
+        source: &Int32OneLeEvidence,
+        value: &Bitvector32Term,
+    ) -> bool {
+        match source {
+            Int32OneLeEvidence::Direct(step) => {
+                step.lower == Bitvector32Term::Constant(1)
+                    && step.upper == *value
+                    && !step.strict
+                    && self.replays_exact_order_step(step)
+            }
+            Int32OneLeEvidence::EqualOne(path) => self.replays_exact_bitvector_equality_path(
+                path,
+                value,
+                &Bitvector32Term::Constant(1),
+            ),
+        }
     }
 
     fn exact_increment_bounds_evidence(

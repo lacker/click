@@ -371,9 +371,26 @@ impl PropositionDerivation {
         match &self.rule {
             PropositionDerivationRule::ContextualAtomic {
                 evidence:
-                    AtomicPropositionDerivationEvidence::Int32OneLePredecessorIsNonnegative(step),
+                    AtomicPropositionDerivationEvidence::Int32OneLePredecessorIsNonnegative(
+                        Int32OneLeEvidence::Direct(step),
+                    ),
                 ..
             } => Some(step),
+            _ => None,
+        }
+    }
+
+    pub fn int32_equal_one_predecessor_is_nonnegative_path(
+        &self,
+    ) -> Option<&[BitvectorEqualityDerivationStep]> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32OneLePredecessorIsNonnegative(
+                        Int32OneLeEvidence::EqualOne(path),
+                    ),
+                ..
+            } => Some(path),
             _ => None,
         }
     }
@@ -386,9 +403,38 @@ impl PropositionDerivation {
         match &self.rule {
             PropositionDerivationRule::ContextualAtomic {
                 evidence:
-                    AtomicPropositionDerivationEvidence::Int32OneLePredecessorStrictlyDecreases(step),
+                    AtomicPropositionDerivationEvidence::Int32OneLePredecessorStrictlyDecreases(
+                        Int32OneLeEvidence::Direct(step),
+                    ),
                 ..
             } => Some(step),
+            _ => None,
+        }
+    }
+
+    pub fn int32_equal_one_predecessor_strictly_decreases_path(
+        &self,
+    ) -> Option<&[BitvectorEqualityDerivationStep]> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence:
+                    AtomicPropositionDerivationEvidence::Int32OneLePredecessorStrictlyDecreases(
+                        Int32OneLeEvidence::EqualOne(path),
+                    ),
+                ..
+            } => Some(path),
+            _ => None,
+        }
+    }
+
+    pub fn int32_equal_one_predecessor_is_zero_path(
+        &self,
+    ) -> Option<&[BitvectorEqualityDerivationStep]> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::Int32EqualOnePredecessorIsZero(path),
+                ..
+            } => Some(path),
             _ => None,
         }
     }

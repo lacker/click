@@ -496,6 +496,37 @@ pub(super) fn lower_surface_atomic_derivation(
         .and_then(|pairs| {
             plan_recorded_int32_one_le_predecessor_for_context(&lowered_conclusion, pairs, false)
         });
+    let typed_equal_one_predecessor_pairs =
+        recorded_int32_equal_one_predecessor_is_nonnegative_pairs(derivation, &premise_pairs)
+            .or_else(|| {
+                recorded_int32_equal_one_predecessor_strictly_decreases_pairs(
+                    derivation,
+                    &premise_pairs,
+                )
+            });
+    let typed_equal_one_predecessor_plan = typed_equal_one_predecessor_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_equal_one_predecessor_for_context(
+                &lowered_conclusion,
+                derivation,
+                pairs,
+                false,
+            )
+        });
+    let typed_equal_one_predecessor_zero_pairs =
+        recorded_int32_equal_one_predecessor_is_zero_pairs(derivation, &premise_pairs);
+    let typed_equal_one_predecessor_zero_plan = typed_equal_one_predecessor_zero_pairs
+        .as_ref()
+        .filter(|pairs| replay_kind(pairs).is_some())
+        .and_then(|pairs| {
+            plan_recorded_int32_equal_one_predecessor_is_zero(
+                &lowered_conclusion,
+                derivation,
+                pairs,
+            )
+        });
     let typed_le_not_lt_equality_pairs =
         recorded_int32_le_and_not_lt_implies_equality_pairs(derivation, &premise_pairs);
     let typed_le_not_lt_equality_plan = typed_le_not_lt_equality_pairs
@@ -611,6 +642,8 @@ pub(super) fn lower_surface_atomic_derivation(
         || typed_positive_predecessor_decrease_plan.is_some()
         || typed_predecessor_upper_bound_plan.is_some()
         || typed_one_le_predecessor_plan.is_some()
+        || typed_equal_one_predecessor_plan.is_some()
+        || typed_equal_one_predecessor_zero_plan.is_some()
         || typed_le_not_lt_equality_plan.is_some()
         || typed_ge_not_gt_equality_plan.is_some()
         || typed_positive_nonnegative_plan.is_some()
@@ -675,6 +708,12 @@ pub(super) fn lower_surface_atomic_derivation(
     } else if typed_one_le_predecessor_plan.is_some() {
         premise_pairs = typed_one_le_predecessor_pairs
             .expect("a typed one-le-predecessor plan retains its exact premise");
+    } else if typed_equal_one_predecessor_plan.is_some() {
+        premise_pairs = typed_equal_one_predecessor_pairs
+            .expect("a typed equal-one predecessor plan retains its exact equality path");
+    } else if typed_equal_one_predecessor_zero_plan.is_some() {
+        premise_pairs = typed_equal_one_predecessor_zero_pairs
+            .expect("a typed predecessor-zero plan retains its exact equality path");
     } else if typed_le_not_lt_equality_plan.is_some() {
         premise_pairs = typed_le_not_lt_equality_pairs
             .expect("a typed <=/not-< equality plan retains both exact premises");
@@ -987,6 +1026,22 @@ pub(super) fn lower_surface_atomic_derivation(
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "recorded one-le-predecessor rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_equal_one_predecessor_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded equal-one predecessor rule produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_equal_one_predecessor_zero_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded predecessor-zero rule produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -3826,6 +3881,33 @@ pub(super) fn recorded_int32_one_le_predecessor_strictly_decreases_pairs(
         .map(|pair| vec![pair])
 }
 
+pub(super) fn recorded_int32_equal_one_predecessor_is_nonnegative_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    derivation
+        .int32_equal_one_predecessor_is_nonnegative_path()
+        .and_then(|path| recorded_bitvector_equality_path_pairs(path, premise_pairs))
+}
+
+pub(super) fn recorded_int32_equal_one_predecessor_strictly_decreases_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    derivation
+        .int32_equal_one_predecessor_strictly_decreases_path()
+        .and_then(|path| recorded_bitvector_equality_path_pairs(path, premise_pairs))
+}
+
+pub(super) fn recorded_int32_equal_one_predecessor_is_zero_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    derivation
+        .int32_equal_one_predecessor_is_zero_path()
+        .and_then(|path| recorded_bitvector_equality_path_pairs(path, premise_pairs))
+}
+
 pub(super) fn recorded_int32_le_and_not_lt_implies_equality_pairs(
     derivation: &PropositionDerivation,
     premise_pairs: &[(Proposition, ClickProposition)],
@@ -4160,6 +4242,112 @@ pub(super) fn plan_recorded_int32_one_le_predecessor_for_context(
     Some(tactics)
 }
 
+pub(super) fn plan_recorded_int32_equal_one_predecessor_for_context(
+    goal: &Proposition,
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    point_application_closes_goal: bool,
+) -> Option<Vec<ProofTactic>> {
+    let path = derivation
+        .int32_equal_one_predecessor_is_nonnegative_path()
+        .or_else(|| derivation.int32_equal_one_predecessor_strictly_decreases_path())?;
+    let value = one_le_predecessor_value(goal)?;
+    let one_le_kernel = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessEqual(
+            Box::new(Bitvector32Term::Constant(1)),
+            Box::new(value.clone()),
+        ),
+        true,
+    );
+    let first = path.first()?;
+    let (_, first_surface) = premise_pairs
+        .iter()
+        .find(|(kernel, _)| kernel == first.premise())?;
+    let first_oriented = orient_surface_bitvector_equality(first, first_surface)?;
+    let one_le_surface = surface_one_le_equality_source(&first_oriented)?;
+    let available = premise_pairs
+        .iter()
+        .map(|(kernel, _)| kernel.clone())
+        .collect::<Vec<_>>();
+    let mut current = one_le_kernel.clone();
+    let mut equality_tactics = Vec::with_capacity(path.len() + 1);
+    for step in path {
+        let (_, surface) = premise_pairs
+            .iter()
+            .find(|(kernel, _)| kernel == step.premise())?;
+        let oriented_surface = orient_surface_bitvector_equality(step, surface)?;
+        let oriented_kernel = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(step.source().clone()),
+                Box::new(step.target().clone()),
+            ),
+            true,
+        );
+        current =
+            rewrite_proposition_by_exact_equality(&current, &oriented_kernel, &available).ok()?;
+        equality_tactics.push(ProofTactic::Rewrite(oriented_surface));
+    }
+    if !normalizes_context_free(&current) {
+        return None;
+    }
+    equality_tactics.push(ProofTactic::Normalize);
+
+    let mut predecessor_tactics =
+        plan_explicit_one_le_predecessor(goal, &[(one_le_kernel, one_le_surface.clone())])?;
+    if point_application_closes_goal {
+        remove_trailing_theorem_assumption(&mut predecessor_tactics)?;
+        let ProofTactic::Have(positive) = predecessor_tactics.first_mut()? else {
+            return None;
+        };
+        let SourceProof::Script(body) = &mut positive.proof else {
+            return None;
+        };
+        remove_trailing_theorem_assumption(body)?;
+    }
+    let mut tactics = Vec::with_capacity(predecessor_tactics.len() + 1);
+    tactics.push(ProofTactic::Have(ProofHave {
+        proposition: one_le_surface,
+        proof: SourceProof::Script(equality_tactics),
+    }));
+    tactics.append(&mut predecessor_tactics);
+    Some(tactics)
+}
+
+pub(super) fn plan_recorded_int32_equal_one_predecessor_is_zero(
+    goal: &Proposition,
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let path = derivation.int32_equal_one_predecessor_is_zero_path()?;
+    let available = premise_pairs
+        .iter()
+        .map(|(kernel, _)| kernel.clone())
+        .collect::<Vec<_>>();
+    let mut current = goal.clone();
+    let mut tactics = Vec::with_capacity(path.len() + 1);
+    for step in path {
+        let (_, surface) = premise_pairs
+            .iter()
+            .find(|(kernel, _)| kernel == step.premise())?;
+        let oriented_surface = orient_surface_bitvector_equality(step, surface)?;
+        let oriented_kernel = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(step.source().clone()),
+                Box::new(step.target().clone()),
+            ),
+            true,
+        );
+        current =
+            rewrite_proposition_by_exact_equality(&current, &oriented_kernel, &available).ok()?;
+        tactics.push(ProofTactic::Rewrite(oriented_surface));
+    }
+    if !normalizes_context_free(&current) {
+        return None;
+    }
+    tactics.push(ProofTactic::Normalize);
+    Some(tactics)
+}
+
 pub(super) fn plan_recorded_int32_le_and_not_lt_implies_equality_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
@@ -4425,20 +4613,27 @@ fn orient_surface_bitvector_equality(
     oriented(surface, reverse)
 }
 
+fn recorded_bitvector_equality_path_pairs(
+    path: &[BitvectorEqualityDerivationStep],
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<(Proposition, ClickProposition)>> {
+    path.iter()
+        .map(|step| {
+            premise_pairs
+                .iter()
+                .find(|(kernel, _)| kernel == step.premise())
+                .cloned()
+        })
+        .collect()
+}
+
 fn recorded_bitvector_equality_pairs(
     derivation: &PropositionDerivation,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<(Proposition, ClickProposition)>> {
-    derivation.bitvector_equality_path().and_then(|path| {
-        path.iter()
-            .map(|step| {
-                premise_pairs
-                    .iter()
-                    .find(|(kernel, _)| kernel == step.premise())
-                    .cloned()
-            })
-            .collect()
-    })
+    derivation
+        .bitvector_equality_path()
+        .and_then(|path| recorded_bitvector_equality_path_pairs(path, premise_pairs))
 }
 
 /// Transcribe the exact equality path retained by the kernel. Each edge is
@@ -5875,6 +6070,47 @@ fn plan_explicit_one_le_predecessor(
         ]);
     }
     None
+}
+
+fn one_le_predecessor_value(goal: &Proposition) -> Option<Bitvector32Term> {
+    if let Some((goal_lower, predecessor)) = goal_exact_less_equal_parts(goal) {
+        if goal_lower != &Bitvector32Term::Constant(0) {
+            return None;
+        }
+        let Bitvector32Term::Subtract(value, amount) = predecessor else {
+            return None;
+        };
+        (amount.as_ref() == &Bitvector32Term::Constant(1)).then(|| value.as_ref().clone())
+    } else {
+        let (predecessor, value) = goal_exact_less_than_parts(goal)?;
+        let Bitvector32Term::Subtract(predecessor_value, amount) = predecessor else {
+            return None;
+        };
+        (predecessor_value.as_ref() == value && amount.as_ref() == &Bitvector32Term::Constant(1))
+            .then(|| value.clone())
+    }
+}
+
+fn surface_one_le_equality_source(surface: &ClickProposition) -> Option<ClickProposition> {
+    match surface {
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Some(ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(surface_one_le_equality_source(proposition)?),
+        }),
+        ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::Equal,
+            ..
+        } => Some(ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(1))),
+            operator: ComparisonOperator::LessEqual,
+            right: left.clone(),
+        }),
+        _ => None,
+    }
 }
 
 fn plan_explicit_positive_predecessor_strictly_decreases(

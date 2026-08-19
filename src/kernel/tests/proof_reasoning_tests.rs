@@ -1800,6 +1800,84 @@ fn predecessor_derivations_retain_their_exact_named_rule_premises() {
 }
 
 #[test]
+fn predecessor_derivation_retains_equal_one_path_instead_of_a_derived_bound() {
+    let value = Bitvector32Term::Variable(Variable(223));
+    let one = Bitvector32Term::Constant(1);
+    let predecessor = Bitvector32Term::Subtract(Box::new(value.clone()), Box::new(one.clone()));
+    let equal_one =
+        Proposition::ConditionIs(ConditionTerm::equal(one.clone(), value.clone()), true);
+    let assumptions = PureFactContext::new().assume_proposition(equal_one.clone());
+
+    for (goal, nonnegative_result) in [
+        (
+            Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), predecessor.clone()),
+                true,
+            ),
+            true,
+        ),
+        (
+            Proposition::ConditionIs(
+                ConditionTerm::signed_less_than(predecessor.clone(), value.clone()),
+                true,
+            ),
+            false,
+        ),
+    ] {
+        let derivation = assumptions
+            .derive_simp_proposition(&goal)
+            .expect("equality to one should prove the predecessor conclusion");
+        let path = if nonnegative_result {
+            derivation.int32_equal_one_predecessor_is_nonnegative_path()
+        } else {
+            derivation.int32_equal_one_predecessor_strictly_decreases_path()
+        }
+        .expect("the predecessor decision should retain its exact equality path");
+        assert_eq!(path.len(), 1);
+        assert_eq!(path[0].source(), &value);
+        assert_eq!(path[0].target(), &one);
+        assert_eq!(path[0].premise(), &equal_one);
+        assert!(derivation.replay(&assumptions));
+        assert!(!derivation.replay(&PureFactContext::new()));
+    }
+}
+
+#[test]
+fn predecessor_zero_derivation_retains_its_equal_one_path() {
+    let value = Bitvector32Term::Variable(Variable(224));
+    let one = Bitvector32Term::Constant(1);
+    let zero = Bitvector32Term::Constant(0);
+    let predecessor = Bitvector32Term::Subtract(Box::new(value.clone()), Box::new(one.clone()));
+    let equal_one =
+        Proposition::ConditionIs(ConditionTerm::equal(one.clone(), value.clone()), true);
+    let assumptions = PureFactContext::new().assume_proposition(equal_one.clone());
+
+    for goal in [
+        Proposition::ConditionIs(
+            ConditionTerm::equal(predecessor.clone(), zero.clone()),
+            true,
+        ),
+        Proposition::ConditionIs(
+            ConditionTerm::equal(zero.clone(), predecessor.clone()),
+            true,
+        ),
+    ] {
+        let derivation = assumptions
+            .derive_simp_proposition(&goal)
+            .expect("equality to one should prove that the predecessor is zero");
+        let path = derivation
+            .int32_equal_one_predecessor_is_zero_path()
+            .expect("the predecessor-zero decision should retain its exact equality path");
+        assert_eq!(path.len(), 1);
+        assert_eq!(path[0].source(), &value);
+        assert_eq!(path[0].target(), &one);
+        assert_eq!(path[0].premise(), &equal_one);
+        assert!(derivation.replay(&assumptions));
+        assert!(!derivation.replay(&PureFactContext::new()));
+    }
+}
+
+#[test]
 fn bitvector_equality_derivation_retains_its_exact_oriented_path() {
     let left = Bitvector32Term::Variable(Variable(215));
     let middle = Bitvector32Term::Variable(Variable(216));
