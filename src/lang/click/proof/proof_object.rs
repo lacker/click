@@ -78,22 +78,6 @@ struct ExecutionOutcomeProofBranches<'a> {
 /// frontier movement once. Arm bodies then extend the retained `Proof`
 /// descendants; a join owns the corresponding structured certificate node.
 #[derive(Clone)]
-pub(super) struct ExecutionProofBranches<'a> {
-    root: Proof<'a>,
-    /// The recorded split with each arm's child goal id and entry provenance
-    /// marker, then-arm before else-arm. This identity lives on the
-    /// container, never on an arm value: a spliced foreign arm must not be
-    /// able to carry its own credentials into this split's join.
-    split: SplitId,
-    child_goals: [GoalId; 2],
-    entries: [Option<ProofCheckpoint<'a>>; 2],
-    statement_index: usize,
-    continuation_index: usize,
-    continuation_remaining: Option<Arc<CStatement>>,
-    execution_start_state: CState,
-    initial_continuation_depth: usize,
-    arms: [Option<ExecutionProofArm<'a>>; 2],
-}
 
 /// Bookkeeping for one in-`Proof` execution branch split: the split
 /// identity and marker its joins verify, each feasible arm's recorded goal
@@ -200,17 +184,6 @@ struct PreparedExecutionArm {
     execution: ExecutionProofState,
     path_facts: Vec<Proposition>,
     introduced_facts: PersistentOrderedSet<Proposition>,
-    condition_theorem: Theorem,
-}
-
-#[derive(Clone)]
-struct ExecutionProofArm<'a> {
-    proof: Proof<'a>,
-    introduced_facts: PersistentOrderedSet<Proposition>,
-    introduced_effect_facts: Vec<ExecutionPureFact>,
-    introduced_function_entry_prerequisites: PersistentOrderedSet<Proposition>,
-    introduced_function_entry_derivations: PersistentOrderedSet<Theorem>,
-    introduced_unfolded_predicates: PersistentOrderedSet<String>,
     condition_theorem: Theorem,
 }
 
@@ -866,16 +839,6 @@ impl ProofGoals {
                 execution: Some(Arc::new(execution)),
             },
         )
-    }
-
-    /// Installs a complete path-local context on the addressed frontier
-    /// goal. Joins use this to carry merged fact, unfold, and snapshot
-    /// successors in one atomic goal update.
-    fn replace_frontier_context_at(&self, at: GoalId, context: GoalContext) -> Self {
-        let Some(Goal::Frontier(_)) = self.get(at) else {
-            unreachable!("a frontier transition requires the addressed frontier goal");
-        };
-        self.with_context_at(at, context)
     }
 
     /// The strict frontier successor: the addressed goal must be an
@@ -5498,64 +5461,6 @@ impl<'a> Proof<'a> {
         Ok((successor, record))
     }
 
-    pub(super) fn begin_execution_branch(&self) -> Result<ExecutionProofBranches<'a>, ClickError> {
-        let prepared = self.prepare_execution_branch()?;
-        let (split, child_goals, children_goals) =
-            self.state.goals.branch_children::<2>(self.focused);
-        let mut entries: [Option<ProofCheckpoint<'a>>; 2] = [None, None];
-        let mut arms: [Option<ExecutionProofArm<'a>>; 2] = [None, None];
-        for (arm_index, prepared_arm) in prepared.arms.into_iter().enumerate() {
-            let Some(prepared_arm) = prepared_arm else {
-                continue;
-            };
-            let proof = Proof {
-                context: self.context.clone(),
-                state: Arc::new(ProofState {
-                    locals: self.state.locals.clone(),
-                    goals: children_goals[arm_index].replace_frontier_at(
-                        child_goals[arm_index],
-                        prepared_arm.facts,
-                        prepared_arm.execution,
-                    ),
-                    added_facts: Arc::new(prepared_arm.path_facts.clone()),
-                    checked_facts: Arc::new(prepared_arm.path_facts),
-                }),
-                // The structural certificate is owned by the container and
-                // installed atomically by the checked join. The entry marker
-                // carries no step; its identity records this split instance.
-                node: Arc::new(ProofNode {
-                    parent: Some(self.node.clone()),
-                    step: None,
-                    focused: child_goals[arm_index],
-                    depth: self.node.depth,
-                }),
-                focused: child_goals[arm_index],
-            };
-            entries[arm_index] = Some(proof.checkpoint());
-            arms[arm_index] = Some(ExecutionProofArm {
-                proof,
-                introduced_facts: prepared_arm.introduced_facts,
-                introduced_effect_facts: Vec::new(),
-                introduced_function_entry_prerequisites: PersistentOrderedSet::default(),
-                introduced_function_entry_derivations: PersistentOrderedSet::default(),
-                introduced_unfolded_predicates: PersistentOrderedSet::default(),
-                condition_theorem: prepared_arm.condition_theorem,
-            });
-        }
-        Ok(ExecutionProofBranches {
-            root: self.clone(),
-            split,
-            child_goals,
-            entries,
-            statement_index: prepared.statement_index,
-            continuation_index: prepared.continuation_index,
-            continuation_remaining: prepared.continuation_remaining,
-            execution_start_state: prepared.execution_start_state,
-            initial_continuation_depth: prepared.initial_continuation_depth,
-            arms,
-        })
-    }
-
     /// Independently checks an already-serialized simple certificate.
     ///
     /// This is for explicit source verification and expansion/audit, where
@@ -9655,1120 +9560,6 @@ impl<'a> ExecutionOutcomeProofBranches<'a> {
     }
 }
 
-impl<'a> ExecutionProofBranches<'a> {
-    /// Extracts one arm's checked body through its recorded entry marker and
-    /// requires the arm to still own its recorded child goal. A derivation
-    /// from another split of the same root fails here transactionally
-    /// instead of being spliced into the structured certificate.
-    fn arm_certificate(
-        root: &Proof<'a>,
-        split: SplitId,
-        expected_goal: GoalId,
-        entry: Option<&ProofCheckpoint<'a>>,
-        arm: &ExecutionProofArm<'a>,
-    ) -> Result<ProofCertificate, ClickError> {
-        let Some(entry) = entry else {
-            return Err(root.step_error(format!(
-                "split {split:?} recorded no entry for this branch arm"
-            )));
-        };
-        if arm.proof.sole_goal_id() != Some(expected_goal) {
-            return Err(root.step_error(format!(
-                "branch arm does not own the goal recorded by split {split:?}"
-            )));
-        }
-        arm.proof.certificate_since(entry).map_err(|error| {
-            root.step_error(format!(
-                "branch arm did not derive from split {split:?} ({error:?})"
-            ))
-        })
-    }
-
-    fn derived_join_continuation(&self) -> Option<ExecutionBranchJoinContinuation> {
-        derive_execution_join_continuation(
-            self.root.execution()?,
-            &self.continuation_remaining,
-            self.continuation_index,
-        )
-    }
-
-    fn resource_contexts_descend_from_root(&self) -> bool {
-        let Some(root_execution) = self.root.execution() else {
-            return false;
-        };
-        let [Some(then_arm), Some(else_arm)] = &self.arms else {
-            return false;
-        };
-        let Some(then_execution) = then_arm.proof.execution() else {
-            return false;
-        };
-        let Some(else_execution) = else_arm.proof.execution() else {
-            return false;
-        };
-        then_execution
-            .state
-            .resources()
-            .descends_from(root_execution.state.resources())
-            && else_execution
-                .state
-                .resources()
-                .descends_from(root_execution.state.resources())
-    }
-
-    fn arm_reached_shared_continuation(&self, arm: &ExecutionProofArm<'a>) -> bool {
-        let Some(join) = self.derived_join_continuation() else {
-            return false;
-        };
-        let Some(execution) = arm.proof.execution() else {
-            return false;
-        };
-        execution
-            .replay
-            .completed_branch_regions
-            .contains(&self.statement_index)
-            && execution.replay.frontier.next_statement_index == join.next_statement_index
-            && execution
-                .replay
-                .frontier
-                .continuations
-                .shares_tail_with(&join.continuations)
-            && matches!(
-                &execution.replay.frontier.point,
-                ProofExecutionPoint::StatementEntry { remaining }
-                    if remaining.as_ref() == join.remaining.as_ref()
-            )
-    }
-
-    fn ensure_arm_can_advance(
-        &self,
-        take_then: bool,
-        arm: &ExecutionProofArm<'a>,
-    ) -> Result<(), ClickError> {
-        if self.arm_reached_shared_continuation(arm) {
-            return Err(self.root.step_error(format!(
-                "{} arm of `branch` must stop at the shared continuation statement({})",
-                if take_then { "then" } else { "else" },
-                self.continuation_index
-            )));
-        }
-        Ok(())
-    }
-
-    /// Enforces the source `branch` body's boundary without constraining the
-    /// separate terminal-execution operation, whose logical certificate may
-    /// deliberately continue both arms to function exit.
-    pub(super) fn ensure_source_arm_step(
-        &self,
-        take_then: bool,
-        step: &SimpleProofStep,
-    ) -> Result<(), ClickError> {
-        if !matches!(step, SimpleProofStep::StepUsing(_)) {
-            return Ok(());
-        }
-        let arm = self.arms[usize::from(!take_then)].as_ref().ok_or_else(|| {
-            self.root.step_error(format!(
-                "cannot advance the infeasible {} execution arm",
-                if take_then { "then" } else { "else" }
-            ))
-        })?;
-        self.ensure_arm_can_advance(take_then, arm)
-    }
-
-    /// Re-derives one logical arm from its retained Surface certificate.
-    /// Terminal and decided branches record one synthetic branch-entry
-    /// `step using` (two for an empty C arm); those structural entry steps are
-    /// validated here and skipped because `begin_execution_branch` already
-    /// performed them.
-    pub(super) fn check_logical_arm_certificate(
-        mut self,
-        take_then: bool,
-        certificate: &ProofCertificate,
-    ) -> Result<Self, ClickError> {
-        let root_execution = self.root.execution().ok_or_else(|| {
-            self.root
-                .step_error("execution branch root lost its semantic state")
-        })?;
-        let ProofContext::Execution(context) = self.root.context.as_ref() else {
-            unreachable!("execution branch retained a non-execution context")
-        };
-        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-            &root_execution.replay,
-            &root_execution.state,
-            context.function,
-            context.arguments,
-            context.claim_label,
-            context.tactic_index,
-            "terminal branch certificate",
-        )?;
-        let CStatement::If {
-            then_branch,
-            else_branch,
-            ..
-        } = statement
-        else {
-            return Err(self
-                .root
-                .step_error("terminal branch certificate root is not a C `if`"));
-        };
-        let source_arm = if take_then {
-            then_branch.as_ref()
-        } else {
-            else_branch.as_ref()
-        };
-        let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
-        if certificate.steps().len() < entry_steps
-            || !certificate.steps()[..entry_steps]
-                .iter()
-                .all(|step| matches!(step, SimpleProofStep::StepUsing(_)))
-        {
-            return Err(self.root.step_error(format!(
-                "logical execution {} certificate does not begin with its {entry_steps} checked branch-entry step(s)",
-                if take_then { "then" } else { "else" },
-            )));
-        }
-        for step in &certificate.steps()[entry_steps..] {
-            self = self.apply_step(take_then, step.clone())?;
-        }
-        Ok(self)
-    }
-
-    fn retain_arm_successor(
-        arm: &mut ExecutionProofArm<'a>,
-        successor: Proof<'a>,
-        prior_effect_count: usize,
-    ) {
-        arm.proof = successor;
-        for fact in arm.proof.added_facts() {
-            arm.introduced_facts.insert(fact.clone());
-        }
-        let execution = arm
-            .proof
-            .execution()
-            .expect("checked execution step retains semantic state");
-        for fact in execution
-            .replay
-            .effect_facts
-            .iter()
-            .skip(prior_effect_count)
-        {
-            if !arm.introduced_effect_facts.contains(fact) {
-                arm.introduced_effect_facts.push(fact.clone());
-            }
-        }
-        for fact in &execution.last_step_delta.function_entry_prerequisites {
-            arm.introduced_function_entry_prerequisites
-                .insert(fact.clone());
-        }
-        for theorem in &execution.last_step_delta.function_entry_derivations {
-            arm.introduced_function_entry_derivations
-                .insert(theorem.clone());
-        }
-        for name in &execution.last_step_delta.unfolded_predicates {
-            arm.introduced_unfolded_predicates.insert(name.clone());
-        }
-    }
-
-    fn retain_nested_branch_metadata(
-        arm: &mut ExecutionProofArm<'a>,
-        nested: &ExecutionProofBranches<'a>,
-    ) {
-        for nested_arm in nested.arms.iter().flatten() {
-            for fact in &nested_arm.introduced_function_entry_prerequisites {
-                arm.introduced_function_entry_prerequisites
-                    .insert(fact.clone());
-            }
-            for theorem in &nested_arm.introduced_function_entry_derivations {
-                arm.introduced_function_entry_derivations
-                    .insert(theorem.clone());
-            }
-            for name in &nested_arm.introduced_unfolded_predicates {
-                arm.introduced_unfolded_predicates.insert(name.clone());
-            }
-        }
-    }
-
-    /// Returns the sole kernel-feasible C arm, or `None` when both arms are
-    /// feasible. The no-arm case is rejected when the container is created.
-    pub(super) fn sole_feasible_arm(&self) -> Option<bool> {
-        match (&self.arms[0], &self.arms[1]) {
-            (Some(_), None) => Some(true),
-            (None, Some(_)) => Some(false),
-            _ => None,
-        }
-    }
-
-    /// Whether both feasible descendants have completed the C function.
-    ///
-    /// Search uses this read-only query only to select the audited terminal
-    /// join below; it cannot manufacture or edit either outcome.
-    pub(super) fn both_arms_at_function_exit(&self) -> bool {
-        self.arms.iter().all(|arm| {
-            arm.as_ref().is_some_and(|arm| {
-                arm.proof
-                    .execution()
-                    .is_some_and(|execution| execution.replay.is_at_function_exit())
-            })
-        })
-    }
-
-    /// Whether this branch can attempt a checked interface join.
-    ///
-    /// This structural preflight deliberately does not inspect the exported
-    /// interface. Arm steps may establish or fold an owned resource that did
-    /// not exist at the branch root. The completed-arm check below decides
-    /// whether that resulting representation can actually be joined.
-    pub(super) fn supports_interface_branch(&self) -> bool {
-        self.sole_feasible_arm().is_some()
-            || (self.derived_join_continuation().is_some()
-                && self.resource_contexts_descend_from_root())
-    }
-
-    #[cfg(test)]
-    fn arm(&self, take_then: bool) -> Option<&Proof<'a>> {
-        self.arms[usize::from(!take_then)]
-            .as_ref()
-            .map(|arm| &arm.proof)
-    }
-
-    /// Opens one proposition proof rooted at the selected execution arm's
-    /// exact current Proof. The nested scope cannot be published into the arm
-    /// except through `join_nested`, which checks this ancestry again.
-    pub(super) fn begin_have(
-        &self,
-        take_then: bool,
-        proposition: ClickProposition,
-    ) -> Result<ProofScope<'a>, ClickError> {
-        let arm = self.arms[usize::from(!take_then)].as_ref().ok_or_else(|| {
-            self.root.step_error(format!(
-                "cannot begin `have` in the infeasible {} execution arm",
-                if take_then { "then" } else { "else" }
-            ))
-        })?;
-        arm.proof.begin_have(proposition)
-    }
-
-    /// Incorporates one completed proposition scope as the selected arm's
-    /// next direct checked successor. A scope searched from another arm or an
-    /// earlier arm state cannot be spliced into this container.
-    pub(super) fn join_nested(
-        &self,
-        take_then: bool,
-        nested: ProofScope<'a>,
-    ) -> Result<Self, ClickError> {
-        let arm_index = usize::from(!take_then);
-        let arm = self.arms[arm_index].as_ref().ok_or_else(|| {
-            self.root.step_error(format!(
-                "cannot join `have` into the infeasible {} execution arm",
-                if take_then { "then" } else { "else" }
-            ))
-        })?;
-        if !Arc::ptr_eq(&nested.root.context, &arm.proof.context)
-            || !Arc::ptr_eq(&nested.root.state, &arm.proof.state)
-            || !Arc::ptr_eq(&nested.root.node, &arm.proof.node)
-        {
-            return Err(self
-                .root
-                .step_error("nested proof scope is not rooted at the selected execution arm"));
-        }
-        let prior_effect_count = arm
-            .proof
-            .execution()
-            .ok_or_else(|| {
-                self.root
-                    .step_error("execution branch arm lost its semantic state")
-            })?
-            .replay
-            .effect_facts
-            .len();
-        let successor = nested.join()?;
-        let Some(parent) = successor.node.parent.as_ref() else {
-            return Err(self
-                .root
-                .step_error("nested arm proof produced a root without provenance"));
-        };
-        if !Arc::ptr_eq(parent, &arm.proof.node) {
-            return Err(self
-                .root
-                .step_error("nested arm proof did not produce one direct checked successor"));
-        }
-        let mut next = self.clone();
-        let next_arm = next.arms[arm_index]
-            .as_mut()
-            .expect("the cloned feasible arm is retained");
-        Self::retain_arm_successor(next_arm, successor, prior_effect_count);
-        Ok(next)
-    }
-
-    /// Applies one checked simple step inside the selected C arm and retains
-    /// only that step's semantic fact delta for the eventual join.
-    pub(super) fn apply_step(
-        mut self,
-        take_then: bool,
-        step: SimpleProofStep,
-    ) -> Result<Self, ClickError> {
-        if !matches!(
-            step,
-            SimpleProofStep::StepUsing(_)
-                | SimpleProofStep::TransportUsing { .. }
-                | SimpleProofStep::UnfoldPredicate(_)
-                | SimpleProofStep::UnfoldResource(_)
-                | SimpleProofStep::FoldResource(_)
-                | SimpleProofStep::ObserveResource(_)
-                | SimpleProofStep::ApplyTheoremUsing { .. }
-        ) {
-            return Err(self.root.step_error(
-                "execution branch arms currently accept only statement, transport, unfold/fold/observe resource, predicate unfold, and theorem-application steps",
-            ));
-        }
-        let arm_index = usize::from(!take_then);
-        let mut arm = self.arms[arm_index].take().ok_or_else(|| {
-            self.root.step_error(format!(
-                "cannot apply a step to the infeasible {} execution arm",
-                if take_then { "then" } else { "else" }
-            ))
-        })?;
-        let prior_effect_count = arm
-            .proof
-            .execution()
-            .ok_or_else(|| {
-                self.root
-                    .step_error("execution branch arm lost its semantic state")
-            })?
-            .replay
-            .effect_facts
-            .len();
-        let successor = arm.proof.apply_step(step)?;
-        Self::retain_arm_successor(&mut arm, successor, prior_effect_count);
-        self.arms[arm_index] = Some(arm);
-        Ok(self)
-    }
-
-    /// Runs one contextual smart statement selector against the selected
-    /// arm's owned Proof. Branch arms necessarily carry the root's unrelated
-    /// resources and may carry facts introduced by an earlier arm step, so
-    /// they use the same indexed selection policy as checked `execute`. A
-    /// successful search is already the retained `StepUsing` successor; a
-    /// miss leaves this branch container unchanged.
-    pub(super) fn try_smart_step(&self, take_then: bool) -> Result<Option<Self>, ClickError> {
-        let arm_index = usize::from(!take_then);
-        let arm = self.arms[arm_index].as_ref().ok_or_else(|| {
-            self.root.step_error(format!(
-                "cannot apply a smart step to the infeasible {} execution arm",
-                if take_then { "then" } else { "else" }
-            ))
-        })?;
-        self.ensure_arm_can_advance(take_then, arm)?;
-        let prior_effect_count = arm
-            .proof
-            .execution()
-            .ok_or_else(|| {
-                self.root
-                    .step_error("execution branch arm lost its semantic state")
-            })?
-            .replay
-            .effect_facts
-            .len();
-        let successor = arm.proof.try_indexed_execute_step()?;
-        let Some(successor) = successor else {
-            return Ok(None);
-        };
-        let mut next = self.clone();
-        let next_arm = next.arms[arm_index]
-            .as_mut()
-            .expect("the cloned feasible arm is retained");
-        Self::retain_arm_successor(next_arm, successor, prior_effect_count);
-        Ok(Some(next))
-    }
-
-    /// Selects one bare theorem application against the chosen arm's owned
-    /// Proof, then submits the resulting explicit `ApplyTheoremUsing` step to
-    /// that same Proof. Search cannot add the conclusion directly, and a
-    /// failed selection leaves the branch container unchanged.
-    pub(super) fn try_theorem_application(
-        &self,
-        take_then: bool,
-        application: &TheoremApplication,
-    ) -> Result<Option<Self>, ClickError> {
-        let arm_index = usize::from(!take_then);
-        let arm = self.arms[arm_index].as_ref().ok_or_else(|| {
-            self.root.step_error(format!(
-                "cannot apply a theorem to the infeasible {} execution arm",
-                if take_then { "then" } else { "else" }
-            ))
-        })?;
-        if arm.proof.is_at_function_exit() {
-            // Exit applications need one point proof per concrete outcome so
-            // that `result` lowers correctly. Ordered finalization owns that
-            // distinct operation until outcome goals migrate into Proof.
-            return Ok(None);
-        }
-        let Some(successor) = arm.proof.try_theorem_application(application)? else {
-            return Ok(None);
-        };
-        let prior_effect_count = arm
-            .proof
-            .execution()
-            .ok_or_else(|| {
-                self.root
-                    .step_error("execution branch arm lost its semantic state")
-            })?
-            .replay
-            .effect_facts
-            .len();
-        let mut next = self.clone();
-        let next_arm = next.arms[arm_index]
-            .as_mut()
-            .expect("the cloned feasible arm is retained");
-        Self::retain_arm_successor(next_arm, successor, prior_effect_count);
-        Ok(Some(next))
-    }
-
-    /// Runs bare fact-transport search against the selected arm's immutable
-    /// Proof. Each candidate is an explicit `TransportUsing` checked on that
-    /// arm; only the already-checked successful descendant is retained.
-    pub(super) fn try_fact_transport(
-        &self,
-        take_then: bool,
-        source: &ClickProposition,
-        target: &ClickProposition,
-    ) -> Result<Option<Self>, ClickError> {
-        let arm_index = usize::from(!take_then);
-        let arm = self.arms[arm_index].as_ref().ok_or_else(|| {
-            self.root.step_error(format!(
-                "cannot transport a fact in the infeasible {} execution arm",
-                if take_then { "then" } else { "else" }
-            ))
-        })?;
-        if arm.proof.is_at_function_exit() {
-            return Ok(None);
-        }
-        let prior_effect_count = arm
-            .proof
-            .execution()
-            .ok_or_else(|| {
-                self.root
-                    .step_error("execution branch arm lost its semantic state")
-            })?
-            .replay
-            .effect_facts
-            .len();
-        let Some(successor) = arm.proof.try_execution_fact_transport(source, target)? else {
-            return Ok(None);
-        };
-        let mut next = self.clone();
-        let next_arm = next.arms[arm_index]
-            .as_mut()
-            .expect("the cloned feasible arm is retained");
-        Self::retain_arm_successor(next_arm, successor, prior_effect_count);
-        Ok(Some(next))
-    }
-
-    /// Runs the narrow statement selector independently in one C arm until
-    /// that arm reaches function exit. Every accepted transition is already
-    /// a retained `StepUsing` successor. Nested C `if` frontiers recurse
-    /// through another checked branch container; any other structural
-    /// frontier is a search miss and leaves the caller free to use the legacy
-    /// executor.
-    pub(super) fn try_execute_arm_to_exit(
-        mut self,
-        take_then: bool,
-    ) -> Result<Option<Self>, ClickError> {
-        let arm_index = usize::from(!take_then);
-        loop {
-            let mut arm = self.arms[arm_index].take().ok_or_else(|| {
-                self.root.step_error(format!(
-                    "cannot execute the infeasible {} execution arm",
-                    if take_then { "then" } else { "else" }
-                ))
-            })?;
-            let execution = arm.proof.execution().ok_or_else(|| {
-                self.root
-                    .step_error("execution branch arm lost its semantic state")
-            })?;
-            if execution.replay.is_at_function_exit() {
-                self.arms[arm_index] = Some(arm);
-                return Ok(Some(self));
-            }
-            let prior_effect_count = execution.replay.effect_facts.len();
-            let successor = if let Some(successor) = arm.proof.try_indexed_execute_step()? {
-                successor
-            } else {
-                if !arm.proof.is_at_execution_branch()? {
-                    self.arms[arm_index] = Some(arm);
-                    return Ok(None);
-                }
-                let nested = arm.proof.begin_execution_branch()?;
-                if let Some(take_then) = nested.sole_feasible_arm() {
-                    let Some(nested) = nested.try_execute_arm_to_exit(take_then)? else {
-                        self.arms[arm_index] = Some(arm);
-                        return Ok(None);
-                    };
-                    Self::retain_nested_branch_metadata(&mut arm, &nested);
-                    nested.finish_decided()?
-                } else {
-                    let Some(nested) = nested.try_execute_arm_to_exit(true)? else {
-                        self.arms[arm_index] = Some(arm);
-                        return Ok(None);
-                    };
-                    let Some(nested) = nested.try_execute_arm_to_exit(false)? else {
-                        self.arms[arm_index] = Some(arm);
-                        return Ok(None);
-                    };
-                    Self::retain_nested_branch_metadata(&mut arm, &nested);
-                    nested.join_terminal()?
-                }
-            };
-            Self::retain_arm_successor(&mut arm, successor, prior_effect_count);
-            self.arms[arm_index] = Some(arm);
-        }
-    }
-
-    /// Joins two checked C branch descendants that both return.
-    ///
-    /// Unlike the equal-state execution `Branch` join, distinct return
-    /// outcomes remain as separate paths. The retained certificate is the
-    /// logical Surface Click `if` needed to replay those paths: each arm
-    /// begins with the explicit statement step(s) whose semantic branch entry
-    /// was performed structurally by `begin_execution_branch`.
-    pub(super) fn join_terminal(self) -> Result<Proof<'a>, ClickError> {
-        let [Some(then_arm), Some(else_arm)] = self.arms else {
-            return Err(self
-                .root
-                .step_error("a terminal execution `branch` requires both feasible arms"));
-        };
-        let then_body = Self::arm_certificate(
-            &self.root,
-            self.split,
-            self.child_goals[0],
-            self.entries[0].as_ref(),
-            &then_arm,
-        )?;
-        let else_body = Self::arm_certificate(
-            &self.root,
-            self.split,
-            self.child_goals[1],
-            self.entries[1].as_ref(),
-            &else_arm,
-        )?;
-        let then_execution = then_arm.proof.execution().ok_or_else(|| {
-            self.root
-                .step_error("then branch arm lost its execution state")
-        })?;
-        let else_execution = else_arm.proof.execution().ok_or_else(|| {
-            self.root
-                .step_error("else branch arm lost its execution state")
-        })?;
-        let root_execution = self.root.execution().ok_or_else(|| {
-            self.root
-                .step_error("execution branch root lost its semantic state")
-        })?;
-        let parts = self.root.merge_terminal_execution_join(
-            self.root.facts(),
-            self.root.focused_goal_unfolds(),
-            root_execution,
-            self.statement_index,
-            self.execution_start_state.clone(),
-            self.initial_continuation_depth,
-            [
-                CheckedExecutionJoinArm {
-                    certificate: then_body,
-                    facts: then_arm.proof.facts(),
-                    execution: then_execution,
-                    condition_theorem: &then_arm.condition_theorem,
-                    introduced_facts: then_arm.introduced_facts.iter().cloned().collect(),
-                    introduced_effect_facts: then_arm.introduced_effect_facts.clone(),
-                    introduced_prerequisites: then_arm
-                        .introduced_function_entry_prerequisites
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    introduced_derivations: then_arm
-                        .introduced_function_entry_derivations
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    introduced_unfolds: then_arm
-                        .introduced_unfolded_predicates
-                        .iter()
-                        .cloned()
-                        .collect(),
-                },
-                CheckedExecutionJoinArm {
-                    certificate: else_body,
-                    facts: else_arm.proof.facts(),
-                    execution: else_execution,
-                    condition_theorem: &else_arm.condition_theorem,
-                    introduced_facts: else_arm.introduced_facts.iter().cloned().collect(),
-                    introduced_effect_facts: else_arm.introduced_effect_facts.clone(),
-                    introduced_prerequisites: else_arm
-                        .introduced_function_entry_prerequisites
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    introduced_derivations: else_arm
-                        .introduced_function_entry_derivations
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    introduced_unfolds: else_arm
-                        .introduced_unfolded_predicates
-                        .iter()
-                        .cloned()
-                        .collect(),
-                },
-            ],
-        )?;
-        Ok(Proof {
-            context: self.root.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.root.state.locals.clone(),
-                goals: self.root.state.goals.replace_frontier_context_at(
-                    self.root.focused,
-                    GoalContext {
-                        facts: parts.facts,
-                        unfolded_predicates: parts.unfolded_predicates,
-                        execution: Some(Arc::new(parts.execution)),
-                    },
-                ),
-                added_facts: Arc::new(parts.common_added_facts.clone()),
-                checked_facts: Arc::new(parts.common_added_facts),
-            }),
-            node: Arc::new(ProofNode {
-                parent: Some(self.root.node.clone()),
-                step: Some(Arc::new(parts.step)),
-                focused: self.root.focused,
-                depth: self.root.node.depth + 1,
-            }),
-            focused: self.root.focused,
-        })
-    }
-
-    /// Closes a C branch for which the kernel certified exactly one feasible
-    /// arm. This is path retention, not a two-state join: the surviving
-    /// descendant becomes the successor while a logical `If` records the
-    /// checked source condition and an empty contradictory arm.
-    pub(super) fn finish_decided(self) -> Result<Proof<'a>, ClickError> {
-        let take_then = self.sole_feasible_arm().ok_or_else(|| {
-            self.root
-                .step_error("a decided execution branch requires exactly one kernel-feasible arm")
-        })?;
-        let arm_index = usize::from(!take_then);
-        let arm = self.arms[arm_index]
-            .as_ref()
-            .expect("sole feasible arm was selected above");
-        let root_execution = self.root.execution().ok_or_else(|| {
-            self.root
-                .step_error("execution branch root lost its semantic state")
-        })?;
-        let execution = arm.proof.execution().ok_or_else(|| {
-            self.root
-                .step_error("decided execution branch arm lost its semantic state")
-        })?;
-        let body = Self::arm_certificate(
-            &self.root,
-            self.split,
-            self.child_goals[arm_index],
-            self.entries[arm_index].as_ref(),
-            arm,
-        )?;
-        let view = CheckedExecutionJoinArm {
-            certificate: body,
-            facts: arm.proof.facts(),
-            execution,
-            condition_theorem: &arm.condition_theorem,
-            introduced_facts: arm.introduced_facts.iter().cloned().collect(),
-            introduced_effect_facts: arm.introduced_effect_facts.clone(),
-            introduced_prerequisites: arm
-                .introduced_function_entry_prerequisites
-                .iter()
-                .cloned()
-                .collect(),
-            introduced_derivations: arm
-                .introduced_function_entry_derivations
-                .iter()
-                .cloned()
-                .collect(),
-            introduced_unfolds: arm.introduced_unfolded_predicates.iter().cloned().collect(),
-        };
-        let step = self.root.merge_decided_execution_path(
-            root_execution,
-            self.statement_index,
-            self.continuation_index,
-            self.initial_continuation_depth,
-            take_then,
-            &view,
-        )?;
-
-        let mut state = (*arm.proof.state).clone();
-        let introduced_facts = arm.introduced_facts.to_vec();
-        state.added_facts = Arc::new(introduced_facts.clone());
-        state.checked_facts = Arc::new(introduced_facts);
-        let mut execution = arm
-            .proof
-            .execution()
-            .cloned()
-            .expect("validated decided execution state");
-        execution.branch_path = root_execution.branch_path.clone();
-        let arm_facts = arm.proof.facts().clone();
-        state.goals = state
-            .goals
-            .replace_frontier_at(arm.proof.focused, arm_facts, execution);
-        // The successor's goal map came from the decided arm, so the handle
-        // addresses that arm's recorded goal id.
-        let focused = arm.proof.focused;
-        Ok(Proof {
-            context: self.root.context.clone(),
-            state: Arc::new(state),
-            node: Arc::new(ProofNode {
-                parent: Some(self.root.node.clone()),
-                step: Some(Arc::new(step)),
-                focused,
-                depth: self.root.node.depth + 1,
-            }),
-            focused,
-        })
-    }
-
-    /// Joins two checked C branch descendants through one explicit common
-    /// frontier interface.
-    ///
-    /// Each arm is independently checked and abstracted before any result is
-    /// selected. The operation accepts the join only when those abstract
-    /// semantic states and exported facts agree exactly, then records the
-    /// corresponding `Branch { ensuring, .. }` certificate atomically.
-    pub(super) fn join_with_interface(
-        self,
-        assertions: Vec<ProofAssertion>,
-    ) -> Result<Proof<'a>, ClickError> {
-        if self.sole_feasible_arm().is_some() {
-            return self.finish_decided_with_interface(assertions);
-        }
-        let [Some(then_arm), Some(else_arm)] = self.arms else {
-            return Err(self
-                .root
-                .step_error("checked `branch ensuring` found no feasible continuing arm"));
-        };
-        let then_proof = Self::arm_certificate(
-            &self.root,
-            self.split,
-            self.child_goals[0],
-            self.entries[0].as_ref(),
-            &then_arm,
-        )?;
-        let else_proof = Self::arm_certificate(
-            &self.root,
-            self.split,
-            self.child_goals[1],
-            self.entries[1].as_ref(),
-            &else_arm,
-        )?;
-        let then_execution = then_arm.proof.execution().ok_or_else(|| {
-            self.root
-                .step_error("then branch arm lost its execution state")
-        })?;
-        let else_execution = else_arm.proof.execution().ok_or_else(|| {
-            self.root
-                .step_error("else branch arm lost its execution state")
-        })?;
-        let root_execution = self.root.execution().ok_or_else(|| {
-            self.root
-                .step_error("execution branch root lost its semantic state")
-        })?;
-        let parts = self.root.merge_interface_execution_join(
-            self.root.facts(),
-            self.root.focused_goal_unfolds(),
-            root_execution,
-            self.statement_index,
-            self.continuation_index,
-            &self.continuation_remaining,
-            self.execution_start_state.clone(),
-            assertions,
-            [
-                CheckedExecutionJoinArm {
-                    certificate: then_proof,
-                    facts: then_arm.proof.facts(),
-                    execution: then_execution,
-                    condition_theorem: &then_arm.condition_theorem,
-                    introduced_facts: then_arm.introduced_facts.iter().cloned().collect(),
-                    introduced_effect_facts: then_arm.introduced_effect_facts.clone(),
-                    introduced_prerequisites: then_arm
-                        .introduced_function_entry_prerequisites
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    introduced_derivations: then_arm
-                        .introduced_function_entry_derivations
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    introduced_unfolds: then_arm
-                        .introduced_unfolded_predicates
-                        .iter()
-                        .cloned()
-                        .collect(),
-                },
-                CheckedExecutionJoinArm {
-                    certificate: else_proof,
-                    facts: else_arm.proof.facts(),
-                    execution: else_execution,
-                    condition_theorem: &else_arm.condition_theorem,
-                    introduced_facts: else_arm.introduced_facts.iter().cloned().collect(),
-                    introduced_effect_facts: else_arm.introduced_effect_facts.clone(),
-                    introduced_prerequisites: else_arm
-                        .introduced_function_entry_prerequisites
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    introduced_derivations: else_arm
-                        .introduced_function_entry_derivations
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    introduced_unfolds: else_arm
-                        .introduced_unfolded_predicates
-                        .iter()
-                        .cloned()
-                        .collect(),
-                },
-            ],
-        )?;
-        Ok(Proof {
-            context: self.root.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.root.state.locals.clone(),
-                goals: self.root.state.goals.replace_frontier_context_at(
-                    self.root.focused,
-                    GoalContext {
-                        facts: parts.facts,
-                        unfolded_predicates: parts.unfolded_predicates,
-                        execution: Some(Arc::new(parts.execution)),
-                    },
-                ),
-                added_facts: Arc::new(parts.common_added_facts.clone()),
-                checked_facts: Arc::new(parts.common_added_facts),
-            }),
-            node: Arc::new(ProofNode {
-                parent: Some(self.root.node.clone()),
-                step: Some(Arc::new(parts.step)),
-                focused: self.root.focused,
-                depth: self.root.node.depth + 1,
-            }),
-            focused: self.root.focused,
-        })
-    }
-
-    /// Validates an explicit interface on the sole kernel-feasible arm.
-    ///
-    /// No abstraction or resource merge occurs: the surviving checked state
-    /// remains the successor, and the structured `Branch` records an empty
-    /// impossible arm. Consequently ownership assertions are safe here even
-    /// though two-arm ownership normalization has not migrated.
-    fn finish_decided_with_interface(
-        self,
-        assertions: Vec<ProofAssertion>,
-    ) -> Result<Proof<'a>, ClickError> {
-        let take_then = self.sole_feasible_arm().ok_or_else(|| {
-            self.root
-                .step_error("a decided `branch ensuring` requires exactly one kernel-feasible arm")
-        })?;
-        let decided_index = usize::from(!take_then);
-        let arm = self.arms[decided_index]
-            .as_ref()
-            .expect("sole feasible interface arm was selected");
-        let root_execution = self.root.execution().ok_or_else(|| {
-            self.root
-                .step_error("execution branch root lost its semantic state")
-        })?;
-        let arm_execution = arm.proof.execution().ok_or_else(|| {
-            self.root
-                .step_error("decided interface arm lost its execution state")
-        })?;
-        let body = Self::arm_certificate(
-            &self.root,
-            self.split,
-            self.child_goals[decided_index],
-            self.entries[decided_index].as_ref(),
-            arm,
-        )?;
-        let view = CheckedExecutionJoinArm {
-            certificate: body,
-            facts: arm.proof.facts(),
-            execution: arm_execution,
-            condition_theorem: &arm.condition_theorem,
-            introduced_facts: arm.introduced_facts.iter().cloned().collect(),
-            introduced_effect_facts: arm.introduced_effect_facts.clone(),
-            introduced_prerequisites: arm
-                .introduced_function_entry_prerequisites
-                .iter()
-                .cloned()
-                .collect(),
-            introduced_derivations: arm
-                .introduced_function_entry_derivations
-                .iter()
-                .cloned()
-                .collect(),
-            introduced_unfolds: arm.introduced_unfolded_predicates.iter().cloned().collect(),
-        };
-        let parts = self.root.merge_decided_interface_execution_path(
-            self.root.focused_goal_unfolds(),
-            root_execution,
-            self.statement_index,
-            self.continuation_index,
-            self.initial_continuation_depth,
-            take_then,
-            assertions,
-            &view,
-        )?;
-        Ok(Proof {
-            context: self.root.context.clone(),
-            state: Arc::new(ProofState {
-                locals: arm.proof.state.locals.clone(),
-                goals: arm.proof.state.goals.replace_frontier_at(
-                    arm.proof.focused,
-                    parts.facts,
-                    parts.execution,
-                ),
-                added_facts: Arc::new(parts.common_added_facts.clone()),
-                checked_facts: Arc::new(parts.common_added_facts),
-            }),
-            node: Arc::new(ProofNode {
-                parent: Some(self.root.node.clone()),
-                step: Some(Arc::new(parts.step)),
-                focused: arm.proof.focused,
-                depth: self.root.node.depth + 1,
-            }),
-            focused: arm.proof.focused,
-        })
-    }
-
-    /// Preserves the original empty-arm entry point for callers that require
-    /// the branch to contain no body steps.
-    pub(super) fn join_empty(self) -> Result<Proof<'a>, ClickError> {
-        self.join_checked(true)
-    }
-
-    /// Joins two checked non-returning C branch arms at their shared frontier.
-    pub(super) fn join(self) -> Result<Proof<'a>, ClickError> {
-        self.join_checked(false)
-    }
-
-    fn join_checked(self, require_empty: bool) -> Result<Proof<'a>, ClickError> {
-        let [Some(then_arm), Some(else_arm)] = self.arms else {
-            return Err(self.root.step_error(
-                "an execution `branch` with one feasible arm is a decided path, not a join",
-            ));
-        };
-        let then_proof = Self::arm_certificate(
-            &self.root,
-            self.split,
-            self.child_goals[0],
-            self.entries[0].as_ref(),
-            &then_arm,
-        )?;
-        let else_proof = Self::arm_certificate(
-            &self.root,
-            self.split,
-            self.child_goals[1],
-            self.entries[1].as_ref(),
-            &else_arm,
-        )?;
-        let root_execution = self.root.execution().ok_or_else(|| {
-            self.root
-                .step_error("execution branch root lost its semantic state")
-        })?;
-        let then_execution = then_arm.proof.execution().ok_or_else(|| {
-            self.root
-                .step_error("then branch arm lost its execution state")
-        })?;
-        let else_execution = else_arm.proof.execution().ok_or_else(|| {
-            self.root
-                .step_error("else branch arm lost its execution state")
-        })?;
-        let parts = self.root.merge_checked_execution_join(
-            self.root.facts(),
-            self.root.focused_goal_unfolds(),
-            root_execution,
-            self.statement_index,
-            self.continuation_index,
-            self.continuation_remaining.clone(),
-            self.execution_start_state.clone(),
-            self.initial_continuation_depth,
-            require_empty,
-            [
-                CheckedExecutionJoinArm {
-                    certificate: then_proof,
-                    facts: then_arm.proof.facts(),
-                    execution: then_execution,
-                    condition_theorem: &then_arm.condition_theorem,
-                    introduced_facts: then_arm.introduced_facts.iter().cloned().collect(),
-                    introduced_effect_facts: then_arm.introduced_effect_facts.clone(),
-                    introduced_prerequisites: then_arm
-                        .introduced_function_entry_prerequisites
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    introduced_derivations: then_arm
-                        .introduced_function_entry_derivations
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    introduced_unfolds: then_arm
-                        .introduced_unfolded_predicates
-                        .iter()
-                        .cloned()
-                        .collect(),
-                },
-                CheckedExecutionJoinArm {
-                    certificate: else_proof,
-                    facts: else_arm.proof.facts(),
-                    execution: else_execution,
-                    condition_theorem: &else_arm.condition_theorem,
-                    introduced_facts: else_arm.introduced_facts.iter().cloned().collect(),
-                    introduced_effect_facts: else_arm.introduced_effect_facts.clone(),
-                    introduced_prerequisites: else_arm
-                        .introduced_function_entry_prerequisites
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    introduced_derivations: else_arm
-                        .introduced_function_entry_derivations
-                        .iter()
-                        .cloned()
-                        .collect(),
-                    introduced_unfolds: else_arm
-                        .introduced_unfolded_predicates
-                        .iter()
-                        .cloned()
-                        .collect(),
-                },
-            ],
-        )?;
-        Ok(Proof {
-            context: self.root.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.root.state.locals.clone(),
-                goals: self.root.state.goals.replace_frontier_context_at(
-                    self.root.focused,
-                    GoalContext {
-                        facts: parts.facts,
-                        unfolded_predicates: parts.unfolded_predicates,
-                        execution: Some(Arc::new(parts.execution)),
-                    },
-                ),
-                added_facts: Arc::new(parts.common_added_facts.clone()),
-                checked_facts: Arc::new(parts.common_added_facts),
-            }),
-            node: Arc::new(ProofNode {
-                parent: Some(self.root.node.clone()),
-                step: Some(Arc::new(parts.step)),
-                focused: self.root.focused,
-                depth: self.root.node.depth + 1,
-            }),
-            focused: self.root.focused,
-        })
-    }
-}
-
 impl<'a> ProofScope<'a> {
     #[cfg(test)]
     pub(super) fn body(&self) -> &Proof<'a> {
@@ -10831,6 +9622,22 @@ impl<'a> ProofScope<'a> {
         Ok(next)
     }
 
+    /// Applies one ordinary checked step inside the nested body. Failed
+    /// candidates leave the enclosing scope value unchanged.
+    pub(super) fn apply_step(&self, step: SimpleProofStep) -> Result<Self, ClickError> {
+        let mut next = self.clone();
+        let body = self.body.apply_step(step)?;
+        if matches!(self.structure.as_ref(), ProofScopeStructure::Open { .. }) {
+            for fact in body.added_facts() {
+                if !next.introduced_facts.contains(fact) {
+                    next.introduced_facts.push(fact.clone());
+                }
+            }
+        }
+        next.body = body;
+        Ok(next)
+    }
+
     /// Opens the C branch at this scope body's frontier as an in-`Proof`
     /// sibling split. The returned proof advances by focusing each recorded
     /// arm; `join_execution_split` accepts the direct joined successor.
@@ -10866,81 +9673,6 @@ impl<'a> ProofScope<'a> {
         for fact in body.added_facts() {
             if !next.introduced_facts.contains(fact) {
                 next.introduced_facts.push(fact.clone());
-            }
-        }
-        next.body = body;
-        Ok(next)
-    }
-
-    /// Opens the C branch at this scope body's current execution frontier.
-    /// The branch container remains rooted at the body until its feasible
-    /// arms are checked and `join_execution_branch` accepts the direct
-    /// joined or decided successor.
-    pub(super) fn begin_execution_branch(&self) -> Result<ExecutionProofBranches<'a>, ClickError> {
-        self.body.begin_execution_branch()
-    }
-
-    /// Joins checked C arms as the next direct structural node of this scope.
-    ///
-    /// The exact-root checks prevent a branch searched from a sibling scope
-    /// from being spliced into this one. Only facts common to the audited join
-    /// are exposed as the outer scope's output-sized delta.
-    pub(super) fn join_execution_branch(
-        &self,
-        branches: ExecutionProofBranches<'a>,
-        empty: bool,
-        ensuring: Option<Vec<ProofAssertion>>,
-    ) -> Result<Self, ClickError> {
-        if !Arc::ptr_eq(&branches.root.context, &self.body.context)
-            || !Arc::ptr_eq(&branches.root.state, &self.body.state)
-            || !Arc::ptr_eq(&branches.root.node, &self.body.node)
-        {
-            return Err(self
-                .root
-                .step_error("execution branches are not rooted at the current scope body"));
-        }
-        let body = if let Some(assertions) = ensuring {
-            branches.join_with_interface(assertions)?
-        } else if branches.sole_feasible_arm().is_some() {
-            branches.finish_decided()?
-        } else if branches.both_arms_at_function_exit() {
-            branches.join_terminal()?
-        } else if empty {
-            branches.join_empty()?
-        } else {
-            branches.join()?
-        };
-        let Some(parent) = body.node.parent.as_ref() else {
-            return Err(self
-                .root
-                .step_error("execution branch join produced a root without provenance"));
-        };
-        if !Arc::ptr_eq(parent, &self.body.node) {
-            return Err(self
-                .root
-                .step_error("execution branch join did not produce one direct checked successor"));
-        }
-        let mut next = self.clone();
-        for fact in body.added_facts() {
-            if !next.introduced_facts.contains(fact) {
-                next.introduced_facts.push(fact.clone());
-            }
-        }
-        next.body = body;
-        Ok(next)
-    }
-
-    /// Applies one ordinary checked step inside the nested body. Failed
-    /// candidates leave the enclosing scope value unchanged.
-    #[allow(dead_code)]
-    pub(super) fn apply_step(&self, step: SimpleProofStep) -> Result<Self, ClickError> {
-        let mut next = self.clone();
-        let body = self.body.apply_step(step)?;
-        if matches!(self.structure.as_ref(), ProofScopeStructure::Open { .. }) {
-            for fact in body.added_facts() {
-                if !next.introduced_facts.contains(fact) {
-                    next.introduced_facts.push(fact.clone());
-                }
             }
         }
         next.body = body;
@@ -14651,34 +13383,30 @@ mod tests {
                 &click_function_environment,
                 &theorem_environment,
             );
-            let branches = root
-                .begin_execution_branch()
+            let (split, record) = root
+                .split_focused_execution_branch()
                 .expect("the symbolic condition should expose two theorem-search arms");
-            let nested_branches = branches.clone();
-            let execute_branches = branches.clone();
+            let then_id = record.arm_id(true).expect("then arm is feasible");
+            let else_id = record.arm_id(false).expect("else arm is feasible");
+            let then_arm = split
+                .focus_split_arm(&record, true)
+                .expect("the then sibling is open");
             assert!(
-                branches
-                    .try_theorem_application(true, &missing_application)
+                then_arm
+                    .try_theorem_application(&missing_application)
                     .expect("an unavailable exact theorem premise should be a bounded miss")
                     .is_none(),
                 "an unavailable theorem premise must not manufacture an arm descendant"
             );
-            assert!(
-                branches
-                    .arm(true)
-                    .expect("then arm remains feasible")
-                    .certificate()
-                    .steps()
-                    .is_empty(),
-                "failed theorem search must not alter arm provenance"
-            );
 
             let before = fact_node_allocations();
-            let branches = branches
-                .try_theorem_application(true, &application)
+            let branches = then_arm
+                .try_theorem_application(&application)
                 .expect("then arm theorem search should run")
                 .expect("then arm theorem search should retain its checked step")
-                .try_theorem_application(false, &application)
+                .focus_split_arm(&record, false)
+                .expect("the else sibling is open")
+                .try_theorem_application(&application)
                 .expect("else arm theorem search should run")
                 .expect("else arm theorem search should retain its checked step");
             samples.push((
@@ -14686,13 +13414,12 @@ mod tests {
                 (u32::BITS - size.leading_zeros()) as usize,
                 fact_node_allocations() - before,
             ));
-            for take_then in [true, false] {
+            let arm_steps = branches
+                .partition_steps_since(&record.marker, record.split, [then_id, else_id])
+                .expect("both theorem-search arms partition by attribution");
+            for steps in &arm_steps {
                 assert!(matches!(
-                    branches
-                        .arm(take_then)
-                        .expect("both theorem-search arms remain feasible")
-                        .certificate()
-                        .steps(),
+                    steps.as_slice(),
                     [SimpleProofStep::ApplyTheoremUsing {
                         application: retained,
                         premises,
@@ -14700,62 +13427,40 @@ mod tests {
                 ));
             }
 
-            if size == 16 {
-                let foreign = nested_branches
-                    .begin_have(true, premise.clone())
-                    .expect("the then arm should open a proposition proof")
-                    .apply_step(SimpleProofStep::Assumption)
-                    .expect("the root premise should close the nested arm proof");
-                let rejected = match nested_branches.join_nested(false, foreign) {
-                    Ok(_) => panic!("a nested proof from the then arm must not enter the else arm"),
-                    Err(error) => error,
-                };
-                assert!(
-                    rejected.message().contains("not rooted at the selected"),
-                    "{rejected:?}"
-                );
-                for take_then in [true, false] {
-                    assert!(
-                        nested_branches
-                            .arm(take_then)
-                            .expect("both nested-proof arms remain feasible")
-                            .certificate()
-                            .steps()
-                            .is_empty(),
-                        "a rejected cross-arm join must not alter either arm"
-                    );
-                }
-            }
-
+            // The cross-arm nested-splice rejection is structural in the
+            // sibling form: a scope join produces one direct successor of
+            // the arm that opened it, so there is no operation that could
+            // publish it into the sibling; the scope provenance regressions
+            // pin that law.
             let before_nested = fact_node_allocations();
-            let then_nested = nested_branches
-                .begin_have(true, premise.clone())
+            let nested_branches = split
+                .focus_split_arm(&record, true)
+                .expect("the then sibling is open")
+                .begin_have(premise.clone())
                 .expect("the then arm should open a proposition proof")
                 .apply_step(SimpleProofStep::Assumption)
-                .expect("the root premise should close the then-arm proof");
-            let nested_branches = nested_branches
-                .join_nested(true, then_nested)
-                .expect("the completed proof should advance the then arm");
-            let else_nested = nested_branches
-                .begin_have(false, premise.clone())
+                .expect("the root premise should close the then-arm proof")
+                .join()
+                .expect("the completed proof should advance the then arm")
+                .focus_split_arm(&record, false)
+                .expect("the else sibling is open")
+                .begin_have(premise.clone())
                 .expect("the else arm should open a proposition proof")
                 .apply_step(SimpleProofStep::Assumption)
-                .expect("the root premise should close the else-arm proof");
-            let nested_branches = nested_branches
-                .join_nested(false, else_nested)
+                .expect("the root premise should close the else-arm proof")
+                .join()
                 .expect("the completed proof should advance the else arm");
             nested_samples.push((
                 size,
                 (u32::BITS - size.leading_zeros()) as usize,
                 fact_node_allocations() - before_nested,
             ));
-            for take_then in [true, false] {
+            let nested_steps = nested_branches
+                .partition_steps_since(&record.marker, record.split, [then_id, else_id])
+                .expect("both nested-proof arms partition by attribution");
+            for steps in &nested_steps {
                 assert!(matches!(
-                    nested_branches
-                        .arm(take_then)
-                        .expect("both nested-proof arms remain feasible")
-                        .certificate()
-                        .steps(),
+                    steps.as_slice(),
                     [SimpleProofStep::Have {
                         proposition: retained,
                         proof,
@@ -14765,25 +13470,28 @@ mod tests {
             }
 
             let before_execute = fact_node_allocations();
-            let execute_branches = execute_branches
-                .try_execute_arm_to_exit(true)
+            let execute_branches = split
+                .focus_split_arm(&record, true)
+                .expect("the then sibling is open")
+                .try_focused_execute_to_exit()
                 .expect("then-arm execution search should run")
                 .expect("the direct then return should produce a checked descendant")
-                .try_execute_arm_to_exit(false)
+                .focus_split_arm(&record, false)
+                .expect("the else sibling is open")
+                .try_focused_execute_to_exit()
                 .expect("else-arm execution search should run")
                 .expect("the direct else return should produce a checked descendant");
-            for take_then in [true, false] {
+            let execute_steps = execute_branches
+                .partition_steps_since(&record.marker, record.split, [then_id, else_id])
+                .expect("both terminal execution arms partition by attribution");
+            for steps in &execute_steps {
                 assert!(matches!(
-                    execute_branches
-                        .arm(take_then)
-                        .expect("both terminal execution arms remain feasible")
-                        .certificate()
-                        .steps(),
+                    steps.as_slice(),
                     [SimpleProofStep::StepUsing(premises)] if premises.len() == 1
                 ));
             }
             let terminal = execute_branches
-                .join_terminal()
+                .join_focused_execution_terminal(&record)
                 .expect("the two checked return arms should join as terminal outcomes");
             assert!(matches!(
                 terminal.certificate().steps(),
@@ -19459,13 +18167,13 @@ mod tests {
                 &theorem_environment,
             );
             let before = fact_node_allocations();
-            let branches = root
-                .begin_execution_branch()
-                .expect("symbolic condition should open two checked arms");
-            assert!(branches.arm(true).is_some());
-            assert!(branches.arm(false).is_some());
-            let joined = branches
-                .join_empty()
+            let (split, record) = root
+                .split_focused_execution_branch()
+                .expect("symbolic condition should open two sibling arms");
+            assert!(record.arm_id(true).is_some());
+            assert!(record.arm_id(false).is_some());
+            let joined = split
+                .join_focused_execution_empty(&record)
                 .expect("identical empty arms should rejoin");
             let allocations = fact_node_allocations() - before;
             allocation_samples.push((
@@ -19593,15 +18301,23 @@ mod tests {
                 &click_function_environment,
                 &theorem_environment,
             );
-            let branches = root
-                .begin_execution_branch()
-                .expect("symbolic condition should open two checked arms")
-                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+            let (split, record) = root
+                .split_focused_execution_branch()
+                .expect("symbolic condition should open two sibling arms");
+            let branches = split
+                .focus_split_arm(&record, true)
+                .expect("the then sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("then assignment should check")
-                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .focus_split_arm(&record, false)
+                .expect("the else sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("else assignment should check");
             let overshoot_step = SimpleProofStep::StepUsing(Vec::new());
-            let Err(overshoot) = branches.ensure_source_arm_step(true, &overshoot_step) else {
+            let then_arm = branches
+                .focus_split_arm(&record, true)
+                .expect("the then sibling stays open until the join");
+            let Err(overshoot) = then_arm.ensure_focused_arm_step(&record, &overshoot_step) else {
                 panic!("an arm must not consume the shared return continuation");
             };
             assert!(
@@ -19612,7 +18328,7 @@ mod tests {
             );
             let before = fact_node_allocations();
             let joined = branches
-                .join()
+                .join_focused_execution_branch(&record)
                 .expect("identical checked assignment arms should rejoin");
             assert!(matches!(
                 joined.certificate().steps(),
@@ -19870,16 +18586,24 @@ mod tests {
         let mut samples = Vec::new();
         for size in [16_u32, 64, 256, 1024, 4096] {
             let root = make_root(size, CState::new());
-            let branches = root
-                .begin_execution_branch()
-                .expect("symbolic condition should open both interface arms")
-                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+            let (split, record) = root
+                .split_focused_execution_branch()
+                .expect("symbolic condition should open both interface arms");
+            let branches = split
+                .focus_split_arm(&record, true)
+                .expect("the then sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("then assignment should check")
-                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .focus_split_arm(&record, false)
+                .expect("the else sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("else assignment should check");
             let before = fact_node_allocations();
             let joined = branches
-                .join_with_interface(vec![ProofAssertion::Fact(nonnegative.clone())])
+                .join_focused_execution_interface(
+                    &record,
+                    vec![ProofAssertion::Fact(nonnegative.clone())],
+                )
                 .expect("both assignments should establish the interface");
             samples.push((
                 size,
@@ -19925,51 +18649,28 @@ mod tests {
 
         let root = make_root(16, CState::new());
         let retained = root.clone();
-        let error = root
-            .begin_execution_branch()
-            .expect("rejection test should open both arms")
-            .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+        let (split, record) = root
+            .split_focused_execution_branch()
+            .expect("rejection test should open both arms");
+        let error = split
+            .focus_split_arm(&record, true)
+            .expect("the then sibling is open")
+            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
             .expect("then assignment should check")
-            .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+            .focus_split_arm(&record, false)
+            .expect("the else sibling is open")
+            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
             .expect("else assignment should check")
-            .join_with_interface(vec![ProofAssertion::Fact(negative)])
+            .join_focused_execution_interface(&record, vec![ProofAssertion::Fact(negative)])
             .err()
             .expect("each arm must independently establish the interface");
         assert!(error.message().contains("did not establish fact"));
         assert!(Arc::ptr_eq(&root.state, &retained.state));
         assert!(root.certificate().steps().is_empty());
 
-        // An arm advanced under a different split of the same root has
-        // identical replay metadata — both splits opened the same C `if` —
-        // so only the recorded entry marker distinguishes it. The join must
-        // reject the splice transactionally.
-        let root = make_root(16, CState::new());
-        let genuine = root
-            .begin_execution_branch()
-            .expect("identity test should open both arms")
-            .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
-            .expect("then assignment should check")
-            .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
-            .expect("else assignment should check");
-        let foreign = root
-            .begin_execution_branch()
-            .expect("a second split of the same root should open both arms")
-            .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
-            .expect("foreign then assignment should check");
-        let mut spliced = genuine.clone();
-        spliced.arms[0] = foreign.arms[0].clone();
-        let error = spliced
-            .join_with_interface(Vec::new())
-            .err()
-            .expect("a foreign arm must not satisfy this split's join");
-        assert!(
-            error.message().contains("did not derive from split"),
-            "{error:?}"
-        );
-        assert!(root.certificate().steps().is_empty());
-        genuine
-            .join_with_interface(Vec::new())
-            .expect("the recorded arms still join after the rejected splice");
+        // The container's spliced-arm identity regression is superseded by
+        // the split-identity regression below: a foreign split of the same
+        // root collides numerically and is rejected by marker identity.
 
         // The in-`Proof` execution split: both feasible arms become sibling
         // frontier goals in one state, each advancing by focus on one
@@ -20072,17 +18773,22 @@ mod tests {
                     CResourceFact::own_token(format!("unrelated_{index}"), vec![int32(index)])
                 }))
                 .unchecked_with_fact(marker_fact.clone());
-            let branches = make_root(16, CState::new().with_resource_context(resources))
-                .begin_execution_branch()
-                .expect("the owned-interface condition should expose both arms")
-                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+            let (split, record) = make_root(16, CState::new().with_resource_context(resources))
+                .split_focused_execution_branch()
+                .expect("the owned-interface condition should expose both arms");
+            let branches = split
+                .focus_split_arm(&record, true)
+                .expect("the then sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("owned-interface then assignment should check")
-                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .focus_split_arm(&record, false)
+                .expect("the else sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("owned-interface else assignment should check");
             let assertions = vec![ProofAssertion::Resource(marker_clause.clone())];
             let before = fact_node_allocations();
             let joined = branches
-                .join_with_interface(assertions.clone())
+                .join_focused_execution_interface(&record, assertions.clone())
                 .expect("an exact unchanged owned resource should rejoin");
             ownership_samples.push((
                 size,
@@ -20124,42 +18830,48 @@ mod tests {
                     CResourceFact::own_token(format!("unrelated_{index}"), vec![int32(index)])
                 }))
                 .unchecked_with_fact(permit_fact.clone());
-            let branches = make_root(16, CState::new().with_resource_context(resources))
-                .begin_execution_branch()
+            let (split, record) = make_root(16, CState::new().with_resource_context(resources))
+                .split_focused_execution_branch()
                 .expect("the transformed-interface condition should expose both arms");
             assert!(
-                branches.supports_interface_branch(),
+                record.supports_interface_branch(),
                 "a structural preflight must not require a resource folded later in the arms"
             );
-            let branches = branches
-                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+            let branches = split
+                .focus_split_arm(&record, true)
+                .expect("the then sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("transformed-interface then assignment should check")
-                .apply_step(true, SimpleProofStep::FoldResource(ready_clause.clone()))
+                .apply_step(SimpleProofStep::FoldResource(ready_clause.clone()))
                 .expect("then arm should fold its ready resource")
-                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .focus_split_arm(&record, false)
+                .expect("the else sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("transformed-interface else assignment should check")
-                .apply_step(false, SimpleProofStep::FoldResource(ready_clause.clone()))
+                .apply_step(SimpleProofStep::FoldResource(ready_clause.clone()))
                 .expect("else arm should independently fold its ready resource");
-            let then_resources = branches
-                .arm(true)
-                .expect("then arm should remain feasible")
-                .execution()
-                .expect("then arm should retain execution")
-                .state
-                .resources();
-            let else_resources = branches
-                .arm(false)
-                .expect("else arm should remain feasible")
-                .execution()
-                .expect("else arm should retain execution")
-                .state
-                .resources();
-            assert!(!then_resources.shares_storage_with(else_resources));
+            let arm_execution = |take_then: bool| {
+                let id = record.arm_id(take_then).expect("both arms are feasible");
+                let Some(Goal::Frontier(frontier)) = branches.state.goals.get(id) else {
+                    panic!("both arms should remain open execution frontiers");
+                };
+                frontier
+                    .context
+                    .execution
+                    .as_deref()
+                    .expect("both arms should retain execution")
+            };
+            assert!(
+                !arm_execution(true)
+                    .state
+                    .resources()
+                    .shares_storage_with(arm_execution(false).state.resources())
+            );
 
             let assertions = vec![ProofAssertion::Resource(ready_clause.clone())];
             let before = fact_node_allocations();
             let joined = branches
-                .join_with_interface(assertions)
+                .join_focused_execution_interface(&record, assertions)
                 .expect("independently folded resource snapshots should rejoin");
             changed_snapshot_samples.push((
                 size,
@@ -20207,16 +18919,24 @@ mod tests {
                     CResourceFact::own_token(format!("quantity_unrelated_{index}"), Vec::new())
                 }))
                 .unchecked_with_fact(represented_quantity.clone());
-            let branches = make_root(16, CState::new().with_resource_context(resources))
-                .begin_execution_branch()
-                .expect("the normalized-ownership probe should expose both arms")
-                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+            let (split, record) = make_root(16, CState::new().with_resource_context(resources))
+                .split_focused_execution_branch()
+                .expect("the normalized-ownership probe should expose both arms");
+            let branches = split
+                .focus_split_arm(&record, true)
+                .expect("the then sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("normalized-ownership then assignment should check")
-                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .focus_split_arm(&record, false)
+                .expect("the else sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("normalized-ownership else assignment should check");
             let before = fact_node_allocations();
             let normalized_join = branches
-                .join_with_interface(vec![ProofAssertion::Resource(marker_clause.clone())])
+                .join_focused_execution_interface(
+                    &record,
+                    vec![ProofAssertion::Resource(marker_clause.clone())],
+                )
                 .expect("an entailed quantity representation should be consumed and restored once");
             normalized_quantity_samples.push((
                 size,
@@ -20242,26 +18962,34 @@ mod tests {
             );
         }
 
-        let invalid_branches = make_root(
+        let invalid_root = make_root(
             16,
             CState::new().with_resource_context(
                 ResourceContext::new().unchecked_with_fact(represented_quantity),
             ),
-        )
-        .begin_execution_branch()
-        .expect("the rejected quantity probe should expose both arms")
-        .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
-        .expect("rejected quantity then assignment should check")
-        .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
-        .expect("rejected quantity else assignment should check");
-        let invalid_root = invalid_branches.root.clone();
+        );
+        let (invalid_split, invalid_record) = invalid_root
+            .split_focused_execution_branch()
+            .expect("the rejected quantity probe should expose both arms");
+        let invalid_branches = invalid_split
+            .focus_split_arm(&invalid_record, true)
+            .expect("the then sibling is open")
+            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .expect("rejected quantity then assignment should check")
+            .focus_split_arm(&invalid_record, false)
+            .expect("the else sibling is open")
+            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .expect("rejected quantity else assignment should check");
         let quantity_three = ResourceClause::Quantified {
             quantity: ContractExpression::CFragment(CExpression::Value(int32(3))),
             resource: Box::new(marker_clause),
         };
         assert!(
             invalid_branches
-                .join_with_interface(vec![ProofAssertion::Resource(quantity_three)])
+                .join_focused_execution_interface(
+                    &invalid_record,
+                    vec![ProofAssertion::Resource(quantity_three)],
+                )
                 .is_err(),
             "an interface may not manufacture a quantity larger than either arm owns"
         );
@@ -20328,27 +19056,34 @@ mod tests {
 
         let mut samples = Vec::new();
         for size in [16_u32, 64, 256, 1024, 4096] {
-            let outer = make_root(size)
-                .begin_execution_branch()
+            let (outer_split, outer_record) = make_root(size)
+                .split_focused_execution_branch()
                 .expect("outer symbolic condition should expose both arms");
-            let outer_statement = outer.statement_index;
-            let outer_then = outer
-                .arm(true)
-                .expect("outer then arm should be feasible")
-                .clone();
-            let nested = outer_then
-                .begin_execution_branch()
-                .expect("nested symbolic condition should expose both arms")
-                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+            let outer_statement = outer_record.statement_index;
+            let outer_then = outer_split
+                .focus_split_arm(&outer_record, true)
+                .expect("outer then arm should be feasible");
+            let (nested_split, nested_record) = outer_then
+                .split_focused_execution_branch()
+                .expect("nested symbolic condition should expose both arms");
+            let nested = nested_split
+                .focus_split_arm(&nested_record, true)
+                .expect("the nested then sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("nested then assignment should check")
-                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .focus_split_arm(&nested_record, false)
+                .expect("the nested else sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("nested else assignment should check");
-            let nested_statement = nested.statement_index;
-            assert!(nested.continuation_remaining.is_none());
+            let nested_statement = nested_record.statement_index;
+            assert!(nested_record.continuation_remaining.is_none());
 
             let before = fact_node_allocations();
             let joined = nested
-                .join_with_interface(vec![ProofAssertion::Fact(nonnegative.clone())])
+                .join_focused_execution_interface(
+                    &nested_record,
+                    vec![ProofAssertion::Fact(nonnegative.clone())],
+                )
                 .expect("nested end-of-arm interface should reach the outer continuation");
             samples.push((
                 size,
@@ -20450,23 +19185,19 @@ mod tests {
             )
         };
 
-        let probe = make_root(Vec::new())
-            .begin_execution_branch()
+        let (_, probe) = make_root(Vec::new())
+            .split_focused_execution_branch()
             .expect("the unconstrained condition should expose both arms");
-        let selecting_fact = probe.arms[0]
+        let selecting_fact = probe.path_facts[0]
             .as_ref()
             .expect("the then arm should be feasible")
-            .introduced_facts
-            .iter()
-            .next()
+            .first()
             .expect("the then arm should retain its condition fact")
             .clone();
-        let rejecting_fact = probe.arms[1]
+        let rejecting_fact = probe.path_facts[1]
             .as_ref()
             .expect("the else arm should be feasible")
-            .introduced_facts
-            .iter()
-            .next()
+            .first()
             .expect("the else arm should retain its condition fact")
             .clone();
         let mut samples = Vec::new();
@@ -20474,18 +19205,20 @@ mod tests {
             let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
             facts.push(selecting_fact.clone());
             let root = make_root(facts);
-            let branches = root
-                .begin_execution_branch()
+            let (split, record) = root
+                .split_focused_execution_branch()
                 .expect("the selecting fact should make exactly one arm feasible");
-            assert_eq!(branches.sole_feasible_arm(), Some(true));
-            assert!(branches.arm(false).is_none());
-            let branches = branches
-                .try_smart_step(true)
+            assert_eq!(record.sole_feasible_arm(), Some(true));
+            assert!(record.arm_id(false).is_none());
+            let advanced = split
+                .focus_split_arm(&record, true)
+                .expect("the sole sibling is open")
+                .try_indexed_execute_step()
                 .expect("smart selection should remain bounded")
                 .expect("the assignment should produce a checked simple successor");
             let before = fact_node_allocations();
-            let decided = branches
-                .finish_decided()
+            let decided = advanced
+                .finish_focused_execution_decided(&record)
                 .expect("the sole checked arm should form a decided path");
             samples.push((
                 size,
@@ -20540,16 +19273,18 @@ mod tests {
             );
         }
 
-        let branches = make_root(vec![rejecting_fact])
-            .begin_execution_branch()
+        let (split, record) = make_root(vec![rejecting_fact])
+            .split_focused_execution_branch()
             .expect("the rejecting fact should retain only the else arm");
-        assert_eq!(branches.sole_feasible_arm(), Some(false));
-        let branches = branches
-            .try_smart_step(false)
+        assert_eq!(record.sole_feasible_arm(), Some(false));
+        let advanced = split
+            .focus_split_arm(&record, false)
+            .expect("the sole else sibling is open")
+            .try_indexed_execute_step()
             .expect("else-arm smart selection should remain bounded")
             .expect("the else assignment should produce a checked successor");
-        let decided = branches
-            .finish_decided()
+        let decided = advanced
+            .finish_focused_execution_decided(&record)
             .expect("the sole else arm should form a decided path");
         let certificate = decided.certificate();
         assert!(
@@ -20718,17 +19453,22 @@ mod tests {
                 &click_function_environment,
                 &theorem_environment,
             );
-            let branches = root
-                .begin_execution_branch()
-                .expect("symbolic condition should open two checked arms")
-                .apply_step(true, SimpleProofStep::StepUsing(Vec::new()))
+            let (split, record) = root
+                .split_focused_execution_branch()
+                .expect("symbolic condition should open two sibling arms");
+            let advanced = split
+                .focus_split_arm(&record, true)
+                .expect("the then sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("then return should check")
-                .apply_step(false, SimpleProofStep::StepUsing(Vec::new()))
+                .focus_split_arm(&record, false)
+                .expect("the else sibling is open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
                 .expect("else return should check");
-            assert!(branches.both_arms_at_function_exit());
+            assert!(advanced.split_arms_at_function_exit(&record));
             let before = fact_node_allocations();
-            let joined = branches
-                .join_terminal()
+            let joined = advanced
+                .join_focused_execution_terminal(&record)
                 .expect("two checked returns should form a terminal logical case split");
             allocation_samples.push((
                 size,

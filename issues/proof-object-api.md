@@ -3307,6 +3307,26 @@ entrypoint is now production-dead: the container survives only in its
 regressions until they migrate to split equivalents, and then it is
 deleted with its curves at unchanged bounds.
 
+### Progress (2026-08-18: `ExecutionProofBranches` is deleted)
+
+The second container retirement is complete. All seven container
+regressions migrated to the split form at unchanged curve bounds — the
+empty/checked/terminal/decided/interface joins, the theorem-search,
+nested-have, and execute-to-exit arm operations (per-arm certificate
+assertions now read through the attribution partition), the
+nested-end-of-arm interface with its derived enclosing continuation, and
+the owned-resource interface curves with the preflight on the split
+record. The container's spliced-arm identity regression is superseded by
+the split's marker-identity rejection, and the cross-arm nested-splice
+rejection became structural (a scope join produces one direct successor
+of the arm that opened it; no operation can publish it into the sibling).
+`ExecutionProofBranches`, `ExecutionProofArm`, the container's join and
+arm-selector surface, and the scope's container wrappers are deleted —
+not retained as fallbacks. Remaining execution-side work from the plan:
+the outcome partition container (`ExecutionOutcomeProofBranches`)
+retires onto goal-set partitioning next, then the drain's legacy readers
+and no-goal fallbacks.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
