@@ -1959,51 +1959,35 @@ pub(super) fn finish_ordered_proof_replay(
                                     )));
                                 };
 
-                                let (added_facts, certificate) =
-                                    if let Some(evolving) = outcome_proof.take() {
-                                        // The migrated path: the tactic advances
-                                        // this path's one evolving outcome proof
-                                        // and retains its checked step directly.
-                                        #[cfg(debug_assertions)]
-                                        assert_outcome_sync(
-                                            &evolving,
-                                            &path_requirements,
-                                            &proof_label,
-                                            path_index,
-                                        );
-                                        let before = evolving.checkpoint();
-                                        let unfolded = evolving.apply_step(
-                                            SimpleProofStep::UnfoldPredicate(name.clone()),
-                                        )?;
-                                        let added_facts = unfolded.added_facts().to_vec();
-                                        let certificate = unfolded.certificate_since(&before)?;
-                                        outcome_proof = Some(unfolded);
-                                        (added_facts, certificate)
-                                    } else {
-                                        working_set_dirty = true;
-                                        let transition_facts = path.execution_facts();
-                                        let proof = Proof::for_point_frontier(
-                                            &proof_label,
-                                            *tactic_index,
-                                            &path_requirements,
-                                            parsed_function.parameters(),
-                                            arguments,
-                                            pre_state,
-                                            post_state,
-                                            Some(result),
-                                            &replay.program_point_states,
-                                            &outcome_surface_propositions,
-                                            predicate_environment,
-                                            click_function_environment,
-                                            theorem_environment,
-                                            &unfolded_predicates,
-                                            &transition_facts,
-                                        );
-                                        let proof = proof.apply_step(
-                                            SimpleProofStep::UnfoldPredicate(name.clone()),
-                                        )?;
-                                        (proof.added_facts().to_vec(), proof.certificate())
-                                    };
+                                let (added_facts, certificate) = if let Some(evolving) =
+                                    outcome_proof.take()
+                                {
+                                    // The migrated path: the tactic advances
+                                    // this path's one evolving outcome proof
+                                    // and retains its checked step directly.
+                                    #[cfg(debug_assertions)]
+                                    assert_outcome_sync(
+                                        &evolving,
+                                        &path_requirements,
+                                        &proof_label,
+                                        path_index,
+                                    );
+                                    let before = evolving.checkpoint();
+                                    let unfolded = evolving.apply_step(
+                                        SimpleProofStep::UnfoldPredicate(name.clone()),
+                                    )?;
+                                    let added_facts = unfolded.added_facts().to_vec();
+                                    let certificate = unfolded.certificate_since(&before)?;
+                                    outcome_proof = Some(unfolded);
+                                    (added_facts, certificate)
+                                } else {
+                                    // The unconditional substrate makes this unreachable;
+                                    // fail loudly rather than silently routing through the
+                                    // deleted legacy point root.
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for this path is unavailable"
+                                    )));
+                                };
                                 if !unfolded_predicates.contains(name) {
                                     unfolded_predicates.push(name.clone());
                                 }
@@ -2038,48 +2022,35 @@ pub(super) fn finish_ordered_proof_replay(
                                     )));
                                 };
 
-                                let (added_facts, certificate) =
-                                    if let Some(evolving) = outcome_proof.take() {
-                                        // The migrated smart case: selection reads
-                                        // the goal-aware view and the accepted
-                                        // application advances this path's
-                                        // evolving outcome proof.
-                                        #[cfg(debug_assertions)]
-                                        assert_outcome_sync(
-                                            &evolving,
-                                            &path_requirements,
-                                            &proof_label,
-                                            path_index,
-                                        );
-                                        let before = evolving.checkpoint();
-                                        let applied =
-                                            evolving.apply_theorem_application(application)?;
-                                        let added_facts = applied.added_facts().to_vec();
-                                        let certificate = applied.certificate_since(&before)?;
-                                        outcome_proof = Some(applied);
-                                        (added_facts, certificate)
-                                    } else {
-                                        working_set_dirty = true;
-                                        let proof = Proof::for_point_frontier(
-                                            &proof_label,
-                                            *tactic_index,
-                                            &path_requirements,
-                                            parsed_function.parameters(),
-                                            arguments,
-                                            pre_state,
-                                            post_state,
-                                            Some(result),
-                                            &replay.program_point_states,
-                                            &outcome_surface_propositions,
-                                            predicate_environment,
-                                            click_function_environment,
-                                            theorem_environment,
-                                            &unfolded_predicates,
-                                            &replay.effect_facts,
-                                        );
-                                        let proof = proof.apply_theorem_application(application)?;
-                                        (proof.added_facts().to_vec(), proof.certificate())
-                                    };
+                                let (added_facts, certificate) = if let Some(evolving) =
+                                    outcome_proof.take()
+                                {
+                                    // The migrated smart case: selection reads
+                                    // the goal-aware view and the accepted
+                                    // application advances this path's
+                                    // evolving outcome proof.
+                                    #[cfg(debug_assertions)]
+                                    assert_outcome_sync(
+                                        &evolving,
+                                        &path_requirements,
+                                        &proof_label,
+                                        path_index,
+                                    );
+                                    let before = evolving.checkpoint();
+                                    let applied =
+                                        evolving.apply_theorem_application(application)?;
+                                    let added_facts = applied.added_facts().to_vec();
+                                    let certificate = applied.certificate_since(&before)?;
+                                    outcome_proof = Some(applied);
+                                    (added_facts, certificate)
+                                } else {
+                                    // The unconditional substrate makes this unreachable;
+                                    // fail loudly rather than silently routing through the
+                                    // deleted legacy point root.
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for this path is unavailable"
+                                    )));
+                                };
                                 // The retained `apply using` step is prefixed to every
                                 // claim certificate, so independent replay holds the
                                 // same checked conclusions when the closer runs.
@@ -2138,30 +2109,12 @@ pub(super) fn finish_ordered_proof_replay(
                                     outcome_proof = Some(applied);
                                     added_facts
                                 } else {
-                                    working_set_dirty = true;
-                                    let proof = Proof::for_point_frontier(
-                                        &proof_label,
-                                        *tactic_index,
-                                        &path_requirements,
-                                        parsed_function.parameters(),
-                                        arguments,
-                                        pre_state,
-                                        post_state,
-                                        Some(result),
-                                        &replay.program_point_states,
-                                        &outcome_surface_propositions,
-                                        predicate_environment,
-                                        click_function_environment,
-                                        theorem_environment,
-                                        &unfolded_predicates,
-                                        &replay.effect_facts,
-                                    );
-                                    let proof =
-                                        proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
-                                            application: application.clone(),
-                                            premises: premises.clone(),
-                                        })?;
-                                    proof.added_facts().to_vec()
+                                    // The unconditional substrate makes this unreachable;
+                                    // fail loudly rather than silently routing through the
+                                    // deleted legacy point root.
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for this path is unavailable"
+                                    )));
                                 };
                                 for fact in added_facts {
                                     if !path_requirements.contains(&fact) {
@@ -2781,79 +2734,49 @@ pub(super) fn finish_ordered_proof_replay(
                                 } else {
                                     None
                                 };
-                                let (added_facts, checked_facts, certificate) =
-                                    if let Some(evolving) = outcome_proof.take() {
-                                        // The migrated cases: an explicit
-                                        // transport applies its source step and
-                                        // a smart one searches its gathered
-                                        // candidates, both advancing this
-                                        // path's evolving outcome proof, which
-                                        // records the checked lowerings on the
-                                        // goal atomically.
-                                        let resynced = evolving
-                                            .with_drained_outcome_facts(&transport_available)?;
-                                        let before = resynced.checkpoint();
-                                        let transported = if let Some(premises) = premises {
-                                            resynced.apply_step(
-                                                SimpleProofStep::TransportUsing {
-                                                    source: source.clone(),
-                                                    target: target.clone(),
-                                                    premises: premises.clone(),
-                                                },
-                                            )?
-                                        } else {
-                                            resynced.search_point_fact_transport(
-                                                source,
-                                                target,
-                                                candidates
-                                                    .clone()
-                                                    .expect("smart transport gathered candidates"),
-                                            )?
-                                        };
-                                        let added_facts = transported.added_facts().to_vec();
-                                        let checked_facts = transported.checked_facts().to_vec();
-                                        let certificate = transported.certificate_since(&before)?;
-                                        outcome_proof = Some(transported);
-                                        (added_facts, checked_facts, certificate)
+                                let (added_facts, checked_facts, certificate) = if let Some(
+                                    evolving,
+                                ) =
+                                    outcome_proof.take()
+                                {
+                                    // The migrated cases: an explicit
+                                    // transport applies its source step and
+                                    // a smart one searches its gathered
+                                    // candidates, both advancing this
+                                    // path's evolving outcome proof, which
+                                    // records the checked lowerings on the
+                                    // goal atomically.
+                                    let resynced = evolving
+                                        .with_drained_outcome_facts(&transport_available)?;
+                                    let before = resynced.checkpoint();
+                                    let transported = if let Some(premises) = premises {
+                                        resynced.apply_step(SimpleProofStep::TransportUsing {
+                                            source: source.clone(),
+                                            target: target.clone(),
+                                            premises: premises.clone(),
+                                        })?
                                     } else {
-                                        working_set_dirty = true;
-                                        let proof = Proof::for_point_frontier(
-                                            &proof_label,
-                                            *tactic_index,
-                                            &transport_available,
-                                            parsed_function.parameters(),
-                                            arguments,
-                                            pre_state,
-                                            post_state,
-                                            Some(result),
-                                            &replay.program_point_states,
-                                            &outcome_surface_propositions,
-                                            predicate_environment,
-                                            click_function_environment,
-                                            theorem_environment,
-                                            &unfolded_predicates,
-                                            &transition_facts,
-                                        );
-                                        let proof = if let Some(premises) = premises {
-                                            proof.apply_step(SimpleProofStep::TransportUsing {
-                                                source: source.clone(),
-                                                target: target.clone(),
-                                                premises: premises.clone(),
-                                            })?
-                                        } else {
-                                            proof.search_point_fact_transport(
-                                                source,
-                                                target,
-                                                candidates
-                                                    .expect("smart transport gathered candidates"),
-                                            )?
-                                        };
-                                        (
-                                            proof.added_facts().to_vec(),
-                                            proof.checked_facts().to_vec(),
-                                            proof.certificate(),
-                                        )
+                                        resynced.search_point_fact_transport(
+                                            source,
+                                            target,
+                                            candidates
+                                                .clone()
+                                                .expect("smart transport gathered candidates"),
+                                        )?
                                     };
+                                    let added_facts = transported.added_facts().to_vec();
+                                    let checked_facts = transported.checked_facts().to_vec();
+                                    let certificate = transported.certificate_since(&before)?;
+                                    outcome_proof = Some(transported);
+                                    (added_facts, checked_facts, certificate)
+                                } else {
+                                    // The unconditional substrate makes this unreachable;
+                                    // fail loudly rather than silently routing through the
+                                    // deleted legacy point root.
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for this path is unavailable"
+                                    )));
+                                };
                                 let [checked_source, checked_target] = checked_facts.as_slice()
                                 else {
                                     return Err(ClickError::new(format!(

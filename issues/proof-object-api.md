@@ -3415,6 +3415,21 @@ fallback deletion lands, and corpus coverage for fold-at-exit and the
 region-frame certifier is worth a follow-up fixture so those live arms
 stop being probe-invisible.
 
+### Progress (2026-08-18: four no-goal fallback arms fail loudly)
+
+The four uniform no-goal fallback arms (unfold, apply, apply-using,
+transport) are prompt errors now: each `else` that built a legacy point
+root when the typed outcome goal was unavailable returns "the typed
+outcome goal for this path is unavailable" instead, per the probe
+evidence that no test reaches them and the rule that deleted routes fail
+loudly. Two legacy escapes deliberately remain beyond the feature-live
+arms: the smart-`have` fallback is not no-goal-only — `evolving_have` is
+`None` both when the goal is unavailable and when the goal-based search
+legitimately declines, so deleting it would change smart-miss behavior
+and needs its own analysis — and the `Simp` legacy-planner escape stays
+with its entry flag until that analysis lands. `working_set_dirty` is
+now set at exactly those two sites.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
