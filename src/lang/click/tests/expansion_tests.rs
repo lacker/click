@@ -7839,6 +7839,62 @@ fn quantified_outcome_simp_keeps_its_binder_on_the_checked_goal() {
 }
 
 #[test]
+fn outcome_simp_transports_loadability_on_the_checked_proof() {
+    let summarize_c = r#"
+        int32 summarize(int32* p) {
+            return 0;
+        }
+    "#;
+    let use_c = r#"
+        int32 use_summary(int32* p) {
+            int32 result;
+            result = summarize(p);
+            return result;
+        }
+    "#;
+    let click_source = r#"
+        verifying "summarize.c";
+        verifying "use_summary.c";
+
+        int32 summarize(int32* p) {
+            requires loadable(p[0..1]);
+            ensures loadable(p[0..1]);
+        } by {
+            execute();
+            simp();
+        }
+
+        int32 use_summary(int32* p) {
+            requires loadable(p[0..1]);
+            ensures loadable(p[0..1]);
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let sources = [("summarize.c", summarize_c), ("use_summary.c", use_c)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the call-preserved loadability should transport through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp compatibility construction"
+        )),
+        "outcome loadability transport must bypass compatibility construction: {events:#?}"
+    );
+
+    let expanded =
+        expand_c0_claim_source(click_source, &sources, "use_summary", CProofClaim::Grouped)
+            .expect("the retained loadability transport should expand");
+    assert!(expanded.contains("transport"), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the retained loadability transport should replay independently");
+}
+
+#[test]
 fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {

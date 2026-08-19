@@ -6540,6 +6540,11 @@ impl<'a> Proof<'a> {
         if let Some(atomic) = atomic {
             return Ok(Some(atomic));
         }
+        if let Some(surface_goal) = self.surface_goal()
+            && let Some(proof) = self.try_outcome_snapshot_transport_closure(surface_goal)?
+        {
+            return Ok(Some(proof));
+        }
         // The atomic helpers still classify their internal candidate misses
         // as `Option`; surface a deadline that fired inside them here rather
         // than continuing into structural search with it exceeded.
@@ -6548,6 +6553,47 @@ impl<'a> Proof<'a> {
             return Ok(None);
         };
         self.try_structural_simp_closure(&surface_goal)
+    }
+
+    /// Tries the focused outcome goal itself as one explicit fact transport
+    /// from a recorded program point. The candidate space is the execution's
+    /// program-point index, not the ambient fact set; every accepted source
+    /// and target is checked by `TransportUsing` on this immutable Proof.
+    fn try_outcome_snapshot_transport_closure(
+        &self,
+        surface_goal: &ClickProposition,
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(view) = self.outcome_point_view() else {
+            return Ok(None);
+        };
+        let entry = ProgramPointRef {
+            region: CodeRegionRef::Function,
+            kind: ProgramPointKind::Entry,
+        };
+        let selectors =
+            std::iter::once(entry).chain(view.program_point_states.keys().rev().cloned());
+        let mut tried = BTreeSet::new();
+        for point in selectors {
+            if !tried.insert(point.clone()) {
+                continue;
+            }
+            let source = ClickProposition::At {
+                selector: VisitSelector::ProgramPoint(point),
+                proposition: Box::new(surface_goal.clone()),
+            };
+            match self.search_point_fact_transport(
+                &source,
+                surface_goal,
+                std::iter::once(source.clone()),
+            ) {
+                Ok(proof) if proof.is_complete() => return Ok(Some(proof)),
+                Ok(_) => {}
+                Err(_) => {
+                    check_verification_deadline()?;
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Refines the Proof-owned Surface goal through audited scopes and steps.

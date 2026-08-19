@@ -491,3 +491,19 @@ typed `simp` query selects universal-goal and instantiation candidates from
 its indexed decision premises, then checks the resulting
 `Intro`/`InstantiateUsing` certificate on `Proof` without compatibility
 construction. The quantified outcome and bubble-pass regressions are green.
+
+## Recorded-point outcome transport landed (2026-08-19)
+
+After direct and typed atomic closure miss, outcome `simp` can now state its
+focused Surface goal at each recorded program point and submit that exact
+source/target pair to `TransportUsing`. The search walks the program-point
+index, never the ambient fact set, and returns only an already-checked
+descendant. A call-preserved `loadable(p[0..1])` regression observes no
+compatibility construction, expands to the retained transport, and
+independently reverifies.
+
+This closes the direct recorded-point loadability class, not all effect-facing
+residue. Goals such as `p[0] == old(p[0])` need component-level historical
+spelling rather than wrapping the complete proposition in `at(...)`, and
+post-store arithmetic goals need their certified statement/effect equations
+introduced by explicit proof steps before rewrite/normalization can see them.

@@ -3679,6 +3679,21 @@ A quantified post-execution regression observes no outcome compatibility
 construction, expands to `Intro`/`InstantiateUsing`, and independently
 reverifies; the canonical bubble-pass mdtest remains green.
 
+### Progress (2026-08-19: direct recorded-point outcome transport stays on Proof)
+
+When direct and typed atomic closure miss, an outcome proposition goal now
+searches the execution's recorded program-point index for an exact historical
+spelling of that same Surface goal. Each candidate is submitted as an
+ordinary `TransportUsing` step; only a complete checked descendant is
+returned. This is smart search over explicit source/target syntax, not ambient
+fact harvesting, and failed candidates leave the root untouched.
+
+A call-preserved loadability regression bypasses compatibility construction,
+expands to the retained transport, and independently reverifies. The remaining
+effect-facing residue is structurally richer: component-level historical
+spellings such as `p[0] == old(p[0])`, and certified statement equations that
+must be introduced before arithmetic rewrite/normalization.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
