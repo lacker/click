@@ -135,6 +135,28 @@ which birth the reproduction actually exercises. Both births get the
 same canonicalization; the assertion in the acceptance criteria covers
 whichever remains.
 
+## Implementation begun (2026-08-18): WIP branch and fallout worklist
+
+The eval-side canonicalization is implemented on
+`claude/load-canonicalization-wip` (pushed): loaded indices entering
+element addresses bind fresh verification variables via the execution
+budget's counter, with defining equations joining the path fact stream;
+the counter threads read_c_lvalue_expression_paths →
+read_c_lvalue_paths → evaluate_c_memory_load_paths → the four
+canonicalized call sites. The kernel suite passes (401); a birth census
+run measured 211 eval-side births versus 14 spec-side per reproduction
+run, so the eval side is the bulk. Fourteen lib tests fail on the WIP
+and form the fallout audit worklist — expansion spelling preservation
+(2), diagnostics (1), execution certificates and premises (3),
+restricted simp after indexed store (1), loop frames (1), project
+proofs including perpetual-service stability and vector storage
+expansion (4), surface field offsets (1), clone-store tactics (1).
+Each is a consumer that relied on load-in-offset spellings; the audit
+decides per test whether the certificate spelling legitimately changes
+(fixture update) or a consumer must read the defining fact instead
+(code fix). The spec-side birth (14/run) migrates after the eval
+fallout settles, with allocator provenance from the replay counter.
+
 ## Intended regression
 
 - The metadata-write mdtest's `owner->data` have strict-checks within the
