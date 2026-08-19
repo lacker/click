@@ -812,3 +812,31 @@ against the pre-canonicalization spellings; the honest options are to
 keep widening the matchers, or to update that script to the spellings
 the stronger prover now produces (it is proof, not C, so editing it is
 in bounds).
+
+## owned-string diagnosed: an int32-equality origins bridge (2026-08-19)
+
+Probed rather than guessed. At `owned_string_push` have proof 24 the
+rewrite cites `at(statement(2).entry, value) == at(statement(2).exit,
+(at(statement(2).entry, owner->data) + 0)[at(statement(2).entry,
+index)])`. Its availability check fails, but the fact family IS present:
+22 of the 59 available facts mention the `value` parameter. So this is a
+spelling mismatch, not a missing fact.
+
+Two things were tried and reverted because they did not close it, and
+unexercised code should not land: routing `rewrite` availability through
+`snapshot_bridged_fact_is_available`, and matching int32 equalities
+modulo canonical names. Neither matches, because the two loads
+canonicalize to DIFFERENT names — they are distinct cells to the
+canonicalizer, and only framing can show the cell is unchanged across
+the store.
+
+That is precisely what `premise_bridged_by_canonical_name_chain_with_origins`
+does, and it is restricted to pointer-offset equalities. Closing
+owned-string means generalising the origins bridge to int32 equalities:
+given available `A == B` and query `A == B'` where B and B' are canonical
+names whose origins are provably one unchanged cell, accept. The bounded
+origins machinery already exists; this is a shape generalisation of it.
+
+Deleting the two now-redundant rewrites in that `have` was also tried:
+it advances proof 24 to 25, i.e. the same class recurs in the following
+`have`, so script edits are not a one-line escape either.
