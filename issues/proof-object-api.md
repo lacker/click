@@ -3477,6 +3477,24 @@ checker's, or are these expected declines?), and the `Simp` escape is a
 constantly-exercised production path, not a residue. The vector stays
 load-bearing until those two paths write through goals on their own.
 
+### Progress (2026-08-18: the have-miss decomposition)
+
+The 1023 smart-`have` misses decompose precisely: 585 of the 590 mdtest
+misses are *fully explicit scripts* — 312 `[Normalize]`, 145
+`[Assumption]`, and similar — that `try_linear_smart_script` declines by
+design, because searchless scripts belong to explicit certificate
+checking and the drain site lacks the `check_certificate` branch the
+scope drivers already have. Landing that branch converted the bulk of
+the fallbacks but was reverted on one mdtest: three of its explicit have
+certificates carry tactics after a goal-closing step (legacy tolerates
+the suffix, the strict path rejects — a policy decision), and one
+certificate consumes the entire deterministic control budget inside the
+strict scope check where the legacy checker is cheap — a
+scalable-verification violation. Both blockers, the reproduction, and
+the acceptance criteria are in `issues/explicit-have-goal-path-gaps.md`;
+the drain's smart-`have` fallback and `Simp` escape remain load-bearing
+until it lands.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

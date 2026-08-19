@@ -389,7 +389,7 @@ fn collect_statement_variable_names(statement: &CStatement, names: &mut BTreeSet
     }
 }
 
-fn script_contains_linear_search(tactics: &[ProofTactic]) -> bool {
+pub(super) fn script_contains_linear_search(tactics: &[ProofTactic]) -> bool {
     tactics.iter().any(|tactic| match tactic {
         ProofTactic::ApplyTheorem(_) | ProofTactic::Simp => true,
         ProofTactic::Have(have) => source_proof_contains_linear_search(&have.proof),
@@ -9926,7 +9926,10 @@ impl<'a> ProofScope<'a> {
 
     /// Checks an already-simple nested body through the same Proof API. This
     /// is used only when a surrounding smart script also owns search steps.
-    fn check_certificate(&self, certificate: &ProofCertificate) -> Result<Self, ClickError> {
+    pub(super) fn check_certificate(
+        &self,
+        certificate: &ProofCertificate,
+    ) -> Result<Self, ClickError> {
         let mut next = self.clone();
         next.body = self.body.check_certificate(certificate)?;
         Ok(next)

@@ -20,6 +20,10 @@ when evidence exposes one.
 
 ## Open
 
+- [Explicit have scripts cannot move onto the goal path yet](explicit-have-goal-path-gaps.md):
+  77% of smart-have fallbacks are searchless scripts the goal path
+  declines by design; landing the certificate branch is blocked on a
+  suffix-strictness decision and a checker performance gap.
 - [Proof object API](proof-object-api.md): smart tactics need one immutable,
   cheaply forkable checked `Proof` interface where applying a
   `SimpleProofStep` atomically advances semantic state and retains the exact
