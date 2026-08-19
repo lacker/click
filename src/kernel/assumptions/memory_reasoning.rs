@@ -1061,7 +1061,22 @@ impl PureFactContext {
                     || self.proves_resource_contains_inner(fact_left, right)
                         && self.proves_resource_contains_inner(fact_right, left))
         };
-        if self.prop_facts.iter().any(|proposition| {
+        // For a memory-memory query, memory-memory separation facts live in
+        // the block-pair index and are consulted by the indexed pass below;
+        // the linear pass covers only the residual facts with a non-memory
+        // side, whose containment can still entail memory separation
+        // through a composite body. Any other query shape keeps the full
+        // scan: the indexed pass below does not run for it.
+        let memory_memory_query =
+            matches!((left, right), (CResource::Memory(_), CResource::Memory(_)));
+        let scan_facts: &dyn Fn(&dyn Fn(&Proposition) -> bool) -> bool = &|entails| {
+            if memory_memory_query {
+                self.nonmemory_separation_facts.iter().any(|p| entails(p))
+            } else {
+                self.prop_facts.iter().any(|p| entails(p))
+            }
+        };
+        let residual_hit = scan_facts(&|proposition| {
             let Proposition::CResourceSeparate {
                 left: fact_left,
                 right: fact_right,
@@ -1070,7 +1085,38 @@ impl PureFactContext {
                 return false;
             };
             separation_fact_entails(fact_left, fact_right)
-        }) {
+        });
+        if memory_memory_query && std::env::var_os("CLICK_DBG_SEP_PARITY").is_some() {
+            let legacy_hit = self.prop_facts.iter().any(|proposition| {
+                let Proposition::CResourceSeparate {
+                    left: fact_left,
+                    right: fact_right,
+                } = proposition
+                else {
+                    return false;
+                };
+                separation_fact_entails(fact_left, fact_right)
+            });
+            let indexed_hit = residual_hit
+                || match (left, right) {
+                    (CResource::Memory(left_range), CResource::Memory(right_range)) => self
+                        .memory_separation_candidates(
+                            &left_range.base().block,
+                            &right_range.base().block,
+                        )
+                        .any(|(_, fact_left, fact_right)| {
+                            separation_fact_entails(
+                                &CResource::Memory(fact_left.clone()),
+                                &CResource::Memory(fact_right.clone()),
+                            )
+                        }),
+                    _ => false,
+                };
+            if legacy_hit != indexed_hit {
+                eprintln!("SEP-PARITY-FLIP legacy={legacy_hit} indexed={indexed_hit}");
+            }
+        }
+        if residual_hit {
             return true;
         }
         // The same candidates, projected from the compact compositions

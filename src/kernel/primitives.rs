@@ -1820,6 +1820,11 @@ pub struct PureFactContext {
     pub(super) memory_separation_facts: std::sync::Arc<
         BTreeMap<(PointerBlock, PointerBlock), Vec<(Proposition, CMemoryRange, CMemoryRange)>>,
     >,
+    /// Separation facts the block-pair index cannot serve: at least one
+    /// side is a non-memory resource whose containment may still entail a
+    /// memory separation through its body. Kept small and scanned
+    /// linearly; memory-memory facts live in the index above instead.
+    pub(super) nonmemory_separation_facts: std::sync::Arc<Vec<Proposition>>,
     /// Same-block separation candidates projected from the compact resource
     /// compositions, keyed and maintained incrementally like
     /// `memory_separation_facts`. Two owned facts of one valid composition

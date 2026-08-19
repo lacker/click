@@ -1450,6 +1450,7 @@ impl PureFactContext {
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_shape_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.memory_separation_facts = std::sync::Arc::new(BTreeMap::new());
+        self.nonmemory_separation_facts = std::sync::Arc::new(Vec::new());
         self.recompute_content_fingerprint();
     }
 
@@ -1611,9 +1612,33 @@ impl PureFactContext {
 
     fn rebuild_memory_separation_facts(&mut self) {
         self.memory_separation_facts = std::sync::Arc::new(BTreeMap::new());
+        self.nonmemory_separation_facts = std::sync::Arc::new(Vec::new());
         let facts = self.prop_facts.iter().cloned().collect::<Vec<_>>();
         for proposition in facts {
             self.adjust_memory_separation_fact(&proposition, true);
+            self.adjust_nonmemory_separation_fact(&proposition, true);
+        }
+    }
+
+    /// Maintains the residual separation-fact list: `CResourceSeparate`
+    /// facts with at least one non-memory side, which the block-pair index
+    /// cannot serve but whose containment may entail memory separation.
+    fn adjust_nonmemory_separation_fact(&mut self, proposition: &Proposition, insert: bool) {
+        if !matches!(proposition, Proposition::CResourceSeparate { .. })
+            || Self::proposition_memory_separation(proposition).is_some()
+        {
+            return;
+        }
+        let residuals = std::sync::Arc::make_mut(&mut self.nonmemory_separation_facts);
+        if insert {
+            if !residuals.contains(proposition) {
+                residuals.push(proposition.clone());
+            }
+        } else if let Some(position) = residuals
+            .iter()
+            .position(|candidate| candidate == proposition)
+        {
+            residuals.remove(position);
         }
     }
 
@@ -1665,6 +1690,7 @@ impl PureFactContext {
             }
             self.adjust_memory_loadable_fact(&proposition, true);
             self.adjust_memory_separation_fact(&proposition, true);
+            self.adjust_nonmemory_separation_fact(&proposition, true);
             self.content_fingerprint ^= Self::fingerprint(2, &proposition);
         }
     }
@@ -1676,6 +1702,7 @@ impl PureFactContext {
             }
             self.adjust_memory_loadable_fact(proposition, false);
             self.adjust_memory_separation_fact(proposition, false);
+            self.adjust_nonmemory_separation_fact(proposition, false);
             self.content_fingerprint ^= Self::fingerprint(2, proposition);
         }
     }

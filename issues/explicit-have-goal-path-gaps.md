@@ -128,6 +128,20 @@ memory-memory fact reachable only through cross-block containment would
 be a completeness loss, so the change needs a probe run over the gates
 asserting no derived-separation outcome flips.
 
+## Progress (2026-08-18: the residual list lands; the sink is containment proving)
+
+The linear `prop_facts` scan is replaced for memory-memory queries by the
+block-pair index plus a maintained residual list of non-memory separation
+facts (other query shapes keep the full scan, since the indexed pass does
+not serve them). A corpus-wide parity probe found 35 outcome flips — all
+`legacy=false, indexed=true`: the composition-projected candidates were
+invisible to the legacy scan, so the change is strictly stronger with
+zero losses. It does **not** clear the reproducing budget: the 2M
+exhaustion persists, so the true per-call sink is the per-candidate
+containment proving (`proves_resource_contains_inner` twice per indexed
+candidate) and the composition/coverage sweeps, not the enumeration. The
+next profiling round should sub-attribute inside those.
+
 ## Intended regression
 
 - A deterministic curve comparing goal-path versus legacy explicit-have
