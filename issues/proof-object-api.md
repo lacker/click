@@ -3185,6 +3185,23 @@ the same certificate shape, separate outcome paths, and premature-join
 rejection as the container form. Remaining variants: decided and the two
 interface joins.
 
+### Progress (2026-08-18: the decided execution finish runs on the sole sibling)
+
+`finish_decided`'s retention law is extracted the same way
+(`merge_decided_execution_path`: arrival at continuation or exit, the
+shared polarity/metadata guards, and logical-`If` assembly with the empty
+contradictory arm), consumed by the container and by
+`finish_focused_execution_decided`. The sibling arm-view derivation is now
+a per-arm helper (`sibling_execution_arm_view`) shared by the two-arm joins
+and the decided finish, whose partition names the sole arm in both slots so
+every step since the marker must be attributed to it. One deliberate
+divergence from the container: the container's decided successor keeps the
+*arm's* goal id, but the sibling form resumes the *parent* id — it splices
+over the split region, and enclosing attribution must keep addressing the
+parent obligation. The regression drives the sole sibling through its
+smart-selected step, pins the certificate shape, id resumption, and the
+two-feasible-sibling refusal. Remaining variants: the two interface joins.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

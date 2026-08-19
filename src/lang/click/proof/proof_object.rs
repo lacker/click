@@ -3736,6 +3736,100 @@ impl<'a> Proof<'a> {
         Ok(())
     }
 
+    /// The retention law for a decided execution branch: the kernel
+    /// certified exactly one feasible arm, so the surviving descendant's
+    /// context becomes the successor while a logical `If` records the
+    /// checked source condition and an empty contradictory arm. Verifies
+    /// arrival at the shared continuation or function exit, condition
+    /// polarity, and the migrated replay deltas, and produces the `If`
+    /// step. Callers assemble the successor around the arm's own context.
+    fn merge_decided_execution_path(
+        &self,
+        parent_execution: &ExecutionProofState,
+        statement_index: usize,
+        continuation_index: usize,
+        initial_continuation_depth: usize,
+        take_then: bool,
+        arm: &CheckedExecutionJoinArm<'_>,
+    ) -> Result<SimpleProofStep, ClickError> {
+        let replay = &arm.execution.replay;
+        let reached_continuation = replay.completed_branch_regions.contains(&statement_index)
+            && replay.frontier.continuations.len() <= initial_continuation_depth
+            && replay.frontier.next_statement_index == continuation_index;
+        let reached_exit = replay.is_at_function_exit()
+            && replay.frontier.continuations.len() <= initial_continuation_depth;
+        if !reached_continuation && !reached_exit {
+            return Err(self.step_error(format!(
+                "the sole feasible {} execution arm has not reached its continuation or function exit",
+                if take_then { "then" } else { "else" }
+            )));
+        }
+        self.validate_execution_join_arm_deltas(
+            "path operation",
+            "the decided",
+            take_then,
+            arm,
+            parent_execution,
+        )?;
+
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            unreachable!("execution branch retained a non-execution context")
+        };
+        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+            &parent_execution.replay,
+            &parent_execution.state,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "decided branch",
+        )?;
+        let CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } = statement
+        else {
+            return Err(
+                self.step_error("decided execution branch root no longer points at a C `if`")
+            );
+        };
+        let surface_condition = surface_with_source_site(
+            &surface_c_condition(&condition),
+            &ProgramPointRef {
+                region: CodeRegionRef::Statement(statement_index),
+                kind: ProgramPointKind::Entry,
+            },
+        )?;
+        let source_arm = if take_then {
+            then_branch.as_ref()
+        } else {
+            else_branch.as_ref()
+        };
+        let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
+        let path_condition = if take_then {
+            surface_condition.clone()
+        } else {
+            negate_click_proposition(&surface_condition)
+        };
+        let mut selected_steps = Vec::with_capacity(entry_steps + arm.certificate.steps().len());
+        selected_steps.push(SimpleProofStep::StepUsing(vec![path_condition]));
+        selected_steps.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
+        selected_steps.extend_from_slice(arm.certificate.steps());
+        let selected = ProofCertificate::from_steps(selected_steps);
+        let empty = ProofCertificate::from_steps(Vec::new());
+        let (then_proof, else_proof) = if take_then {
+            (selected, empty)
+        } else {
+            (empty, selected)
+        };
+        Ok(SimpleProofStep::If {
+            condition: surface_condition,
+            then_proof: Box::new(then_proof),
+            else_proof: Box::new(else_proof),
+        })
+    }
+
     /// The merge law for a terminal two-arm execution join: both arms
     /// completed at function exit, so distinct return outcomes remain as
     /// separate paths instead of requiring one equal C state. Produces the
@@ -4267,64 +4361,79 @@ impl<'a> Proof<'a> {
         };
         let [then_steps, else_steps] =
             self.partition_steps_since(&record.marker, record.split, [then_id, else_id])?;
-        let mut selection = None;
-        let mut arm_views = Vec::with_capacity(2);
-        for (name, arm_index, id, steps) in [
-            ("then", 0usize, then_id, then_steps),
-            ("else", 1, else_id, else_steps),
-        ] {
-            let Some(Goal::Frontier(frontier)) = self.state.goals.get(id) else {
-                return Err(self.step_error(format!(
-                    "cannot join `branch`: the {name} arm is not an open execution frontier"
-                )));
-            };
-            selection = Some(frontier.selection);
-            let execution = frontier.context.execution.as_deref().ok_or_else(|| {
-                self.step_error(format!("{name} branch arm lost its execution state"))
-            })?;
-            let base_facts = record.base_facts[arm_index]
-                .as_ref()
-                .expect("a recorded arm id has a recorded fact base");
-            let base_execution = record.base_executions[arm_index]
-                .as_ref()
-                .expect("a recorded arm id has a recorded execution base");
-            let condition_theorem = record.condition_theorems[arm_index]
-                .as_ref()
-                .expect("a recorded arm id has a recorded condition theorem");
-            let not_descended = || {
-                self.step_error(format!(
-                    "cannot join `branch`: the {name} arm does not descend from split {:?}",
-                    record.split
-                ))
-            };
-            let introduced_facts = frontier
-                .context
-                .facts
-                .introduced_since(base_facts)
-                .ok_or_else(not_descended)?;
-            let introduced_effect_facts = execution
-                .replay
-                .effect_facts
-                .suffix_since(&base_execution.replay.effect_facts)
-                .ok_or_else(not_descended)?
-                .to_vec();
-            let introduced_prerequisites = execution
-                .replay
-                .function_entry_execution_prerequisites
-                .introduced_since(&base_execution.replay.function_entry_execution_prerequisites)
-                .ok_or_else(not_descended)?;
-            let introduced_derivations = execution
-                .replay
-                .function_entry_derivations
-                .introduced_since(&base_execution.replay.function_entry_derivations)
-                .ok_or_else(not_descended)?;
-            let introduced_unfolds = execution
-                .replay
-                .unfolded_predicates
-                .suffix_since(&base_execution.replay.unfolded_predicates)
-                .ok_or_else(not_descended)?
-                .to_vec();
-            arm_views.push(CheckedExecutionJoinArm {
+        let (selection, then_view) =
+            self.sibling_execution_arm_view(record, "then", 0, then_id, then_steps)?;
+        let (_, else_view) =
+            self.sibling_execution_arm_view(record, "else", 1, else_id, else_steps)?;
+        Ok(([then_id, else_id], selection, [then_view, else_view]))
+    }
+
+    /// Reduces one sibling arm of an in-`Proof` execution split to the
+    /// shared per-arm join view: the recorded goal must be an open
+    /// execution frontier, the partitioned steps become its body
+    /// certificate, and its introduction deltas are recovered by suffix
+    /// walks against the recorded split-time bases.
+    fn sibling_execution_arm_view<'v>(
+        &'v self,
+        record: &'v ExecutionSplit<'a>,
+        name: &str,
+        arm_index: usize,
+        id: GoalId,
+        steps: Vec<SimpleProofStep>,
+    ) -> Result<(EffectGoalSelection, CheckedExecutionJoinArm<'v>), ClickError> {
+        let Some(Goal::Frontier(frontier)) = self.state.goals.get(id) else {
+            return Err(self.step_error(format!(
+                "cannot join `branch`: the {name} arm is not an open execution frontier"
+            )));
+        };
+        let execution = frontier.context.execution.as_deref().ok_or_else(|| {
+            self.step_error(format!("{name} branch arm lost its execution state"))
+        })?;
+        let base_facts = record.base_facts[arm_index]
+            .as_ref()
+            .expect("a recorded arm id has a recorded fact base");
+        let base_execution = record.base_executions[arm_index]
+            .as_ref()
+            .expect("a recorded arm id has a recorded execution base");
+        let condition_theorem = record.condition_theorems[arm_index]
+            .as_ref()
+            .expect("a recorded arm id has a recorded condition theorem");
+        let not_descended = || {
+            self.step_error(format!(
+                "cannot join `branch`: the {name} arm does not descend from split {:?}",
+                record.split
+            ))
+        };
+        let introduced_facts = frontier
+            .context
+            .facts
+            .introduced_since(base_facts)
+            .ok_or_else(not_descended)?;
+        let introduced_effect_facts = execution
+            .replay
+            .effect_facts
+            .suffix_since(&base_execution.replay.effect_facts)
+            .ok_or_else(not_descended)?
+            .to_vec();
+        let introduced_prerequisites = execution
+            .replay
+            .function_entry_execution_prerequisites
+            .introduced_since(&base_execution.replay.function_entry_execution_prerequisites)
+            .ok_or_else(not_descended)?;
+        let introduced_derivations = execution
+            .replay
+            .function_entry_derivations
+            .introduced_since(&base_execution.replay.function_entry_derivations)
+            .ok_or_else(not_descended)?;
+        let introduced_unfolds = execution
+            .replay
+            .unfolded_predicates
+            .suffix_since(&base_execution.replay.unfolded_predicates)
+            .ok_or_else(not_descended)?
+            .to_vec();
+        Ok((
+            frontier.selection,
+            CheckedExecutionJoinArm {
                 certificate: ProofCertificate::from_steps(steps),
                 facts: &frontier.context.facts,
                 execution,
@@ -4334,13 +4443,63 @@ impl<'a> Proof<'a> {
                 introduced_prerequisites,
                 introduced_derivations,
                 introduced_unfolds,
-            });
-        }
-        let Ok(arms) = <[CheckedExecutionJoinArm; 2]>::try_from(arm_views) else {
-            unreachable!("both recorded arms produced views")
+            },
+        ))
+    }
+
+    /// Finishes an in-`Proof` execution split for which the kernel
+    /// certified exactly one feasible arm. This is path retention, not a
+    /// join: the sole sibling's evolved context becomes the continuation
+    /// while a logical `If` records the checked source condition and an
+    /// empty contradictory arm. The parent obligation resumes under its
+    /// original id — unlike the container form, which keeps the arm's id —
+    /// because the sibling form splices over the split region and enclosing
+    /// attribution must keep addressing the parent.
+    pub(super) fn finish_focused_execution_decided(
+        &self,
+        record: &ExecutionSplit<'a>,
+    ) -> Result<Self, ClickError> {
+        let (take_then, arm_index, id) = match record.ids {
+            [Some(id), None] => (true, 0usize, id),
+            [None, Some(id)] => (false, 1, id),
+            _ => {
+                return Err(self.step_error(
+                    "a decided execution branch requires exactly one kernel-feasible arm",
+                ));
+            }
         };
-        let selection = selection.expect("both arms carried the parent selection");
-        Ok(([then_id, else_id], selection, arms))
+        // Both partition slots name the sole arm: every step recorded since
+        // the marker must be attributed to it.
+        let [mut steps, trailing] =
+            self.partition_steps_since(&record.marker, record.split, [id, id])?;
+        steps.extend(trailing);
+        let name = if take_then { "then" } else { "else" };
+        let (selection, view) =
+            self.sibling_execution_arm_view(record, name, arm_index, id, steps)?;
+        let step = self.merge_decided_execution_path(
+            &record.parent_execution,
+            record.statement_index,
+            record.continuation_index,
+            record.initial_continuation_depth,
+            take_then,
+            &view,
+        )?;
+        let mut execution = view.execution.clone();
+        execution.branch_path = record.parent_execution.branch_path.clone();
+        let parts = CheckedExecutionJoinParts {
+            execution,
+            facts: view.facts.clone(),
+            common_added_facts: view.introduced_facts.clone(),
+            unfolded_predicates: view.introduced_unfolds.iter().fold(
+                record.parent_unfolds.clone(),
+                |mut unfolds, name| {
+                    unfolds.insert(name.clone());
+                    unfolds
+                },
+            ),
+            step,
+        };
+        self.resume_parent_after_sibling_join(record, [id, id], selection, parts)
     }
 
     /// Consumes both sibling arm goals and resumes the parent obligation
@@ -9453,89 +9612,6 @@ impl<'a> ExecutionProofBranches<'a> {
             self.root
                 .step_error("decided execution branch arm lost its semantic state")
         })?;
-        let reached_continuation = execution
-            .replay
-            .completed_branch_regions
-            .contains(&self.statement_index)
-            && execution.replay.frontier.continuations.len() <= self.initial_continuation_depth
-            && execution.replay.frontier.next_statement_index == self.continuation_index;
-        let reached_exit = execution.replay.is_at_function_exit()
-            && execution.replay.frontier.continuations.len() <= self.initial_continuation_depth;
-        if !reached_continuation && !reached_exit {
-            return Err(self.root.step_error(format!(
-                "the sole feasible {} execution arm has not reached its continuation or function exit",
-                if take_then { "then" } else { "else" }
-            )));
-        }
-        if !matches!(
-            implication_body(arm.condition_theorem.proposition()),
-            Proposition::CConditionEvaluates {
-                outcome: CConditionOutcome::Value(actual),
-                ..
-            } if *actual == take_then
-        ) {
-            return Err(self
-                .root
-                .step_error("the decided execution arm retained the wrong condition theorem"));
-        }
-        let replay = &execution.replay;
-        if replay.function_entry_execution_prerequisites.len()
-            != root_execution
-                .replay
-                .function_entry_execution_prerequisites
-                .len()
-                + arm.introduced_function_entry_prerequisites.len()
-            || replay.function_entry_derivations.len()
-                != root_execution.replay.function_entry_derivations.len()
-                    + arm.introduced_function_entry_derivations.len()
-            || replay.frontier_loop_clauses.len()
-                != root_execution.replay.frontier_loop_clauses.len()
-            || replay.frontier_loop_rules.len() != root_execution.replay.frontier_loop_rules.len()
-            || replay.unfolded_predicates.len()
-                != root_execution.replay.unfolded_predicates.len()
-                    + arm.introduced_unfolded_predicates.len()
-            || replay.planned_statement_transitions.len()
-                != root_execution.replay.planned_statement_transitions.len()
-        {
-            return Err(self.root.step_error(
-                "the decided execution arm changed replay metadata that the checked path operation has not migrated",
-            ));
-        }
-
-        let ProofContext::Execution(context) = self.root.context.as_ref() else {
-            unreachable!("execution branch retained a non-execution context")
-        };
-        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-            &root_execution.replay,
-            &root_execution.state,
-            context.function,
-            context.arguments,
-            context.claim_label,
-            context.tactic_index,
-            "decided branch",
-        )?;
-        let CStatement::If {
-            condition,
-            then_branch,
-            else_branch,
-        } = statement
-        else {
-            return Err(self
-                .root
-                .step_error("decided execution branch root no longer points at a C `if`"));
-        };
-        let surface_condition = surface_with_source_site(
-            &surface_c_condition(&condition),
-            &ProgramPointRef {
-                region: CodeRegionRef::Statement(self.statement_index),
-                kind: ProgramPointKind::Entry,
-            },
-        )?;
-        let source_arm = if take_then {
-            then_branch.as_ref()
-        } else {
-            else_branch.as_ref()
-        };
         let body = Self::arm_certificate(
             &self.root,
             self.split,
@@ -9543,23 +9619,33 @@ impl<'a> ExecutionProofBranches<'a> {
             self.entries[arm_index].as_ref(),
             arm,
         )?;
-        let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
-        let path_condition = if take_then {
-            surface_condition.clone()
-        } else {
-            negate_click_proposition(&surface_condition)
+        let view = CheckedExecutionJoinArm {
+            certificate: body,
+            facts: arm.proof.facts(),
+            execution,
+            condition_theorem: &arm.condition_theorem,
+            introduced_facts: arm.introduced_facts.iter().cloned().collect(),
+            introduced_effect_facts: arm.introduced_effect_facts.clone(),
+            introduced_prerequisites: arm
+                .introduced_function_entry_prerequisites
+                .iter()
+                .cloned()
+                .collect(),
+            introduced_derivations: arm
+                .introduced_function_entry_derivations
+                .iter()
+                .cloned()
+                .collect(),
+            introduced_unfolds: arm.introduced_unfolded_predicates.iter().cloned().collect(),
         };
-        let mut selected_steps = Vec::with_capacity(entry_steps + body.steps().len());
-        selected_steps.push(SimpleProofStep::StepUsing(vec![path_condition]));
-        selected_steps.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
-        selected_steps.extend_from_slice(body.steps());
-        let selected = ProofCertificate::from_steps(selected_steps);
-        let empty = ProofCertificate::from_steps(Vec::new());
-        let (then_proof, else_proof) = if take_then {
-            (selected, empty)
-        } else {
-            (empty, selected)
-        };
+        let step = self.root.merge_decided_execution_path(
+            root_execution,
+            self.statement_index,
+            self.continuation_index,
+            self.initial_continuation_depth,
+            take_then,
+            &view,
+        )?;
 
         let mut state = (*arm.proof.state).clone();
         let introduced_facts = arm.introduced_facts.to_vec();
@@ -9583,11 +9669,7 @@ impl<'a> ExecutionProofBranches<'a> {
             state: Arc::new(state),
             node: Arc::new(ProofNode {
                 parent: Some(self.root.node.clone()),
-                step: Some(Arc::new(SimpleProofStep::If {
-                    condition: surface_condition,
-                    then_proof: Box::new(then_proof),
-                    else_proof: Box::new(else_proof),
-                })),
+                step: Some(Arc::new(step)),
                 focused,
                 depth: self.root.node.depth + 1,
             }),
@@ -19983,6 +20065,71 @@ mod tests {
                 )
             ),
             "{certificate:#?}"
+        );
+
+        // The in-`Proof` decided finish: a split under the selecting fact
+        // opens exactly one sibling goal; its steps splice under a logical
+        // `If` with an empty contradictory arm, and the parent obligation
+        // resumes under its original id. Two feasible siblings refuse the
+        // decided finish.
+        let root = make_root(vec![selecting_fact.clone()]);
+        let parent_id = root.focused;
+        let (split_proof, record) = root
+            .split_focused_execution_branch()
+            .expect("the selecting fact should split to the sole then sibling");
+        assert!(record.ids[0].is_some() && record.ids[1].is_none());
+        assert_eq!(split_proof.goals().count(), 1);
+        let advanced = split_proof
+            .try_indexed_execute_step()
+            .expect("sole-sibling selection should remain bounded")
+            .expect("the assignment should produce a checked simple successor");
+        let decided = advanced
+            .finish_focused_execution_decided(&record)
+            .expect("the sole checked sibling should form a decided path");
+        assert_eq!(decided.focused, parent_id);
+        let decided_ids: Vec<GoalId> = decided.goals().collect();
+        assert_eq!(decided_ids, [parent_id]);
+        assert!(matches!(
+            decided.certificate().steps(),
+            [SimpleProofStep::If {
+                then_proof,
+                else_proof,
+                ..
+            }] if matches!(
+                then_proof.steps(),
+                [SimpleProofStep::StepUsing(decision), SimpleProofStep::StepUsing(_)]
+                    if !decision.is_empty()
+            ) && else_proof.steps().is_empty()
+        ));
+        assert_eq!(
+            decided
+                .execution()
+                .expect("the decided sibling path retains execution")
+                .branch_path
+                .len(),
+            0
+        );
+        let completed = decided
+            .try_indexed_execute_step()
+            .expect("contextual return selection should remain bounded")
+            .expect("the continuation return should check with retained branch facts");
+        assert!(
+            completed
+                .execution()
+                .expect("the completed decided sibling proof retains execution")
+                .replay
+                .is_at_function_exit()
+        );
+        let (undecided_proof, undecided_record) = make_root(Vec::new())
+            .split_focused_execution_branch()
+            .expect("the unconstrained condition should split to both siblings");
+        let error = undecided_proof
+            .finish_focused_execution_decided(&undecided_record)
+            .err()
+            .expect("two feasible siblings are not a decided path");
+        assert!(
+            error.message().contains("exactly one kernel-feasible arm"),
+            "{error:?}"
         );
     }
 
