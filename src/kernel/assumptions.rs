@@ -800,10 +800,16 @@ fn loads_equal_by_bounded_snapshot_match(left: &Bitvector32Term, right: &Bitvect
         }
         current
     }
+    let (Some(left_load), Some(right_load)) = (
+        crate::kernel::eval::viewed_as_memory_load(&chase(left)),
+        crate::kernel::eval::viewed_as_memory_load(&chase(right)),
+    ) else {
+        return false;
+    };
     let (
         Bitvector32Term::MemoryLoad(left_memory, left_pointer),
         Bitvector32Term::MemoryLoad(right_memory, right_pointer),
-    ) = (&chase(left), &chase(right))
+    ) = (&left_load, &right_load)
     else {
         return false;
     };

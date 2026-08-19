@@ -572,6 +572,32 @@ fn bitvector_terms_equal_for_memory_resolution(
     if !consume_memory_resolution_fuel() {
         return false;
     }
+    // A canonical load variable is its load for equality reasoning: view it
+    // through the registry so snapshot provenance fires exactly as it would
+    // for the load spelling, then fall through to the variable-spelling
+    // paths if the load view does not decide.
+    let canonical_view = |term: &Bitvector32Term| {
+        if let Bitvector32Term::Variable(variable) = term {
+            if let Some((memory, pointer)) =
+                crate::kernel::eval::registered_canonical_load(variable)
+            {
+                return Some(Bitvector32Term::MemoryLoad(memory, Box::new(pointer)));
+            }
+        }
+        None
+    };
+    let left_view = canonical_view(left);
+    let right_view = canonical_view(right);
+    if (left_view.is_some() || right_view.is_some())
+        && bitvector_terms_equal_for_memory_resolution(
+            left_view.as_ref().unwrap_or(left),
+            right_view.as_ref().unwrap_or(right),
+            assumptions,
+            depth + 1,
+        )
+    {
+        return true;
+    }
     // Ask the memory DAG before canonicalizing anything. Two loads of one
     // cell whose derivations resolve to the same source are equal after a
     // bounded walk over named edges, with no snapshot comparison at all;
@@ -802,10 +828,16 @@ pub(in crate::kernel) fn memory_load_terms_equal_for_fact_transport(
     right: &Bitvector32Term,
     assumptions: &PureFactContext,
 ) -> bool {
+    let (Some(left_load), Some(right_load)) = (
+        crate::kernel::eval::viewed_as_memory_load(left),
+        crate::kernel::eval::viewed_as_memory_load(right),
+    ) else {
+        return false;
+    };
     let (
         Bitvector32Term::MemoryLoad(left_memory, left_pointer),
         Bitvector32Term::MemoryLoad(right_memory, right_pointer),
-    ) = (left, right)
+    ) = (&left_load, &right_load)
     else {
         return false;
     };

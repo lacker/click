@@ -148,3 +148,24 @@ removed in cleanup. Lead test passes; suite fallout dropped 14 → 6.
    layer-2 fix; extend the resolved round-trip or synthesize spellings for
    defining facts. The transport source also shows an un-canonicalized
    load born through the pointer-ADD operator path (worklist item).
+
+## Snapshot-stable naming: canonical spelling + registry view (6 -> 4)
+
+Two refinements landed. First, the canonical variable id now hashes the
+provenance-stable spelling (`canonicalize_atomic_loads`) rather than the
+raw term, so representational snapshot differences share one name. Second,
+assumption-based cross-snapshot equalities (call-havoc boundaries) cannot
+be hashed away, so equality reasoning views a registered canonical
+variable as the load it names at the three trigger points
+(`bitvector_terms_equal_for_memory_resolution`, the chase-pair check in
+assumptions.rs, and `memory_load_terms_equal_for_fact_transport`),
+letting the existing provenance evidence fire exactly as it did for load
+spellings. The perpetual-service and truncated-service tests pass again.
+
+Remaining (4): the resource-neutral-callee allocation fold and the
+expansion separation `have` still miss — some resource/separation
+matching path bypasses the widened equality; and the two expansion
+transport tests need Click surface spellings for defining equations.
+Also watch: full-suite time moved 19s -> 34s on one run; measure whether
+the canonical-view recursion on the hot equality path is responsible
+before integration.

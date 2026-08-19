@@ -23,6 +23,7 @@ pub(crate) use assumptions::{
     with_search_attempt_rollback,
 };
 pub(crate) use eval::canonical_load_variable;
+pub(crate) use eval::canonical_load_variable_for_term;
 pub(crate) use eval::resolve_pending_heap_allocations;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub use memory_provenance::*;

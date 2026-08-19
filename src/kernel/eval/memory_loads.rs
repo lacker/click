@@ -563,6 +563,32 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
     }))
 }
 
+thread_local! {
+    static CANONICAL_LOAD_REGISTRY: std::cell::RefCell<
+        std::collections::HashMap<Variable, (SharedCMemory, Pointer)>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// The load identity a canonical load variable names, when this thread
+/// minted it. Reasoning uses this to consult the snapshot lazily: a
+/// canonical variable in an equality query is viewed as its load exactly
+/// where a load term would have triggered provenance evidence.
+pub(crate) fn registered_canonical_load(variable: &Variable) -> Option<(SharedCMemory, Pointer)> {
+    CANONICAL_LOAD_REGISTRY.with(|registry| registry.borrow().get(variable).cloned())
+}
+
+/// Views a term as a memory load for equality reasoning: load terms pass
+/// through, and registered canonical load variables resolve to the load
+/// they name. Other terms are not loads.
+pub(crate) fn viewed_as_memory_load(term: &Bitvector32Term) -> Option<Bitvector32Term> {
+    match term {
+        Bitvector32Term::MemoryLoad(_, _) => Some(term.clone()),
+        Bitvector32Term::Variable(variable) => registered_canonical_load(variable)
+            .map(|(memory, pointer)| Bitvector32Term::MemoryLoad(memory, Box::new(pointer))),
+        _ => None,
+    }
+}
+
 /// The canonical verification variable naming one load identity: the pair of
 /// a memory snapshot (by content) and a loaded pointer. The id is derived
 /// deterministically by hashing that identity into a reserved id space, so
@@ -580,12 +606,7 @@ pub(crate) fn canonical_load_variable(memory: &SharedCMemory, pointer: &Pointer)
     const LOAD_VARIABLE_BASE: u64 = 1 << 40;
     const LOAD_VARIABLE_RANGE: u64 = 1 << 40;
     let variable = Variable(LOAD_VARIABLE_BASE + hash % LOAD_VARIABLE_RANGE);
-    thread_local! {
-        static REGISTRY: std::cell::RefCell<
-            std::collections::HashMap<Variable, (SharedCMemory, Pointer)>,
-        > = std::cell::RefCell::new(std::collections::HashMap::new());
-    }
-    REGISTRY.with(|registry| {
+    CANONICAL_LOAD_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
         if let Some((known_memory, known_pointer)) = registry.get(&variable) {
             assert!(
@@ -602,6 +623,28 @@ pub(crate) fn canonical_load_variable(memory: &SharedCMemory, pointer: &Pointer)
     variable
 }
 
+/// Names a load term through its provenance-stable spelling: the term is
+/// first canonicalized assumption-free (resolving cached cells and snapshot
+/// representation differences), so the same cell loaded at different
+/// execution points shares one canonical variable whenever the difference
+/// is representational. Returns the variable and the spelling its defining
+/// equation should use.
+pub(crate) fn canonical_load_variable_for_term(
+    bits: &Bitvector32Term,
+) -> Option<(Variable, Bitvector32Term)> {
+    let Bitvector32Term::MemoryLoad(_, _) = bits else {
+        return None;
+    };
+    let canonical = crate::kernel::memory_provenance::canonicalize_atomic_loads(bits);
+    if let Bitvector32Term::MemoryLoad(memory, pointer) = &canonical {
+        return Some((canonical_load_variable(memory, pointer), canonical.clone()));
+    }
+    let Bitvector32Term::MemoryLoad(memory, pointer) = bits else {
+        unreachable!("the pattern above matched a memory load");
+    };
+    Some((canonical_load_variable(memory, pointer), bits.clone()))
+}
+
 /// Binds a load term to its canonical variable and records the defining
 /// equation in the path's fact stream. The defining equation is
 /// kernel-certified by construction: the variable is the kernel's own name
@@ -613,14 +656,11 @@ fn mint_canonical_load_variable(
     facts: &mut Vec<ExecutionPureFact>,
     _assumptions: &PureFactContext,
 ) -> Option<Variable> {
-    let Bitvector32Term::MemoryLoad(loaded_memory, loaded_pointer) = bits else {
-        return None;
-    };
-    let fresh = canonical_load_variable(loaded_memory, loaded_pointer);
+    let (fresh, spelling) = canonical_load_variable_for_term(bits)?;
     let defining = ExecutionPureFact::certified(Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(Bitvector32Term::Variable(fresh)),
-            Box::new(bits.clone()),
+            Box::new(spelling),
         ),
         true,
     ));

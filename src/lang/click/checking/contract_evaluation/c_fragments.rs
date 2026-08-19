@@ -632,11 +632,8 @@ fn symbolic_pointer_contract_memory_load(
     // A load never enters a pointer offset as a `MemoryLoad` term: the
     // canonical load variable names it, so contract-lowered ranges spell
     // addresses exactly as kernel execution does.
-    let bits = if let Bitvector32Term::MemoryLoad(loaded_memory, loaded_pointer) = &bits {
-        Bitvector32Term::Variable(crate::kernel::canonical_load_variable(
-            loaded_memory,
-            loaded_pointer,
-        ))
+    let bits = if let Some((variable, _)) = crate::kernel::canonical_load_variable_for_term(&bits) {
+        Bitvector32Term::Variable(variable)
     } else {
         bits
     };
