@@ -1928,6 +1928,15 @@ fn select_outcome_simp_certificate(
             let bridged_match_assumptions = assumptions_from_propositions(&certified_context);
             let bridged_match = |lowered: &Proposition, required: &Proposition| {
                 propositions_match_up_to_canonical_loads(lowered, required)
+                    // A required premise may name a load by its canonical
+                    // variable while a fresh lowering spells the load; the
+                    // two denote one atom, so look through the registry.
+                    || {
+                        let resolved =
+                            crate::kernel::resolve_canonical_load_variables_from_registry(required);
+                        &resolved != required
+                            && propositions_match_up_to_canonical_loads(lowered, &resolved)
+                    }
                     || snapshot_bridged_fact_is_available_under(
                         required,
                         std::slice::from_ref(lowered),
@@ -1985,8 +1994,11 @@ fn select_outcome_simp_certificate(
                     .chain(replay.program_point_states.iter().rev());
                 for (point, point_state) in candidate_states {
                     check_verification_deadline()?;
+                    // Synthesis renders C expressions, and a canonical load
+                    // variable is a kernel-internal name with no spelling;
+                    // resolve it back to the load it names first.
                     let Some(core) = synthesize_surface_proposition(
-                        &required,
+                        &crate::kernel::resolve_canonical_load_variables_from_registry(&required),
                         parameters,
                         arguments,
                         point_state,

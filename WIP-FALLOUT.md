@@ -916,3 +916,22 @@ Branch state: lib/bins 1200/1200, ALL examples pass, mdtests 396/397
 with only `leaf_flag_grouped_simp` left, which is independent of this
 campaign. Note `bubble_sort3_loop_permutation` can fail under machine
 load: it is real-time budgeted, and it passes on a quiet machine.
+
+## leaf_flag closed — and it was NOT independent (2026-08-19)
+
+Checked rather than assumed: mdtests pass entirely on origin/master, so
+`leaf_flag_grouped_simp` was a casualty of this campaign, not a
+pre-existing failure. My earlier description of it as independent was
+wrong.
+
+The unspellable premise was `p->left != 0` with `p->left` spelled as a
+canonical load variable. Surface synthesis renders C expressions and a
+canonical name has no spelling, so the premise could not be expressed
+and the grouped transition fell back to an opaque certificate — exactly
+what that mdtest exists to forbid. Two fixes, both looking through the
+registry: synthesis resolves canonical names to the loads they name
+before rendering, and `bridged_match` accepts a fresh lowering that
+spells the load against a required premise that names it.
+
+THE FULL GATE IS GREEN: scripts/check.sh exits 0, with 1200/1200 unit
+tests, 397/397 mdtests and every example project verifying.
