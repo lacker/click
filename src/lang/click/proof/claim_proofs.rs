@@ -3584,6 +3584,39 @@ pub(super) fn finish_ordered_proof_replay(
                                     .deferred_tactic_capture
                                     .as_ref()
                                     .is_some_and(|capture| capture.tactic_index == *tactic_index);
+                                // A divergent path has no outcome to prove
+                                // claims against; every open ensure closes
+                                // with the same trivial Normalize certificate
+                                // the legacy discharge emits for divergence.
+                                if matches!(&outcome, CFunctionOutcome::VerificationDiverges) {
+                                    let certificate = ProofCertificate::from_proof_tactics(&[
+                                        ProofTactic::Normalize,
+                                    ])
+                                    .map_err(|error| {
+                                        ClickError::new(format!(
+                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: divergence produced an invalid normalize certificate: {error:?}"
+                                        ))
+                                    })?;
+                                    for (claim_index, claim) in claims.iter().enumerate() {
+                                        if closures[claim_index].is_closed() {
+                                            continue;
+                                        }
+                                        let FunctionClaimRef::Ensure(_, _) = claim else {
+                                            continue;
+                                        };
+                                        closures[claim_index] =
+                                            ClaimClosure::by_checked_certificate(&certificate);
+                                        if replay.grouped_contract {
+                                            path_grouped_surface_closers
+                                                .extend(certificate.to_proof_tactics());
+                                        }
+                                        if capturing_this_tactic {
+                                            path_deferred_capture_tactics
+                                                .extend(certificate.to_proof_tactics());
+                                        }
+                                    }
+                                    continue;
+                                }
                                 // Grouped proofs forbid top-level existence
                                 // tactics, so the direct path admits every
                                 // grouped claim without them and every
