@@ -58,3 +58,23 @@ certified store equations are not. Next session: read the smart-frame
 candidate construction to find where premises are collected and whether
 certified-derived offset equalities should be filtered into the ambient
 channel instead of the surfaced premise list.
+
+## Layer 3 fixed: bookkeeping derivations filtered from frame premises
+
+Frame-certificate lowering now skips derivations whose conclusion
+resolves to a syntactically reflexive equality under defining-fact
+substitution (`proposition_is_reflexive_equality` after
+`resolve_minted_load_variables`): those bridge the minted and load
+spellings of one address, replay re-mints them deterministically, and
+they are certified bookkeeping rather than Click-visible premises.
+
+## Layer 4: outcome matching needs the equation chain
+
+The test now reaches the outcome-match class: replay produces
+`Return(Constant(7))` while kernel certification spells the outcome
+differently, and pairing fails. The bridge needs chaining through the
+defining equation and the store equation (v == load == value); check
+whether `outcomes_match`'s definitional equality chains two equations or
+needs the defining facts normalized into direct value equalities first
+(normalize_direct_atomic_memory_loads exists nearby in the simp premise
+path and may be the intended tool).

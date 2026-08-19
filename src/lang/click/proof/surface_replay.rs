@@ -1,6 +1,21 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
+/// True when the proposition asserts a syntactically reflexive equality —
+/// the shape defining-equation bridging facts collapse to once kernel-minted
+/// load variables are resolved to their loads.
+fn proposition_is_reflexive_equality(proposition: &Proposition) -> bool {
+    match proposition {
+        Proposition::ConditionIs(condition, true) => match condition {
+            ConditionTerm::Bitvector32Equal(left, right) => left == right,
+            ConditionTerm::PointerOffsetEqual(left, right) => left == right,
+            ConditionTerm::PointerEqual(left, right) => left == right,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 pub(super) fn checked_surface_fact_at_point(
     replay: &TacticReplayState,
     kernel: &Proposition,
@@ -2020,6 +2035,21 @@ pub(super) fn append_simple_proof_step_for_operation(
                     }
                     for derivation in derivations {
                         check_verification_deadline()?;
+                        // A derivation that merely bridges a kernel-minted
+                        // load variable to its defining load spelling is
+                        // certified bookkeeping: replay re-mints the same
+                        // variable and equation deterministically, so the
+                        // generated certificate neither needs nor can name
+                        // it as a Click-visible premise.
+                        let resolved = crate::kernel::resolve_minted_load_variables(
+                            derivation.conclusion(),
+                            &replay.effect_facts,
+                        );
+                        if resolved != *derivation.conclusion()
+                            && proposition_is_reflexive_equality(&resolved)
+                        {
+                            continue;
+                        }
                         let memories = c_condition_fact_memories(derivation.conclusion());
                         // Prefer the stable function-entry selector when it
                         // names the certified snapshot. Statement-entry
