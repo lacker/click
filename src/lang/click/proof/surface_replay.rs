@@ -465,10 +465,18 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             bases.push(surface.clone());
         }
     }
-    let (exact_points, compatible_points) =
-        snapshot_indexed_program_points(kernel, &replay.program_point_states);
     let resolved_kernel =
         crate::kernel::resolve_minted_load_variables(kernel, &replay.effect_facts);
+    // Canonical variables name loads whose snapshots the point index needs;
+    // resolve through the registry when no defining fact is in scope, and
+    // index points from the load spelling rather than the internal name.
+    let resolved_kernel = if &resolved_kernel == kernel {
+        crate::kernel::resolve_canonical_load_variables_from_registry(kernel)
+    } else {
+        resolved_kernel
+    };
+    let (exact_points, compatible_points) =
+        snapshot_indexed_program_points(&resolved_kernel, &replay.program_point_states);
     if let Some(surface) =
         synthesize_surface_proposition(&resolved_kernel, parameters, arguments, state)
         && !bases.contains(&surface)

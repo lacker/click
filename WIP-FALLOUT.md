@@ -265,3 +265,16 @@ sites in statements/expression/functions, resource_algebra write-miss,
 statement_step exact-premise. The CLICK_DISABLE_BRIDGE /
 CLICK_DISABLE_TSKIP bisection gates in statement_step.rs and
 surface_replay.rs must come out before integration.
+
+## Suite green (1062/1062, 18.3s)
+
+The last test closed when snapshot-indexed program points were computed
+from the RESOLVED load spelling instead of the canonical-variable form:
+`checked_surface_comparison_fact_at_point` now resolves canonical
+variables (defining facts in scope, else the registry) before indexing
+recorded snapshots, so the separation-derivation premise finds its
+compatible point and a replayable Click spelling. Full lib suite passes;
+time back to ~18s. Remaining before integration: strip probes and
+bisection gates, run scripts/check.sh, the metadata-write budget
+regression, and the position assertion from the issue's acceptance
+criteria.
