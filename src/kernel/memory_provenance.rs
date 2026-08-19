@@ -2024,8 +2024,20 @@ fn c_memory_load_is_directly_unchanged(
                 pointers,
             } => {
                 (effect_before == before
-                    || memory_materializes_atomic_load(effect_before, before, pointer))
-                    && effect_after == after
+                    || memory_materializes_atomic_load(effect_before, before, pointer)
+                    || directly_matched_effect_endpoint(
+                        effect_before,
+                        before,
+                        pointer,
+                        assumptions,
+                    ))
+                    && (effect_after == after
+                        || directly_matched_effect_endpoint(
+                            effect_after,
+                            after,
+                            pointer,
+                            assumptions,
+                        ))
                     && pointers.iter().all(|write| {
                         write.blocks_proven_distinct(pointer)
                             || pointer_offsets_with_common_base_proven_distinct(
@@ -2061,8 +2073,14 @@ fn c_memory_load_is_directly_unchanged(
                         pointer,
                         assumptions,
                     );
+                // The direct check decides most disjointness structurally;
+                // ranges owned through composites need the bounded deep
+                // prover, exactly as the mutates-only arm's per-write
+                // distinctness already does.
                 let disjoint = after_matches
-                    && assumptions.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer);
+                    && (assumptions.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer)
+                        || assumptions
+                            .ranges_proven_disjoint_from_pointer(mutable_ranges, pointer));
                 before_matches && after_matches && disjoint
             }
             Proposition::CHeapLifetimeRetired {
@@ -3295,4 +3313,20 @@ pub(crate) fn c_condition_fact_with_canonical_loads(fact: &Proposition) -> Propo
         Some(canonical) => Proposition::ConditionIs(canonical, *value),
         None => fact.clone(),
     }
+}
+
+/// Never-inlined endpoint matcher for the effect arms: the direct-unchanged
+/// check participates in transport recursion where added frame bytes
+/// overflow the stack. The fact's snapshot handles may differ from the
+/// effect's endpoints by bookkeeping (materialized cells, recorded locals);
+/// what the chain needs is agreement on the loaded cell, which the
+/// directly-match check decides per pointer with havoc-marker parity.
+#[inline(never)]
+fn directly_matched_effect_endpoint(
+    effect_side: &CMemory,
+    side: &CMemory,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> bool {
+    memories_directly_match_for_pointer_load(effect_side, side, pointer, assumptions)
 }
