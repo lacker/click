@@ -426,49 +426,101 @@ fn solve_nested_have<'a>(
     Ok(selected)
 }
 
-fn advance_execution_branch_arm<'a>(
-    mut branches: ExecutionProofBranches<'a>,
-    take_then: bool,
+/// Advances one sibling arm of an in-`Proof` execution split through its
+/// linear source tactics, on a proof focused at that arm's recorded goal.
+/// Every operation is the ordinary focused `Proof` form; the split record
+/// supplies only the stop-at-continuation boundary for source steps.
+fn advance_focused_execution_arm<'a>(
+    mut proof: Proof<'a>,
+    record: &ExecutionSplit<'a>,
     tactics: &[IndexedTactic],
-) -> Result<Option<ExecutionProofBranches<'a>>, ClickError> {
+) -> Result<Option<Proof<'a>>, ClickError> {
     for indexed in tactics {
         if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
-            branches.ensure_source_arm_step(take_then, &step)?;
-            branches = branches.apply_step(take_then, step)?;
+            proof.ensure_focused_arm_step(record, &step)?;
+            proof = proof.apply_step(step)?;
         } else if matches!(indexed.tactic, ProofTactic::SmartStep) {
-            let Some(next) = branches.try_smart_step(take_then)? else {
+            proof.ensure_focused_arm_can_advance(record)?;
+            let Some(next) = proof.try_indexed_execute_step()? else {
                 return Ok(None);
             };
-            branches = next;
+            proof = next;
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
-            let Some(next) = branches.try_theorem_application(take_then, application)? else {
+            if proof.is_at_function_exit() {
+                // Exit applications need one point proof per concrete
+                // outcome so that `result` lowers correctly; ordered
+                // finalization owns that distinct operation.
+                return Ok(None);
+            }
+            let Some(next) = proof.try_theorem_application(application)? else {
                 return Ok(None);
             };
-            branches = next;
+            proof = next;
         } else if let ProofTactic::Transport { source, target } = &indexed.tactic {
-            let Some(next) = branches.try_fact_transport(take_then, source, target)? else {
+            if proof.is_at_function_exit() {
+                return Ok(None);
+            }
+            let Some(next) = proof.try_execution_fact_transport(source, target)? else {
                 return Ok(None);
             };
-            branches = next;
+            proof = next;
         } else if let ProofTactic::Have(have) = &indexed.tactic {
-            let nested = branches.begin_have(take_then, have.proposition.clone())?;
+            let nested = proof.begin_have(have.proposition.clone())?;
             let Some(nested) = solve_nested_have(nested, have)? else {
                 return Ok(None);
             };
-            branches = branches.join_nested(take_then, nested)?;
+            proof = nested.join()?;
         } else if matches!(
             indexed.tactic,
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
         ) {
-            let Some(next) = branches.try_execute_arm_to_exit(take_then)? else {
+            let Some(next) = try_execute_focused_arm_to_exit(proof)? else {
                 return Ok(None);
             };
-            branches = next;
+            proof = next;
         } else {
             return Ok(None);
         }
     }
-    Ok(Some(branches))
+    Ok(Some(proof))
+}
+
+/// Runs the narrow statement selector on the focused sibling arm until it
+/// reaches function exit. A nested C `if` frontier recurses through another
+/// in-`Proof` split; any other structural frontier is a search miss.
+fn try_execute_focused_arm_to_exit<'a>(
+    mut proof: Proof<'a>,
+) -> Result<Option<Proof<'a>>, ClickError> {
+    loop {
+        if proof.is_at_function_exit() {
+            return Ok(Some(proof));
+        }
+        if let Some(next) = proof.try_indexed_execute_step()? {
+            proof = next;
+            continue;
+        }
+        if !proof.is_at_execution_branch()? {
+            return Ok(None);
+        }
+        let (split, record) = proof.split_focused_execution_branch()?;
+        let mut advanced = split;
+        for take_then in [true, false] {
+            if record.arm_id(take_then).is_none() {
+                continue;
+            }
+            let Some(next) =
+                try_execute_focused_arm_to_exit(advanced.focus_split_arm(&record, take_then)?)?
+            else {
+                return Ok(None);
+            };
+            advanced = next;
+        }
+        proof = if record.sole_feasible_arm().is_some() {
+            advanced.finish_focused_execution_decided(&record)?
+        } else {
+            advanced.join_focused_execution_terminal(&record)?
+        };
+    }
 }
 
 fn linear_execution_certificate(node: &InternalProofNode) -> Option<ProofCertificate> {
@@ -792,33 +844,30 @@ fn advance_checked_open_scope<'a>(
     else {
         return Ok(None);
     };
-    let branches = scope.begin_execution_branch()?;
-    let feasible_arm = branches.sole_feasible_arm();
+    let (split, record) = scope.split_execution_branch()?;
     if ensuring
         .as_ref()
-        .is_some_and(|_| !branches.supports_interface_branch())
+        .is_some_and(|_| !record.supports_interface_branch())
     {
         return Ok(None);
     }
     let empty = then_tactics.is_empty() && else_tactics.is_empty();
-    let mut branches = Some(branches);
-    if feasible_arm.is_none_or(|take_then| take_then) {
-        branches = advance_execution_branch_arm(
-            branches.expect("checked then arm starts with its branch container"),
-            true,
-            then_tactics,
-        )?;
-    }
-    if feasible_arm.is_none_or(|take_then| !take_then) {
-        let Some(branches_value) = branches else {
+    let mut advanced = split;
+    for (take_then, tactics) in [(true, then_tactics), (false, else_tactics)] {
+        if record.arm_id(take_then).is_none() {
+            continue;
+        }
+        let Some(next) = advance_focused_execution_arm(
+            advanced.focus_split_arm(&record, take_then)?,
+            &record,
+            tactics,
+        )?
+        else {
             return Ok(None);
         };
-        branches = advance_execution_branch_arm(branches_value, false, else_tactics)?;
+        advanced = next;
     }
-    let Some(branches) = branches else {
-        return Ok(None);
-    };
-    let scope = scope.join_execution_branch(branches, empty, ensuring.clone())?;
+    let scope = scope.join_execution_split(&advanced, &record, empty, ensuring.clone())?;
     advance_checked_open_scope(scope, continuation, expansion_capture, proof_site)
 }
 
@@ -978,25 +1027,6 @@ fn try_execute_checked_open_scope_and_continue<'a>(
         arguments,
     )
     .map(Some)
-}
-
-// Keep the alternative structural join temporaries out of the recursively
-// evaluated `execute_internal_proof` frame. The deep pure-case regression is
-// deliberately sensitive to even small growth in that frame.
-#[inline(never)]
-fn join_linear_execution_branches<'a>(
-    branches: ExecutionProofBranches<'a>,
-    empty: bool,
-) -> Result<Proof<'a>, ClickError> {
-    if branches.sole_feasible_arm().is_some() {
-        branches.finish_decided()
-    } else if branches.both_arms_at_function_exit() {
-        branches.join_terminal()
-    } else if empty {
-        branches.join_empty()
-    } else {
-        branches.join()
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1359,38 +1389,37 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                     theorem_environment,
                 );
                 let checkpoint = proof.checkpoint();
-                let branches = proof.begin_execution_branch()?;
-                let feasible_arm = branches.sole_feasible_arm();
+                let (split, record) = proof.split_focused_execution_branch()?;
+                let feasible_arm = record.sole_feasible_arm();
                 let checked_interface_preflight = ensuring
                     .as_ref()
-                    .is_none_or(|_| branches.supports_interface_branch());
+                    .is_none_or(|_| record.supports_interface_branch());
                 let empty = then_tactics.is_empty() && else_tactics.is_empty();
                 let checked = if checked_interface_preflight {
                     (|| {
-                        let branches = if feasible_arm.is_none_or(|take_then| take_then) {
-                            advance_execution_branch_arm(branches, true, then_tactics)?
-                        } else {
-                            Some(branches)
-                        };
-                        let branches = if feasible_arm.is_none_or(|take_then| !take_then) {
-                            let Some(branches) = branches else {
+                        let mut advanced = split;
+                        for (take_then, tactics) in [(true, then_tactics), (false, else_tactics)] {
+                            if record.arm_id(take_then).is_none() {
+                                continue;
+                            }
+                            let Some(next) = advance_focused_execution_arm(
+                                advanced.focus_split_arm(&record, take_then)?,
+                                &record,
+                                tactics,
+                            )?
+                            else {
                                 return Ok(None);
                             };
-                            advance_execution_branch_arm(branches, false, else_tactics)?
-                        } else {
-                            branches
-                        };
-                        Ok::<_, ClickError>(branches)
+                            advanced = next;
+                        }
+                        Ok::<_, ClickError>(Some(advanced))
                     })()?
                 } else {
                     None
                 };
-                if let Some(branches) = checked {
-                    let branch_proof = if let Some(assertions) = ensuring {
-                        branches.join_with_interface(assertions.clone())?
-                    } else {
-                        join_linear_execution_branches(branches, empty)?
-                    };
+                if let Some(advanced) = checked {
+                    let branch_proof =
+                        advanced.join_focused_execution_split(&record, empty, ensuring.clone())?;
                     let branch_certificate = branch_proof.certificate_since(&checkpoint)?;
                     let can_advance_continuation = feasible_arm.is_none()
                         || (execution_branch_tactics_end_at_exit(then_tactics)

@@ -107,6 +107,7 @@ pub(super) struct ExecutionSplit<'a> {
     condition_theorems: [Option<Theorem>; 2],
     base_facts: [Option<ProofFacts>; 2],
     base_executions: [Option<Arc<ExecutionProofState>>; 2],
+    path_facts: [Option<Vec<Proposition>>; 2],
     parent_facts: ProofFacts,
     parent_unfolds: PersistentOrderedSet<String>,
     parent_execution: Arc<ExecutionProofState>,
@@ -144,6 +145,42 @@ struct CheckedExecutionJoinParts {
     common_added_facts: Vec<Proposition>,
     unfolded_predicates: PersistentOrderedSet<String>,
     step: SimpleProofStep,
+}
+
+impl<'a> ExecutionSplit<'a> {
+    /// `Some(take_then)` when the kernel certified exactly one feasible arm.
+    pub(super) fn sole_feasible_arm(&self) -> Option<bool> {
+        match self.ids {
+            [Some(_), None] => Some(true),
+            [None, Some(_)] => Some(false),
+            _ => None,
+        }
+    }
+
+    /// The recorded sibling goal id for one arm, when that arm is feasible.
+    pub(super) fn arm_id(&self, take_then: bool) -> Option<GoalId> {
+        self.ids[usize::from(!take_then)]
+    }
+
+    /// The structural preflight for `branch ensuring` on this split: a
+    /// decided path always supports an interface, and a two-arm join does
+    /// when the shared continuation is derivable and both arm snapshots
+    /// descend from the parent's resource context.
+    pub(super) fn supports_interface_branch(&self) -> bool {
+        self.sole_feasible_arm().is_some()
+            || (derive_execution_join_continuation(
+                &self.parent_execution,
+                &self.continuation_remaining,
+                self.continuation_index,
+            )
+            .is_some()
+                && self.base_executions.iter().flatten().all(|execution| {
+                    execution
+                        .state
+                        .resources()
+                        .descends_from(self.parent_execution.state.resources())
+                }))
+    }
 }
 
 /// The audited branch-entry result shared by the execution container and
@@ -5122,6 +5159,134 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Focuses one recorded sibling arm and installs that arm's split-time
+    /// path facts as the proof's delta. The container gave each arm proof
+    /// its own `added_facts`; with siblings sharing one proof, the cursor
+    /// move re-presents the delta that created the now-focused obligation
+    /// so smart premise selection sees the same candidates.
+    pub(super) fn focus_split_arm(
+        &self,
+        record: &ExecutionSplit<'a>,
+        take_then: bool,
+    ) -> Result<Self, ClickError> {
+        let arm_index = usize::from(!take_then);
+        let Some(id) = record.ids[arm_index] else {
+            return Err(self.step_error(format!(
+                "cannot focus the infeasible {} execution arm",
+                if take_then { "then" } else { "else" }
+            )));
+        };
+        let mut focused = self.focus(id)?;
+        let path_facts = record.path_facts[arm_index]
+            .clone()
+            .expect("a recorded arm id has recorded path facts");
+        focused.state = Arc::new(ProofState {
+            locals: focused.state.locals.clone(),
+            goals: focused.state.goals.clone(),
+            added_facts: Arc::new(path_facts.clone()),
+            checked_facts: Arc::new(path_facts),
+        });
+        Ok(focused)
+    }
+
+    /// Enforces the source `branch` body's boundary on the focused sibling
+    /// arm: once the arm has reached the shared continuation, further
+    /// source `step using` transitions belong to the continuation, not the
+    /// arm. The terminal-execution operation is unconstrained, as in the
+    /// container form.
+    pub(super) fn ensure_focused_arm_step(
+        &self,
+        record: &ExecutionSplit<'a>,
+        step: &SimpleProofStep,
+    ) -> Result<(), ClickError> {
+        if !matches!(step, SimpleProofStep::StepUsing(_)) {
+            return Ok(());
+        }
+        self.ensure_focused_arm_can_advance(record)
+    }
+
+    /// The unconditional form of the boundary: source transitions — explicit
+    /// `step using` and the smart statement selector alike — must not
+    /// consume the shared continuation from inside an arm.
+    pub(super) fn ensure_focused_arm_can_advance(
+        &self,
+        record: &ExecutionSplit<'a>,
+    ) -> Result<(), ClickError> {
+        let Some(join) = derive_execution_join_continuation(
+            &record.parent_execution,
+            &record.continuation_remaining,
+            record.continuation_index,
+        ) else {
+            return Ok(());
+        };
+        let Some(execution) = self.execution() else {
+            return Ok(());
+        };
+        if execution
+            .replay
+            .completed_branch_regions
+            .contains(&record.statement_index)
+            && execution.replay.frontier.next_statement_index == join.next_statement_index
+            && execution
+                .replay
+                .frontier
+                .continuations
+                .shares_tail_with(&join.continuations)
+        {
+            return Err(self.step_error(format!(
+                "focused arm of `branch` must stop at the shared continuation statement({})",
+                record.continuation_index
+            )));
+        }
+        Ok(())
+    }
+
+    /// Preserves the original empty-arm entry point for callers that require
+    /// the sibling branch region to contain no body steps.
+    pub(super) fn join_focused_execution_empty(
+        &self,
+        record: &ExecutionSplit<'a>,
+    ) -> Result<Self, ClickError> {
+        self.join_focused_execution_checked(record, true)
+    }
+
+    /// True when the split recorded two feasible arms and both sibling
+    /// goals completed at function exit.
+    pub(super) fn split_arms_at_function_exit(&self, record: &ExecutionSplit<'a>) -> bool {
+        record.sole_feasible_arm().is_none()
+            && record.ids.iter().flatten().all(|id| {
+                self.state
+                    .goals
+                    .get(*id)
+                    .and_then(|goal| goal.context().execution.as_deref())
+                    .is_some_and(|execution| execution.replay.is_at_function_exit())
+            })
+    }
+
+    /// Selects the structural join for an advanced in-`Proof` execution
+    /// split, mirroring the container's join dispatch: an explicit
+    /// interface joins (or decides) through it, a sole feasible arm is
+    /// decided path retention, two returned arms join terminally, and a
+    /// nonterminal region joins at the shared continuation.
+    pub(super) fn join_focused_execution_split(
+        &self,
+        record: &ExecutionSplit<'a>,
+        empty: bool,
+        ensuring: Option<Vec<ProofAssertion>>,
+    ) -> Result<Self, ClickError> {
+        if let Some(assertions) = ensuring {
+            self.join_focused_execution_interface(record, assertions)
+        } else if record.sole_feasible_arm().is_some() {
+            self.finish_focused_execution_decided(record)
+        } else if self.split_arms_at_function_exit(record) {
+            self.join_focused_execution_terminal(record)
+        } else if empty {
+            self.join_focused_execution_empty(record)
+        } else {
+            self.join_focused_execution_branch(record)
+        }
+    }
+
     pub(super) fn split_focused_execution_branch(
         &self,
     ) -> Result<(Self, ExecutionSplit<'a>), ClickError> {
@@ -5147,6 +5312,7 @@ impl<'a> Proof<'a> {
         let mut condition_theorems: [Option<Theorem>; 2] = [None, None];
         let mut base_facts: [Option<ProofFacts>; 2] = [None, None];
         let mut base_executions: [Option<Arc<ExecutionProofState>>; 2] = [None, None];
+        let mut path_facts: [Option<Vec<Proposition>>; 2] = [None, None];
         for (arm_index, prepared_arm) in prepared.arms.into_iter().enumerate() {
             let Some(prepared_arm) = prepared_arm else {
                 continue;
@@ -5154,6 +5320,7 @@ impl<'a> Proof<'a> {
             arm_ids[arm_index] = Some(ids[arm_index]);
             condition_theorems[arm_index] = Some(prepared_arm.condition_theorem);
             base_facts[arm_index] = Some(prepared_arm.facts.clone());
+            path_facts[arm_index] = Some(prepared_arm.path_facts);
             let execution = Arc::new(prepared_arm.execution);
             base_executions[arm_index] = Some(execution.clone());
             open = open.with_inserted(
@@ -5174,6 +5341,12 @@ impl<'a> Proof<'a> {
             .next()
             .copied()
             .expect("the preparation rejects branches with no feasible arm");
+        let first_path_facts = path_facts
+            .iter()
+            .flatten()
+            .next()
+            .cloned()
+            .expect("a feasible arm records its path facts");
         let successor = Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
@@ -5182,8 +5355,12 @@ impl<'a> Proof<'a> {
                     open,
                     next_id: self.state.goals.next_id + 3,
                 },
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
+                // The successor starts focused on the first feasible arm and
+                // carries that arm's path facts as its delta, exactly as the
+                // container's arm proof did; `focus_split_arm` installs the
+                // matching delta when the driver moves to the other arm.
+                added_facts: Arc::new(first_path_facts.clone()),
+                checked_facts: Arc::new(first_path_facts),
             }),
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
@@ -5200,6 +5377,7 @@ impl<'a> Proof<'a> {
             condition_theorems,
             base_facts,
             base_executions,
+            path_facts,
             parent_facts,
             parent_unfolds: unfolds,
             parent_execution,
@@ -7027,7 +7205,7 @@ impl<'a> Proof<'a> {
     /// from standalone smart `step` so `execute` can traverse an open resource
     /// scope without changing `step`'s established explicit-certificate
     /// selection policy.
-    fn try_indexed_execute_step(&self) -> Result<Option<Self>, ClickError> {
+    pub(super) fn try_indexed_execute_step(&self) -> Result<Option<Self>, ClickError> {
         self.try_indexed_statement_step_with_unrelated_context(true)
     }
 
@@ -7104,13 +7282,18 @@ impl<'a> Proof<'a> {
         }
         let mut indexed_dependencies = BTreeMap::new();
         if allow_unrelated_context {
+            // A recent delta fact is a premise candidate only when the
+            // focused goal actually owns it: a sibling split's delta spans
+            // both arms, and the other arm's path fact may surface in this
+            // arm's inherited replay record without being available here.
             for fact in self.state.added_facts.iter() {
-                if execution
-                    .replay
-                    .surface_propositions
-                    .surfaces(fact)
-                    .next()
-                    .is_some()
+                if self.facts().contains_top_level(fact)
+                    && execution
+                        .replay
+                        .surface_propositions
+                        .surfaces(fact)
+                        .next()
+                        .is_some()
                     && !selected.contains(fact)
                 {
                     selected.push(fact.clone());
@@ -7414,7 +7597,7 @@ impl<'a> Proof<'a> {
     /// Smart `execute` uses this read-only query to distinguish a structural
     /// frontier from an ordinary statement whose indexed candidate simply did
     /// not apply. It grants no branch authority and performs no transition.
-    fn is_at_execution_branch(&self) -> Result<bool, ClickError> {
+    pub(super) fn is_at_execution_branch(&self) -> Result<bool, ClickError> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution proof lost its semantic frontier"))?;
@@ -10545,6 +10728,47 @@ impl<'a> ProofScope<'a> {
                 if !next.introduced_facts.contains(fact) {
                     next.introduced_facts.push(fact.clone());
                 }
+            }
+        }
+        next.body = body;
+        Ok(next)
+    }
+
+    /// Opens the C branch at this scope body's frontier as an in-`Proof`
+    /// sibling split. The returned proof advances by focusing each recorded
+    /// arm; `join_execution_split` accepts the direct joined successor.
+    pub(super) fn split_execution_branch(
+        &self,
+    ) -> Result<(Proof<'a>, ExecutionSplit<'a>), ClickError> {
+        self.body.split_focused_execution_branch()
+    }
+
+    /// Joins an advanced in-`Proof` execution split as the next direct
+    /// structural node of this scope. The split's marker identity prevents
+    /// a region searched from a sibling scope from being spliced here, and
+    /// only the audited join's output-sized fact delta is exposed.
+    pub(super) fn join_execution_split(
+        &self,
+        advanced: &Proof<'a>,
+        record: &ExecutionSplit<'a>,
+        empty: bool,
+        ensuring: Option<Vec<ProofAssertion>>,
+    ) -> Result<Self, ClickError> {
+        let body = advanced.join_focused_execution_split(record, empty, ensuring)?;
+        let Some(parent) = body.node.parent.as_ref() else {
+            return Err(self
+                .root
+                .step_error("execution branch join produced a root without provenance"));
+        };
+        if !Arc::ptr_eq(parent, &self.body.node) {
+            return Err(self
+                .root
+                .step_error("execution branch join did not produce one direct checked successor"));
+        }
+        let mut next = self.clone();
+        for fact in body.added_facts() {
+            if !next.introduced_facts.contains(fact) {
+                next.introduced_facts.push(fact.clone());
             }
         }
         next.body = body;

@@ -3238,6 +3238,54 @@ equivalent. Next: flip the `join_linear_execution_branches` dispatch in
 split/focus/join, then delete `ExecutionProofBranches` with its curves
 migrated at unchanged bounds, as `ProofBranches` was.
 
+### Progress (2026-08-18: the linear branch drivers run on in-`Proof` splits)
+
+Both linear C-branch drivers — the checked open-scope driver and the bare
+smart-script driver — now branch through `split_focused_execution_branch`:
+each feasible arm is one focused run of `advance_focused_execution_arm`,
+whose per-tactic operations are the ordinary focused `Proof` forms the
+container's arm wrappers had been delegating to all along (the container
+selector layer added only arm bookkeeping the goal stores now carry).
+`try_execute_focused_arm_to_exit` recurses nested C `if`s through nested
+splits. Join selection is one shared dispatch
+(`Proof::join_focused_execution_split`, mirrored at scope level by
+`join_execution_split`, whose one-direct-successor law holds because the
+sibling join splices to the pre-split body node), the `branch ensuring`
+preflight moved onto the split record (`supports_interface_branch` from
+the recorded bases), and the stop-at-continuation boundary became
+`ensure_focused_arm_step` on the focused proof. The container's arm
+selector methods and `join_linear_execution_branches` are production-dead;
+remaining container consumers are the logical-certificate expansion path
+(`check_logical_arm_certificate` at the terminal-expansion site), the
+container's own internal recursion, and the regressions — the deletion
+chunk follows.
+
+The flip surfaced one real behavioral seam the container had hidden: the
+per-`Proof` `added_facts` delta is also a *premise hint* — smart statement
+selection offers the recent delta's surfacing facts as explicit `using`
+premises, and each container arm proof carried its own path facts there
+for the whole arm. With siblings sharing one proof, the first arm's steps
+overwrite the delta, so the second arm's steps silently lost their
+explicit path-condition premises and an expansion regression caught the
+shape drift (after first flowing through the certificate builder's
+leaf-appending, which made the drift look structural). The fix records
+each arm's path facts on the split and adds `focus_split_arm`, the
+record-aware cursor move that re-presents the focused arm's creation
+delta — plus a genuine tightening in the premise phase: a delta fact is a
+candidate only when the focused goal actually owns it, which is a no-op
+for single-goal proofs and prevents cross-arm premise leakage in splits.
+
+A second regression caught a dropped guard rather than a shape drift: the
+container's `try_smart_step` enforced the stop-at-continuation boundary
+*inside* the arm selector, so the flip's smart-step path silently lost it,
+and an overshooting `step()` fell through to the lenient compatibility
+executor (which retrofits returned arms as decided cases) instead of being
+rejected. The boundary is now `ensure_focused_arm_can_advance`, called by
+both the explicit-step wrapper and the smart-step path — the lesson being
+that container arm wrappers were not pure delegation: each must be checked
+for guards it had fused with the arm bookkeeping before its focused
+replacement is accepted.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
