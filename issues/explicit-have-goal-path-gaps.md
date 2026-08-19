@@ -104,6 +104,30 @@ index), cutting ~900K units and bringing the reproducing have from 2.2M
 units to ~1.3M, under its 2M budget. Verify the completeness lemma
 against the index construction before landing.
 
+## The completeness lemma, resolved (2026-08-18)
+
+`adjust_memory_separation_fact` captures every
+`CResourceSeparate { Memory, Memory }` and `CMemoryDisjoint` proposition
+into the block-pair index at insertion, and compositions project through
+`extend_composition_separation_facts` — so for memory-memory facts the
+index is complete. The linear scan's residual value is exactly two
+things the index cannot serve: separation facts where either side is
+non-memory (a composite or token whose containment can still entail
+memory separation through body unfolding), and any containment reasoning
+that crosses block spellings (the index is keyed by base-block pair; the
+scan's `proves_resource_contains_inner` is not). The
+semantics-preserving fix is therefore a *residual list*: maintain a
+dedicated small collection of separation facts not captured by
+`proposition_memory_separation`, and rewrite the scan as index-first
+(block-pair candidates, which the caller has often already consulted)
+plus a linear pass over only the residual list — output-sensitive in the
+number of non-memory separation facts, which is small. Cross-block
+containment via provably-equal pointer bases, if it matters in practice,
+stays covered by the residual pass only when the fact is non-memory; a
+memory-memory fact reachable only through cross-block containment would
+be a completeness loss, so the change needs a probe run over the gates
+asserting no derived-separation outcome flips.
+
 ## Intended regression
 
 - A deterministic curve comparing goal-path versus legacy explicit-have
