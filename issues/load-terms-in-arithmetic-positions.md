@@ -99,6 +99,23 @@ the execution's fact stream, so the next step is locating how execution
 mints fresh variables today (abstract calls and havoc already do) and
 whether the defining fact rides the existing effect-fact channel.
 
+## Plumbing resolved (2026-08-18)
+
+The birth site is self-announcing: `symbolic_pointer_value_from_int_cell`
+pattern-matches `CValue::Int32(Bitvector32Term::MemoryLoad(..))` before
+embedding — the deliberate load-into-offset case — and its caller sits in
+the memory-load evaluation path where `CExpressionPath { facts, .. }`
+already flows. Variable minting is `VerificationVariableGenerator`
+against the execution budget's `next_verification_variable` (the same
+plumbing abstract calls use at `functions.rs` ~548). The implementation
+is therefore: thread the generator into this helper, mint `v`, return
+the pointer offset over `Variable(v)` plus the defining fact
+`v == load(snapshot, ptr)` for the caller's fact stream. The expected
+fallout to audit through the gates: any analysis that pattern-matched
+load-in-offset shapes directly (provenance canonicalization, DAG
+equality evidence) must find the same information through the defining
+fact instead.
+
 ## Intended regression
 
 - The metadata-write mdtest's `owner->data` have strict-checks within the
