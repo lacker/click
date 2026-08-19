@@ -207,3 +207,244 @@ checking mode.
   and whichever side is chosen has a regression.
 - The sound-probe have-miss count over the gates drops accordingly; the
   remaining misses are genuinely searching scripts.
+
+## Simp chunk 2 scoping (2026-08-19)
+
+The direct Simp path (claim_proofs.rs ~3585) admits a claim set only when
+every open claim is `Ensure::Proposition` with no rewritten and no
+frame-certified goal. Widening, in dependency order:
+
+1. **Rewritten claim goals**: `rewritten_claim_goals[i]` holds the checked
+   rewritten surface goal (produced via `focus_point_goal` +
+   `SimpleProofStep::Rewrite`, with the rewrite certificate retained in
+   `retained_certificate`). Admit these by pushing `(i, rewritten_goal)`
+   into `direct_claims` instead of bailing; the direct proof proves the
+   rewritten spelling and the retained rewrite certificate composes in
+   the claim closure exactly as the legacy path composes it. Confirm the
+   closure credit path before wiring.
+2. **Frame-certified claim goals**: same shape —
+   `frame_certified_claim_goals[i]` carries the frame-certified spelling;
+   the direct attempt proves that spelling and the frame certificate
+   composes. Verify whether such claims are already closed by the frame
+   pass (`closures[i].is_closed()` guards them) and only the residue
+   needs proving.
+3. **`Ensure::Resource` claims**: need a typed resource-production goal
+   on `Proof` (`begin_have` takes propositions only). This is the real
+   API addition and connects to the substrate-4 typed function-outcome
+   goals: a `produces R` goal focused per claim, discharged by the
+   fold/consume machinery the legacy exit planner uses today. Land 1 and
+   2 first; measure the remaining escape census (the 145-entry
+   vocabulary measurement predates chunk 1) before designing 3.
+
+Each step is gated: escape-census probe before and after, corpus parity,
+`scripts/check.sh`.
+
+## Simp chunk 2 census after step 1 (2026-08-19)
+
+Rewritten claim goals are admitted to the direct path (landed 01dcd708,
+gate green). A classifier census over both fixture corpora
+(CLICK_CENSUS probe at the direct gate, --nocapture) counts the
+remaining escapes to the legacy exit closer:
+
+- resource-ensure: 191 (141 mdtests + 50 examples)
+- frame-certified: 1 (single mdtest)
+- non-ensure claims: 0
+
+The typed resource-production goal (step 3) is therefore nearly the
+whole remaining vocabulary; a claim set containing one resource ensure
+keeps every claim on the legacy path today. Frame-certified admission
+is a single-site follow-up. Design starting point for the resource
+goal: `discharge_exit_simp_claim`'s grouped arm treats
+`Ensure::Resource` as joining the grouped transition with no
+proposition goal — the direct path needs the substrate-4 typed
+function-outcome goal extended with a resource-production form whose
+discharge runs the same fold/consume machinery
+`resource_context_satisfies_definitional_fact` uses at certification.
+
+## Grouped resource ensures: not closure-only (2026-08-19)
+
+After the ungrouped slice (75ad9b74), 144 escapes remain, all
+grouped-resource (94 mdtests + 50 examples; every example escape is
+grouped). Marking grouped resource claims closed
+`by_grouped_transition` with the direct certificate is NOT sufficient:
+54 lib tests fail, led by grouped-simp expansion fixtures
+(grouped_simp_expansion_preserves_resource_scalar_and_quantified_transitions,
+expanded_execute_and_frame_replay_after_resource_branch) — the grouped
+transition certificate must itself carry the resource transition
+content (fold/production steps) that the legacy grouped closer builds
+into it, not merely mark the claims closed. Next: read the legacy
+grouped-transition builder (the code consuming
+GroupedOutcomeSimpGoal/grouped_pending after the direct path) to see
+what resource content it emits into path_grouped_surface_closers, and
+either reproduce that content from the direct proof or extend
+complete_point_obligations_since with typed resource-production
+steps.
+
+## Chunk 2 resource vocabulary landed (2026-08-19)
+
+Three gate-green commits close the resource-ensure escape class:
+ungrouped resource ensures (75ad9b74), grouped resource ensures via the
+Assumption-padded grouped transition (63078245), and all-resource claim
+sets closing without a proof attempt (this commit). The
+compatibility-lowering fallback is gated to ungrouped attempts so
+grouped sets needing nested-have spelling keep the legacy certifier
+(pinned by outcome_predecessor_upper_bound...). Census across both
+corpora: legacy-exit-closer entries 154 -> 81, of which 71 are direct
+proof attempts whose goals the direct closures cannot prove yet (the
+next vocabulary frontier) and ~10 are divergent/existence/frame
+special cases. The remaining chunk items: strengthen the direct
+closures against the 71 (measure which closure step fails), the single
+frame-certified admission, then retire the legacy closer for the
+converted classes.
+
+## Attempt-miss breakdown (2026-08-19, post resource vocabulary)
+
+The 71 direct-attempt failures split 38 ungrouped / 24 grouped (mdtests;
+plus 7 examples-side, unclassified) with a diverse goal tail: predicate
+calls needing scope-level unfold reasoning (permutation x15, valid_pool,
+valid_capacity, sorted, sorted_pair), separation goals, plain result
+comparisons (result >= 0, == 7 — likely needing outcome-value
+substitution the compatibility lowering used to supply), and chained
+implications. The grouped 24 are sets my compatibility gate now sends
+to the legacy certifier — reclaiming them means teaching the direct
+scope closures the nested-have spelling the legacy
+certify_outcome_simp_have produces, which is the same work as the
+ungrouped tail. This is incremental closure-vocabulary growth: pick the
+largest classes (predicate-call goals, then result comparisons),
+extend try_direct_logical_closure / try_simp_closure or add a
+structured nested-have builder on the scope, one gated commit per
+class.
+
+## Predicate-call arm landed; grouped planner-candidate attempt reverted (2026-08-19)
+
+`try_structural_simp_closure` gained a predicate-call arm (unfold the
+goal once, refuse repeat unfolds, recurse) — gate green, converts a few
+simple predicate goals; the big predicate classes (permutation etc.)
+still miss because their unfolded bodies exceed the closure vocabulary.
+
+A second attempt wired `certify_outcome_simp_have` (the legacy grouped
+nested-have planner) into the grouped direct attempt as a checked
+candidate per scope. Two findings before reverting to green:
+(1) the planner's tactics establish the goal as a fact — a trailing
+`Assumption` is needed to close the scope, mirroring the legacy
+transition's per-claim closers; with it the nested proof completes.
+(2) the resulting grouped surface script then fails COMPLETE replay
+("`explicit proof script` surface certificate failed complete replay")
+— the direct certificate's tactic stream, recorded into
+path_grouped_surface_closers, does not replay at its position in the
+explicit whole-contract script the way the legacy transition's stream
+does. Next session: diff the two tactic streams for
+drop_one.contract (legacy vs direct-with-planner) and align the
+recorded form; the pinned test
+outcome_predecessor_upper_bound_spells_a_rewritten_nonnegative_leg is
+the reproduction.
+
+## Planner-at-proof-level round (2026-08-19, reverted, evidence banked)
+
+Applying the nested-have planner's certificate at the proof level (on
+scope failure, never nested inside a second scope) fixes the doubled
+`have ordered_pair(pair)` — the recorded script now carries the
+planner's single have. The remaining failure is the trailing claim
+closer: explicit whole-contract replay reports "tactic 8: `assumption`
+did not match any current proposition goal". Contrast with the legacy
+transition's recorded stream for the same contract (captured):
+`[Have(<unfolded conjunction>){nested haves...}, Assumption,
+Assumption]` — the legacy have is spelled with the UNFOLDED conjunction
+and is followed by TWO bare assumptions (claim_count), while the
+direct path's stream spells `have ordered_pair(pair)` (predicate call)
+and appends one focus-based closer via
+complete_point_obligations_since. Working hypotheses, in test order:
+(a) the assumption count must equal the grouped claim count in claim
+order (legacy pads to claim_count; the direct completion emits one per
+proposition goal only); (b) the have must be spelled unfolded so the
+claim-closing assumption's goal-match sees the same surface form.
+Scope-closed grouped sets already replay fine with focus-based
+closers (63078245), so the mismatch is specific to planner-produced
+haves. Reproduction:
+outcome_predecessor_upper_bound_spells_a_rewritten_nonnegative_leg.
+
+## Grouped planner fallback landed (2026-08-19, 13442de7)
+
+The nested-have certifier now plans grouped goals the scope closures
+cannot prove, applied at the proof level with the kernel goal lowered
+under active unfolds (the fix for the claim-closer replay: the planner
+only chooses the unfolded certificate spelling when the kernel goal it
+receives was lowered that way). Planner-closed claims take bare
+trailing assumptions. Census: legacy-exit-closer entries 81 -> 74
+(43 ungrouped mdtests; 25+6 grouped). The grouped residue is goals the
+planner also fails on plus gate-bailed sets (divergent, existence,
+frame-certified); the ungrouped residue are per-claim
+certificate-closed by the legacy loop (already checked certificates,
+not unsound escapes). Remaining chunk-2 work is therefore incremental:
+teach the scope closures / planner the residual goal classes, and
+admit ungrouped attempt-misses through certify_outcome_simp the same
+way if retiring the legacy loop entirely is wanted before the drain
+escape retirement.
+
+## Ungrouped per-claim mirror round (2026-08-19, reverted, evidence banked)
+
+Routing ungrouped scope failures through the legacy per-claim pipeline
+(check_function_claim_by_simp, then certify_outcome_simp against the
+legacy certificate_facts context, closures applied only after attempt
+success) breaks three expansion fixtures: the captured per-claim
+certificate fails ITS OWN replay at "tactic 3: assumption did not match
+any current proposition goal" (restricted_simp_rewrites_a_named_successor
+_before_increment_order and two branch-arm expansion tests). Matching
+the legacy certificate_replay exactly — including retaining
+deferred_tactic_capture — did not fix it, so the difference is in how
+the captured stream is assembled for expansion, not in the certificate
+construction context: the legacy loop records per-claim closures via
+ClaimClosure::claim_tactics() at the newly_closed capture site, while
+the direct path splices per-claim certificates and the shared attempt
+certificate into path_deferred_capture_tactics in a different shape.
+Next session: capture the legacy vs direct expanded source for
+named_successor (the reproduction is fast) and diff the tactic
+streams, then either reproduce claim_tactics()' framing or hand the
+per-claim closures through the same newly_closed bookkeeping the
+legacy loop uses.
+
+## Ungrouped per-claim mirror landed (2026-08-19, 1b788c63)
+
+The earlier expansion breakage had a one-line root cause: individually
+closed ungrouped claims also joined the grouped trailing-Assumption
+padding, adding a spurious claim closer to captured streams (found by
+diffing the legacy vs direct expanded source for named_successor —
+identical except one extra `assumption()`). With the padding gated to
+grouped mode the mirror lands gate-green. Census: legacy-exit-closer
+entries 74 -> 56 (25 ungrouped + 31 grouped). The residue: ungrouped
+entries that fail even the per-claim certifier or carry existence
+tactics/divergent outcomes; grouped planner-misses and gate-bailed
+special cases. Each further conversion is now strictly a
+prover-capability question (the routing surface is fully migrated for
+proposition and resource claims in both modes).
+
+## Divergent fast path; arm-level census (2026-08-19, c3027aff)
+
+Divergent-path ensures close directly with the legacy-identical
+Normalize certificate; census 56 -> 53 legacy entries. Arm-level
+census of the claims those entries close: 96 plain-simp (24 ungrouped
++ 72 grouped), 1 existence, 1 frame-certified. Since the direct
+attempts run the same ambient check and certifiers, the plain-simp
+population is dominated by SIBLING claims swept to legacy by the
+all-or-nothing abort: one hard claim in a set sends every sibling to
+the legacy closer. The next structural lever is partial-set success —
+close the claims that succeed on the direct path and leave only the
+genuinely failing ones to legacy — which requires per-claim rollback
+boundaries instead of the single with_search_attempt_rollback around
+the whole set. That is a deliberate design change to the attempt
+protocol; note it for discussion rather than landing it overnight.
+
+## Planner-miss sample (2026-08-19)
+
+Of the 28 grouped legacy entries, only 6 sets reach the nested-have
+planner at all (the rest abort earlier: a sibling claim already failed,
+or existence candidates route around the planner arm). The 6 planner
+misses split into quantified goals the planner cannot spell
+(Exists/ForAll postconditions) and "expressible facts do not replay the
+postcondition derivation" cases — genuine certifier capability limits
+shared with the legacy transition (the same certifier), meaning those
+sets close in legacy today through path-level effects rather than the
+per-claim certifier. Remaining conversion is therefore blocked on
+either per-claim rollback boundaries (the sibling-abort lever, flagged
+for discussion) or certifier capability work (quantified spelling),
+both design-scale.

@@ -6525,7 +6525,7 @@ fn lower_outcome_simp_proof_direct(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn certify_outcome_simp_have(
+pub(super) fn certify_outcome_simp_have(
     replay: &TacticReplayState,
     surface_goal: &ClickProposition,
     goal: &Proposition,

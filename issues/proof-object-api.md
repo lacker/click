@@ -3588,6 +3588,42 @@ rewritten and frame-certified goals) is next; the fallback population it
 inherits is now the goal-path misses rather than the entire ungrouped
 corpus.
 
+### Progress (2026-08-19: the region-frame arm is corpus-covered)
+
+The 2026-08-18 note asking for a region-frame certifier coverage
+fixture is stale: a --nocapture probe now counts 15 hits across the lib
+suite and 2 in the mdtests gate for the `FrameRegion` drain arm, so the
+arm stopped being probe-invisible with the ordered-finalization
+deferral work. The fold-at-exit fixture had already landed earlier. No
+additional fixture is needed; the arm-end immediate re-import remains
+the covered behavior.
+
+### Progress (2026-08-19: Simp chunk 2 lands the resource vocabulary and the grouped planner fallback)
+
+Six gate-green commits move most of the Simp escape population onto the
+direct goal path. Rewritten claim goals replay their recorded surface
+equalities as checked Rewrite steps inside the claim's have scope.
+Resource ensures close on the direct path in both modes: the bounded
+production check runs before the attempt, ungrouped claims take the
+legacy-identical Assumption certificate, grouped claims join an
+Assumption-padded grouped transition, and all-resource claim sets close
+with no proof attempt at all. The structural closure gained a
+predicate-call arm (unfold the goal once, refuse repeat unfolds).
+Grouped goals beyond the scope closures are planned by the same
+nested-have certifier the legacy transition uses, applied at the proof
+level with the kernel goal lowered under active unfolds — the spelling
+condition that makes the claim-closing replay match. Census across both
+fixture corpora: legacy-exit-closer entries 154 -> 74, with the residue
+characterized per class in `explicit-have-goal-path-gaps.md` (43
+ungrouped per-claim certificate closes; 31 grouped planner-misses and
+gate-bailed special cases). One banked negative result: routing
+ungrouped scope failures through the per-claim certifier breaks three
+expansion fixtures at captured-stream replay — the expansion capture
+assembly, not certificate construction, is the difference to align.
+Separately, the load-canonicalization campaign (its own branch) is
+green on the lib suite with the remaining gate failures reduced to one
+filed design issue (`canonical-name-transport-across-effects.md`).
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
