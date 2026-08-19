@@ -134,7 +134,14 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     // `known_value` first would collapse `at(mark, field == 11)` to `true` and
     // erase the address needed for later frame transport.
     if has_external_read_resource && assumptions.should_force_symbolic_external_loads() {
-        let Some(value) = symbolic_load_value(memory, &pointer, value_type) else {
+        let Some(value) = canonicalized_symbolic_load_value(
+            memory,
+            &pointer,
+            value_type,
+            next_verification_variable,
+            &mut facts,
+            assumptions,
+        ) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
@@ -247,7 +254,14 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }
 
     if has_external_read_resource && assumptions.should_prefer_symbolic_external_loads() {
-        let Some(value) = symbolic_load_value(memory, &pointer, value_type) else {
+        let Some(value) = canonicalized_symbolic_load_value(
+            memory,
+            &pointer,
+            value_type,
+            next_verification_variable,
+            &mut facts,
+            assumptions,
+        ) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
@@ -308,7 +322,14 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }
 
     if pointer.has_symbolic_block() && has_external_read_resource {
-        let Some(value) = symbolic_load_value(&memory, &pointer, value_type) else {
+        let Some(value) = canonicalized_symbolic_load_value(
+            &memory,
+            &pointer,
+            value_type,
+            next_verification_variable,
+            &mut facts,
+            assumptions,
+        ) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
@@ -395,7 +416,14 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }
 
     if memory.is_loadable_concretely(&pointer, value_type.byte_width()) {
-        let Some(value) = symbolic_load_value(&memory, &pointer, value_type) else {
+        let Some(value) = canonicalized_symbolic_load_value(
+            &memory,
+            &pointer,
+            value_type,
+            next_verification_variable,
+            &mut facts,
+            assumptions,
+        ) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
@@ -446,7 +474,14 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }
     }
 
-    let Some(value) = symbolic_load_value(&memory, &pointer, value_type) else {
+    let Some(value) = canonicalized_symbolic_load_value(
+        &memory,
+        &pointer,
+        value_type,
+        next_verification_variable,
+        &mut facts,
+        assumptions,
+    ) else {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts,
@@ -483,74 +518,105 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
         CType::UInt8Pointer => 1,
         _ => return None,
     };
-    // One canonical variable per load identity: repeated loads of the same
-    // cell from the same snapshot reuse the minted name, so relations
-    // between occurrences stay syntactic instead of demanding equation
-    // chains through the defining facts. The cache key is the snapshot's
-    // arena identity plus the loaded pointer; entries from finished
-    // executions are unreachable via their arena ids and age out at the
-    // size cap.
+    let fresh = mint_canonical_load_variable(bits, next_verification_variable, facts, assumptions)?;
+    Some(CValue::Pointer(Pointer {
+        block: pointer.block.clone(),
+        offset: PointerOffsetTerm::scale_int32(
+            Bitvector32Term::Variable(fresh),
+            i64::from(pointee_byte_width),
+        ),
+    }))
+}
+
+/// The canonicalizing form of [`symbolic_load_value`]: a pointer loaded from
+/// an opaque cell is spelled through a minted verification variable instead
+/// of embedding the `MemoryLoad` term in its offset. Non-pointer loads pass
+/// through unchanged — the invariant governs pointer-offset positions, where
+/// arithmetic must stay over small terms.
+pub(in crate::kernel) fn canonicalized_symbolic_load_value(
+    memory: &CMemory,
+    pointer: &Pointer,
+    value_type: CType,
+    next_verification_variable: &mut u64,
+    facts: &mut Vec<ExecutionPureFact>,
+    assumptions: &PureFactContext,
+) -> Option<CValue> {
+    let value = symbolic_load_value(memory, pointer, value_type)?;
+    let CValue::Pointer(Pointer {
+        block,
+        offset:
+            PointerOffsetTerm::Int32Scaled {
+                value: bits,
+                byte_width,
+            },
+    }) = &value
+    else {
+        return Some(value);
+    };
+    if !matches!(bits.as_ref(), Bitvector32Term::MemoryLoad(_, _)) {
+        return Some(value);
+    }
+    let fresh = mint_canonical_load_variable(bits, next_verification_variable, facts, assumptions)?;
+    Some(CValue::Pointer(Pointer {
+        block: block.clone(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(fresh), *byte_width),
+    }))
+}
+
+/// The canonical verification variable naming one load identity: the pair of
+/// a memory snapshot (by content) and a loaded pointer. The id is derived
+/// deterministically by hashing that identity into a reserved id space, so
+/// every pass — contract-grant lowering, requirement evaluation, and body
+/// execution — spells the same load with the same variable without sharing
+/// any allocator state, and certificates replay across runs. A thread-local
+/// registry detects hash collisions between distinct load identities and
+/// stops verification loudly instead of silently conflating them.
+pub(crate) fn canonical_load_variable(memory: &SharedCMemory, pointer: &Pointer) -> Variable {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    memory.hash(&mut hasher);
+    pointer.hash(&mut hasher);
+    let hash = hasher.finish();
+    const LOAD_VARIABLE_BASE: u64 = 1 << 40;
+    const LOAD_VARIABLE_RANGE: u64 = 1 << 40;
+    let variable = Variable(LOAD_VARIABLE_BASE + hash % LOAD_VARIABLE_RANGE);
     thread_local! {
-        static MINT_CACHE: std::cell::RefCell<
-            std::collections::HashMap<((u32, u32), Pointer), Variable>,
+        static REGISTRY: std::cell::RefCell<
+            std::collections::HashMap<Variable, (SharedCMemory, Pointer)>,
         > = std::cell::RefCell::new(std::collections::HashMap::new());
     }
-    const MINT_CACHE_LIMIT: usize = 100_000;
+    REGISTRY.with(|registry| {
+        let mut registry = registry.borrow_mut();
+        if let Some((known_memory, known_pointer)) = registry.get(&variable) {
+            assert!(
+                known_memory == memory && known_pointer == pointer,
+                "canonical load-variable collision: {variable:?} names two distinct loads"
+            );
+        } else {
+            if registry.len() >= 1_000_000 {
+                registry.clear();
+            }
+            registry.insert(variable, (memory.clone(), pointer.clone()));
+        }
+    });
+    variable
+}
+
+/// Binds a load term to its canonical variable and records the defining
+/// equation in the path's fact stream. The defining equation is
+/// kernel-certified by construction: the variable is the kernel's own name
+/// for this load. It must not demand a replayable assumption derivation
+/// downstream.
+fn mint_canonical_load_variable(
+    bits: &Bitvector32Term,
+    _next_verification_variable: &mut u64,
+    facts: &mut Vec<ExecutionPureFact>,
+    _assumptions: &PureFactContext,
+) -> Option<Variable> {
     let Bitvector32Term::MemoryLoad(loaded_memory, loaded_pointer) = bits else {
-        unreachable!("the pattern above matched a memory load");
+        return None;
     };
-    let cache_key = (loaded_memory.arena_id(), loaded_pointer.as_ref().clone());
-    let cached = MINT_CACHE.with(|cache| cache.borrow().get(&cache_key).copied());
-    // Contract lowering may already have bound this exact load to a
-    // variable (an owned-range base, for example). Reusing that binding
-    // makes the executed address and the contract-spelled range coincide
-    // syntactically, so containment needs no equation chaining.
-    let ambient_binding = || {
-        assumptions.prop_facts.iter().find_map(|fact| {
-            let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = fact
-            else {
-                return None;
-            };
-            let (Bitvector32Term::Variable(variable), Bitvector32Term::MemoryLoad(memory, ptr)) =
-                (left.as_ref(), right.as_ref())
-            else {
-                return None;
-            };
-            (ptr == loaded_pointer && memory == loaded_memory).then_some(*variable)
-        })
-    };
-    let fresh = if let Some(cached) = cached {
-        cached
-    } else if let Some(bound) = ambient_binding() {
-        MINT_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            if cache.len() >= MINT_CACHE_LIMIT {
-                cache.clear();
-            }
-            cache.insert(cache_key, bound);
-        });
-        bound
-    } else {
-        let mut existing = std::collections::BTreeSet::new();
-        crate::kernel::reasoning::collect_bitvector_variables(bits, &mut existing);
-        let mut variables = crate::kernel::primitives::VerificationVariableGenerator::fresh_for(
-            *next_verification_variable,
-            existing,
-        );
-        let fresh = variables.next();
-        *next_verification_variable = variables.next;
-        MINT_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            if cache.len() >= MINT_CACHE_LIMIT {
-                cache.clear();
-            }
-            cache.insert(cache_key, fresh);
-        });
-        fresh
-    };
-    // The defining equation is kernel-certified by construction: the fresh
-    // variable is the kernel's own name for this load. It must not demand a
-    // replayable assumption derivation downstream.
+    let fresh = canonical_load_variable(loaded_memory, loaded_pointer);
     let defining = ExecutionPureFact::certified(Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(Bitvector32Term::Variable(fresh)),
@@ -564,13 +630,7 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
     {
         facts.push(defining);
     }
-    Some(CValue::Pointer(Pointer {
-        block: pointer.block.clone(),
-        offset: PointerOffsetTerm::scale_int32(
-            Bitvector32Term::Variable(fresh),
-            i64::from(pointee_byte_width),
-        ),
-    }))
+    Some(fresh)
 }
 
 pub(in crate::kernel) fn symbolic_pointer_value_from_int_cell(

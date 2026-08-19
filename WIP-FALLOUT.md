@@ -114,3 +114,37 @@ shapes mentioning the contract variable in this test's entry facts
 `Equal`, or a TypedLoad-anchored form), then widen the reuse match to
 that shape, bridging entry-to-current memory through the existing
 unchanged-load machinery if the handles differ.
+
+## Layer 4 closed: content-addressed canonical load variables
+
+The MissingResource class was a three-way spelling split for one load:
+contract-grant lowering (surface, raw `MemoryLoad(empty-placeholder)`),
+requirement evaluation (kernel mint from one counter), and body execution
+(kernel mint from another counter). Counter-based minting cannot unify
+passes that share no allocator state, so the mint is now content-addressed:
+`canonical_load_variable(memory, pointer)` hashes the load identity into a
+reserved id space (base 2^40, precedent `spec_fold_bound_variable`), with a
+thread-local registry that panics on a hash collision between distinct
+identities instead of silently conflating them. All three birth paths —
+`mint_canonical_load_variable` (eval + spec) and the surface
+`symbolic_pointer_contract_memory_load` — now call it, so every pass spells
+the same load with the same variable and containment is syntactic. The
+counter threading is now vestigial (parameters retained, unused) and can be
+removed in cleanup. Lead test passes; suite fallout dropped 14 → 6.
+
+## Remaining fallout classes (6 tests)
+
+1. **Snapshot-unstable naming** (`truncated_service_step…`, likely the
+   perpetual-service and simp-premise tests): the same cell loaded at two
+   snapshots hashes to two canonical variables, where raw load spellings
+   were previously bridged by atomic-load provenance seeing through the
+   terms. Fix direction: canonicalize the load term to its
+   provenance-stable spelling (store-equation / placeholder resolution,
+   the existing `canonicalize_atomic_loads` layer) before hashing, so
+   unchanged cells share one name across snapshots.
+2. **No surface spelling for canonical variables in expansion**
+   (`modular_call_snapshot_anchor…`, expansion tests): fact transports over
+   defining equations have no recorded Click spelling. Same family as the
+   layer-2 fix; extend the resolved round-trip or synthesize spellings for
+   defining facts. The transport source also shows an un-canonicalized
+   load born through the pointer-ADD operator path (worklist item).

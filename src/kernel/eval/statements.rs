@@ -167,6 +167,9 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 .cloned();
             let has_external_write_resource = is_external && authorized_range.is_some();
             if is_external_memory_pointer(&pointer) && !has_external_write_resource {
+                if std::env::var("CLICK_PROBE").is_ok() {
+                    eprintln!("PROBE MissingResource statements.rs:171");
+                }
                 return vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
                         resource: CResourceFact::own_memory(CMemoryRange::new(
@@ -236,6 +239,12 @@ fn execute_c_heap_allocate_paths(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     if state.local_object_type(target) != Some(CType::Int32Pointer) {
+        if std::env::var("CLICK_PROBE").is_ok() {
+            eprintln!("PROBE MissingResource statements.rs:475");
+        }
+        if std::env::var("CLICK_PROBE").is_ok() {
+            eprintln!("PROBE MissingResource statements.rs:492");
+        }
         return Ok(vec![CStatementExecutionPath {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts: Vec::new(),

@@ -1095,13 +1095,29 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                     },
                     SpecMemory::Fixed(memory) => memory,
                 };
-                let value = memory
-                    .known_value(&pointer)
-                    .and_then(|stored| {
-                        symbolic_pointer_value_from_int_cell(&pointer, &stored, *value_type)
-                            .or_else(|| value_type.accepts(&stored).then_some(stored))
-                    })
-                    .or_else(|| symbolic_load_value(memory, &pointer, *value_type));
+                let mut facts = pointer_path.facts;
+                let mut value = None;
+                if let Some(stored) = memory.known_value(&pointer) {
+                    value = canonicalized_pointer_value_from_int_cell(
+                        &pointer,
+                        &stored,
+                        *value_type,
+                        &mut budget.next_verification_variable,
+                        &mut facts,
+                        assumptions,
+                    )
+                    .or_else(|| value_type.accepts(&stored).then_some(stored));
+                }
+                if value.is_none() {
+                    value = canonicalized_symbolic_load_value(
+                        memory,
+                        &pointer,
+                        *value_type,
+                        &mut budget.next_verification_variable,
+                        &mut facts,
+                        assumptions,
+                    );
+                }
                 let Some(value) = value else {
                     continue;
                 };
@@ -1118,7 +1134,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                 }
                 paths.push(SpecExpressionPath {
                     value,
-                    facts: pointer_path.facts,
+                    facts,
                     obligations,
                 });
             }

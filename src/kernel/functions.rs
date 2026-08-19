@@ -1517,6 +1517,16 @@ fn prepare_function_resource_transfer(
             caller_state.memory(),
             assumptions,
         ) else {
+            if std::env::var("CLICK_PROBE").is_ok() {
+                eprintln!("PROBE required: {resource:?}");
+                eprintln!("PROBE held: {return_resources:?}");
+                for fact in assumptions.prop_facts.iter() {
+                    let text = format!("{fact:?}");
+                    if text.contains("Variable(1000000)") || text.contains("MemoryLoad") {
+                        eprintln!("PROBE fact: {}", &text[..text.len().min(300)]);
+                    }
+                }
+            }
             return Ok(Err(CRuntimeError::MissingResource {
                 resource: resource.clone(),
             }));
