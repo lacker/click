@@ -3081,6 +3081,38 @@ transactionality assertion moved into it. `ExecutionProofBranches` and the
 outcome partition container remain, with the same retirement path once
 execution sibling goals exist.
 
+### Execution sibling-split plan (written 2026-08-18, next work)
+
+`ExecutionProofBranches` and the outcome partition container retire the same
+way `ProofBranches` did, but their joins consume per-arm *introduced
+deltas* — facts, effect facts, function-entry prerequisites and
+derivations, unfolded names, and the arm's condition theorem — which the
+containers accumulate at apply time so joins merge output-sensitively
+instead of diffing whole contexts. The in-`Proof` form keeps that contract
+by the established principle that path-local semantics live on the goal:
+
+1. **Goal-owned introduction deltas.** `GoalContext` gains persistent
+   insertion-ordered `introduced` sequences (facts now; effect facts,
+   prerequisites, derivations as the execution split needs them). Every
+   fact successor records its additions; splits create children with empty
+   deltas; joins read each sibling's delta directly — O(arm delta), never a
+   context diff. The unfold delta already lives on the goal and is the
+   model.
+2. **Frontier splits.** `split_focused_execution_branch` mirrors
+   `begin_execution_branch`: kernel-feasible arms become sibling frontier
+   goals in one state, each with its arm snapshot, path facts, and
+   condition theorem recorded on the split (a small split record value
+   holds marker, ids, condition theorems, and the shared continuation
+   data — bookkeeping the join verifies, not semantic authority).
+3. **Joins by variant.** The six join variants move one at a time onto
+   sibling goals, reading arm deltas from the goals and continuing to
+   produce their existing structured steps; the container survives until
+   its last join consumer moves, then is deleted with its curves migrated
+   at unchanged bounds, as with `ProofBranches`.
+4. **The outcome partition container** follows: it already partitions
+   checked outcomes, which are goals now, so its split becomes goal-set
+   partitioning and its join the existing attribution machinery.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
