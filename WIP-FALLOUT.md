@@ -689,3 +689,31 @@ Branch state: lib 1062/1062; mdtests 396/397. Two focused residues:
   modulo-canonical orderings) to fire at CallHavoc edges — probe where
   its walk stops now and whether the effect-summary arm's endpoint
   matching or range disjointness is the residual gap.
+
+## Input-cursor residue precisely scoped (2026-08-19)
+
+Its bridge walk stops at call-havoc edges (15 stops) and stores (53):
+the CallHavoc arm needs `left+8` disjoint from the call's mutable range
+`right[0..4]`, whose only evidence is the resource composition holding
+Own(right[0..4]) RAW plus Own(input_cursor(left)) as an UNEXPANDED
+COMPOSITE — and `proves_owned_range_separate_from_pointer_shallow`
+requires the pointer side to sit in an owned MEMORY fact, so the
+composite is opaque. The composition facts published by
+`observable_facts_assuming_valid` clone the context as-is (no
+definitions at that layer), and the transport call chain
+(prove_pure_proposition_case_at_point -> the have-body transport) does
+not carry the ResourceEnvironment.
+
+Fix directions for a fresh session, in preference order:
+1. Publish composite-EXPANDED composition facts where definitions ARE
+   in scope: at drain working-set construction (claim_proofs has
+   resource_environment), assume an additional
+   CResourceComposition(expanded) alongside the raw one — the shallow
+   check then sees Own(left[0..4]) etc. Bounded: expansion runs once
+   per point, and expand_all_composite_resource_facts exists.
+2. Or thread composite definitions into the transport chain
+   (signature churn through prove_pure_proposition_case_at_point and
+   check_point_fact_transport_using_facts).
+
+leaf_flag (the other residue) is independent: a false-goal certificate
+arm for path-infeasible ensures in the grouped planner.
