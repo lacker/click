@@ -679,12 +679,10 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         assumption();
     }
     have owner->data[old(owner->len)] == value by {
-        rewrite(at(statement(2).entry, value) == at(statement(2).exit, (at(statement(2).entry, owner->data) + 0)[at(statement(2).entry, index)]));
         rewrite(owner->data == old(owner->data));
         assumption();
     }
     have owner->data[owner->len] == 0 by {
-        rewrite(at(statement(4).entry, 0) == at(statement(4).exit, (at(statement(4).entry, owner->data) + 0)[at(statement(4).entry, (index + 1))]));
         rewrite(owner->len == (old(owner->len) + 1));
         rewrite(owner->data == old(owner->data));
         assumption();

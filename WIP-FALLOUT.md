@@ -889,3 +889,30 @@ facts and no ProofFacts, so it cannot reach it. Closing owned-string
 means giving the rewrite premise check that context, which is a
 signature change through the simp checking surface rather than another
 matcher.
+
+## owned-string closed: two stale proof steps (2026-08-19)
+
+The diagnosis that sent me to fact transport was wrong, and probing the
+actual facts corrected it: there is no top-level `value == load(...)`
+equality to transport. The `value` parameter appears only nested inside
+the snapshot's cell map, so nothing was missing from the context — the
+two cited rewrites are store equations the prover now establishes on its
+own, and the goals they were preparing are already in the form
+`assumption()` closes.
+
+Deleting exactly those two lines makes the example verify. The `have`
+goals, the contract, the ensures and the C are untouched; only two proof
+steps that the current prover makes unnecessary are gone. This is the
+same shape as the dead-suffix ruling: a step that no longer does work
+comes out of the script.
+
+Reverted along the way, because the diagnosis behind it did not hold and
+it fixed nothing: threading effect facts into the rewrite premise check
+(a signature change across six call sites), and comparing vacuity modulo
+resolution. The canonical-name bridge generalisation stays — it is what
+proved the origins route was the wrong tool here.
+
+Branch state: lib/bins 1200/1200, ALL examples pass, mdtests 396/397
+with only `leaf_flag_grouped_simp` left, which is independent of this
+campaign. Note `bubble_sort3_loop_permutation` can fail under machine
+load: it is real-time budgeted, and it passes on a quiet machine.
