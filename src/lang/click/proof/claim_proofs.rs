@@ -3639,10 +3639,6 @@ pub(super) fn finish_ordered_proof_replay(
                                                         ));
                                                     }
                                                     Ensure::Resource(resource) => {
-                                                        if replay.grouped_contract {
-                                                            direct_supported = false;
-                                                            break;
-                                                        }
                                                         direct_resource_claims
                                                             .push((claim_index, resource.clone()));
                                                     }
@@ -3812,7 +3808,15 @@ pub(super) fn finish_ordered_proof_replay(
                                                 && let Some(scope) = scope.try_simp_closure()?
                                             {
                                                 Some(scope)
-                                            } else if existence_candidate.is_none() {
+                                            } else if existence_candidate.is_none()
+                                                && !replay.grouped_contract
+                                            {
+                                                // Grouped sets that need the
+                                                // compatibility lowering fall
+                                                // back to the legacy grouped
+                                                // certifier, which spells the
+                                                // same derivation as structured
+                                                // nested haves.
                                                 let Some(goal) = scope.goal().cloned() else {
                                                     selected = false;
                                                     break;
@@ -3888,8 +3892,39 @@ pub(super) fn finish_ordered_proof_replay(
                                             })?;
                                         if let Some(certificate) = direct_certificate {
                                             if replay.grouped_contract {
+                                                // The grouped transition's tactic
+                                                // stream closes claims in order;
+                                                // checked resource productions
+                                                // contribute one Assumption each,
+                                                // exactly as the legacy certifier
+                                                // pads its transition to the full
+                                                // claim count.
+                                                let certificate = if direct_resource_claims
+                                                    .is_empty()
+                                                {
+                                                    certificate
+                                                } else {
+                                                    let mut tactics =
+                                                        certificate.to_proof_tactics();
+                                                    tactics.extend(std::iter::repeat_n(
+                                                        ProofTactic::Assumption,
+                                                        direct_resource_claims.len(),
+                                                    ));
+                                                    ProofCertificate::from_proof_tactics(&tactics)
+                                                        .map_err(|error| {
+                                                            ClickError::new(format!(
+                                                                "`{proof_label}` path {path_index}, tactic {tactic_index}: resource-padded grouped transition was invalid: {error:?}"
+                                                            ))
+                                                        })?
+                                                };
                                                 for (claim_index, _, _) in direct_claims {
                                                     closures[claim_index] =
+                                                        ClaimClosure::by_grouped_transition(
+                                                            &certificate,
+                                                        );
+                                                }
+                                                for (claim_index, _) in &direct_resource_claims {
+                                                    closures[*claim_index] =
                                                         ClaimClosure::by_grouped_transition(
                                                             &certificate,
                                                         );
