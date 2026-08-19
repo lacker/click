@@ -661,3 +661,31 @@ without_possible_aliasing_cells dropped the store's own written cell
 
 Everything else in the bridge is probe-verified working; this one
 resolution turns the metadata-write acceptance green.
+
+## MILESTONE: the metadata-write acceptance verifies (2026-08-19, bdb03be0+)
+
+The original motivating case of the whole canonicalization campaign —
+`mdtests/field_derived_precise_effect_after_metadata_write.md` —
+verifies with HEALTHY VOLUME diagnostics. The final fix chain: field
+cells survive separated-array stores (the drop's per-cell check gains
+the separation+membership route — placed at the drop site only after a
+general-path placement slowed the suite 9x), which lets post-store
+spellings resolve, the canonical matcher connect the ordering facts,
+the store edge cross, and the origins bridge prove. A follow-up made
+the surface-lowering recorder tolerant of connective collapse (a
+resolved cell decides a loop-exit ordering and the kernel keeps one
+leg), fixing the one spelling-shift fixture.
+
+Branch state: lib 1062/1062; mdtests 396/397. Two focused residues:
+- `leaf_flag_grouped_simp`: on path 1 an ensures now lowers to
+  Constant(false) (a canonical/materialized resolution decides an
+  implication antecedent concretely where it used to stay symbolic);
+  the grouped certifier has no arm for a false goal — the proof is the
+  path's own infeasibility. Needs a false-goal/contradiction
+  certificate arm in the grouped planner.
+- `examples/input-cursor`: the CALL-havoc variant of the bridge; the
+  cell-survival fix applies to stores, not havocs. Its origins bridge
+  needs the effect-summary membership route (now equipped with
+  modulo-canonical orderings) to fire at CallHavoc edges — probe where
+  its walk stops now and whether the effect-summary arm's endpoint
+  matching or range disjointness is the residual gap.
