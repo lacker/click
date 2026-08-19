@@ -50,28 +50,6 @@ pub(super) struct ProofCheckpoint<'a> {
     node: Arc<ProofNode>,
 }
 
-/// Two exhaustive terminal-execution outcome partitions selected by one
-/// proof-level condition.
-///
-/// Unlike a proposition sibling split, these arms retain execution-frontier
-/// goals and
-/// own disjoint subsets of an already-checked function execution. Branch-local
-/// facts can therefore justify terminal simple steps without being exposed to
-/// incompatible outcomes. The audited join restores the complete execution,
-/// records one structured `If`, and combines matching checked-frame authority
-/// into one ordered resource transition.
-struct ExecutionOutcomeProofBranches<'a> {
-    root: Proof<'a>,
-    /// The recorded split with each arm's child goal id and entry marker,
-    /// then-arm before else-arm.
-    split: SplitId,
-    child_goals: [GoalId; 2],
-    entries: [ProofCheckpoint<'a>; 2],
-    condition: ClickProposition,
-    arms: [Proof<'a>; 2],
-    root_post_execution_count: usize,
-}
-
 /// Feasible arms of one checked C `if` frontier.
 ///
 /// Entering the container performs the audited condition transition and C
@@ -165,6 +143,24 @@ impl<'a> ExecutionSplit<'a> {
                         .descends_from(self.parent_execution.state.resources())
                 }))
     }
+}
+
+/// Bookkeeping for one in-`Proof` terminal-outcome partition split: the
+/// marker and recorded arm ids its join verifies, the partition condition
+/// and the effect selection both arms must close, the parent context the
+/// join resumes, and each arm's entry fact delta. This is a record the
+/// audited join checks — never semantic authority.
+pub(super) struct OutcomeSplit<'a> {
+    marker: ProofCheckpoint<'a>,
+    split: SplitId,
+    ids: [GoalId; 2],
+    condition: ClickProposition,
+    expected_effects: Vec<usize>,
+    path_facts: [Vec<Proposition>; 2],
+    parent_facts: ProofFacts,
+    parent_unfolds: PersistentOrderedSet<String>,
+    parent_execution: Arc<ExecutionProofState>,
+    root_post_execution_count: usize,
 }
 
 /// The audited branch-entry result shared by the execution container and
@@ -735,36 +731,10 @@ impl ProofGoals {
         }
     }
 
-    /// Allocates the labeled child goal collections of an audited split in
-    /// rule order (for a branch: then before else).
-    ///
-    /// Each child owns the addressed obligation's content under a fresh
-    /// recorded id. The parent proof's own goal collection is untouched: its
-    /// id is retired only when the join commits, so dropping the split leaves
-    /// the root the unchanged authority. Divergent splits of one root
-    /// allocate numerically colliding ids — identity across splits is carried
-    /// by each arm's entry provenance marker, never by id magnitude
-    /// (identity rule 3).
-    fn branch_children<const ARMS: usize>(
-        &self,
-        at: GoalId,
-    ) -> (SplitId, [GoalId; ARMS], [Self; ARMS]) {
-        let Some(goal) = self.get(at) else {
-            unreachable!("an audited split requires the addressed open goal");
-        };
-        let split = SplitId(self.next_id);
-        let ids: [GoalId; ARMS] = std::array::from_fn(|arm| GoalId(self.next_id + 1 + arm as u64));
-        let children: [Self; ARMS] = std::array::from_fn(|arm| Self {
-            open: PersistentMap::default().with_inserted(ids[arm], goal.clone()),
-            next_id: self.next_id + 1 + ARMS as u64,
-        });
-        (split, ids, children)
-    }
-
     /// Replaces the addressed goal with labeled sibling goals in this same
     /// collection, in rule order: the parent id is retired by the split and
-    /// each arm owns its recorded fresh id (identity rule 1). Unlike
-    /// [`Self::branch_children`], the siblings coexist in one state.
+    /// each arm owns its recorded fresh id (identity rule 1); the siblings
+    /// coexist in one state.
     fn split_at<const ARMS: usize>(
         &self,
         at: GoalId,
@@ -1920,17 +1890,6 @@ impl<'a> Proof<'a> {
         self.goal_execution().map(Arc::as_ref)
     }
 
-    /// The identity of the addressed goal while it remains open. Joins
-    /// compare this against their recorded child goal ids; comparisons are
-    /// only meaningful within one lineage or recorded split (identity rule 3).
-    fn sole_goal_id(&self) -> Option<GoalId> {
-        self.state
-            .goals
-            .get(self.focused)
-            .is_some()
-            .then_some(self.focused)
-    }
-
     #[cfg(test)]
     fn goals_next_id(&self) -> u64 {
         self.state.goals.next_id
@@ -2457,10 +2416,13 @@ impl<'a> Proof<'a> {
             let retained = checked.certificate_since(&checkpoint)?;
             return checked.with_deferred_frame_surface_certificate(retained);
         };
-        let branches = self.begin_execution_outcome_if(condition.clone())?;
-        let branches = branches.check_arm_certificate(0, then_proof, origin)?;
-        let branches = branches.check_arm_certificate(1, else_proof, origin)?;
-        branches.join()
+        let (split, record) = self.split_focused_outcome_if(condition.clone())?;
+        let advanced = split
+            .focus_outcome_arm(&record, 0)?
+            .apply_contextual_frame_candidate_certificate(then_proof, origin)?
+            .focus_outcome_arm(&record, 1)?
+            .apply_contextual_frame_candidate_certificate(else_proof, origin)?;
+        advanced.join_focused_outcome_if(&record)
     }
 
     /// Checks one flat planner candidate while letting the owned nested Proof
@@ -3214,10 +3176,18 @@ impl<'a> Proof<'a> {
     /// Partitions an already-checked terminal execution by one proof-level
     /// condition. Every owned outcome must decide exactly one polarity; no
     /// path may be copied into both arms or silently discarded.
-    fn begin_execution_outcome_if(
+    /// Partitions an already-checked terminal execution by one proof-level
+    /// condition into two sibling frontier goals inside this proof. Every
+    /// owned outcome must decide exactly one polarity; no path may be
+    /// copied into both arms or silently discarded. Unlike a proposition
+    /// sibling split, the arms retain execution-frontier goals owning
+    /// disjoint subsets of the checked execution, so branch-local facts
+    /// justify terminal simple steps without being exposed to incompatible
+    /// outcomes.
+    fn split_focused_outcome_if(
         &self,
         condition: ClickProposition,
-    ) -> Result<ExecutionOutcomeProofBranches<'a>, ClickError> {
+    ) -> Result<(Self, OutcomeSplit<'a>), ClickError> {
         if self.state.goals.is_discharged() {
             return Err(self.step_error("execution outcome `if` follows a completed proof"));
         }
@@ -3299,9 +3269,28 @@ impl<'a> Proof<'a> {
         let arguments = checked.arguments().to_vec();
         let polarity_facts = [then_fact, else_fact];
         let polarity_surfaces = [condition.clone(), else_surface];
-        let (split, child_goals, children_goals) =
-            self.state.goals.branch_children::<2>(self.focused);
-        let mut arms = Vec::with_capacity(2);
+        let Some(Goal::Frontier(parent)) = self.focused_goal() else {
+            unreachable!("the execution frontier requirement was checked above")
+        };
+        let ProofContext::Execution(execution_context) = self.context.as_ref() else {
+            unreachable!("the execution context requirement was checked above")
+        };
+        let expected_effects = self.selected_effect_indices(execution_context)?;
+        let selection = parent.selection;
+        let parent_facts = parent.context.facts.clone();
+        let parent_unfolds = parent.context.unfolded_predicates.clone();
+        let parent_execution = parent
+            .context
+            .execution
+            .clone()
+            .expect("the execution frontier owns its semantic state");
+        let split = SplitId(self.state.goals.next_id);
+        let ids = [
+            GoalId(self.state.goals.next_id + 1),
+            GoalId(self.state.goals.next_id + 2),
+        ];
+        let mut open = self.state.goals.open.without_key(&self.focused);
+        let mut path_facts: [Vec<Proposition>; 2] = [Vec::new(), Vec::new()];
         for arm_index in 0..2 {
             let mut execution = root_execution.clone();
             let paths = std::mem::take(&mut partition_paths[arm_index]);
@@ -3319,7 +3308,7 @@ impl<'a> Proof<'a> {
                 .surface_propositions
                 .record_lowering(&polarity_surfaces[arm_index], &polarity_facts[arm_index])?;
 
-            let mut facts = self.facts().clone();
+            let mut facts = parent_facts.clone();
             let mut added_facts = Vec::new();
             for fact in std::iter::once(&polarity_facts[arm_index])
                 .chain(common_path_facts[arm_index].as_ref().into_iter().flatten())
@@ -3329,45 +3318,200 @@ impl<'a> Proof<'a> {
                     added_facts.push(fact.clone());
                 }
             }
-            arms.push(Proof {
-                context: self.context.clone(),
-                state: Arc::new(ProofState {
-                    locals: self.state.locals.clone(),
-
-                    goals: children_goals[arm_index].replace_frontier_at(
-                        child_goals[arm_index],
+            path_facts[arm_index] = added_facts;
+            open = open.with_inserted(
+                ids[arm_index],
+                Goal::Frontier(FrontierGoal {
+                    selection,
+                    context: GoalContext {
                         facts,
-                        execution,
-                    ),
-                    added_facts: Arc::new(added_facts.clone()),
-                    checked_facts: Arc::new(added_facts),
+                        unfolded_predicates: parent_unfolds.clone(),
+                        execution: Some(Arc::new(execution)),
+                    },
                 }),
-                // The entry marker records this split instance; the join
-                // accepts only descendants that pass through it.
-                node: Arc::new(ProofNode {
-                    parent: Some(self.node.clone()),
-                    step: None,
-                    focused: child_goals[arm_index],
-                    depth: self.node.depth,
-                }),
-                focused: child_goals[arm_index],
-            });
+            );
         }
-        let mut arms = arms.into_iter();
-        let then_arm = arms
-            .next()
-            .expect("the then outcome partition was constructed");
-        let else_arm = arms
-            .next()
-            .expect("the else outcome partition was constructed");
-        Ok(ExecutionOutcomeProofBranches {
-            root: self.clone(),
+        let successor = Self {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                locals: self.state.locals.clone(),
+                goals: ProofGoals {
+                    open,
+                    next_id: self.state.goals.next_id + 3,
+                },
+                added_facts: Arc::new(path_facts[0].clone()),
+                checked_facts: Arc::new(path_facts[0].clone()),
+            }),
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: None,
+                focused: self.focused,
+                depth: self.node.depth,
+            }),
+            focused: ids[0],
+        };
+        let record = OutcomeSplit {
+            marker: successor.checkpoint(),
             split,
-            child_goals,
-            entries: [then_arm.checkpoint(), else_arm.checkpoint()],
+            ids,
             condition,
-            arms: [then_arm, else_arm],
+            expected_effects,
+            path_facts,
+            parent_facts,
+            parent_unfolds,
+            parent_execution,
             root_post_execution_count: root_execution.replay.post_execution_tactics.len(),
+        };
+        Ok((successor, record))
+    }
+
+    /// Focuses one recorded outcome-partition arm and installs that arm's
+    /// entry fact delta as the proof's delta, as `focus_split_arm` does for
+    /// C-branch siblings.
+    fn focus_outcome_arm(
+        &self,
+        record: &OutcomeSplit<'a>,
+        arm_index: usize,
+    ) -> Result<Self, ClickError> {
+        let mut focused = self.focus(record.ids[arm_index])?;
+        let delta = record.path_facts[arm_index].clone();
+        focused.state = Arc::new(ProofState {
+            locals: focused.state.locals.clone(),
+            goals: focused.state.goals.clone(),
+            added_facts: Arc::new(delta.clone()),
+            checked_facts: Arc::new(delta),
+        });
+        Ok(focused)
+    }
+
+    /// Joins two exhaustive terminal outcome partitions after both sibling
+    /// arms checked the same effect selection. Each arm may retain
+    /// different simple evidence, but ordered finalization receives one
+    /// authority and therefore performs the resource transition once per
+    /// original path. The parent obligation resumes under its original id
+    /// with its effect goal closed.
+    fn join_focused_outcome_if(&self, record: &OutcomeSplit<'a>) -> Result<Self, ClickError> {
+        let [then_steps, else_steps] =
+            self.partition_steps_since(&record.marker, record.split, record.ids)?;
+        let arm_certificates = [
+            ProofCertificate::from_steps(then_steps),
+            ProofCertificate::from_steps(else_steps),
+        ];
+        let mut checked_deferrals = Vec::with_capacity(2);
+        for (name, id) in [("then", record.ids[0]), ("else", record.ids[1])] {
+            let Some(Goal::Frontier(frontier)) = self.state.goals.get(id) else {
+                return Err(self.step_error(format!(
+                    "execution outcome {name} arm is not an open execution frontier"
+                )));
+            };
+            if !matches!(frontier.selection, EffectGoalSelection::None) {
+                return Err(self.step_error(format!(
+                    "execution outcome {name} arm did not close its effect goal"
+                )));
+            }
+            let execution = frontier.context.execution.as_deref().ok_or_else(|| {
+                self.step_error(format!(
+                    "execution outcome {name} arm lost its semantic frontier"
+                ))
+            })?;
+            if !execution.replay.is_at_function_exit() {
+                return Err(self.step_error(format!(
+                    "execution outcome {name} arm did not remain at function exit"
+                )));
+            }
+            let mut added = execution
+                .replay
+                .post_execution_tactics
+                .iter()
+                .skip(record.root_post_execution_count);
+            let deferred = added.next().ok_or_else(|| {
+                self.step_error(format!(
+                    "execution outcome {name} arm retained no checked terminal operation"
+                ))
+            })?;
+            if added.next().is_some() {
+                return Err(self.step_error(format!(
+                    "execution outcome {name} arm retained more than one terminal operation"
+                )));
+            }
+            let PostExecutionTactic::CheckedFrameUsing { authority, .. } = &deferred.tactic else {
+                return Err(self.step_error(format!(
+                    "execution outcome {name} arm did not retain checked frame authority"
+                )));
+            };
+            if authority.effect_indices.as_ref() != &record.expected_effects {
+                return Err(self.step_error(format!(
+                    "execution outcome {name} arm closed a different effect selection"
+                )));
+            }
+            checked_deferrals.push(deferred.clone());
+        }
+        if checked_deferrals[0].tactic_index != checked_deferrals[1].tactic_index
+            || checked_deferrals[0].source_index != checked_deferrals[1].source_index
+        {
+            return Err(self.step_error(
+                "execution outcome arms attribute their frame to different source tactics",
+            ));
+        }
+
+        let mut execution = (*record.parent_execution).clone();
+        execution.replay.defer_checked_post_execution(
+            checked_deferrals[0].tactic_index,
+            checked_deferrals[0].source_index,
+            PostExecutionTactic::CheckedFrameUsing {
+                authority: CheckedFrameAuthority::new(record.expected_effects.clone()),
+                // The structured node below owns the two exact surface
+                // spellings. This deferral is semantic authority only.
+                region: None,
+                premises: Vec::new(),
+                surface_certificate: None,
+            },
+        );
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        let parent_goal = record.marker.node.focused;
+        let parent_node = record.marker.node.parent.clone().ok_or_else(|| {
+            self.step_error("cannot join outcome `if`: the split marker lost its root")
+        })?;
+        let open = self
+            .state
+            .goals
+            .open
+            .without_key(&record.ids[0])
+            .without_key(&record.ids[1])
+            .with_inserted(
+                parent_goal,
+                Goal::Frontier(FrontierGoal {
+                    selection: EffectGoalSelection::None,
+                    context: GoalContext {
+                        facts: record.parent_facts.clone(),
+                        unfolded_predicates: record.parent_unfolds.clone(),
+                        execution: Some(Arc::new(execution)),
+                    },
+                }),
+            );
+        let [then_certificate, else_certificate] = arm_certificates;
+        Ok(Self {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                locals: self.state.locals.clone(),
+                goals: ProofGoals {
+                    open,
+                    next_id: self.state.goals.next_id,
+                },
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+            }),
+            node: Arc::new(ProofNode {
+                parent: Some(parent_node.clone()),
+                step: Some(Arc::new(SimpleProofStep::If {
+                    condition: record.condition.clone(),
+                    then_proof: Box::new(then_certificate),
+                    else_proof: Box::new(else_certificate),
+                })),
+                focused: parent_goal,
+                depth: parent_node.depth + 1,
+            }),
+            focused: parent_goal,
         })
     }
 
@@ -7481,6 +7625,15 @@ impl<'a> Proof<'a> {
     /// Focus is a cursor: the returned handle shares this proof's semantic
     /// state and provenance, and checked operations through it advance
     /// exactly the addressed goal.
+    /// The single open goal's id, when exactly one goal remains. Split
+    /// regressions use it to name the pre-split obligation.
+    #[cfg(test)]
+    fn sole_goal_id(&self) -> Option<GoalId> {
+        let mut ids = self.goals();
+        let sole = ids.next()?;
+        ids.next().is_none().then_some(sole)
+    }
+
     pub(super) fn focus(&self, goal: GoalId) -> Result<Self, ClickError> {
         if self.state.goals.get(goal).is_none() {
             return Err(self.step_error(format!("goal {goal:?} is not open in this proof")));
@@ -9397,166 +9550,6 @@ impl<'a> Proof<'a> {
     #[cfg(test)]
     fn fact_lookup_comparisons(&self, fact: &Proposition) -> usize {
         self.facts().lookup_comparisons(fact)
-    }
-}
-
-impl<'a> ExecutionOutcomeProofBranches<'a> {
-    fn check_arm_certificate(
-        mut self,
-        arm_index: usize,
-        certificate: &ProofCertificate,
-        origin: Option<ProofStepOrigin>,
-    ) -> Result<Self, ClickError> {
-        self.arms[arm_index] = self.arms[arm_index]
-            .apply_contextual_frame_candidate_certificate(certificate, origin)?;
-        Ok(self)
-    }
-
-    /// Joins two exhaustive terminal outcome partitions after both have
-    /// checked the same effect selection. Each arm may retain different
-    /// simple evidence, but ordered finalization receives one authority and
-    /// therefore performs the resource transition once per original path.
-    fn join(self) -> Result<Proof<'a>, ClickError> {
-        let ProofContext::Execution(context) = self.root.context.as_ref() else {
-            unreachable!("execution outcome branches retained a non-execution context")
-        };
-        let expected_effects = self.root.selected_effect_indices(context)?;
-        for (name, (arm, expected)) in ["then", "else"]
-            .into_iter()
-            .zip(self.arms.iter().zip(self.child_goals))
-        {
-            if arm.sole_goal_id() != Some(expected) {
-                return Err(self.root.step_error(format!(
-                    "execution outcome {name} arm does not own the goal recorded by split {:?}",
-                    self.split
-                )));
-            }
-        }
-        let arm_certificates = [
-            self.arms[0]
-                .certificate_since(&self.entries[0])
-                .map_err(|error| {
-                    self.root.step_error(format!(
-                        "execution outcome then arm did not derive from split {:?} ({error:?})",
-                        self.split
-                    ))
-                })?,
-            self.arms[1]
-                .certificate_since(&self.entries[1])
-                .map_err(|error| {
-                    self.root.step_error(format!(
-                        "execution outcome else arm did not derive from split {:?} ({error:?})",
-                        self.split
-                    ))
-                })?,
-        ];
-        let mut checked_deferrals = Vec::with_capacity(2);
-        for (name, arm) in [("then", &self.arms[0]), ("else", &self.arms[1])] {
-            if !matches!(
-                arm.focused_goal(),
-                Some(Goal::Frontier(FrontierGoal {
-                    selection: EffectGoalSelection::None,
-                    ..
-                }))
-            ) {
-                return Err(self.root.step_error(format!(
-                    "execution outcome {name} arm did not close its effect goal"
-                )));
-            }
-            let execution = arm.execution().ok_or_else(|| {
-                self.root.step_error(format!(
-                    "execution outcome {name} arm lost its semantic frontier"
-                ))
-            })?;
-            if !execution.replay.is_at_function_exit() {
-                return Err(self.root.step_error(format!(
-                    "execution outcome {name} arm did not remain at function exit"
-                )));
-            }
-            let mut added = execution
-                .replay
-                .post_execution_tactics
-                .iter()
-                .skip(self.root_post_execution_count);
-            let deferred = added.next().ok_or_else(|| {
-                self.root.step_error(format!(
-                    "execution outcome {name} arm retained no checked terminal operation"
-                ))
-            })?;
-            if added.next().is_some() {
-                return Err(self.root.step_error(format!(
-                    "execution outcome {name} arm retained more than one terminal operation"
-                )));
-            }
-            let PostExecutionTactic::CheckedFrameUsing { authority, .. } = &deferred.tactic else {
-                return Err(self.root.step_error(format!(
-                    "execution outcome {name} arm did not retain checked frame authority"
-                )));
-            };
-            if authority.effect_indices.as_ref() != &expected_effects {
-                return Err(self.root.step_error(format!(
-                    "execution outcome {name} arm closed a different effect selection"
-                )));
-            }
-            checked_deferrals.push(deferred.clone());
-        }
-        if checked_deferrals[0].tactic_index != checked_deferrals[1].tactic_index
-            || checked_deferrals[0].source_index != checked_deferrals[1].source_index
-        {
-            return Err(self.root.step_error(
-                "execution outcome arms attribute their frame to different source tactics",
-            ));
-        }
-
-        let mut execution = self
-            .root
-            .execution()
-            .cloned()
-            .expect("validated execution outcome branch root");
-        execution.replay.defer_checked_post_execution(
-            checked_deferrals[0].tactic_index,
-            checked_deferrals[0].source_index,
-            PostExecutionTactic::CheckedFrameUsing {
-                authority: CheckedFrameAuthority::new(expected_effects),
-                // The structured node below owns the two exact surface
-                // spellings. This deferral is semantic authority only.
-                region: None,
-                premises: Vec::new(),
-                surface_certificate: None,
-            },
-        );
-        execution.last_step_delta = ExecutionProofStepDelta::default();
-        Ok(Proof {
-            context: self.root.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.root.state.locals.clone(),
-
-                goals: self.root.state.goals.replace_at(
-                    self.root.focused,
-                    Goal::Frontier(FrontierGoal {
-                        selection: EffectGoalSelection::None,
-                        context: GoalContext {
-                            facts: self.root.facts().clone(),
-                            unfolded_predicates: self.root.focused_goal_unfolds().clone(),
-                            execution: Some(Arc::new(execution)),
-                        },
-                    }),
-                ),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
-            node: Arc::new(ProofNode {
-                parent: Some(self.root.node.clone()),
-                step: Some(Arc::new(SimpleProofStep::If {
-                    condition: self.condition,
-                    then_proof: Box::new(arm_certificates[0].clone()),
-                    else_proof: Box::new(arm_certificates[1].clone()),
-                })),
-                focused: self.root.focused,
-                depth: self.root.node.depth + 1,
-            }),
-            focused: self.root.focused,
-        })
     }
 }
 

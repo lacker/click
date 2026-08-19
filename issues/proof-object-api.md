@@ -3327,6 +3327,25 @@ the outcome partition container (`ExecutionOutcomeProofBranches`)
 retires onto goal-set partitioning next, then the drain's legacy readers
 and no-goal fallbacks.
 
+### Progress (2026-08-18: the outcome partition container is deleted)
+
+The third and last execution container is gone, converted in place rather
+than mirrored: `split_focused_outcome_if` keeps the audited partition law
+(every owned outcome decides exactly one polarity; no path copied or
+discarded) and opens two sibling frontier goals owning disjoint subsets
+of the checked execution, with the effect selection to close recorded on
+the `OutcomeSplit` at split time. The one production consumer — the
+branch-shaped contextual frame candidate checker — recurses each arm as a
+focused run of itself (nested outcome splits nest naturally under the
+attribution partition), and `join_focused_outcome_if` validates both arms
+closed the same effect selection with one checked terminal deferral each,
+resuming the parent obligation with its effect goal closed and one
+authority for ordered finalization. `ExecutionOutcomeProofBranches` and
+the now-orphaned `branch_children` allocator are deleted; the existing
+partitioned-outcome contextual-frame regressions cover the flip.
+Remaining from the plan: the drain's legacy readers (recorded-lowering
+membership gates) and the no-goal fallback point roots.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
