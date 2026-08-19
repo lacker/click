@@ -37,6 +37,7 @@ pub(crate) use reasoning::memory_effect_write_pointers;
 pub(crate) use reasoning::resolve_canonical_load_variables_from_registry;
 pub(crate) use reasoning::resolve_canonical_load_variables_via;
 pub(crate) use reasoning::resolve_minted_load_variables;
+pub(crate) use reasoning::with_bounded_snapshot_comparison;
 pub(crate) use reasoning::with_isolated_memory_resolution_fuel;
 pub use termination::c_verified_function_termination_rules;
 

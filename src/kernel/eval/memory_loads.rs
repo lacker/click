@@ -677,6 +677,40 @@ pub(crate) fn canonical_load_variables_name_matching_loads(
         )
 }
 
+/// Structural term equality modulo canonical load names: two spellings of
+/// one load atom — the raw load at any snapshot, or the canonical variable —
+/// compare equal when they canonicalize to the same name. Arithmetic nodes
+/// recurse; everything else must match exactly. Bounded by term size, with
+/// the canonicalization memoized.
+pub(crate) fn terms_match_modulo_canonical_names(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    let name = |term: &Bitvector32Term| match term {
+        Bitvector32Term::Variable(variable) if is_canonical_load_variable(variable) => {
+            Some(*variable)
+        }
+        Bitvector32Term::MemoryLoad(_, _) => {
+            canonical_load_variable_for_term(term).map(|(variable, _)| variable)
+        }
+        _ => None,
+    };
+    if let (Some(left_name), Some(right_name)) = (name(left), name(right)) {
+        return left_name == right_name;
+    }
+    match (left, right) {
+        (Bitvector32Term::Add(a, b), Bitvector32Term::Add(c, d))
+        | (Bitvector32Term::Subtract(a, b), Bitvector32Term::Subtract(c, d))
+        | (Bitvector32Term::Multiply(a, b), Bitvector32Term::Multiply(c, d)) => {
+            terms_match_modulo_canonical_names(a, c) && terms_match_modulo_canonical_names(b, d)
+        }
+        _ => false,
+    }
+}
+
 /// The canonical verification variable naming one load identity: the pair of
 /// a memory snapshot (by content) and a loaded pointer. The id is derived
 /// deterministically by hashing that identity into a reserved id space, so
@@ -735,6 +769,32 @@ pub(crate) fn canonical_load_variable_for_term(
     let Bitvector32Term::MemoryLoad(_, _) = bits else {
         return None;
     };
+    // Naming is deterministic per term, and callers ask per fact atom per
+    // comparison; the epoch walk and canonicalization behind a cold call
+    // are not free, so cache by term. Term hashing is cheap: embedded
+    // snapshots hash by interned identity.
+    thread_local! {
+        static NAME_CACHE: std::cell::RefCell<
+            std::collections::HashMap<Bitvector32Term, (Variable, Bitvector32Term)>,
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    if let Some(hit) = NAME_CACHE.with(|cache| cache.borrow().get(bits).cloned()) {
+        return Some(hit);
+    }
+    let computed = canonical_load_variable_for_term_uncached(bits)?;
+    NAME_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= 100_000 {
+            cache.clear();
+        }
+        cache.insert(bits.clone(), computed.clone());
+    });
+    Some(computed)
+}
+
+fn canonical_load_variable_for_term_uncached(
+    bits: &Bitvector32Term,
+) -> Option<(Variable, Bitvector32Term)> {
     let canonical = crate::kernel::memory_provenance::canonicalize_atomic_loads(bits);
     if let Bitvector32Term::MemoryLoad(memory, pointer) = &canonical {
         let Bitvector32Term::MemoryLoad(origin, _) = bits else {

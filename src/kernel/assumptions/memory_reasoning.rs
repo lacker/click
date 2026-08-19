@@ -967,8 +967,19 @@ impl PureFactContext {
     ) -> bool {
         let proves = |condition: ConditionTerm| {
             self.exact_condition_value(&condition) == Some(true)
+                || self.exact_ordering_modulo_canonical_atoms(&condition)
                 || self.nonnegative_successor_by_exact_facts(&condition)
-                || self.decide(&condition) == Some(true)
+                // Bounded comparison scopes answer from exact facts only:
+                // the general decider's order-fact matching resolves loads
+                // and fans out. Suppression records a truncation so this
+                // weaker context's negatives are never memoized where the
+                // full check would have run.
+                || if crate::kernel::reasoning::memory_resolution::bounded_snapshot_comparison_active() {
+                    crate::kernel::assumptions::note_search_truncation();
+                    false
+                } else {
+                    self.decide(&condition) == Some(true)
+                }
         };
         let range_base = base.offset_by_int32_elements(start.clone());
         if let Some(index) = self.pointer_element_index_from_base(pointer, &range_base) {
@@ -989,6 +1000,37 @@ impl PureFactContext {
             start.clone(),
             index.clone(),
         )) && proves(ConditionTerm::signed_less_than(index, end.clone()))
+    }
+
+    /// An exact ordering fact whose operands match the queried condition's
+    /// operands modulo canonical load names: facts may spell a load atom at
+    /// a recorded snapshot while the query carries the placeholder load or
+    /// the canonical variable, and all of those are one atom. Bounded by
+    /// the exact fact set and term size.
+    fn exact_ordering_modulo_canonical_atoms(&self, condition: &ConditionTerm) -> bool {
+        let query = match condition {
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector32SignedLessThan(left, right) => (left, right),
+            _ => return false,
+        };
+        self.condition_facts.iter().any(|(fact, value)| {
+            if !*value {
+                return false;
+            }
+            let operands = match (condition, fact) {
+                (
+                    ConditionTerm::Bitvector32SignedLessEqual(_, _),
+                    ConditionTerm::Bitvector32SignedLessEqual(left, right),
+                )
+                | (
+                    ConditionTerm::Bitvector32SignedLessThan(_, _),
+                    ConditionTerm::Bitvector32SignedLessThan(left, right),
+                ) => (left, right),
+                _ => return false,
+            };
+            crate::kernel::eval::terms_match_modulo_canonical_names(query.0, operands.0)
+                && crate::kernel::eval::terms_match_modulo_canonical_names(query.1, operands.1)
+        })
     }
 
     /// Proves `0 <= t + 1` from two exact facts: `0 <= t` and any exact
@@ -1023,16 +1065,18 @@ impl PureFactContext {
             }
         }
         spellings.iter().any(|spelling| {
-            self.exact_condition_value(&ConditionTerm::signed_less_equal(
-                Bitvector32Term::Constant(0),
-                spelling.clone(),
-            )) == Some(true)
+            let nonnegative =
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), spelling.clone());
+            (self.exact_condition_value(&nonnegative) == Some(true)
+                || self.exact_ordering_modulo_canonical_atoms(&nonnegative))
                 && self.condition_facts.iter().any(|(fact, value)| {
                     *value
                         && matches!(
                             fact,
                             ConditionTerm::Bitvector32SignedLessThan(left, _)
-                                if left.as_ref() == spelling
+                                if crate::kernel::eval::terms_match_modulo_canonical_names(
+                                    left, spelling,
+                                )
                         )
                 })
         })

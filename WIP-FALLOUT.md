@@ -576,3 +576,32 @@ when the walk fails; once the walk decides, it never fires for this
 case. If it still burns for other pairs, the same
 canonicalize-then-compare discipline applies to its per-cell
 membership checks.
+
+## Modulo-canonical orderings, bounded comparison scope, name cache (2026-08-19)
+
+Landed suite-green: `terms_match_modulo_canonical_names` (structural
+equality with load atoms compared by canonical name),
+`exact_ordering_modulo_canonical_atoms` in pointer_in_range's proves
+(facts spelled at recorded snapshots now match queries spelled with
+placeholder loads or canonical variables), the successor rule's lookups
+widened the same way, `with_bounded_snapshot_comparison` (suppresses
+the whole-snapshot general-alias leg AND the decide fallback inside
+bounded scopes, with truncation notes — the same pattern as
+inside_condition_decision), the chain's origins check running inside
+that scope, and a name cache for canonical_load_variable_for_term.
+
+Result: the general-alias burn (1.57M) is gone from the metadata-write
+trace. The residual budget burn is 1.25M deterministic units attributed
+to "range disjointness: indexed facts" spans across only 149 calls
+(~8.4k units each), with only 140k in the per-candidate sub-spans —
+the unit emitters are NOT in the code my edits touched (unit counts
+were bit-identical across two behaviorally different edits). Next
+session needs real unit attribution rather than span inference:
+temporarily instrument record_deterministic_work call sites with an
+env-gated tally by caller (the candidates are
+record_c_memory_structural_lookup_work — units proportional to
+snapshot size per structural lookup/intern — and the loadable/
+separation candidate scans), find which one fires ~1.1M times or with
+big weights under pointers_proven_disjoint_by_range, and bound or cache
+that site. The tactic budget is 2M and the remaining spend is ~1.4M —
+one attribution away from passing.

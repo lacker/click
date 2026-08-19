@@ -2425,17 +2425,19 @@ pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain_with_origi
         // recursion canonical naming exists to avoid.
         left_pointer == right_pointer
             && crate::kernel::with_isolated_memory_resolution_fuel(8_000, || {
-                crate::kernel::c_memory_load_is_unchanged(
-                    &left_memory,
-                    &right_memory,
-                    &left_pointer,
-                    assumptions,
-                ) || crate::kernel::c_memory_load_is_unchanged(
-                    &right_memory,
-                    &left_memory,
-                    &left_pointer,
-                    assumptions,
-                )
+                crate::kernel::with_bounded_snapshot_comparison(|| {
+                    crate::kernel::c_memory_load_is_unchanged(
+                        &left_memory,
+                        &right_memory,
+                        &left_pointer,
+                        assumptions,
+                    ) || crate::kernel::c_memory_load_is_unchanged(
+                        &right_memory,
+                        &left_memory,
+                        &left_pointer,
+                        assumptions,
+                    )
+                })
             })
     };
     // Two canonical names for one unchanged cell need no fact edge at all:

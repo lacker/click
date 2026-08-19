@@ -142,6 +142,31 @@ pub(crate) fn pointers_disjoint_by_range_memoized(
     })
 }
 
+thread_local! {
+    static BOUNDED_SNAPSHOT_COMPARISON: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `body` with the whole-snapshot general-alias comparison suppressed:
+/// per-cell distinctness stays on the bounded resolution check, and each
+/// suppression records a search truncation so the weaker context's negative
+/// answers are never memoized where the full check would have run. For
+/// callers like canonical-name origin bridging, whose answers must come
+/// from recorded derivations and effect facts, never from whole-snapshot
+/// alias search.
+pub(crate) fn with_bounded_snapshot_comparison<T>(body: impl FnOnce() -> T) -> T {
+    BOUNDED_SNAPSHOT_COMPARISON.with(|flag| {
+        let previous = flag.get();
+        flag.set(true);
+        let result = body();
+        flag.set(previous);
+        result
+    })
+}
+
+pub(crate) fn bounded_snapshot_comparison_active() -> bool {
+    BOUNDED_SNAPSHOT_COMPARISON.with(std::cell::Cell::get)
+}
+
 /// Runs `body` with the memory-resolution node budget armed. Nested calls
 /// (a wrapper reached from inside another query) keep the outer budget.
 pub(in crate::kernel) fn with_memory_resolution_fuel<T>(body: impl FnOnce() -> T) -> T {
@@ -1365,7 +1390,9 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
                         assumptions,
                     )
                 },
-            ) || if crate::kernel::assumptions::inside_condition_decision() {
+            ) || if crate::kernel::assumptions::inside_condition_decision()
+                || bounded_snapshot_comparison_active()
+            {
                 crate::kernel::assumptions::note_search_truncation();
                 false
             } else {
