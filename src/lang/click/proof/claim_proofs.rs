@@ -1783,6 +1783,13 @@ pub(super) fn finish_ordered_proof_replay(
                             )
                         },
                     );
+                    // The ordered surface equalities each claim's goal was
+                    // rewritten through, parallel to `rewritten_claim_goals`.
+                    // The direct Simp path replays them inside its checked
+                    // `have` scope, so a rewritten claim proves the same
+                    // rewritten goal the legacy closer checks.
+                    let mut rewrite_claim_equalities: Vec<Vec<ClickProposition>> =
+                        vec![Vec::new(); claims.len()];
                     // Facts established after execution all describe this fixed
                     // outcome snapshot. Keep them separately so `fold` can reuse an
                     // exact lowering without accidentally selecting the same surface
@@ -3205,6 +3212,8 @@ pub(super) fn finish_ordered_proof_replay(
                                             retained_certificate
                                                 .get_or_insert_with(|| proof.certificate());
                                             rewritten_claim_goals[claim_index] = Some(rewritten);
+                                            rewrite_claim_equalities[claim_index]
+                                                .push(surface_equality.clone());
                                             rewrote_any = true;
                                         }
                                         Err(error) => {
@@ -3606,15 +3615,20 @@ pub(super) fn finish_ordered_proof_replay(
                                         }
                                         match claim {
                                             FunctionClaimRef::Ensure(_, ensure_clause)
-                                                if rewritten_claim_goals[claim_index].is_none()
-                                                    && frame_certified_claim_goals[claim_index]
-                                                        .is_none() =>
+                                                if frame_certified_claim_goals[claim_index]
+                                                    .is_none() =>
                                             {
                                                 match ensure_clause.ensure() {
                                                     Ensure::Proposition(surface_goal) => {
+                                                        // A rewritten claim proves the
+                                                        // original spelling with its
+                                                        // recorded rewrites replayed
+                                                        // inside the checked scope.
                                                         direct_claims.push((
                                                             claim_index,
                                                             surface_goal.clone(),
+                                                            rewrite_claim_equalities[claim_index]
+                                                                .clone(),
                                                         ));
                                                     }
                                                     Ensure::Resource(_) => {
@@ -3695,14 +3709,31 @@ pub(super) fn finish_ordered_proof_replay(
                                         let direct_base = direct_proof.checkpoint();
                                         let mut direct_available = path_requirements.clone();
                                         let mut selected = true;
-                                        for (_, surface_goal) in &direct_claims {
-                                            let Ok(scope) =
+                                        for (_, surface_goal, equalities) in &direct_claims {
+                                            let Ok(mut scope) =
                                                 direct_proof.begin_have(surface_goal.clone())
                                             else {
                                                 check_verification_deadline()?;
                                                 selected = false;
                                                 break;
                                             };
+                                            let mut rewrites_applied = true;
+                                            for equality in equalities {
+                                                match scope.apply_step(SimpleProofStep::Rewrite(
+                                                    equality.clone(),
+                                                )) {
+                                                    Ok(next) => scope = next,
+                                                    Err(_) => {
+                                                        check_verification_deadline()?;
+                                                        rewrites_applied = false;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            if !rewrites_applied {
+                                                selected = false;
+                                                break;
+                                            }
                                             let scope =
                                                 if let Some(candidate) = &existence_candidate {
                                                     // Re-record the active
@@ -3806,7 +3837,7 @@ pub(super) fn finish_ordered_proof_replay(
                                         }
                                         let surface_goals = direct_claims
                                             .iter()
-                                            .map(|(_, goal)| goal.clone())
+                                            .map(|(_, goal, _)| goal.clone())
                                             .collect::<Vec<_>>();
                                         Ok(Some(direct_proof.complete_point_obligations_since(
                                             &direct_base,
@@ -3819,7 +3850,7 @@ pub(super) fn finish_ordered_proof_replay(
                                             })?;
                                         if let Some(certificate) = direct_certificate {
                                             if replay.grouped_contract {
-                                                for (claim_index, _) in direct_claims {
+                                                for (claim_index, _, _) in direct_claims {
                                                     closures[claim_index] =
                                                         ClaimClosure::by_grouped_transition(
                                                             &certificate,
@@ -3832,7 +3863,7 @@ pub(super) fn finish_ordered_proof_replay(
                                                         .extend(certificate.to_proof_tactics());
                                                 }
                                             } else {
-                                                for (claim_index, _) in direct_claims {
+                                                for (claim_index, _, _) in direct_claims {
                                                     closures[claim_index] =
                                                         ClaimClosure::by_checked_certificate(
                                                             &certificate,
