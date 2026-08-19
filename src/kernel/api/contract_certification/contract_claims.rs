@@ -1090,13 +1090,18 @@ fn function_claim_holds_on_prepared_path(
                 return false;
             };
             expected.facts().iter().all(|fact| {
-                resource_context_satisfies_definitional_fact(
+                let satisfied = resource_context_satisfies_definitional_fact(
                     return_state.resources(),
                     fact,
                     function.composite_resource_definitions(),
                     return_state.memory(),
                     assumptions,
-                )
+                );
+                if !satisfied && std::env::var("CLICK_PROBE").is_ok() {
+                    eprintln!("PROBE ensure-resource expected: {fact:?}");
+                    eprintln!("PROBE ensure-resource held: {:?}", return_state.resources());
+                }
+                satisfied
             })
         }
         CFunctionContractClaimTarget::Effect => {

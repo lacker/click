@@ -194,3 +194,17 @@ snapshot_bridged_simp_premise) which need Click surface spellings for
 canonical-variable defining equations. Probes still in tree: statements/
 expression/functions MissingResource sites, resource_algebra write-miss
 probe — remove before integration.
+
+## Defining equations leave the path wraps (4 -> 3)
+
+The resource-neutral-callee failure traced to `wrap_path_context`: call
+postcondition equalities were being wrapped as
+`Implies(defining-equation, equality)`, and the resource argument
+equality path (`pointer_offsets_equal_for_memory_resolution` ->
+`exact_condition_value`) does not discharge implications. A canonical
+defining equation is true by construction of the naming, so both wraps
+(`wrap_proof_facts`, `wrap_path_context`) now skip
+`is_canonical_load_defining_fact` propositions, leaving consequents
+unguarded and reachable by exact fact lookup. Suite time back to ~22s.
+Remaining: the three expansion tests (transport spellings for canonical
+variables, separation have).

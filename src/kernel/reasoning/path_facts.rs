@@ -33,6 +33,7 @@ pub(in crate::kernel) fn wrap_proof_facts(
     let proposition = facts
         .iter()
         .filter(|fact| fact.is_public())
+        .filter(|fact| !crate::kernel::eval::is_canonical_load_defining_fact(fact.proposition()))
         .rev()
         .fold(proposition, |body, fact| {
             Proposition::Implies(Box::new(fact.proposition().clone()), Box::new(body))
@@ -70,9 +71,19 @@ pub(in crate::kernel) fn wrap_path_context(
             Proposition::Implies(Box::new(obligation.proposition().clone()), Box::new(body))
         });
 
-    facts.iter().rev().fold(proposition, |body, fact| {
-        Proposition::Implies(Box::new(fact.proposition().clone()), Box::new(body))
-    })
+    facts
+        .iter()
+        .filter(|fact| {
+            // A canonical-load defining equation is true by construction of
+            // the naming; wrapping it as a premise only buries the
+            // consequent behind an antecedent every prover then has to
+            // discharge.
+            !crate::kernel::eval::is_canonical_load_defining_fact(fact.proposition())
+        })
+        .rev()
+        .fold(proposition, |body, fact| {
+            Proposition::Implies(Box::new(fact.proposition().clone()), Box::new(body))
+        })
 }
 
 pub(in crate::kernel) fn public_execution_pure_facts(

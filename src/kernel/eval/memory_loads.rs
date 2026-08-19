@@ -563,6 +563,34 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
     }))
 }
 
+const LOAD_VARIABLE_BASE: u64 = 1 << 40;
+const LOAD_VARIABLE_RANGE: u64 = 1 << 40;
+
+/// Whether a variable id lies in the reserved canonical-load id space.
+/// Structural: no registry consultation, so the answer is deterministic
+/// and thread-agnostic.
+pub(crate) fn is_canonical_load_variable(variable: &Variable) -> bool {
+    (LOAD_VARIABLE_BASE..LOAD_VARIABLE_BASE + LOAD_VARIABLE_RANGE).contains(&variable.0)
+}
+
+/// Whether a proposition is a canonical-load defining equation
+/// (`v == load(snapshot, ptr)` for a reserved canonical variable). Such
+/// equations are true by construction of the canonical naming, so path
+/// wrapping treats them as ambient truths rather than premises.
+pub(crate) fn is_canonical_load_defining_fact(proposition: &Proposition) -> bool {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = proposition
+    else {
+        return false;
+    };
+    matches!(
+        (left.as_ref(), right.as_ref()),
+        (
+            Bitvector32Term::Variable(variable),
+            Bitvector32Term::MemoryLoad(_, _)
+        ) if is_canonical_load_variable(variable)
+    )
+}
+
 thread_local! {
     static CANONICAL_LOAD_REGISTRY: std::cell::RefCell<
         std::collections::HashMap<Variable, (SharedCMemory, Pointer)>,
@@ -603,8 +631,6 @@ pub(crate) fn canonical_load_variable(memory: &SharedCMemory, pointer: &Pointer)
     memory.hash(&mut hasher);
     pointer.hash(&mut hasher);
     let hash = hasher.finish();
-    const LOAD_VARIABLE_BASE: u64 = 1 << 40;
-    const LOAD_VARIABLE_RANGE: u64 = 1 << 40;
     let variable = Variable(LOAD_VARIABLE_BASE + hash % LOAD_VARIABLE_RANGE);
     CANONICAL_LOAD_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
