@@ -3118,6 +3118,17 @@ by the established principle that path-local semantics live on the goal:
    checked outcomes, which are goals now, so its split becomes goal-set
    partitioning and its join the existing attribution machinery.
 
+### Progress (2026-08-18: the branch-entry law is shared)
+
+`prepare_execution_branch` extracts the audited C-branch entry work —
+guards, source resolution, the kernel condition transitions, and each
+feasible arm's checked facts, snapshot, path-fact delta, and condition
+theorem — into one implementation that `begin_execution_branch` now
+consumes for its container assembly. The in-`Proof` execution split builds
+on the same preparation next, so the sibling-goal form cannot drift from
+the container's semantics while both exist, and the eventual container
+deletion removes only assembly, never a second copy of the law.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

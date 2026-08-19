@@ -95,6 +95,26 @@ pub(super) struct ExecutionProofBranches<'a> {
     arms: [Option<ExecutionProofArm<'a>>; 2],
 }
 
+/// The audited branch-entry result shared by the execution container and
+/// the in-`Proof` sibling split: source structure plus each feasible arm's
+/// checked facts, snapshot, path-fact delta, and condition theorem.
+struct PreparedExecutionBranch {
+    statement_index: usize,
+    continuation_index: usize,
+    continuation_remaining: Option<Arc<CStatement>>,
+    execution_start_state: CState,
+    initial_continuation_depth: usize,
+    arms: [Option<PreparedExecutionArm>; 2],
+}
+
+struct PreparedExecutionArm {
+    facts: ProofFacts,
+    execution: ExecutionProofState,
+    path_facts: Vec<Proposition>,
+    introduced_facts: PersistentOrderedSet<Proposition>,
+    condition_theorem: Theorem,
+}
+
 #[derive(Clone)]
 struct ExecutionProofArm<'a> {
     proof: Proof<'a>,
@@ -3397,7 +3417,12 @@ impl<'a> Proof<'a> {
     /// entry owns condition certification, path-fact admission, and movement
     /// to each selected arm. The enclosing `Branch` certificate is recorded
     /// only when those descendants join.
-    pub(super) fn begin_execution_branch(&self) -> Result<ExecutionProofBranches<'a>, ClickError> {
+    /// Performs the audited C-branch entry work shared by the container
+    /// and the in-`Proof` sibling split: guards, source resolution, the
+    /// kernel condition transitions, and each feasible arm's checked facts,
+    /// snapshot, path-fact delta, and condition theorem. There is exactly
+    /// one implementation of this branch-entry law.
+    fn prepare_execution_branch(&self) -> Result<PreparedExecutionBranch, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`branch` requires an execution-frontier proof"));
         };
@@ -3468,10 +3493,7 @@ impl<'a> Proof<'a> {
                 context.claim_label, context.tactic_index
             ),
         )?;
-        let (split, child_goals, children_goals) =
-            self.state.goals.branch_children::<2>(self.focused);
-        let mut entries: [Option<ProofCheckpoint<'a>>; 2] = [None, None];
-        let mut arms: [Option<ExecutionProofArm<'a>>; 2] = [None, None];
+        let mut arms: [Option<PreparedExecutionArm>; 2] = [None, None];
         for transition in transitions {
             let take_then = transition.is_true;
             let selected_branch = if take_then {
@@ -3573,19 +3595,48 @@ impl<'a> Proof<'a> {
             for fact in &transition.path_facts {
                 introduced_facts.insert(fact.clone());
             }
-            let arm_index = usize::from(!take_then);
+            arms[usize::from(!take_then)] = Some(PreparedExecutionArm {
+                facts: transition.pure_facts,
+                execution: arm_execution,
+                path_facts: transition.path_facts,
+                introduced_facts,
+                condition_theorem: transition.theorem,
+            });
+        }
+        if arms.iter().all(Option::is_none) {
+            return Err(self.step_error("`branch` found no feasible C `if` arm"));
+        }
+        Ok(PreparedExecutionBranch {
+            statement_index,
+            continuation_index: source_region.continuation_node,
+            continuation_remaining: remaining.map(Arc::new),
+            execution_start_state,
+            initial_continuation_depth,
+            arms,
+        })
+    }
+
+    pub(super) fn begin_execution_branch(&self) -> Result<ExecutionProofBranches<'a>, ClickError> {
+        let prepared = self.prepare_execution_branch()?;
+        let (split, child_goals, children_goals) =
+            self.state.goals.branch_children::<2>(self.focused);
+        let mut entries: [Option<ProofCheckpoint<'a>>; 2] = [None, None];
+        let mut arms: [Option<ExecutionProofArm<'a>>; 2] = [None, None];
+        for (arm_index, prepared_arm) in prepared.arms.into_iter().enumerate() {
+            let Some(prepared_arm) = prepared_arm else {
+                continue;
+            };
             let proof = Proof {
                 context: self.context.clone(),
                 state: Arc::new(ProofState {
                     locals: self.state.locals.clone(),
-
                     goals: children_goals[arm_index].replace_frontier_at(
                         child_goals[arm_index],
-                        transition.pure_facts,
-                        arm_execution,
+                        prepared_arm.facts,
+                        prepared_arm.execution,
                     ),
-                    added_facts: Arc::new(transition.path_facts.clone()),
-                    checked_facts: Arc::new(transition.path_facts.clone()),
+                    added_facts: Arc::new(prepared_arm.path_facts.clone()),
+                    checked_facts: Arc::new(prepared_arm.path_facts),
                 }),
                 // The structural certificate is owned by the container and
                 // installed atomically by the checked join. The entry marker
@@ -3599,30 +3650,26 @@ impl<'a> Proof<'a> {
                 focused: child_goals[arm_index],
             };
             entries[arm_index] = Some(proof.checkpoint());
-            let arm = ExecutionProofArm {
+            arms[arm_index] = Some(ExecutionProofArm {
                 proof,
-                introduced_facts,
+                introduced_facts: prepared_arm.introduced_facts,
                 introduced_effect_facts: Vec::new(),
                 introduced_function_entry_prerequisites: PersistentOrderedSet::default(),
                 introduced_function_entry_derivations: PersistentOrderedSet::default(),
                 introduced_unfolded_predicates: PersistentOrderedSet::default(),
-                condition_theorem: transition.theorem,
-            };
-            arms[arm_index] = Some(arm);
-        }
-        if arms.iter().all(Option::is_none) {
-            return Err(self.step_error("`branch` found no feasible C `if` arm"));
+                condition_theorem: prepared_arm.condition_theorem,
+            });
         }
         Ok(ExecutionProofBranches {
             root: self.clone(),
             split,
             child_goals,
             entries,
-            statement_index,
-            continuation_index: source_region.continuation_node,
-            continuation_remaining: remaining.map(Arc::new),
-            execution_start_state,
-            initial_continuation_depth,
+            statement_index: prepared.statement_index,
+            continuation_index: prepared.continuation_index,
+            continuation_remaining: prepared.continuation_remaining,
+            execution_start_state: prepared.execution_start_state,
+            initial_continuation_depth: prepared.initial_continuation_depth,
             arms,
         })
     }
