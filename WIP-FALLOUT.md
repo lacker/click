@@ -402,3 +402,58 @@ explicit transports connect syntactically and no bounded search is
 needed at all. Gate status on this branch: lib 1062/1062 green;
 mdtests 395/397 (field_derived metadata-write, leaf_flag_grouped_simp);
 examples red on input-cursor only.
+
+## Approved design session: current-point respelling (2026-08-19, findings map)
+
+The user approved option 1 (introduction-time respelling made complete;
+fact sets stay current-point-spelled; transports search-free). One
+session of implementation established, piece by piece with probes:
+
+1. **Landed conceptually, needs clean re-landing** (all were verified to
+   compile and pass the overflow test individually; the combination had
+   2 lib regressions — expansion_preserves_unfolded_resource... and
+   modular_call_snapshot_anchor... — unbisected when context ran out):
+   - MutatesOnly-arm endpoint widening in c_memory_load_is_directly_
+     unchanged via a never-inlined directly_matched_effect_endpoint
+     (origin handles differ from effect endpoints by bookkeeping).
+   - EffectSummary-arm deep-disjointness fallback
+     (ranges_proven_disjoint_from_pointer) for composite-owned ranges.
+   - CResourceSeparate transport in the framed prover
+     (transport_framed_separation + _theorem + _atomic_memory_range, all
+     #[inline(never)] with per-arm returns — a shared `conclusion:
+     Proposition` local in the prover overflowed the expansion recursion;
+     big enum locals are frame poison there).
+   - CResourceComposition facts kept by assumptions_for_direct_fact_
+     transport (owned-in-one-composition separations feed effect
+     disjointness).
+   - Separation bridging: MemorySeparate snapshot-blind key variant
+     (Boxed! the inline tuple variant also overflowed), separation arm in
+     propositions_equal_modulo_proven_snapshots (#[inline(never)]
+     separations_equal_modulo_proven_snapshots comparing range parts via
+     synthesized conditions after shallow canonical resolution), and the
+     separation branch in snapshot_bridged_fact_is_available_under.
+     THESE FIXED the metadata-write have proof 4 (separation transport).
+   - The resolved-load search retry REMOVED from
+     certified_fact_transport_reaches_through (it burned the whole
+     2M-unit budget reconstructing the giant-alias recursion; with it
+     gone the failures are prompt and cheap).
+   - Direct start<->goal origins check in premise_bridged_by_canonical_
+     name_chain_with_origins (bounded by isolated fuel 8k + per-call
+     cache) — the connective for `true -> v_cur == v_entry` targets whose
+     source lowered to Constant(true).
+
+2. **The last diagnosed gap** (metadata-write have proof 6, input-cursor
+   have proof 10): the origins-unchanged proof fails at any fuel because
+   the store hop between origin snapshots lives in the memory DAG, and
+   the origin handles (lowering-time copies with materialized cells)
+   have no derivation records — the DAG walk cannot start from either
+   side, and the effect-fact chain does not cover plain stores. Options
+   ranked: (a) record derivations for point-state/lowering memories so
+   origins are DAG-connected (the walk already matches endpoints
+   pointer-relatively and crosses store edges with the full distinctness
+   battery — likely the complete fix); (b) have the walk start from a
+   DAG-connected sibling of a drifted handle.
+
+Re-landing order: pieces are independent; land 1's items one commit at
+a time against the full lib suite (the two regressions will bisect
+naturally), then attack 2(a).
