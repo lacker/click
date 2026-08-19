@@ -840,3 +840,30 @@ origins machinery already exists; this is a shape generalisation of it.
 Deleting the two now-redundant rewrites in that `have` was also tried:
 it advances proof 24 to 25, i.e. the same class recurs in the following
 `have`, so script edits are not a one-line escape either.
+
+## The origins bridge is generalised over equality shapes (2026-08-19)
+
+Canonical-name bridging is now one implementation serving both
+pointer-offset and int32 equalities, behind a `CanonicalBridgeSide`
+trait: a side yields the canonical load variable it names, the sides of
+an equality of its shape, and an equality over two sides. Both public
+entry points dispatch on the premise, so every existing consumer — the
+`assumption` availability check, explicit transport, and now `rewrite`'s
+premise check — bridges int32 equalities as well.
+
+Two capability gains beyond the shape generalisation:
+
+- A side is recognised whether it spells a load by its canonical name or
+  by the load itself; both denote one atom, so `value == load(m, p)`
+  bridges against a fact spelled with the name.
+- The origins decision is memoised per call (`OriginsUnchanged`), which
+  it was not before, so a renaming pass over many endpoints pays for each
+  distinct pair once.
+
+`rewrite`'s availability check moved from the plain chain to the origins
+variant, building its assumption context lazily so the cheap checks pay
+nothing.
+
+Verified: lib 1062/1062, mdtests 396/397 (leaf_flag, independent),
+examples unchanged with input-cursor still verifying and the observe
+boundary intact.

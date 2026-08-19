@@ -234,14 +234,21 @@ fn rewrite_atomic_proposition_by_exact_equality(
     equality: &Proposition,
     available: &[Proposition],
 ) -> Result<Proposition, String> {
+    // Built only if the cheap checks below fail: `rewrite` runs once per
+    // tactic, but assembling an assumption context is not free.
+    let bridging_assumptions = std::cell::OnceCell::new();
     let is_available = |fact: &Proposition| {
         available.contains(fact)
             || materialization_equivalent_available_fact(fact, available).is_some()
-
-            // Canonical load variables are kernel-internal names; recorded
-            // equalities chained through one are the same user-level fact.
-            || crate::lang::click::proof::fact_reasoning::premise_bridged_by_canonical_name_chain(
-                fact, available,
+            // Canonical load variables are kernel-internal names. Recorded
+            // equalities chained through one are the same user-level fact,
+            // and two names framing shows to be one unchanged cell are the
+            // same atom, so an equality over either spelling is available.
+            || crate::lang::click::proof::fact_reasoning::premise_bridged_by_canonical_name_chain_with_origins(
+                fact,
+                available,
+                bridging_assumptions
+                    .get_or_init(|| assumptions_from_propositions(available)),
             )
     };
 

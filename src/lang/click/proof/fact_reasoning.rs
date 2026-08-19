@@ -2369,168 +2369,103 @@ mod tests {
     }
 }
 
-/// Whether a pointer-offset equality premise follows from recorded
-/// equalities by chaining through canonical load variables. Canonical
-/// variables are kernel-internal names invisible to Click source, so a
-/// premise and the recorded facts may legitimately spell one user-level
-/// equality through different intermediate names. The closure is bounded:
-/// only equality facts with a canonical-variable endpoint contribute
-/// edges, and the walk visits each such fact at most once.
-/// The chain closure with origin-unchanged implicit edges: two canonical
-/// names additionally connect when the loads they were minted from are
-/// provably unchanged between their origin snapshots under the supplied
-/// assumptions (call effect summaries and frame evidence). Reserved for
-/// once-per-tactic consumers such as explicit transport checks — the
-/// unchanged proof is assumption-based and must stay off hot fact paths.
-pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain_with_origins(
-    premise: &Proposition,
-    facts: &[Proposition],
-    assumptions: &PureFactContext,
-) -> bool {
-    if premise_bridged_by_canonical_name_chain(premise, facts) {
-        return true;
+/// One side of an equality that canonical-name bridging can walk.
+///
+/// The bridging argument is identical for pointer-offset and int32
+/// equalities — only the shape of a side and of the equality differ — so one
+/// implementation serves both.
+trait CanonicalBridgeSide: Clone + PartialEq + Sized {
+    /// The canonical load variable this side names, when it names one.
+    fn canonical_variable(&self) -> Option<Variable>;
+    /// The two sides of an equality of this shape.
+    fn equality_sides(proposition: &Proposition) -> Option<(Self, Self)>;
+    /// An equality of this shape over the two sides.
+    fn equality(left: Self, right: Self) -> Proposition;
+}
+
+impl CanonicalBridgeSide for PointerOffsetTerm {
+    fn canonical_variable(&self) -> Option<Variable> {
+        let PointerOffsetTerm::Int32Scaled { value, .. } = self else {
+            return None;
+        };
+        value.as_ref().canonical_variable()
     }
-    let offset_variable = |term: &PointerOffsetTerm| match term {
-        PointerOffsetTerm::Int32Scaled { value, .. } => match value.as_ref() {
-            Bitvector32Term::Variable(variable)
-                if crate::kernel::is_canonical_load_variable(variable) =>
-            {
-                Some(*variable)
-            }
-            _ => None,
-        },
-        _ => None,
-    };
-    let offset_sides = |proposition: &Proposition| {
+
+    fn equality_sides(proposition: &Proposition) -> Option<(Self, Self)> {
         let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) =
             proposition
         else {
             return None;
         };
         Some((left.as_ref().clone(), right.as_ref().clone()))
-    };
-    let Some((start, goal)) = offset_sides(premise) else {
-        return false;
-    };
-    let origins_unchanged = |left: &Variable, right: &Variable| {
-        let (Some((left_memory, left_pointer)), Some((right_memory, right_pointer))) = (
-            crate::kernel::registered_canonical_load_origin(left),
-            crate::kernel::registered_canonical_load_origin(right),
-        ) else {
-            return false;
-        };
-        // Bounded: the unchanged proof must come from the cheap routes —
-        // recorded derivations crossed with exact-fact distinctness — never
-        // from whole-snapshot alias search, which is the giant-term
-        // recursion canonical naming exists to avoid.
-        left_pointer == right_pointer
-            && crate::kernel::with_isolated_memory_resolution_fuel(8_000, || {
-                crate::kernel::with_bounded_snapshot_comparison(|| {
-                    crate::kernel::c_memory_load_is_unchanged(
-                        &left_memory,
-                        &right_memory,
-                        &left_pointer,
-                        assumptions,
-                    ) || crate::kernel::c_memory_load_is_unchanged(
-                        &right_memory,
-                        &left_memory,
-                        &left_pointer,
-                        assumptions,
-                    )
-                })
-            })
-    };
-    // Two canonical names for one unchanged cell need no fact edge at all:
-    // when the premise equates them directly, the origins-unchanged proof is
-    // the whole content.
-    if let (Some(start_variable), Some(goal_variable)) =
-        (offset_variable(&start), offset_variable(&goal))
-        && origins_unchanged(&start_variable, &goal_variable)
-    {
-        return true;
     }
-    // One implicit hop only: rename the premise's canonical endpoints onto
-    // fact endpoints with provably identical loads, then ask the plain
-    // fact-edge closure.
-    let endpoints: Vec<PointerOffsetTerm> = facts
-        .iter()
-        .filter_map(offset_sides)
-        .flat_map(|(left, right)| [left, right])
-        .filter(|term| offset_variable(term).is_some())
-        .collect();
-    let renamed = |term: &PointerOffsetTerm| -> Vec<PointerOffsetTerm> {
-        let Some(variable) = offset_variable(term) else {
-            return vec![term.clone()];
-        };
-        let mut spellings = vec![term.clone()];
-        for endpoint in &endpoints {
-            let candidate = offset_variable(endpoint).expect("filtered above");
-            if candidate != variable
-                && origins_unchanged(&variable, &candidate)
-                && !spellings.contains(endpoint)
-            {
-                spellings.push(endpoint.clone());
-            }
-        }
-        spellings
-    };
-    for start_spelling in renamed(&start) {
-        for goal_spelling in renamed(&goal) {
-            if start_spelling == goal_spelling {
-                return true;
-            }
-            let candidate = Proposition::ConditionIs(
-                ConditionTerm::PointerOffsetEqual(
-                    Box::new(start_spelling.clone()),
-                    Box::new(goal_spelling.clone()),
-                ),
-                true,
-            );
-            if premise_bridged_by_canonical_name_chain(&candidate, facts) {
-                return true;
-            }
-        }
+
+    fn equality(left: Self, right: Self) -> Proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(Box::new(left), Box::new(right)),
+            true,
+        )
     }
-    false
 }
 
-pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain(
+impl CanonicalBridgeSide for Bitvector32Term {
+    /// A side names a load either by its canonical variable or by the load
+    /// itself; both spellings denote one atom, so both answer here.
+    fn canonical_variable(&self) -> Option<Variable> {
+        match self {
+            Bitvector32Term::Variable(variable) => {
+                crate::kernel::is_canonical_load_variable(variable).then_some(*variable)
+            }
+            Bitvector32Term::MemoryLoad(_, _) => {
+                crate::kernel::canonical_load_variable_for_term(self).map(|(name, _)| name)
+            }
+            _ => None,
+        }
+    }
+
+    fn equality_sides(proposition: &Proposition) -> Option<(Self, Self)> {
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+            proposition
+        else {
+            return None;
+        };
+        Some((left.as_ref().clone(), right.as_ref().clone()))
+    }
+
+    fn equality(left: Self, right: Self) -> Proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+            true,
+        )
+    }
+}
+
+/// Whether an equality premise follows from recorded equalities of the same
+/// shape by chaining through canonical load variables. Canonical variables
+/// are kernel-internal names invisible to Click source, so a premise and the
+/// recorded facts may legitimately spell one user-level equality through
+/// different intermediate names. The closure is bounded: only equality facts
+/// with a canonical-variable endpoint contribute edges, and the walk visits
+/// each side at most once.
+fn bridged_by_canonical_name_edges<S: CanonicalBridgeSide>(
     premise: &Proposition,
     facts: &[Proposition],
 ) -> bool {
-    let offset_sides =
-        |proposition: &Proposition| -> Option<(PointerOffsetTerm, PointerOffsetTerm)> {
-            let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) =
-                proposition
-            else {
-                return None;
-            };
-            Some((left.as_ref().clone(), right.as_ref().clone()))
-        };
-    let is_canonical_scaled = |term: &PointerOffsetTerm| {
-        matches!(
-            term,
-            PointerOffsetTerm::Int32Scaled { value, .. }
-                if matches!(
-                    value.as_ref(),
-                    Bitvector32Term::Variable(variable)
-                        if crate::kernel::is_canonical_load_variable(variable)
-                )
-        )
-    };
-    let Some((start, goal)) = offset_sides(premise) else {
+    let Some((start, goal)) = S::equality_sides(premise) else {
         return false;
     };
-    let edges: Vec<(PointerOffsetTerm, PointerOffsetTerm)> = facts
+    let edges: Vec<(S, S)> = facts
         .iter()
-        .filter_map(offset_sides)
-        .filter(|(left, right)| is_canonical_scaled(left) || is_canonical_scaled(right))
+        .filter_map(S::equality_sides)
+        .filter(|(left, right)| {
+            left.canonical_variable().is_some() || right.canonical_variable().is_some()
+        })
         .collect();
     if edges.is_empty() {
         return false;
     }
     let mut frontier = vec![start];
-    let mut visited: Vec<PointerOffsetTerm> = Vec::new();
+    let mut visited: Vec<S> = Vec::new();
     while let Some(current) = frontier.pop() {
         if current == goal {
             return true;
@@ -2548,6 +2483,173 @@ pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain(
         }
     }
     false
+}
+
+/// Decides, and remembers, whether two canonical names stand for one cell
+/// that framing shows unchanged between their origin snapshots.
+struct OriginsUnchanged<'a> {
+    assumptions: &'a PureFactContext,
+    decided: std::collections::HashMap<(Variable, Variable), bool>,
+}
+
+impl<'a> OriginsUnchanged<'a> {
+    fn new(assumptions: &'a PureFactContext) -> Self {
+        Self {
+            assumptions,
+            decided: std::collections::HashMap::new(),
+        }
+    }
+
+    fn decide(&mut self, left: Variable, right: Variable) -> bool {
+        let key = if left.0 <= right.0 {
+            (left, right)
+        } else {
+            (right, left)
+        };
+        if let Some(decided) = self.decided.get(&key) {
+            return *decided;
+        }
+        let decided = self.compute(key.0, key.1);
+        self.decided.insert(key, decided);
+        decided
+    }
+
+    fn compute(&self, left: Variable, right: Variable) -> bool {
+        let (Some((left_memory, left_pointer)), Some((right_memory, right_pointer))) = (
+            crate::kernel::registered_canonical_load_origin(&left),
+            crate::kernel::registered_canonical_load_origin(&right),
+        ) else {
+            return false;
+        };
+        // Bounded: the unchanged proof must come from the cheap routes —
+        // recorded derivations crossed with exact-fact distinctness — never
+        // from whole-snapshot alias search, which is the giant-term
+        // recursion canonical naming exists to avoid.
+        left_pointer == right_pointer
+            && crate::kernel::with_isolated_memory_resolution_fuel(8_000, || {
+                crate::kernel::with_bounded_snapshot_comparison(|| {
+                    crate::kernel::c_memory_load_is_unchanged(
+                        &left_memory,
+                        &right_memory,
+                        &left_pointer,
+                        self.assumptions,
+                    ) || crate::kernel::c_memory_load_is_unchanged(
+                        &right_memory,
+                        &left_memory,
+                        &left_pointer,
+                        self.assumptions,
+                    )
+                })
+            })
+    }
+}
+
+/// The spellings of `side` that name the same cell as one of `endpoints`.
+fn origin_renamings<S: CanonicalBridgeSide>(
+    side: &S,
+    endpoints: &[S],
+    origins: &mut OriginsUnchanged<'_>,
+) -> Vec<S> {
+    let Some(variable) = side.canonical_variable() else {
+        return vec![side.clone()];
+    };
+    let mut spellings = vec![side.clone()];
+    for endpoint in endpoints {
+        let candidate = endpoint
+            .canonical_variable()
+            .expect("filtered by the caller");
+        if candidate != variable
+            && origins.decide(variable, candidate)
+            && !spellings.contains(endpoint)
+        {
+            spellings.push(endpoint.clone());
+        }
+    }
+    spellings
+}
+
+fn bridged_with_origins<S: CanonicalBridgeSide>(
+    premise: &Proposition,
+    facts: &[Proposition],
+    assumptions: &PureFactContext,
+) -> bool {
+    let Some((start, goal)) = S::equality_sides(premise) else {
+        return false;
+    };
+    let mut origins = OriginsUnchanged::new(assumptions);
+    // Two canonical names for one unchanged cell need no fact edge at all:
+    // when the premise equates them directly, the origins-unchanged proof is
+    // the whole content.
+    if let (Some(start_variable), Some(goal_variable)) =
+        (start.canonical_variable(), goal.canonical_variable())
+        && origins.decide(start_variable, goal_variable)
+    {
+        return true;
+    }
+    // One implicit hop only: rename the premise's canonical endpoints onto
+    // fact endpoints naming the same cell, then ask the plain fact-edge
+    // closure.
+    let endpoints: Vec<S> = facts
+        .iter()
+        .filter_map(S::equality_sides)
+        .flat_map(|(left, right)| [left, right])
+        .filter(|side| side.canonical_variable().is_some())
+        .collect();
+    let start_spellings = origin_renamings(&start, &endpoints, &mut origins);
+    let goal_spellings = origin_renamings(&goal, &endpoints, &mut origins);
+    for start_spelling in &start_spellings {
+        for goal_spelling in &goal_spellings {
+            if start_spelling == goal_spelling {
+                return true;
+            }
+            let candidate = S::equality(start_spelling.clone(), goal_spelling.clone());
+            if bridged_by_canonical_name_edges::<S>(&candidate, facts) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain(
+    premise: &Proposition,
+    facts: &[Proposition],
+) -> bool {
+    match premise {
+        Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), true) => {
+            bridged_by_canonical_name_edges::<PointerOffsetTerm>(premise, facts)
+        }
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true) => {
+            bridged_by_canonical_name_edges::<Bitvector32Term>(premise, facts)
+        }
+        _ => false,
+    }
+}
+
+/// The chain closure with origin-unchanged implicit edges: two canonical
+/// names additionally connect when the loads they were minted from are
+/// provably unchanged between their origin snapshots under the supplied
+/// assumptions (call effect summaries and frame evidence). Reserved for
+/// once-per-tactic consumers such as explicit transport and rewrite premise
+/// checks — the unchanged proof is assumption-based and must stay off hot
+/// fact paths.
+pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain_with_origins(
+    premise: &Proposition,
+    facts: &[Proposition],
+    assumptions: &PureFactContext,
+) -> bool {
+    if premise_bridged_by_canonical_name_chain(premise, facts) {
+        return true;
+    }
+    match premise {
+        Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), true) => {
+            bridged_with_origins::<PointerOffsetTerm>(premise, facts, assumptions)
+        }
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true) => {
+            bridged_with_origins::<Bitvector32Term>(premise, facts, assumptions)
+        }
+        _ => false,
+    }
 }
 
 /// The separation branch of bridged availability, never inlined to keep the
