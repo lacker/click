@@ -2419,19 +2419,34 @@ pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain_with_origi
         ) else {
             return false;
         };
+        // Bounded: the unchanged proof must come from the cheap routes —
+        // recorded derivations crossed with exact-fact distinctness — never
+        // from whole-snapshot alias search, which is the giant-term
+        // recursion canonical naming exists to avoid.
         left_pointer == right_pointer
-            && (crate::kernel::c_memory_load_is_unchanged(
-                &left_memory,
-                &right_memory,
-                &left_pointer,
-                assumptions,
-            ) || crate::kernel::c_memory_load_is_unchanged(
-                &right_memory,
-                &left_memory,
-                &left_pointer,
-                assumptions,
-            ))
+            && crate::kernel::with_isolated_memory_resolution_fuel(8_000, || {
+                crate::kernel::c_memory_load_is_unchanged(
+                    &left_memory,
+                    &right_memory,
+                    &left_pointer,
+                    assumptions,
+                ) || crate::kernel::c_memory_load_is_unchanged(
+                    &right_memory,
+                    &left_memory,
+                    &left_pointer,
+                    assumptions,
+                )
+            })
     };
+    // Two canonical names for one unchanged cell need no fact edge at all:
+    // when the premise equates them directly, the origins-unchanged proof is
+    // the whole content.
+    if let (Some(start_variable), Some(goal_variable)) =
+        (offset_variable(&start), offset_variable(&goal))
+        && origins_unchanged(&start_variable, &goal_variable)
+    {
+        return true;
+    }
     // One implicit hop only: rename the premise's canonical endpoints onto
     // fact endpoints with provably identical loads, then ask the plain
     // fact-edge closure.

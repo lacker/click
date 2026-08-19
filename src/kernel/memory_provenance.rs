@@ -652,6 +652,23 @@ fn memory_derivations_reach(
                                 assumptions,
                             )
                         },
+                    ) || crate::instrumentation::measure_operation(
+                        "kernel",
+                        "memory derivation store edge",
+                        "store edge: range-separated pointers",
+                        // The same range-membership route the fact-based
+                        // MutatesOnly arm uses: the write inside one
+                        // separated range and the load inside the other.
+                        // Isolated fuel keeps per-edge work bounded: range
+                        // extents may retain raw load terms, and deciding
+                        // orderings against them must come from exact facts,
+                        // never from re-entering alias resolution.
+                        || {
+                            crate::kernel::reasoning::with_isolated_memory_resolution_fuel(
+                                8_000,
+                                || assumptions.pointers_proven_disjoint_by_range(write, pointer),
+                            )
+                        },
                     )
                 }
                 // Declaring a block or forgetting cached cells writes nothing,

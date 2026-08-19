@@ -326,6 +326,23 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
                 assumptions.assume_proposition(fact.proposition().clone())
             })
             .assume_proposition(source.clone());
+        // Canonical-name bridges decide search-free before the reachability
+        // walk: a target equating two internal names for one unchanged cell
+        // needs only the bounded origins proof, and the walk's general
+        // equality legs would re-enter snapshot comparison on exactly these
+        // targets.
+        let chain_facts: Vec<Proposition> = {
+            let mut chain_facts = available.to_vec();
+            chain_facts.push(source.clone());
+            chain_facts
+        };
+        if super::super::fact_reasoning::premise_bridged_by_canonical_name_chain_with_origins(
+            &target,
+            &chain_facts,
+            &transport_assumptions,
+        ) {
+            return Ok(CheckedPointFactTransport { source, target });
+        }
         if !certified_fact_transport_reaches_through(
             &source,
             &target,

@@ -457,3 +457,41 @@ session of implementation established, piece by piece with probes:
 Re-landing order: pieces are independent; land 1's items one commit at
 a time against the full lib suite (the two regressions will bisect
 naturally), then attack 2(a).
+
+## Fresh-session re-landing (2026-08-19, second pass)
+
+Landed gate-green in order: (1) the effect-arm widenings (933eb177);
+(2) the separation bridging layer + composition facts + retry removal
+(fb640a6a) — the metadata-write separation transport (have proof 4) now
+connects, and transports fail prompt instead of by budget; (3) this
+commit: the direct start<->goal origins check in the chain (bounded,
+8k isolated fuel), the range-membership route on DAG store edges
+(bounded the same way — per-edge work must stay bounded; range extents
+retain raw loads and deciding orderings against them must come from
+exact facts), and a chain-first early accept in the have-body
+transport checker. In-place fact replacement for transported facts
+(order-preserving) also landed, with the replacement in a never-inlined
+helper (frame discipline).
+
+Two footholds confirmed by probes this pass: BOTH origin snapshots for
+the metadata-write bridge are DAG-connected (derivations present), and
+the walk's blocking store edge is `data[len+1]` vs `owner->data`,
+which the new range-membership route can decide when its ordering
+facts arrive by exact spelling.
+
+NOT landed: the automatic separation transport in the framed prover
+(disabled — respelling separations at introduction changes expansion
+premise selection; two pinned fixtures) — the helpers remain
+#[allow(dead_code)] for when the selector question is settled.
+
+Metadata-write frontier now: the 2M-unit burn moved to
+`replay_available_across_effects(&target, ...)` — the bucket bridge's
+modulo comparisons (`conditions_equal_modulo_proven_snapshots` ->
+`memory_loads_proven_equal`) are UNBOUNDED and re-enter whole-snapshot
+alias comparison when canonical-resolved loads cannot be decided
+cheaply. The pattern is now clear across three sites: every consumer
+that resolves canonical names to loads and asks general load equality
+needs the same bounded-fuel discipline; the next session should bound
+`memory_loads_proven_equal`'s deep legs behind isolated fuel at ITS
+entry (one site instead of per-consumer whack-a-mole) and measure the
+corpus for regressions from newly-prompt failures.
