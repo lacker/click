@@ -698,6 +698,19 @@ pub(crate) fn terms_match_modulo_canonical_names(
     if left_canonical == right_canonical {
         return true;
     }
+    if std::env::var("CLICK_PROBE").is_ok()
+        && matches!(left, Bitvector32Term::Add(_, one) if matches!(one.as_ref(), Bitvector32Term::Constant(1)))
+        && let Bitvector32Term::MemoryLoad(fact_memory, fact_pointer) = right
+    {
+        let known = fact_memory.known_value(fact_pointer);
+        let known_text = format!("{known:?}");
+        let pointer_text = format!("{fact_pointer:?}");
+        eprintln!(
+            "PROBE resolve: known={}\n  ptr={}",
+            &known_text[..known_text.len().min(260)],
+            &pointer_text[..pointer_text.len().min(160)],
+        );
+    }
     let name = |term: &Bitvector32Term| match term {
         Bitvector32Term::Variable(variable) if is_canonical_load_variable(variable) => {
             Some(*variable)

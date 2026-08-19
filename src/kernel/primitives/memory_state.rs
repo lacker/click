@@ -565,6 +565,13 @@ impl CMemory {
                 &normalized_pointer,
                 assumptions,
             )
+                // A field cell survives a store into an array it is
+                // separated from: separation facts plus range membership
+                // decide the cross-base pairs offset reasoning cannot.
+                // Only here, per cell per store — not on the general
+                // distinctness path, where this scan is too hot.
+                || assumptions
+                    .pointers_directly_disjoint_by_range(&normalized_cell_pointer, &normalized_pointer)
         });
         if let Some(base) = base {
             record_c_memory_derivation(&memory, CMemoryDerivation::CellsForgotten { base });
