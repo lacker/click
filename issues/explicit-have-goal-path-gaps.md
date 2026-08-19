@@ -83,6 +83,27 @@ range work is the `derived separation` fallback
 or short-circuiting that fallback under snapshot comparison is the other
 untried lever.
 
+## Reduction (2026-08-18, fourth pass — the mechanism)
+
+Engagement counting kills the repetition theory: only 144
+`pointers_proven_distinct` calls occur (136 memo-eligible), ~9,300 units
+each — the cost is per-call, not repeated. Outcome probing then isolates
+it: the `derived separation` fallback runs 166 times and returns `false`
+every time — two-thirds of the range work proves nothing in this
+workload. Its per-call price is structural:
+`proves_resource_separate_inner` performs a linear scan over all
+`prop_facts` propositions with per-separation-fact containment *proving*
+(`proves_resource_contains_inner` twice per fact), then a composition
+sweep and a coverage check — the complexity contract's named linear
+exact-premise anti-pattern, executed per differing snapshot cell. The
+fix's key lemma: `memory_separation_candidates` claims to project "the
+same candidates" from compact compositions — if that index is complete
+for memory separation facts, the linear `prop_facts` scan is redundant
+for memory-memory queries and can be skipped (or the scan gains an
+index), cutting ~900K units and bringing the reproducing have from 2.2M
+units to ~1.3M, under its 2M budget. Verify the completeness lemma
+against the index construction before landing.
+
 ## Intended regression
 
 - A deterministic curve comparing goal-path versus legacy explicit-have
