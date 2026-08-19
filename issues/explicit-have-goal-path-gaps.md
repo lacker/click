@@ -260,3 +260,22 @@ proposition goal — the direct path needs the substrate-4 typed
 function-outcome goal extended with a resource-production form whose
 discharge runs the same fold/consume machinery
 `resource_context_satisfies_definitional_fact` uses at certification.
+
+## Grouped resource ensures: not closure-only (2026-08-19)
+
+After the ungrouped slice (75ad9b74), 144 escapes remain, all
+grouped-resource (94 mdtests + 50 examples; every example escape is
+grouped). Marking grouped resource claims closed
+`by_grouped_transition` with the direct certificate is NOT sufficient:
+54 lib tests fail, led by grouped-simp expansion fixtures
+(grouped_simp_expansion_preserves_resource_scalar_and_quantified_transitions,
+expanded_execute_and_frame_replay_after_resource_branch) — the grouped
+transition certificate must itself carry the resource transition
+content (fold/production steps) that the legacy grouped closer builds
+into it, not merely mark the claims closed. Next: read the legacy
+grouped-transition builder (the code consuming
+GroupedOutcomeSimpGoal/grouped_pending after the direct path) to see
+what resource content it emits into path_grouped_surface_closers, and
+either reproduce that content from the direct proof or extend
+complete_point_obligations_since with typed resource-production
+steps.
