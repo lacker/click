@@ -20,6 +20,11 @@ when evidence exposes one.
 
 ## Open
 
+- [Load terms in arithmetic positions](load-terms-in-arithmetic-positions.md):
+  unresolved memory loads inside pointer offsets make alias queries
+  recursive (8 queries fan out to 1.6M units); the shared root cause
+  behind the explicit-have budget gap and the owned-vector quarantine,
+  with a scoped canonicalization design.
 - [Explicit have scripts cannot move onto the goal path yet](explicit-have-goal-path-gaps.md):
   77% of smart-have fallbacks are searchless scripts the goal path
   declines by design; landing the certificate branch is blocked on a

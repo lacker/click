@@ -178,6 +178,17 @@ certificate, whose own trailing `assumption` remains unverified because
 the check dies first) is now the only thing between the dispatch and
 landing.
 
+## Root cause identified (2026-08-18)
+
+The budget-exhausting certificate's cost is fully explained by
+`issues/load-terms-in-arithmetic-positions.md`: its lowering touches
+array cells addressed by loaded indices, and unresolved load terms in
+those offsets make each alias query recursive. The remaining three
+explicit haves in the reproducing mdtest already check successfully on
+the goal path (394–3K units each) after the suffix cleanup; the dispatch
+lands once the root fix makes the fourth comparable, with no bounded
+checking mode.
+
 ## Intended regression
 
 - A deterministic curve comparing goal-path versus legacy explicit-have
