@@ -870,47 +870,40 @@ impl PureFactContext {
             return Some(index);
         }
 
+        // Bounded comparison scopes answer offset equality by structure and
+        // canonical names only; the general decider's per-pair cost is the
+        // breadth that bounded callers exist to avoid.
+        let offsets_equal = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
+            if crate::kernel::reasoning::memory_resolution::bounded_snapshot_comparison_active() {
+                crate::kernel::eval::offsets_match_modulo_canonical_names(left, right)
+            } else {
+                self.decide(&ConditionTerm::pointer_offset_equal(
+                    left.clone(),
+                    right.clone(),
+                )) == Some(true)
+            }
+        };
         if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
-            if self.decide(&ConditionTerm::pointer_offset_equal(
-                left.as_ref().clone(),
-                base.offset.clone(),
-            )) == Some(true)
-            {
+            if offsets_equal(left, &base.offset) {
                 return int32_element_index_from_offset(right);
             }
-            if self.decide(&ConditionTerm::pointer_offset_equal(
-                right.as_ref().clone(),
-                base.offset.clone(),
-            )) == Some(true)
-            {
+            if offsets_equal(right, &base.offset) {
                 return int32_element_index_from_offset(left);
             }
         }
 
         if let PointerOffsetTerm::Add(left, right) = &base.offset {
-            if self.decide(&ConditionTerm::pointer_offset_equal(
-                pointer.offset.clone(),
-                left.as_ref().clone(),
-            )) == Some(true)
-            {
+            if offsets_equal(&pointer.offset, left) {
                 return int32_element_index_from_offset(right)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
-            if self.decide(&ConditionTerm::pointer_offset_equal(
-                pointer.offset.clone(),
-                right.as_ref().clone(),
-            )) == Some(true)
-            {
+            if offsets_equal(&pointer.offset, right) {
                 return int32_element_index_from_offset(left)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
         }
 
-        if self.decide(&ConditionTerm::pointer_offset_equal(
-            pointer.offset.clone(),
-            base.offset.clone(),
-        )) == Some(true)
-        {
+        if offsets_equal(&pointer.offset, &base.offset) {
             return Some(Bitvector32Term::Constant(0));
         }
         None

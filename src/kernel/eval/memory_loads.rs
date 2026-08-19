@@ -689,6 +689,15 @@ pub(crate) fn terms_match_modulo_canonical_names(
     if left == right {
         return true;
     }
+    // A load whose cell is materialized resolves to the stored term —
+    // e.g. a post-store spelling of `len` resolves to the pre-store
+    // arithmetic — so compare the canonicalized forms before naming.
+    // Both calls are memoized.
+    let left_canonical = crate::kernel::memory_provenance::canonicalize_atomic_loads(left);
+    let right_canonical = crate::kernel::memory_provenance::canonicalize_atomic_loads(right);
+    if left_canonical == right_canonical {
+        return true;
+    }
     let name = |term: &Bitvector32Term| match term {
         Bitvector32Term::Variable(variable) if is_canonical_load_variable(variable) => {
             Some(*variable)
@@ -706,6 +715,35 @@ pub(crate) fn terms_match_modulo_canonical_names(
         | (Bitvector32Term::Subtract(a, b), Bitvector32Term::Subtract(c, d))
         | (Bitvector32Term::Multiply(a, b), Bitvector32Term::Multiply(c, d)) => {
             terms_match_modulo_canonical_names(a, c) && terms_match_modulo_canonical_names(b, d)
+        }
+        _ => false,
+    }
+}
+
+/// Structural pointer-offset equality modulo canonical load names; the
+/// offset analogue of [`terms_match_modulo_canonical_names`].
+pub(crate) fn offsets_match_modulo_canonical_names(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left, right) {
+        (
+            PointerOffsetTerm::Int32Scaled {
+                value: left_value,
+                byte_width: left_width,
+            },
+            PointerOffsetTerm::Int32Scaled {
+                value: right_value,
+                byte_width: right_width,
+            },
+        ) => {
+            left_width == right_width && terms_match_modulo_canonical_names(left_value, right_value)
+        }
+        (PointerOffsetTerm::Add(a, b), PointerOffsetTerm::Add(c, d)) => {
+            offsets_match_modulo_canonical_names(a, c) && offsets_match_modulo_canonical_names(b, d)
         }
         _ => false,
     }

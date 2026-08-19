@@ -605,3 +605,35 @@ separation candidate scans), find which one fires ~1.1M times or with
 big weights under pointers_proven_disjoint_by_range, and bound or cache
 that site. The tactic budget is 2M and the remaining spend is ~1.4M —
 one attribution away from passing.
+
+## Budget burn ELIMINATED; the last gap is fact plumbing (2026-08-19)
+
+The unit-sampling attribution (CLICK_UNITS_SAMPLE backtraces in
+record_deterministic_work — remove after use, done) pinned the burn to
+fuel-check breadth inside the equality recursion under
+pointer_element_index_from_base's five per-candidate `decide` calls.
+Bounded comparison scopes now answer offset equality by structure and
+canonical names only (offsets_match_modulo_canonical_names), and the
+canonical matcher canonicalizes both sides before naming (a post-store
+load resolves to its stored arithmetic). RESULT: the metadata-write
+failure is PROMPT — no budget exhaustion anywhere in the trace. Suite
+green.
+
+The last gap is not cost but plumbing: at the blocking store edge, the
+write-side membership extraction now works (index=Some(Add(load,1))
+against the v1672-based data range), but the ordering facts it needs
+(0 <= len, len+1 < cap) are NOT in the walk's assumption contexts — the
+one context dumped held a single unrelated less-than fact (an
+array-cell value fact). The have's using premises carry those orderings
+at at-entry spellings, but the contexts reaching
+c_memory_load_is_unchanged from the chain/transport do not include
+them. Next session: trace what transport_assumptions/chain_assumptions
+actually contain at the origins call (the fold builds them from
+selected_assumptions + transitions + source), and plumb the selected
+using-premise orderings through — most likely the chain call in
+have_proofs passes transport_assumptions built BEFORE the using
+premises are folded in, or the premises lower into prop_facts rather
+than condition_facts. Once those two orderings reach the context, the
+membership decides, the store edge crosses, the walk connects the
+origins, and the name bridge proves — the entire chain is otherwise
+verified working by probes.
