@@ -169,3 +169,28 @@ transport tests need Click surface spellings for defining equations.
 Also watch: full-suite time moved 19s -> 34s on one run; measure whether
 the canonical-view recursion on the hot equality path is responsible
 before integration.
+
+## Frontier: resource-neutral-callee moved to the exit claim check
+
+After the registry view landed, this test's failure moved past the fold:
+the error is now `unverified claims: Ensure(0) = produces Composite
+allocated(owner)` from src/lang/click/verification.rs:1120, and none of
+the kernel MissingResource probes fire. Established so far: composite
+candidate selection is spelling-insensitive (`exact_shapes` keys on
+family/name/arity, resource_algebra.rs:656), so the miss is either in
+`resource_fact_entails` argument-equality proving or — more likely given
+the new error site — in the surface-level claim satisfaction comparison,
+which may match produced claims structurally rather than through the
+prover. Next: find where Ensure claims are matched against
+replay-established claims in verification.rs and check whether the
+comparison is structural; if so, decide whether to canonicalize claim
+spellings at lowering or route the comparison through proof-aware
+resource entailment.
+
+Remaining failures (4): this one; expansion separation `have`
+(source_expander_derives_separation_from_call_postconditions); and the
+two expansion transport spelling tests (modular_call_snapshot_anchor,
+snapshot_bridged_simp_premise) which need Click surface spellings for
+canonical-variable defining equations. Probes still in tree: statements/
+expression/functions MissingResource sites, resource_algebra write-miss
+probe — remove before integration.
