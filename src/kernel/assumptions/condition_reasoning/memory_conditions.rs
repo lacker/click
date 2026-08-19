@@ -74,29 +74,40 @@ impl PureFactContext {
         ) {
             return true;
         }
-        if memories_match_for_pointer_load_under_assumptions(
-            left_memory,
-            right_memory,
-            left_pointer,
-            self,
-        ) {
-            return true;
-        }
-        // Two spellings whose marker sets differ are never syntactically
-        // equal and defeat the snapshot comparison's block-set filter, but
-        // the load can still be provably unchanged across the marker delta:
-        // the framed-load prover consumes the recorded effect summaries and
-        // mutates-only facts to frame the loaded pointer across each
-        // intervening effect. Deciding the pair by that proof, instead of by
-        // spelling coincidence, is what keeps fact transport working once
-        // canonicalization stops laundering havoc markers (see
-        // issues/canonical-load-jump-launders-havoc-markers.md).
-        crate::kernel::api::c_memory_load_is_unchanged(
-            left_memory,
-            right_memory,
-            left_pointer,
-            self,
-        )
+        // The two remaining legs — whole-snapshot alias comparison and the
+        // framed-load prover — are the expensive general searches. Every
+        // cheap route has already answered above (fact transport,
+        // resolution, structural match, the DAG walk), so the residue runs
+        // under one isolated node budget: load-equality questions the cheap
+        // evidence cannot settle within it fail promptly here rather than
+        // fanning out into the giant-term recursion that canonical naming
+        // exists to avoid.
+        crate::kernel::reasoning::with_isolated_memory_resolution_fuel(8_000, || {
+            if memories_match_for_pointer_load_under_assumptions(
+                left_memory,
+                right_memory,
+                left_pointer,
+                self,
+            ) {
+                return true;
+            }
+            // Two spellings whose marker sets differ are never syntactically
+            // equal and defeat the snapshot comparison's block-set filter,
+            // but the load can still be provably unchanged across the marker
+            // delta: the framed-load prover consumes the recorded effect
+            // summaries and mutates-only facts to frame the loaded pointer
+            // across each intervening effect. Deciding the pair by that
+            // proof, instead of by spelling coincidence, is what keeps fact
+            // transport working once canonicalization stops laundering havoc
+            // markers (see
+            // issues/canonical-load-jump-launders-havoc-markers.md).
+            crate::kernel::api::c_memory_load_is_unchanged(
+                left_memory,
+                right_memory,
+                left_pointer,
+                self,
+            )
+        })
     }
 
     pub(in crate::kernel) fn memory_snapshots_directly_proven_equal_for_memory_resolution(

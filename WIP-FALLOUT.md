@@ -495,3 +495,25 @@ needs the same bounded-fuel discipline; the next session should bound
 `memory_loads_proven_equal`'s deep legs behind isolated fuel at ITS
 entry (one site instead of per-consumer whack-a-mole) and measure the
 corpus for regressions from newly-prompt failures.
+
+## Deep load-equality legs bounded at their single entry (suite green)
+
+`memory_loads_proven_equal`'s two expensive tails — whole-snapshot alias
+comparison and the framed-load prover — now run under one isolated node
+budget at that entry, after every cheap route has answered. Lib suite
+1062/1062; the availability-bridging burn site is gone.
+
+The metadata-write budget burn moved into the DAG walk's new
+range-separated store-edge arm: `range disjointness: derived
+separation` burns ~1.6M DETERMINISTIC UNITS despite the isolated fuel —
+fuel caps resolution NODES, not scan units; the derived-separation
+candidate scan is unit-metered work that fuel does not bound, and the
+walk re-asks it per store edge unmemoized. Next session, two options:
+(a) memoize the per-edge disjointness by (write, pointer, assumptions
+id) and make the derived-separation scan output-bounded; (b) a cheap
+targeted route for the canonical case — write base and separation range
+base share a canonical name, so membership needs only the extent
+ordering, decidable from exact requires facts once their spellings
+normalize (at-spelling vs live). Option (b) is the semantics the case
+actually needs; (a) is the general hygiene both the scalability
+contract and this walk want anyway.
