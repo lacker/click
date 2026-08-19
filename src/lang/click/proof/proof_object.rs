@@ -3771,6 +3771,116 @@ impl<'a> Proof<'a> {
         Ok(())
     }
 
+    /// The retention law for a decided `branch ensuring`: the explicit
+    /// interface is validated on the sole kernel-feasible arm with no
+    /// abstraction or resource merge — the surviving checked state remains
+    /// the successor, so ownership assertions are safe here even though
+    /// two-arm ownership normalization has not migrated. Produces the arm's
+    /// post-interface context and the structured `Branch { ensuring, .. }`
+    /// with an empty impossible arm.
+    #[allow(clippy::too_many_arguments)]
+    fn merge_decided_interface_execution_path(
+        &self,
+        parent_unfolds: &PersistentOrderedSet<String>,
+        parent_execution: &ExecutionProofState,
+        statement_index: usize,
+        continuation_index: usize,
+        initial_continuation_depth: usize,
+        take_then: bool,
+        assertions: Vec<ProofAssertion>,
+        arm: &CheckedExecutionJoinArm<'_>,
+    ) -> Result<CheckedExecutionJoinParts, ClickError> {
+        let replay = &arm.execution.replay;
+        let reached_continuation = replay.completed_branch_regions.contains(&statement_index)
+            && replay.frontier.continuations.len() <= initial_continuation_depth
+            && replay.frontier.next_statement_index == continuation_index;
+        let reached_exit = replay.is_at_function_exit()
+            && replay.frontier.continuations.len() <= initial_continuation_depth;
+        if !reached_continuation && !reached_exit {
+            return Err(self.step_error(format!(
+                "the sole feasible {} `branch ensuring` arm has not reached its continuation or function exit",
+                if take_then { "then" } else { "else" }
+            )));
+        }
+        self.validate_execution_join_arm_deltas(
+            "path operation",
+            "the decided interface",
+            take_then,
+            arm,
+            parent_execution,
+        )?;
+
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            unreachable!("execution branch retained a non-execution context")
+        };
+        let target = ProgramPointRef {
+            region: CodeRegionRef::Statement(continuation_index),
+            kind: ProgramPointKind::Entry,
+        };
+        let mut execution = arm.execution.clone();
+        let mut state = (*execution.state).clone();
+        let mut facts = arm.facts.clone();
+        let facts_before_interface = facts.clone();
+        apply_branch_interface_with_proof_facts(
+            &target,
+            &assertions,
+            context.tactic_index,
+            &mut execution.replay,
+            &mut state,
+            &mut facts,
+            context.parsed_function.parameters(),
+            context.arguments,
+            context.predicate_environment,
+            context.click_function_environment,
+            context.resource_environment,
+            context.claim_label,
+            &BTreeMap::new(),
+            false,
+        )
+        .map_err(|error| add_proof_branch_path(error, &execution.branch_path))?;
+        execution.state = state.into();
+        execution.branch_path = parent_execution.branch_path.clone();
+        execution.replay.case_assumptions = parent_execution.replay.case_assumptions.clone();
+
+        let mut added_facts = arm.introduced_facts.clone();
+        for assertion in &assertions {
+            let ProofAssertion::Fact(surface) = assertion else {
+                continue;
+            };
+            if let Some(fact) = execution.replay.surface_propositions.unique_kernel(surface)
+                && !facts_before_interface.contains_top_level(fact)
+                && !added_facts.contains(fact)
+            {
+                added_facts.push(fact.clone());
+            }
+        }
+        let selected = arm.certificate.clone();
+        let empty = ProofCertificate::from_steps(Vec::new());
+        let (then_proof, else_proof) = if take_then {
+            (selected, empty)
+        } else {
+            (empty, selected)
+        };
+        let unfolded_predicates =
+            arm.introduced_unfolds
+                .iter()
+                .fold(parent_unfolds.clone(), |mut unfolds, name| {
+                    unfolds.insert(name.clone());
+                    unfolds
+                });
+        Ok(CheckedExecutionJoinParts {
+            execution,
+            facts,
+            common_added_facts: added_facts,
+            unfolded_predicates,
+            step: SimpleProofStep::Branch {
+                ensuring: Some(assertions),
+                then_proof: Box::new(then_proof),
+                else_proof: Box::new(else_proof),
+            },
+        })
+    }
+
     /// The retention law for a decided execution branch: the kernel
     /// certified exactly one feasible arm, so the surviving descendant's
     /// context becomes the successor while a logical `If` records the
@@ -4241,12 +4351,37 @@ impl<'a> Proof<'a> {
     /// [`Proof::split_focused_execution_branch`] through one explicit
     /// common frontier interface, resuming the parent obligation under its
     /// original id with the abstract continuation context. A one-arm split
-    /// is a decided path; its interface finish has not migrated yet.
+    /// is a decided path: the interface is validated on the sole sibling
+    /// with no abstraction or resource merge, as in the container form.
     pub(super) fn join_focused_execution_interface(
         &self,
         record: &ExecutionSplit<'a>,
         assertions: Vec<ProofAssertion>,
     ) -> Result<Self, ClickError> {
+        let sole_arm = match record.ids {
+            [Some(id), None] => Some((true, 0usize, id)),
+            [None, Some(id)] => Some((false, 1, id)),
+            _ => None,
+        };
+        if let Some((take_then, arm_index, id)) = sole_arm {
+            let [mut steps, trailing] =
+                self.partition_steps_since(&record.marker, record.split, [id, id])?;
+            steps.extend(trailing);
+            let name = if take_then { "then" } else { "else" };
+            let (selection, view) =
+                self.sibling_execution_arm_view(record, name, arm_index, id, steps)?;
+            let parts = self.merge_decided_interface_execution_path(
+                &record.parent_unfolds,
+                &record.parent_execution,
+                record.statement_index,
+                record.continuation_index,
+                record.initial_continuation_depth,
+                take_then,
+                assertions,
+                &view,
+            )?;
+            return self.resume_parent_after_sibling_join(record, [id, id], selection, parts);
+        }
         let (ids, selection, arms) = self.sibling_execution_arm_views(record)?;
         let parts = self.merge_interface_execution_join(
             &record.parent_facts,
@@ -10156,7 +10291,8 @@ impl<'a> ExecutionProofBranches<'a> {
             self.root
                 .step_error("a decided `branch ensuring` requires exactly one kernel-feasible arm")
         })?;
-        let arm = self.arms[usize::from(!take_then)]
+        let decided_index = usize::from(!take_then);
+        let arm = self.arms[decided_index]
             .as_ref()
             .expect("sole feasible interface arm was selected");
         let root_execution = self.root.execution().ok_or_else(|| {
@@ -10167,138 +10303,60 @@ impl<'a> ExecutionProofBranches<'a> {
             self.root
                 .step_error("decided interface arm lost its execution state")
         })?;
-        let reached_continuation = arm_execution
-            .replay
-            .completed_branch_regions
-            .contains(&self.statement_index)
-            && arm_execution.replay.frontier.continuations.len() <= self.initial_continuation_depth
-            && arm_execution.replay.frontier.next_statement_index == self.continuation_index;
-        let reached_exit = arm_execution.replay.is_at_function_exit()
-            && arm_execution.replay.frontier.continuations.len() <= self.initial_continuation_depth;
-        if !reached_continuation && !reached_exit {
-            return Err(self.root.step_error(format!(
-                "the sole feasible {} `branch ensuring` arm has not reached its continuation or function exit",
-                if take_then { "then" } else { "else" }
-            )));
-        }
-        if !matches!(
-            implication_body(arm.condition_theorem.proposition()),
-            Proposition::CConditionEvaluates {
-                outcome: CConditionOutcome::Value(actual),
-                ..
-            } if *actual == take_then
-        ) {
-            return Err(self
-                .root
-                .step_error("the decided interface arm retained the wrong condition theorem"));
-        }
-        let replay = &arm_execution.replay;
-        if replay.function_entry_execution_prerequisites.len()
-            != root_execution
-                .replay
-                .function_entry_execution_prerequisites
-                .len()
-                + arm.introduced_function_entry_prerequisites.len()
-            || replay.function_entry_derivations.len()
-                != root_execution.replay.function_entry_derivations.len()
-                    + arm.introduced_function_entry_derivations.len()
-            || replay.frontier_loop_clauses.len()
-                != root_execution.replay.frontier_loop_clauses.len()
-            || replay.frontier_loop_rules.len() != root_execution.replay.frontier_loop_rules.len()
-            || replay.unfolded_predicates.len()
-                != root_execution.replay.unfolded_predicates.len()
-                    + arm.introduced_unfolded_predicates.len()
-            || replay.planned_statement_transitions.len()
-                != root_execution.replay.planned_statement_transitions.len()
-        {
-            return Err(self.root.step_error(
-                "the decided interface arm changed replay metadata that the checked path operation has not migrated",
-            ));
-        }
-
-        let ProofContext::Execution(context) = self.root.context.as_ref() else {
-            unreachable!("execution branch retained a non-execution context")
-        };
-        let target = ProgramPointRef {
-            region: CodeRegionRef::Statement(self.continuation_index),
-            kind: ProgramPointKind::Entry,
-        };
-        let mut execution = arm_execution.clone();
-        let mut state = (*execution.state).clone();
-        let mut facts = arm.proof.facts().clone();
-        let facts_before_interface = facts.clone();
-        apply_branch_interface_with_proof_facts(
-            &target,
-            &assertions,
-            context.tactic_index,
-            &mut execution.replay,
-            &mut state,
-            &mut facts,
-            context.parsed_function.parameters(),
-            context.arguments,
-            context.predicate_environment,
-            context.click_function_environment,
-            context.resource_environment,
-            context.claim_label,
-            &BTreeMap::new(),
-            false,
-        )
-        .map_err(|error| add_proof_branch_path(error, &execution.branch_path))?;
-        execution.state = state.into();
-        execution.branch_path = root_execution.branch_path.clone();
-        execution.replay.case_assumptions = root_execution.replay.case_assumptions.clone();
-
-        let mut added_facts = arm.introduced_facts.to_vec();
-        for assertion in &assertions {
-            let ProofAssertion::Fact(surface) = assertion else {
-                continue;
-            };
-            if let Some(fact) = execution.replay.surface_propositions.unique_kernel(surface)
-                && !facts_before_interface.contains_top_level(fact)
-                && !added_facts.contains(fact)
-            {
-                added_facts.push(fact.clone());
-            }
-        }
-        let decided_index = usize::from(!take_then);
-        let selected = Self::arm_certificate(
+        let body = Self::arm_certificate(
             &self.root,
             self.split,
             self.child_goals[decided_index],
             self.entries[decided_index].as_ref(),
             arm,
         )?;
-        let empty = ProofCertificate::from_steps(Vec::new());
-        let (then_proof, else_proof) = if take_then {
-            (selected, empty)
-        } else {
-            (empty, selected)
+        let view = CheckedExecutionJoinArm {
+            certificate: body,
+            facts: arm.proof.facts(),
+            execution: arm_execution,
+            condition_theorem: &arm.condition_theorem,
+            introduced_facts: arm.introduced_facts.iter().cloned().collect(),
+            introduced_effect_facts: arm.introduced_effect_facts.clone(),
+            introduced_prerequisites: arm
+                .introduced_function_entry_prerequisites
+                .iter()
+                .cloned()
+                .collect(),
+            introduced_derivations: arm
+                .introduced_function_entry_derivations
+                .iter()
+                .cloned()
+                .collect(),
+            introduced_unfolds: arm.introduced_unfolded_predicates.iter().cloned().collect(),
         };
+        let parts = self.root.merge_decided_interface_execution_path(
+            self.root.focused_goal_unfolds(),
+            root_execution,
+            self.statement_index,
+            self.continuation_index,
+            self.initial_continuation_depth,
+            take_then,
+            assertions,
+            &view,
+        )?;
         Ok(Proof {
             context: self.root.context.clone(),
             state: Arc::new(ProofState {
                 locals: arm.proof.state.locals.clone(),
-
                 goals: arm.proof.state.goals.replace_frontier_at(
                     arm.proof.focused,
-                    facts,
-                    execution,
+                    parts.facts,
+                    parts.execution,
                 ),
-                added_facts: Arc::new(added_facts.clone()),
-                checked_facts: Arc::new(added_facts),
+                added_facts: Arc::new(parts.common_added_facts.clone()),
+                checked_facts: Arc::new(parts.common_added_facts),
             }),
             node: Arc::new(ProofNode {
                 parent: Some(self.root.node.clone()),
-                step: Some(Arc::new(SimpleProofStep::Branch {
-                    ensuring: Some(assertions),
-                    then_proof: Box::new(then_proof),
-                    else_proof: Box::new(else_proof),
-                })),
+                step: Some(Arc::new(parts.step)),
                 focused: arm.proof.focused,
                 depth: self.root.node.depth + 1,
             }),
-            // The successor's goal map came from the decided arm, so the
-            // handle addresses that arm's recorded goal id.
             focused: arm.proof.focused,
         })
     }
@@ -20244,6 +20302,36 @@ mod tests {
                 .replay
                 .is_at_function_exit()
         );
+        // The decided interface finish mirrors the plain decided finish
+        // through the interface entrypoint: an explicit interface on the
+        // sole sibling records `Branch { ensuring, .. }` with the empty
+        // impossible arm and resumes the parent id.
+        let root = make_root(vec![selecting_fact.clone()]);
+        let parent_id = root.focused;
+        let (split_proof, record) = root
+            .split_focused_execution_branch()
+            .expect("the selecting fact should split to the sole then sibling");
+        let advanced = split_proof
+            .try_indexed_execute_step()
+            .expect("sole-sibling selection should remain bounded")
+            .expect("the assignment should produce a checked simple successor");
+        let decided = advanced
+            .join_focused_execution_interface(&record, Vec::new())
+            .expect("the sole checked sibling should finish through the interface");
+        assert_eq!(decided.focused, parent_id);
+        let decided_ids: Vec<GoalId> = decided.goals().collect();
+        assert_eq!(decided_ids, [parent_id]);
+        assert!(matches!(
+            decided.certificate().steps(),
+            [SimpleProofStep::Branch {
+                ensuring: Some(retained),
+                then_proof,
+                else_proof,
+            }] if retained.is_empty()
+                && matches!(then_proof.steps(), [SimpleProofStep::StepUsing(_)])
+                && else_proof.steps().is_empty()
+        ));
+
         let (undecided_proof, undecided_record) = make_root(Vec::new())
             .split_focused_execution_branch()
             .expect("the unconstrained condition should split to both siblings");

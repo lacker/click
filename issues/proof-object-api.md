@@ -3221,6 +3221,23 @@ the decided interface finish (`finish_decided_with_interface`), whose
 sibling form is the one remaining seam before the container's join surface
 is fully mirrored.
 
+### Progress (2026-08-18: the sibling join surface is complete)
+
+The decided interface finish is extracted as
+`merge_decided_interface_execution_path` — arrival at continuation or
+exit, the shared guards, interface validation on the sole arm with no
+abstraction or resource merge, and `Branch { ensuring, .. }` with the
+empty impossible arm — consumed by the container and by
+`join_focused_execution_interface`, which now dispatches one-arm records
+to it exactly as the container's entrypoint dispatches to its decided
+finish. With that, every container join variant (checked, empty, terminal,
+decided, interface, decided-interface) has a sibling-goal form running on
+a shared merge law, each pinned by a regression beside its container
+equivalent. Next: flip the `join_linear_execution_branches` dispatch in
+`replay_engine/proof_execution.rs` and the other container consumers onto
+split/focus/join, then delete `ExecutionProofBranches` with its curves
+migrated at unchanged bounds, as `ProofBranches` was.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
