@@ -3129,6 +3129,20 @@ on the same preparation next, so the sibling-goal form cannot drift from
 the container's semantics while both exist, and the eventual container
 deletion removes only assembly, never a second copy of the law.
 
+### Progress (2026-08-18: sibling execution frontier goals)
+
+`split_focused_execution_branch` lands on the shared branch-entry law: a C
+`if` at the focused frontier becomes sibling frontier goals inside one
+proof state, each kernel-feasible arm owning its checked facts and
+snapshot, with the parent frontier id retired by the split. The
+`ExecutionSplit` record carries the marker, recorded ids, per-arm condition
+theorems, split-time fact bases, and shared continuation data its joins
+will verify — bookkeeping, never semantic authority. The regression drives
+both siblings through interleaved checked statements on one lineage and
+pins that each arm still descends from its recorded base — the
+`introduced_since` ancestry that the join variants consume. Those variants
+migrate next, one at a time, before the container deletion.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

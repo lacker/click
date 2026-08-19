@@ -95,6 +95,24 @@ pub(super) struct ExecutionProofBranches<'a> {
     arms: [Option<ExecutionProofArm<'a>>; 2],
 }
 
+/// Bookkeeping for one in-`Proof` execution branch split: the split
+/// identity and marker its joins verify, each feasible arm's recorded goal
+/// id, condition theorem, and split-time fact base (the ancestor for
+/// `introduced_since`), and the shared continuation data. This is a record
+/// the audited joins check — never semantic authority.
+pub(super) struct ExecutionSplit<'a> {
+    marker: ProofCheckpoint<'a>,
+    split: SplitId,
+    ids: [Option<GoalId>; 2],
+    condition_theorems: [Option<Theorem>; 2],
+    base_facts: [Option<ProofFacts>; 2],
+    statement_index: usize,
+    continuation_index: usize,
+    continuation_remaining: Option<Arc<CStatement>>,
+    execution_start_state: CState,
+    initial_continuation_depth: usize,
+}
+
 /// The audited branch-entry result shared by the execution container and
 /// the in-`Proof` sibling split: source structure plus each feasible arm's
 /// checked facts, snapshot, path-fact delta, and condition theorem.
@@ -3614,6 +3632,90 @@ impl<'a> Proof<'a> {
             initial_continuation_depth,
             arms,
         })
+    }
+
+    /// Splits the focused execution frontier at a C `if` into sibling
+    /// frontier goals inside this same proof state: the in-`Proof` form of
+    /// the execution branch. Each kernel-feasible arm becomes one sibling
+    /// goal owning its checked arm facts and snapshot; the returned record
+    /// carries the split identity, per-arm condition theorems, split-time
+    /// fact bases for `introduced_since`, and the shared continuation data
+    /// its joins verify — bookkeeping, never semantic authority.
+    pub(super) fn split_focused_execution_branch(
+        &self,
+    ) -> Result<(Self, ExecutionSplit<'a>), ClickError> {
+        let prepared = self.prepare_execution_branch()?;
+        let Some(Goal::Frontier(parent)) = self.focused_goal() else {
+            return Err(self.step_error("`branch` requires an open execution frontier"));
+        };
+        let selection = parent.selection;
+        let unfolds = parent.context.unfolded_predicates.clone();
+        let split = SplitId(self.state.goals.next_id);
+        let ids = [
+            GoalId(self.state.goals.next_id + 1),
+            GoalId(self.state.goals.next_id + 2),
+        ];
+        let mut open = self.state.goals.open.without_key(&self.focused);
+        let mut arm_ids: [Option<GoalId>; 2] = [None, None];
+        let mut condition_theorems: [Option<Theorem>; 2] = [None, None];
+        let mut base_facts: [Option<ProofFacts>; 2] = [None, None];
+        for (arm_index, prepared_arm) in prepared.arms.into_iter().enumerate() {
+            let Some(prepared_arm) = prepared_arm else {
+                continue;
+            };
+            arm_ids[arm_index] = Some(ids[arm_index]);
+            condition_theorems[arm_index] = Some(prepared_arm.condition_theorem);
+            base_facts[arm_index] = Some(prepared_arm.facts.clone());
+            open = open.with_inserted(
+                ids[arm_index],
+                Goal::Frontier(FrontierGoal {
+                    selection,
+                    context: GoalContext {
+                        facts: prepared_arm.facts,
+                        unfolded_predicates: unfolds.clone(),
+                        execution: Some(Arc::new(prepared_arm.execution)),
+                    },
+                }),
+            );
+        }
+        let focused = arm_ids
+            .iter()
+            .flatten()
+            .next()
+            .copied()
+            .expect("the preparation rejects branches with no feasible arm");
+        let successor = Self {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                locals: self.state.locals.clone(),
+                goals: ProofGoals {
+                    open,
+                    next_id: self.state.goals.next_id + 3,
+                },
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+            }),
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: None,
+                focused: self.focused,
+                depth: self.node.depth,
+            }),
+            focused,
+        };
+        let record = ExecutionSplit {
+            marker: successor.checkpoint(),
+            split,
+            ids: arm_ids,
+            condition_theorems,
+            base_facts,
+            statement_index: prepared.statement_index,
+            continuation_index: prepared.continuation_index,
+            continuation_remaining: prepared.continuation_remaining,
+            execution_start_state: prepared.execution_start_state,
+            initial_continuation_depth: prepared.initial_continuation_depth,
+        };
+        Ok((successor, record))
     }
 
     pub(super) fn begin_execution_branch(&self) -> Result<ExecutionProofBranches<'a>, ClickError> {
@@ -18889,6 +18991,40 @@ mod tests {
         genuine
             .join_with_interface(Vec::new())
             .expect("the recorded arms still join after the rejected splice");
+
+        // The in-`Proof` execution split: both feasible arms become sibling
+        // frontier goals in one state, each advancing by focus on one
+        // lineage, with `introduced_since` recovering each arm's fact delta
+        // from its recorded split-time base even after interleaved steps.
+        let root = make_root(16, CState::new());
+        let (split_proof, record) = root
+            .split_focused_execution_branch()
+            .expect("the symbolic condition should split in-proof");
+        let sibling_ids: Vec<GoalId> = split_proof.goals().collect();
+        assert_eq!(sibling_ids.len(), 2);
+        assert_eq!(record.ids, [Some(sibling_ids[0]), Some(sibling_ids[1])]);
+        assert!(record.condition_theorems.iter().all(Option::is_some));
+        let then_stepped = split_proof
+            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .expect("the then sibling advances in place");
+        assert!(then_stepped.state.goals.get(sibling_ids[1]).is_some());
+        let both_stepped = then_stepped
+            .focus(sibling_ids[1])
+            .expect("the else sibling is open")
+            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .expect("the else sibling advances in place");
+        for (index, id) in sibling_ids.iter().enumerate() {
+            let arm = both_stepped.focus(*id).expect("both siblings remain open");
+            let base = record.base_facts[index]
+                .as_ref()
+                .expect("both feasible arms recorded their bases");
+            assert!(
+                arm.facts().introduced_since(base).is_some(),
+                "arm {index} must still descend from its recorded split base"
+            );
+        }
+        assert!(root.certificate().steps().is_empty());
+        assert_eq!(root.goals().count(), 1);
 
         let marker_clause = ResourceClause::Declared {
             access: ResourceAccessMode::Own,
