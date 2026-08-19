@@ -38,6 +38,17 @@ smart drivers decline; establishing which declining shapes are
 user-expressible (and pinning one per arm) — or proving driver
 subsumption — is what stands between the arms and deletion.
 
+## Finding 2 (2026-08-18)
+
+The grouped fixture's `fold(...)` is load-bearing (removing it fails the
+claim) yet applies through none of `Proof::apply_step`,
+`apply_step_at`, or `apply_step_with_origin` at exit, defers nothing,
+and never enters the legacy `tactic_replay` fold handler. The remaining
+candidate is the post-execution exit planner consuming the script's fold
+during `simp` planning (the same planner behind the drain's `Simp`
+escape). Tracing that route is the prerequisite for judging whether the
+drain's `Fold` arm and the `Simp` escape are one shared surface or two.
+
 ## Acceptance criteria
 
 - Running the reachability probe (temporary `eprintln!` at each remaining
