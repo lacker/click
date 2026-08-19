@@ -34,6 +34,59 @@ pub(crate) fn resolve_minted_load_pointer(
     resolved
 }
 
+/// Resolves canonical load variables in a proposition through
+/// defining-equation propositions (`v == load(snapshot, ptr)`), restoring
+/// the load spellings. For surface-spelling synthesis, where the internal
+/// names have no Click spelling but their loads do.
+/// Resolves canonical load variables in a proposition through the
+/// thread-local registry, restoring the load spellings the internal names
+/// stand for. For surface-spelling synthesis when no defining equation is
+/// in scope: the registry is the mint's own record of what each canonical
+/// variable names.
+pub fn resolve_canonical_load_variables_from_registry(proposition: &Proposition) -> Proposition {
+    let mut variables = std::collections::BTreeSet::new();
+    super::variable_collection::collect_proposition_bitvector_variables(
+        proposition,
+        &mut variables,
+    );
+    let mut resolved = proposition.clone();
+    for variable in variables {
+        if !crate::kernel::eval::is_canonical_load_variable(&variable) {
+            continue;
+        }
+        let Some((memory, pointer)) = crate::kernel::eval::registered_canonical_load(&variable)
+        else {
+            continue;
+        };
+        let load = Bitvector32Term::MemoryLoad(memory, Box::new(pointer));
+        resolved = substitute_bitvector_variable_in_proposition(&resolved, variable, &load);
+    }
+    resolved
+}
+
+pub fn resolve_canonical_load_variables_via(
+    proposition: &Proposition,
+    defining: &[Proposition],
+) -> Proposition {
+    let mut resolved = proposition.clone();
+    for fact in defining {
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = fact
+        else {
+            continue;
+        };
+        let (Bitvector32Term::Variable(variable), load @ Bitvector32Term::MemoryLoad(_, _)) =
+            (left.as_ref(), right.as_ref())
+        else {
+            continue;
+        };
+        if !crate::kernel::eval::is_canonical_load_variable(variable) {
+            continue;
+        }
+        resolved = substitute_bitvector_variable_in_proposition(&resolved, *variable, load);
+    }
+    resolved
+}
+
 pub fn resolve_minted_load_variables(
     proposition: &Proposition,
     facts: &[ExecutionPureFact],

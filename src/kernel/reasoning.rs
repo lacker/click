@@ -4,6 +4,8 @@ mod memory_resolution;
 mod order_reasoning;
 mod path_facts;
 mod substitution;
+pub(crate) use substitution::resolve_canonical_load_variables_from_registry;
+pub(crate) use substitution::resolve_canonical_load_variables_via;
 pub(crate) use substitution::resolve_minted_load_pointer;
 pub(crate) use substitution::resolve_minted_load_variables;
 mod variable_collection;

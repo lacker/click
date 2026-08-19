@@ -232,3 +232,36 @@ adapter so its work stays out of the recursive frame. The recursion
 depth itself is worth an issue before integration.
 
 Remaining failure (1): source_expander_derives_separation_from_call_postconditions.
+
+## Last test: separation-derivation expansion (1061 passed / 1 failed)
+
+`source_expander_derives_separation_from_call_postconditions` remains.
+The smart separation derivation has one context premise spelled through a
+canonical variable (`scaled(v1406...) == scaled(v100002)`, an init-ensures
+equality), and `checked_surface_comparison_fact_at_point` cannot express
+it in Click. Two resolution retries were added to the premise-spelling
+loops in surface_certificates.rs (defining-equation based, then
+registry-based via the new
+`resolve_canonical_load_variables_from_registry`); the registry retry
+advanced synthesis from "0 structural bases" to "1 structural bases",
+but the load spelling sits at the call-havoc snapshot and no compatible
+recorded snapshot exists at the proof point, so no replayable surface
+spelling emerges yet.
+
+Next ideas, in order: (1) check what spelling this premise had BEFORE
+canonicalization (git stash the eval/spec migration and print the old
+derivation premises) — the old load-spelled form found "compatible
+recorded snapshots", so the recorded-snapshot matching may just need the
+canonical view (viewed_as_memory_load) inside
+checked_surface_comparison_fact_at_point's snapshot compatibility check;
+(2) alternatively, premises that are pure internal-name bridges could be
+exempted from surface expression when the replay-side canonical chain
+closure makes them ambient — requires understanding replay_kind's
+premise sufficiency contract first.
+
+Probes still in tree (all env-gated behind CLICK_PROBE): contract_claims
+ensure-resource, functions.rs definitional + registry, MissingResource
+sites in statements/expression/functions, resource_algebra write-miss,
+statement_step exact-premise. The CLICK_DISABLE_BRIDGE /
+CLICK_DISABLE_TSKIP bisection gates in statement_step.rs and
+surface_replay.rs must come out before integration.

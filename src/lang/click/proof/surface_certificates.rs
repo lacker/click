@@ -125,6 +125,14 @@ pub(super) fn lower_surface_atomic_derivation(
         .iter()
         .map(syntax::C0Parameter::name)
         .collect::<BTreeSet<_>>();
+    // A premise spelled through canonical load variables has no direct
+    // Click spelling; resolving the internal names back to their load
+    // spellings through the defining equations recovers one.
+    let defining_premises: Vec<Proposition> = available
+        .iter()
+        .filter(|premise| crate::kernel::is_canonical_load_defining_fact(premise))
+        .cloned()
+        .collect();
     for premise in derivation.context_premises() {
         match checked_surface_comparison_fact_at_point(
             replay,
@@ -136,7 +144,30 @@ pub(super) fn lower_surface_atomic_derivation(
             state,
             predicate_environment,
             click_function_environment,
-        ) {
+        )
+        .or_else(|error| {
+            let resolved =
+                crate::kernel::resolve_canonical_load_variables_via(&premise, &defining_premises);
+            let resolved = if resolved == premise {
+                crate::kernel::resolve_canonical_load_variables_from_registry(&premise)
+            } else {
+                resolved
+            };
+            if resolved == premise {
+                return Err(error);
+            }
+            checked_surface_comparison_fact_at_point(
+                replay,
+                &resolved,
+                SurfaceFactMatch::ReplayEquivalent,
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            )
+        }) {
             Ok(surface) => {
                 let surface = match anchor_point {
                     // Requirement-definedness facts are recorded when the
@@ -683,11 +714,19 @@ pub(super) fn lower_surface_atomic_derivation(
             "atomic derivation lowering",
             "derivation lowering: full-context surface recovery",
         );
+        // A premise spelled through canonical load variables has no direct
+        // Click spelling; resolving the internal names back to their load
+        // spellings through the defining equations recovers one.
+        let defining_facts: Vec<Proposition> = available
+            .iter()
+            .filter(|premise| crate::kernel::is_canonical_load_defining_fact(premise))
+            .cloned()
+            .collect();
         for premise in available {
             if premise_pairs.iter().any(|(kernel, _)| kernel == premise) {
                 continue;
             }
-            if let Ok(surface) = checked_surface_comparison_fact_at_point(
+            let surface_spelling = checked_surface_comparison_fact_at_point(
                 replay,
                 premise,
                 SurfaceFactMatch::ReplayEquivalent,
@@ -697,7 +736,26 @@ pub(super) fn lower_surface_atomic_derivation(
                 state,
                 predicate_environment,
                 click_function_environment,
-            ) {
+            )
+            .or_else(|error| {
+                let resolved =
+                    crate::kernel::resolve_canonical_load_variables_via(premise, &defining_facts);
+                if &resolved == premise {
+                    return Err(error);
+                }
+                checked_surface_comparison_fact_at_point(
+                    replay,
+                    &resolved,
+                    SurfaceFactMatch::ReplayEquivalent,
+                    available,
+                    parameters,
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                )
+            });
+            if let Ok(surface) = surface_spelling {
                 let surface = match anchor_point {
                     Some(point) => surface_with_source_site(&surface, point)?,
                     None => surface,
