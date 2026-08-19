@@ -30,6 +30,24 @@ in `mdtests/field_derived_precise_effect_after_metadata_write.md`
    this is a scalable-verification violation to reduce and fix before the
    dispatch lands.
 
+## Reduction (2026-08-18, second pass)
+
+The budget sink is isolated to one certificate shape in the reproducing
+mdtest: a nested `[Have, TransportUsing, Assumption]` explicit body takes
+19.2 seconds through `ProofScope::check_certificate` (its sibling of the
+same shape takes 3 milliseconds), exhausting the 2,000,000-unit budget
+inside the check. Timing attribution puts 1.34M units / 8.8s in kernel
+"general alias: range" under "resource context equality" — per-candidate
+alias queries during the nested transport's matching. Both paths end in
+the same checker (`check_point_fact_transport_using_facts`); the
+difference is the operation view: the goal path's `PointOperationView`
+supplies replay-derived effect facts where the legacy point root supplies
+the path's transition facts, and the byte-granular memory context of this
+test makes the larger effect set explode the alias search. Next step:
+compare the two views' input sizes at the slow have and bound or index
+the transport's candidate enumeration (exact-first, alias-bounded), per
+the complexity contract.
+
 ## Intended regression
 
 - A deterministic curve comparing goal-path versus legacy explicit-have
