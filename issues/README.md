@@ -20,6 +20,11 @@ when evidence exposes one.
 
 ## Open
 
+- [Canonical load names do not connect across effects](canonical-name-transport-across-effects.md):
+  explicit transports cannot connect recorded-point and current-point
+  canonical names across call havocs or undecided-alias stores; blocks
+  the last two check.sh failures on the canonicalization branch, with
+  the design options and both reproductions characterized.
 - [Load terms in arithmetic positions](load-terms-in-arithmetic-positions.md):
   unresolved memory loads inside pointer offsets make alias queries
   recursive (8 queries fan out to 1.6M units); the shared root cause
