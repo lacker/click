@@ -3143,6 +3143,31 @@ pins that each arm still descends from its recorded base — the
 `introduced_since` ancestry that the join variants consume. Those variants
 migrate next, one at a time, before the container deletion.
 
+### Progress (2026-08-18: the checked execution join merges sibling goals)
+
+The first execution join variant runs on sibling goals, and the merge law
+is shared the same way the entry law was: `merge_checked_execution_join`
+extracts `join_checked`'s validation and merge — continuation arrival,
+condition polarity, identical C states, unmigrated-metadata guards, delta
+re-application, common-fact intersection, and `Branch` assembly — behind a
+per-arm view (certificate, final facts and snapshot, condition theorem,
+introduction deltas), which the container now also consumes, so neither
+form can drift. `join_focused_execution_branch` derives that view from the
+proof itself: per-arm certificates by the shared attribution partition
+(extracted from the `cases` join into `partition_steps_since`), fact deltas
+via `introduced_since` against the recorded bases, and the replay deltas —
+effect facts, function-entry prerequisites and derivations, unfolded
+names — via new suffix walks on the persistent replay stores, so the split
+record gained the parent context and per-arm execution bases as its
+ancestors. The merged continuation resumes the *parent obligation's id*:
+unlike `cases`, whose join discharges the parent outright, an execution
+branch suspends the parent frontier and the join resumes it, which keeps
+step attribution correct for enclosing splits (the join node splices over
+the region exactly as the `cases` join does). The regression joins
+interleaved siblings, pins the premature-join and foreign-marker
+rejections, and completes the continuation to function exit. The remaining
+variants (terminal, decided, interface) migrate next.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

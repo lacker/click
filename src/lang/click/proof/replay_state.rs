@@ -58,6 +58,24 @@ impl<'a, T> IntoIterator for &'a SharedVec<T> {
 }
 
 impl<T: Clone> SharedVec<T> {
+    /// The entries appended after `ancestor`, by length suffix. Effect
+    /// histories only append within one execution lineage; the debug build
+    /// verifies the shared prefix element-wise, and `None` reports a
+    /// shorter-than-ancestor history (not a descendant).
+    pub(super) fn suffix_since(&self, ancestor: &Self) -> Option<&[T]>
+    where
+        T: PartialEq + std::fmt::Debug,
+    {
+        if self.0.len() < ancestor.0.len() {
+            return None;
+        }
+        debug_assert!(
+            self.0[..ancestor.0.len()] == ancestor.0[..],
+            "an effect history diverged from its claimed ancestor"
+        );
+        Some(&self.0[ancestor.0.len()..])
+    }
+
     pub(super) fn into_vec(self) -> Vec<T> {
         Arc::try_unwrap(self.0).unwrap_or_else(|shared| shared.as_ref().clone())
     }
@@ -392,6 +410,13 @@ impl<T> Default for PersistentOrderedSet<T> {
 }
 
 impl<T: Clone + Ord> PersistentOrderedSet<T> {
+    /// The members inserted after `ancestor`, oldest first, by the same
+    /// pointer-identity suffix walk as the underlying sequence. `None` when
+    /// `ancestor` is not this set's ancestor.
+    pub(super) fn introduced_since(&self, ancestor: &Self) -> Option<Vec<T>> {
+        self.ordered.suffix_since(&ancestor.ordered)
+    }
+
     pub(super) fn clear(&mut self) {
         self.ordered.clear();
         self.exact = PersistentSet::default();
@@ -1768,6 +1793,33 @@ mod proof_fact_store_tests {
             assert!(!set.insert(size));
             assert_eq!(persistent_node_allocations(), before_duplicate);
         }
+    }
+
+    #[test]
+    fn ordered_set_introduced_since_reports_only_new_members() {
+        let mut set = PersistentOrderedSet::default();
+        set.insert(1u32);
+        set.insert(2);
+        let ancestor = set.clone();
+        set.insert(3);
+        set.insert(2);
+        set.insert(4);
+
+        assert_eq!(set.introduced_since(&ancestor), Some(vec![3, 4]));
+        assert_eq!(ancestor.introduced_since(&ancestor), Some(Vec::new()));
+        assert_eq!(ancestor.introduced_since(&set), None);
+    }
+
+    #[test]
+    fn shared_vec_suffix_since_reports_the_appended_entries() {
+        let mut history = SharedVec::from(vec![1u32, 2]);
+        let ancestor = history.clone();
+        history.push(3);
+        history.push(4);
+
+        assert_eq!(history.suffix_since(&ancestor), Some(&[3u32, 4][..]));
+        assert_eq!(ancestor.suffix_since(&ancestor), Some(&[][..]));
+        assert_eq!(ancestor.suffix_since(&history), None);
     }
 }
 
