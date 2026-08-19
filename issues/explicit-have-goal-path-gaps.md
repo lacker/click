@@ -507,3 +507,28 @@ residue. Goals such as `p[0] == old(p[0])` need component-level historical
 spelling rather than wrapping the complete proposition in `at(...)`, and
 post-store arithmetic goals need their certified statement/effect equations
 introduced by explicit proof steps before rewrite/normalization can see them.
+
+## Component-old outcome transport landed (2026-08-19)
+
+The focused outcome Proof now tries a checked reflexive-entry transport for
+`expression == old(expression)` and its reverse orientation. The selector is
+purely syntactic; `TransportUsing` still rejects the candidate unless the
+retained path effects certify that the component is unchanged. Target lowering
+reuses the Proof's existing validated assumptions only for expression
+definedness, while the restricted source/effect context remains the authority
+for reachability; this admits required bounds without another persistent index
+or an ambient scan.
+
+The same grouped shifted-loop reproduction showed why typed evidence must own
+its premise projection: the kernel equality decision retained an unrelated
+memory equality in its transitive search context, although the checked
+`int32_le_and_not_lt_implies_eq` step needs only the selected `<=` and negated
+`<` facts. Typed planners now require their exact evidence premises from the
+replayable subset instead of requiring every transitive context fact to have a
+Surface spelling. Both sibling goals stay on one Proof, final `simp` performs
+no outcome compatibility construction, expansion retains the explicit
+transport and theorem application, and independent replay is green.
+
+This removes the component-level `old(...)` class from the residue. Certified
+statement/effect equations, predicate/resource derivations, existence paths,
+and the all-or-nothing legacy exit routing remain.

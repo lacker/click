@@ -1209,7 +1209,6 @@ pub(super) struct ProofFacts {
         PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>>,
     assumptions: PureFactContext,
     implicit_transport_assumptions: PureFactContext,
-    direct_lowering_assumptions: PureFactContext,
     by_predicate: PersistentMap<String, PersistentSequence<Proposition>>,
 }
 
@@ -1228,6 +1227,31 @@ struct PrioritizedProofFacts {
 struct ImplicationCandidate {
     antecedents: PersistentSequence<Proposition>,
     consequent: Proposition,
+}
+
+/// A current/entry equality can use the entry expression's reflexivity as an
+/// explicit transport source. Keep this selector intentionally syntactic: the
+/// point checker remains the authority for whether the execution effects
+/// actually permit the transport.
+fn old_reflexive_transport_source(goal: &ClickProposition) -> Option<ClickProposition> {
+    let ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::Equal,
+        right,
+    } = goal
+    else {
+        return None;
+    };
+    let old = match (left, right) {
+        (current, ContractExpression::Old(entry)) if current == entry.as_ref() => right,
+        (ContractExpression::Old(entry), current) if current == entry.as_ref() => left,
+        _ => return None,
+    };
+    Some(ClickProposition::Comparison {
+        left: old.clone(),
+        operator: ComparisonOperator::Equal,
+        right: old.clone(),
+    })
 }
 
 impl<'a> Proof<'a> {
@@ -6510,32 +6534,23 @@ impl<'a> Proof<'a> {
             return Ok(Some(proof));
         }
         let atomic = (|| {
-            let (
-                goal,
-                derivation,
-                premise_pairs,
-                all_premises_replayable,
+            let (goal, derivation, premise_pairs, point_application_closes_goal) =
+                self.selected_simp_derivation()?;
+            self.check_typed_atomic_simp_candidate(
+                &goal,
+                &derivation,
+                &premise_pairs,
                 point_application_closes_goal,
-            ) = self.selected_simp_derivation()?;
-            all_premises_replayable
-                .then(|| {
-                    self.check_typed_atomic_simp_candidate(
-                        &goal,
-                        &derivation,
-                        &premise_pairs,
-                        point_application_closes_goal,
-                    )
+            )
+            .or_else(|| self.try_single_selected_equality_rewrite_closure(&premise_pairs))
+            .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
+            .or_else(|| {
+                self.surface_goal().and_then(|surface_goal| {
+                    self.try_selected_forall_goal(&goal, surface_goal, &premise_pairs)
                 })
-                .flatten()
-                .or_else(|| self.try_single_selected_equality_rewrite_closure(&premise_pairs))
-                .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
-                .or_else(|| {
-                    self.surface_goal().and_then(|surface_goal| {
-                        self.try_selected_forall_goal(&goal, surface_goal, &premise_pairs)
-                    })
-                })
-                .or_else(|| self.try_selected_forall_instantiation(&goal, &premise_pairs))
-                .or_else(|| self.try_selected_disjunction_cases(&premise_pairs))
+            })
+            .or_else(|| self.try_selected_forall_instantiation(&goal, &premise_pairs))
+            .or_else(|| self.try_selected_disjunction_cases(&premise_pairs))
         })();
         if let Some(atomic) = atomic {
             return Ok(Some(atomic));
@@ -6566,6 +6581,15 @@ impl<'a> Proof<'a> {
         let Some(view) = self.outcome_point_view() else {
             return Ok(None);
         };
+        if let Some(source) = old_reflexive_transport_source(surface_goal) {
+            match self.search_point_fact_transport(&source, surface_goal, std::iter::empty()) {
+                Ok(proof) if proof.is_complete() => return Ok(Some(proof)),
+                Ok(_) => {}
+                Err(_) => {
+                    check_verification_deadline()?;
+                }
+            }
+        }
         let entry = ProgramPointRef {
             region: CodeRegionRef::Function,
             kind: ProgramPointKind::Entry,
@@ -6687,16 +6711,17 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Retains the kernel decision and the exact replayable Surface spellings
-    /// selected for its context premises. This is a read-only smart query:
-    /// only the later `apply_step` calls may advance the proof.
+    /// Retains the kernel decision and every exact replayable Surface spelling
+    /// among its context premises. A typed evidence translator selects and
+    /// requires its own exact premises from this subset; unrelated transitive
+    /// search context need not be Surface-spellable. This is a read-only smart
+    /// query: only the later `apply_step` calls may advance the proof.
     fn selected_simp_derivation(
         &self,
     ) -> Option<(
         Proposition,
         PropositionDerivation,
         Vec<(Proposition, ClickProposition)>,
-        bool,
         bool,
     )> {
         let (surface_facts, point_application_closes_goal, premise_anchor) =
@@ -6745,7 +6770,6 @@ impl<'a> Proof<'a> {
             })
         };
         let context_premises = derivation.context_premises();
-        let mut all_premises_replayable = true;
         let premise_pairs = context_premises
             .iter()
             .filter_map(|premise| {
@@ -6758,9 +6782,6 @@ impl<'a> Proof<'a> {
                         let surface = replayable_surface(&spelling);
                         surface.map(|surface| (spelling, surface))
                     });
-                if pair.is_none() {
-                    all_premises_replayable = false;
-                }
                 pair
             })
             .collect::<Vec<_>>();
@@ -6768,7 +6789,6 @@ impl<'a> Proof<'a> {
             goal,
             derivation,
             premise_pairs,
-            all_premises_replayable,
             point_application_closes_goal,
         ))
     }
@@ -6989,16 +7009,8 @@ impl<'a> Proof<'a> {
     }
 
     fn try_typed_atomic_simp_closure(&self) -> Option<Self> {
-        let (
-            goal,
-            derivation,
-            premise_pairs,
-            all_premises_replayable,
-            point_application_closes_goal,
-        ) = self.selected_simp_derivation()?;
-        if !all_premises_replayable {
-            return None;
-        }
+        let (goal, derivation, premise_pairs, point_application_closes_goal) =
+            self.selected_simp_derivation()?;
         self.check_typed_atomic_simp_candidate(
             &goal,
             &derivation,
@@ -10285,7 +10297,6 @@ impl ProofFacts {
         let mut implications_by_consequent = PersistentMap::default();
         let mut assumptions = PureFactContext::new();
         let mut implicit_transport_assumptions = PureFactContext::new();
-        let mut direct_lowering_assumptions = PureFactContext::new();
         let mut by_predicate = PersistentMap::default();
         for fact in facts {
             if top_level_exact.contains(fact) {
@@ -10318,12 +10329,8 @@ impl ProofFacts {
             by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact);
             exact = exact.with_value(fact.clone());
             assumptions = assumptions.assume_proposition(fact.clone());
-            (implicit_transport_assumptions, direct_lowering_assumptions) =
-                index_transport_contexts(
-                    implicit_transport_assumptions,
-                    direct_lowering_assumptions,
-                    fact,
-                );
+            implicit_transport_assumptions =
+                index_implicit_transport_context(implicit_transport_assumptions, fact);
         }
         Self {
             ordered,
@@ -10337,7 +10344,6 @@ impl ProofFacts {
             implications_by_consequent,
             assumptions,
             implicit_transport_assumptions,
-            direct_lowering_assumptions,
             by_predicate,
         }
     }
@@ -10384,12 +10390,8 @@ impl ProofFacts {
         exact = exact.with_value(fact.clone());
         let mut ordered = self.ordered.clone();
         ordered.push(fact.clone());
-        let (implicit_transport_assumptions, direct_lowering_assumptions) =
-            index_transport_contexts(
-                self.implicit_transport_assumptions.clone(),
-                self.direct_lowering_assumptions.clone(),
-                &fact,
-            );
+        let implicit_transport_assumptions =
+            index_implicit_transport_context(self.implicit_transport_assumptions.clone(), &fact);
         Self {
             ordered,
             prioritized: self.prioritized.clone(),
@@ -10402,7 +10404,6 @@ impl ProofFacts {
             implications_by_consequent,
             assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
             implicit_transport_assumptions,
-            direct_lowering_assumptions,
             by_predicate: index_predicate_fact(self.by_predicate.clone(), &fact),
         }
     }
@@ -10441,10 +10442,6 @@ impl ProofFacts {
 
     pub(super) fn implicit_transport_assumptions(&self) -> &PureFactContext {
         &self.implicit_transport_assumptions
-    }
-
-    pub(super) fn direct_lowering_assumptions(&self) -> &PureFactContext {
-        &self.direct_lowering_assumptions
     }
 
     /// Adds one statement's selected successor context while retaining the
@@ -10800,22 +10797,14 @@ fn index_proper_conjuncts(
     index
 }
 
-fn index_transport_contexts(
+fn index_implicit_transport_context(
     mut implicit: PureFactContext,
-    mut direct_lowering: PureFactContext,
     fact: &Proposition,
-) -> (PureFactContext, PureFactContext) {
+) -> PureFactContext {
     if is_implicit_fact_transport_context(fact) {
         implicit = implicit.assume_proposition(fact.clone());
     }
-    let mut conjuncts = Vec::new();
-    collect_owned_atomic_conjuncts(fact, &mut conjuncts);
-    for conjunct in conjuncts {
-        if is_direct_surface_lowering_fact(&conjunct) {
-            direct_lowering = direct_lowering.assume_proposition(conjunct);
-        }
-    }
-    (implicit, direct_lowering)
+    implicit
 }
 
 fn directly_conflicts_with_normalized_index(

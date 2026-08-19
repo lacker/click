@@ -34,9 +34,10 @@ when evidence exposes one.
   searchless source scripts and ground universal instantiation now check
   directly inside the typed outcome goal, and universal binders now remain
   goal-local through typed `simp`; direct recorded-point loadability transport
-  also stays on the checked goal. The file carries the remaining
-  outcome-`simp` planner and legacy-exit-closer migration journal, whose
-  effect-derived rewrite and richer loadability residues still fall back.
+  and component-level `old(...)` transport also stay on the checked goal. The
+  file carries the remaining outcome-`simp` planner and legacy-exit-closer
+  migration journal, whose statement/effect equations and richer
+  predicate/resource derivations still fall back.
 - [Expansion replay recursion exhausts the stack](expansion-replay-recursion-exhausts-the-stack.md):
   ordinary edits — a local, a closure, an unboxed enum payload — abort an
   unrelated expansion test with a stack overflow and no backtrace; the

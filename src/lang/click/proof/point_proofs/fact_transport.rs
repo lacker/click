@@ -295,15 +295,23 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
         )));
     }
 
-    let direct_lowering_assumptions = explicit_premises.iter().cloned().fold(
-        available.direct_lowering_assumptions().clone(),
-        |assumptions, premise| assumptions.assume_proposition(premise),
-    );
+    // The target spelling is paired with an already-lowered focused goal, so
+    // the validated ambient context may justify only its expression
+    // definedness (not the transport conclusion). This includes bounds such
+    // as `n >= 1` needed to read one cell from `loadable(p[0..n])`; the
+    // restricted assumptions below still exclusively decide whether the
+    // explicit source and certified effects reach the lowered target.
+    let target_lowering_assumptions = explicit_premises
+        .iter()
+        .cloned()
+        .fold(available.assumptions().clone(), |assumptions, premise| {
+            assumptions.assume_proposition(premise)
+        });
     // Never resolve the target through the recorded surface map: the same
     // surface spelling may deliberately name an older source snapshot.
     let target = lower_point_proposition_with_assumptions(
         surface_target,
-        &direct_lowering_assumptions,
+        &target_lowering_assumptions,
         parameters,
         arguments,
         pre_state,

@@ -7895,6 +7895,94 @@ fn outcome_simp_transports_loadability_on_the_checked_proof() {
 }
 
 #[test]
+fn outcome_simp_transports_unchanged_old_equality_on_the_checked_proof() {
+    let c_source = r#"
+        int32 shifted_loop_effect_preserves_prefix(int32 p[], int32 n) {
+            int32 i;
+            i = 1;
+            while (i < n) {
+                p[i] = i;
+                i = i + 1;
+            }
+            return i;
+        }
+    "#;
+    let click_source = r#"
+        verifying "shifted.c";
+
+        int32 shifted_loop_effect_preserves_prefix(int32 p[], int32 n) {
+            requires n >= 1;
+            requires n <= 2147483647;
+            requires loadable(p[0..n]);
+            consumes p[0..n];
+            ensures keeps_first: p[0] == old(p[0]);
+            ensures returns_n: result == n;
+        } by {
+            step();
+            step();
+            loop {
+                invariant i >= 1;
+                invariant i <= n;
+                mutable (p + 1)[0..n - 1] by frame;
+            }
+            step();
+            simp();
+        }
+    "#;
+    let sources = [("shifted.c", c_source)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the unchanged old equality should transport through Proof");
+    let simp_start = events
+        .iter()
+        .rposition(|event| {
+            matches!(
+                event,
+                crate::instrumentation::VerificationEvent::TacticStarted(tactic)
+                    if tactic.claim == "shifted_loop_effect_preserves_prefix.contract"
+                        && tactic.tactic_name == "simp"
+            )
+        })
+        .expect("the final smart simp should be instrumented");
+    let simp_end = events[simp_start..]
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                crate::instrumentation::VerificationEvent::TacticFinished { tactic, .. }
+                    if tactic.claim == "shifted_loop_effect_preserves_prefix.contract"
+                        && tactic.tactic_name == "simp"
+            )
+        })
+        .map(|offset| simp_start + offset)
+        .expect("the final smart simp should finish");
+    assert!(
+        events[simp_start..=simp_end].iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp compatibility construction"
+        )),
+        "outcome old-equality transport must bypass compatibility construction during the final simp: {:#?}",
+        &events[simp_start..=simp_end]
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "shifted_loop_effect_preserves_prefix",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained old-equality transport should expand");
+    assert!(
+        expanded.contains("transport(old(p[0]) == old(p[0]), p[0] == old(p[0])) using {"),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &sources)
+        .expect("the retained old-equality transport should replay independently");
+}
+
+#[test]
 fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {

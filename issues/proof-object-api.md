@@ -3694,6 +3694,33 @@ effect-facing residue is structurally richer: component-level historical
 spellings such as `p[0] == old(p[0])`, and certified statement equations that
 must be introduced before arithmetic rewrite/normalization.
 
+### Progress (2026-08-19: component old transport and typed premise projection stay on Proof)
+
+Outcome `simp` now recognizes the syntactic current/entry equality
+`expression == old(expression)` (in either orientation), chooses the reflexive
+entry equality as its explicit source, and submits that candidate to the
+ordinary checked `TransportUsing` transition. The selector carries no semantic
+authority: the point checker still decides from the retained effect facts
+whether the component was unchanged.
+
+The reproduction exposed two adjacent Proof-boundary gaps. Transport target
+lowering now reuses the Proof's existing validated assumption context only to
+justify expression definedness; bounds such as `n >= 1` can therefore justify
+reading `p[0]` from a wider loadable segment without a second fact index or an
+ambient scan. The restricted explicit-source/effect context still exclusively
+decides whether transport reaches that lowered target. Typed atomic evidence
+also selects only its own exact premises from the replayable Surface subset.
+An unrelated transitive premise used by kernel search no longer vetoes an
+otherwise complete checked theorem application merely because that unrelated
+fact has no Surface spelling.
+
+The shifted-loop regression now retains both the component transport and the
+`int32_le_and_not_lt_implies_eq` sibling on one grouped Proof, observes no
+outcome compatibility construction during the final `simp`, expands the
+transport explicitly, and independently reverifies it. Remaining effect-facing
+residue centers on statement/effect equations and richer predicate/resource
+derivations rather than this component-old equality class.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
