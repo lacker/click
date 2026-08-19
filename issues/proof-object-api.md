@@ -3588,6 +3588,16 @@ rewritten and frame-certified goals) is next; the fallback population it
 inherits is now the goal-path misses rather than the entire ungrouped
 corpus.
 
+### Progress (2026-08-19: the region-frame arm is corpus-covered)
+
+The 2026-08-18 note asking for a region-frame certifier coverage
+fixture is stale: a --nocapture probe now counts 15 hits across the lib
+suite and 2 in the mdtests gate for the `FrameRegion` drain arm, so the
+arm stopped being probe-invisible with the ordered-finalization
+deferral work. The fold-at-exit fixture had already landed earlier. No
+additional fixture is needed; the arm-end immediate re-import remains
+the covered behavior.
+
 ### Progress (2026-08-19: Simp chunk 2 lands the resource vocabulary and the grouped planner fallback)
 
 Six gate-green commits move most of the Simp escape population onto the
