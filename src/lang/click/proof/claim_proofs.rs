@@ -3786,6 +3786,7 @@ pub(super) fn finish_ordered_proof_replay(
                                         // are recorded by their own tactics.
                                         let direct_base = direct_proof.checkpoint();
                                         let mut direct_available = path_requirements.clone();
+                                        let mut planner_closed: Vec<usize> = Vec::new();
                                         let mut selected = true;
                                         for (_, surface_goal, equalities) in &direct_claims {
                                             let Ok(mut scope) =
@@ -3907,6 +3908,86 @@ pub(super) fn finish_ordered_proof_replay(
                                             };
                                             let Some(scope) = selected_scope else {
                                                 check_verification_deadline()?;
+                                                // A grouped goal beyond the scope
+                                                // closures is planned by the same
+                                                // nested-have certifier the legacy
+                                                // grouped transition uses; its
+                                                // complete `have` applies at the
+                                                // proof level, and the claim then
+                                                // closes with a bare trailing
+                                                // assumption exactly as the legacy
+                                                // transition pads its stream.
+                                                if replay.grouped_contract
+                                                    && existence_candidate.is_none()
+                                                    && equalities.is_empty()
+                                                    && let Ok(goal) = lower_ensure_proposition_goal(
+                                                        &direct_available,
+                                                        surface_goal,
+                                                        parsed_function.parameters(),
+                                                        arguments,
+                                                        pre_state,
+                                                        &outcome,
+                                                        predicate_environment,
+                                                        click_function_environment,
+                                                        &replay.program_point_states,
+                                                        &unfolded_predicates,
+                                                    )
+                                                {
+                                                    let claim_index = direct_claims
+                                                        .iter()
+                                                        .find(|(_, candidate, _)| {
+                                                            candidate == surface_goal
+                                                        })
+                                                        .map(|(claim_index, _, _)| *claim_index)
+                                                        .expect(
+                                                            "the scope goal came from direct_claims",
+                                                        );
+                                                    let claim_label = function_claim_label(
+                                                        function_block.signature().name(),
+                                                        &claims[claim_index],
+                                                    );
+                                                    let mut certificate_replay = replay.clone();
+                                                    certificate_replay.deferred_tactic_capture =
+                                                        None;
+                                                    certificate_replay.surface_propositions =
+                                                        outcome_surface_propositions.clone();
+                                                    certificate_replay.unfolded_predicates =
+                                                        unfolded_predicates.clone();
+                                                    if let Ok(tactics) = certify_outcome_simp_have(
+                                                        &certificate_replay,
+                                                        surface_goal,
+                                                        &goal,
+                                                        &direct_available,
+                                                        parsed_function.parameters(),
+                                                        arguments,
+                                                        pre_state,
+                                                        post_state,
+                                                        result,
+                                                        predicate_environment,
+                                                        click_function_environment,
+                                                        theorem_environment,
+                                                        function_block.requires(),
+                                                        &claim_label,
+                                                        *tactic_index,
+                                                        path_index,
+                                                    ) && let Ok(candidate) =
+                                                        ProofCertificate::from_proof_tactics(
+                                                            &tactics,
+                                                        )
+                                                        && let Ok(next) =
+                                                            direct_proof.check_certificate(&candidate)
+                                                    {
+                                                        for fact in next.added_facts() {
+                                                            if !direct_available.contains(fact) {
+                                                                direct_available.push(fact.clone());
+                                                            }
+                                                        }
+                                                        direct_proof = next;
+                                                        planner_closed.push(claim_index);
+                                                        continue;
+                                                    }
+                                                    check_verification_deadline()?;
+                                                }
                                                 selected = false;
                                                 break;
                                             };
@@ -3923,12 +4004,39 @@ pub(super) fn finish_ordered_proof_replay(
                                         }
                                         let surface_goals = direct_claims
                                             .iter()
+                                            .filter(|(claim_index, _, _)| {
+                                                !planner_closed.contains(claim_index)
+                                            })
                                             .map(|(_, goal, _)| goal.clone())
                                             .collect::<Vec<_>>();
-                                        Ok(Some(direct_proof.complete_point_obligations_since(
-                                            &direct_base,
-                                            &surface_goals,
-                                        )?))
+                                        let completed = if surface_goals.is_empty() {
+                                            direct_proof.certificate_since(&direct_base)?
+                                        } else {
+                                            direct_proof.complete_point_obligations_since(
+                                                &direct_base,
+                                                &surface_goals,
+                                            )?
+                                        };
+                                        let completed = if planner_closed.is_empty() {
+                                            completed
+                                        } else {
+                                            // Planner-closed claims take bare
+                                            // trailing assumptions, matching the
+                                            // legacy transition's per-claim
+                                            // padding.
+                                            let mut tactics = completed.to_proof_tactics();
+                                            tactics.extend(std::iter::repeat_n(
+                                                ProofTactic::Assumption,
+                                                planner_closed.len(),
+                                            ));
+                                            ProofCertificate::from_proof_tactics(&tactics)
+                                                .map_err(|error| {
+                                                    ClickError::new(format!(
+                                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: planner-padded transition was invalid: {error:?}"
+                                                    ))
+                                                })?
+                                        };
+                                        Ok(Some(completed))
                                                     };
                                                 let outcome = attempt();
                                                 let keep = matches!(&outcome, Ok(Some(_)));
