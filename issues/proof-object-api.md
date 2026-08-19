@@ -3346,6 +3346,17 @@ partitioned-outcome contextual-frame regressions cover the flip.
 Remaining from the plan: the drain's legacy readers (recorded-lowering
 membership gates) and the no-goal fallback point roots.
 
+### Progress (2026-08-18: the outcome substrate is unconditional)
+
+The drain's tactic-kind gate is removed: every drain derives typed
+outcome goals, so the debug parity invariant — the outcome goal's fact
+context equals the path's legacy working set — now checks corpus-wide on
+every fixture run, and the gate timings did not move. This is the armed
+precondition for the final inversion: replace the `path_requirements`
+vector's ~80 read sites with goal-derived reads, delete the vector and
+the `with_drained_outcome_facts` resync adapters, and retire the no-goal
+fallback point roots that the unconditional substrate makes unreachable.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

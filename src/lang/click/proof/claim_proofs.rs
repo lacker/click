@@ -1042,60 +1042,39 @@ pub(super) fn finish_ordered_proof_replay(
     // into deferred checked authority, so the reconstructed frontier carries
     // no effect selection. A context that is not at a returning function
     // exit derives no goals and drains through the legacy path unchanged.
-    // Derivation is gated on a deferred tactic kind that actually consumes
-    // outcome goals, so drains with nothing to consume pay nothing; the gate
-    // widens as tactic kinds migrate and disappears with the final slice.
-    let drain_consumes_outcome_goals =
-        context
-            .replay
-            .post_execution_tactics
-            .iter()
-            .any(|deferred| {
-                matches!(
-                    &deferred.tactic,
-                    PostExecutionTactic::UnfoldPredicate(_)
-                        | PostExecutionTactic::Transport { .. }
-                        | PostExecutionTactic::Apply(_)
-                        | PostExecutionTactic::ApplyUsing { .. }
-                        | PostExecutionTactic::Have(_)
-                        | PostExecutionTactic::Rewrite(_)
-                        | PostExecutionTactic::Assumption
-                        | PostExecutionTactic::Normalize
-                        | PostExecutionTactic::Simp
-                )
-            });
-    let outcome_substrate = drain_consumes_outcome_goals
-        .then(|| {
-            Proof::for_execution_frontier_with_effect_goals(
-                &proof_label,
-                0,
-                ProofReplayContext {
-                    state: context.state.clone(),
-                    pure_facts: context.pure_facts.clone(),
-                    replay: context.replay.clone(),
-                    branch_path: context.branch_path.clone(),
-                },
-                EffectGoalSelection::None,
-                function_block,
-                function,
-                parsed_function,
-                arguments,
-                function_environment,
-                resource_environment,
-                predicate_environment,
-                click_function_environment,
-                theorem_environment,
-            )
-            .focus_function_outcomes(Arc::new(
-                context.pure_facts[..function_block
-                    .requires()
-                    .len()
-                    .min(context.pure_facts.len())]
-                    .to_vec(),
-            ))
-            .ok()
-        })
-        .flatten();
+    // Derivation is unconditional: every result-aware tactic kind consumes
+    // goals now, and the working-set parity invariant below must hold for
+    // every drain before the legacy vector retires.
+    let outcome_substrate = {
+        Proof::for_execution_frontier_with_effect_goals(
+            &proof_label,
+            0,
+            ProofReplayContext {
+                state: context.state.clone(),
+                pure_facts: context.pure_facts.clone(),
+                replay: context.replay.clone(),
+                branch_path: context.branch_path.clone(),
+            },
+            EffectGoalSelection::None,
+            function_block,
+            function,
+            parsed_function,
+            arguments,
+            function_environment,
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+        )
+        .focus_function_outcomes(Arc::new(
+            context.pure_facts[..function_block
+                .requires()
+                .len()
+                .min(context.pure_facts.len())]
+                .to_vec(),
+        ))
+        .ok()
+    };
     let ProofReplayContext {
         state,
         pure_facts,
