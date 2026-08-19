@@ -93,7 +93,6 @@ int32 buffer_push(struct buffer* owner, int32 value) {
             contains(owned_buffer(owner), memory(owner->data));
             0 <= owner->len;
         }
-        assumption();
     }
     have separate(memory(owner[0..4]), memory(owner->data[0..owner->cap])) by {
         transport(
@@ -120,7 +119,6 @@ int32 buffer_push(struct buffer* owner, int32 value) {
             0 <= owner->len;
             owner->len < owner->cap;
         }
-        assumption();
     }
     have owner->cap == old(owner->cap) by {
         have at(statement(4).entry, owner->cap) == old(owner->cap) by {
@@ -138,7 +136,6 @@ int32 buffer_push(struct buffer* owner, int32 value) {
                 memory(owner->data[0..owner->cap])
             );
         }
-        assumption();
     }
     have owner->data == old(owner->data) by {
         have at(statement(4).entry, owner->data) == old(owner->data) by {

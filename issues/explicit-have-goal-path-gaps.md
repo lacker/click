@@ -164,6 +164,20 @@ power. Worth deciding together with the suffix-strictness question,
 since both trade strict-path completeness against cost on the same
 certificate shapes.
 
+## Decision (2026-08-18): strict, with an actionable diagnostic
+
+Extra suffix tactics after a goal-closing step are an error, and the
+tooling now says exactly what to do: "the goal was already proved by the
+previous step, so this `assumption()` has nothing left to prove; you can
+delete this line" (with the claim and step index). Under that rule the
+reproducing mdtest's three provably-dead `assumption()` suffixes are
+deleted — the strict checker itself identified them — and the fixture
+still passes on the legacy path, confirming they were dead for both
+checkers. Blocker 1 is resolved. Blocker 2 (the budget-exhausting
+certificate, whose own trailing `assumption` remains unverified because
+the check dies first) is now the only thing between the dispatch and
+landing.
+
 ## Intended regression
 
 - A deterministic curve comparing goal-path versus legacy explicit-have

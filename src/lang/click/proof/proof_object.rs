@@ -2112,7 +2112,10 @@ impl<'a> Proof<'a> {
         origin: Option<ProofStepOrigin>,
     ) -> Result<Self, ClickError> {
         if self.focused_discharged() {
-            return Err(self.step_error("a tactic follows a goal-closing step"));
+            return Err(self.step_error(format!(
+                "the goal was already proved by the previous step, so this `{}` has nothing left to prove; you can delete this line",
+                simple_step_source_name(&step)
+            )));
         }
 
         let next_state = match &step {
@@ -9550,6 +9553,37 @@ impl<'a> Proof<'a> {
     #[cfg(test)]
     fn fact_lookup_comparisons(&self, fact: &Proposition) -> usize {
         self.facts().lookup_comparisons(fact)
+    }
+}
+
+/// The source-level spelling of one simple step, for diagnostics that point
+/// at a line the user wrote.
+fn simple_step_source_name(step: &SimpleProofStep) -> &'static str {
+    match step {
+        SimpleProofStep::Assumption => "assumption()",
+        SimpleProofStep::Normalize => "normalize()",
+        SimpleProofStep::Intro => "intro()",
+        SimpleProofStep::Split => "split()",
+        SimpleProofStep::Left => "left()",
+        SimpleProofStep::Right => "right()",
+        SimpleProofStep::Enumerate => "enumerate()",
+        SimpleProofStep::Step | SimpleProofStep::StepUsing(_) => "step",
+        SimpleProofStep::ApplyTheoremUsing { .. } => "apply",
+        SimpleProofStep::TransportUsing { .. } => "transport",
+        SimpleProofStep::InstantiateUsing { .. } => "instantiate",
+        SimpleProofStep::Have { .. } => "have",
+        SimpleProofStep::Rewrite(_) => "rewrite",
+        SimpleProofStep::Extract(_) => "extract",
+        SimpleProofStep::Contradiction(_) => "contradiction",
+        SimpleProofStep::Witness(_) => "witness",
+        SimpleProofStep::Choose(_) => "choose",
+        SimpleProofStep::UnfoldPredicate(_) | SimpleProofStep::UnfoldResource(_) => "unfold",
+        SimpleProofStep::FoldResource(_) => "fold",
+        SimpleProofStep::ObserveResource(_) => "observe",
+        SimpleProofStep::FrameUsing { .. } => "frame",
+        SimpleProofStep::CloseInvariants => "close_invariants()",
+        SimpleProofStep::Mark(_) => "mark",
+        _ => "tactic",
     }
 }
 
