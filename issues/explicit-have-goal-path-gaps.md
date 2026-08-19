@@ -207,3 +207,34 @@ checking mode.
   and whichever side is chosen has a regression.
 - The sound-probe have-miss count over the gates drops accordingly; the
   remaining misses are genuinely searching scripts.
+
+## Simp chunk 2 scoping (2026-08-19)
+
+The direct Simp path (claim_proofs.rs ~3585) admits a claim set only when
+every open claim is `Ensure::Proposition` with no rewritten and no
+frame-certified goal. Widening, in dependency order:
+
+1. **Rewritten claim goals**: `rewritten_claim_goals[i]` holds the checked
+   rewritten surface goal (produced via `focus_point_goal` +
+   `SimpleProofStep::Rewrite`, with the rewrite certificate retained in
+   `retained_certificate`). Admit these by pushing `(i, rewritten_goal)`
+   into `direct_claims` instead of bailing; the direct proof proves the
+   rewritten spelling and the retained rewrite certificate composes in
+   the claim closure exactly as the legacy path composes it. Confirm the
+   closure credit path before wiring.
+2. **Frame-certified claim goals**: same shape —
+   `frame_certified_claim_goals[i]` carries the frame-certified spelling;
+   the direct attempt proves that spelling and the frame certificate
+   composes. Verify whether such claims are already closed by the frame
+   pass (`closures[i].is_closed()` guards them) and only the residue
+   needs proving.
+3. **`Ensure::Resource` claims**: need a typed resource-production goal
+   on `Proof` (`begin_have` takes propositions only). This is the real
+   API addition and connects to the substrate-4 typed function-outcome
+   goals: a `produces R` goal focused per claim, discharged by the
+   fold/consume machinery the legacy exit planner uses today. Land 1 and
+   2 first; measure the remaining escape census (the 145-entry
+   vocabulary measurement predates chunk 1) before designing 3.
+
+Each step is gated: escape-census probe before and after, corpus parity,
+`scripts/check.sh`.
