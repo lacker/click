@@ -338,3 +338,27 @@ drop_one.contract (legacy vs direct-with-planner) and align the
 recorded form; the pinned test
 outcome_predecessor_upper_bound_spells_a_rewritten_nonnegative_leg is
 the reproduction.
+
+## Planner-at-proof-level round (2026-08-19, reverted, evidence banked)
+
+Applying the nested-have planner's certificate at the proof level (on
+scope failure, never nested inside a second scope) fixes the doubled
+`have ordered_pair(pair)` — the recorded script now carries the
+planner's single have. The remaining failure is the trailing claim
+closer: explicit whole-contract replay reports "tactic 8: `assumption`
+did not match any current proposition goal". Contrast with the legacy
+transition's recorded stream for the same contract (captured):
+`[Have(<unfolded conjunction>){nested haves...}, Assumption,
+Assumption]` — the legacy have is spelled with the UNFOLDED conjunction
+and is followed by TWO bare assumptions (claim_count), while the
+direct path's stream spells `have ordered_pair(pair)` (predicate call)
+and appends one focus-based closer via
+complete_point_obligations_since. Working hypotheses, in test order:
+(a) the assumption count must equal the grouped claim count in claim
+order (legacy pads to claim_count; the direct completion emits one per
+proposition goal only); (b) the have must be spelled unfolded so the
+claim-closing assumption's goal-match sees the same surface form.
+Scope-closed grouped sets already replay fine with focus-based
+closers (63078245), so the mismatch is specific to planner-produced
+haves. Reproduction:
+outcome_predecessor_upper_bound_spells_a_rewritten_nonnegative_leg.
