@@ -26,28 +26,23 @@ One small mdtest whose claim folds a composite resource at function exit
 projection arm), and one driving the region-frame certifier. Each should
 pin the resulting certificate shape, not merely verification success.
 
-## Finding (2026-08-18)
+## Findings (2026-08-18, corrected)
 
-A fold-at-exit fixture (`mdtests/post_execution_fold_projects_outcome.md`,
-grouped contract with `execute(); fold(...); simp()`) verifies entirely
-through the Proof-based drivers with zero deferrals: the legacy
-`tactic_replay` executor never runs, so the drain's `Fold` projection arm
-is unreachable by any script shape the smart drivers accept. The
-surviving legacy arms are therefore reachable only through scripts the
-smart drivers decline; establishing which declining shapes are
-user-expressible (and pinning one per arm) — or proving driver
-subsumption — is what stands between the arms and deletion.
+An initial probe run concluded the legacy arms were corpus-unreachable
+and the smart drivers subsumed fold-at-exit; both conclusions were
+capture artifacts (`cargo test` swallows output on passing tests —
+probes must panic or run under `--nocapture`). Corrected findings:
 
-## Finding 2 (2026-08-18)
-
-The grouped fixture's `fold(...)` is load-bearing (removing it fails the
-claim) yet applies through none of `Proof::apply_step`,
-`apply_step_at`, or `apply_step_with_origin` at exit, defers nothing,
-and never enters the legacy `tactic_replay` fold handler. The remaining
-candidate is the post-execution exit planner consuming the script's fold
-during `simp` planning (the same planner behind the drain's `Simp`
-escape). Tracing that route is the prerequisite for judging whether the
-drain's `Fold` arm and the `Simp` escape are one shared surface or two.
+- The grouped fold-at-exit fixture
+  (`mdtests/post_execution_fold_projects_outcome.md`) routes through
+  `replay_linear_tactics` — the terminal-effect fast path declines
+  scripts not ending in a frame — defers the fold, and drives the
+  drain's `Fold` projection arm (confirmed twice per run under
+  `--nocapture`). The fold-at-exit coverage criterion is met.
+- The deleted no-goal fallback arms are genuinely unreachable in the
+  corpus: they are hard errors now and the full gates stay green.
+- Still uncovered: the region-frame certifier arm and the `CloseOpen`
+  projection arm; each needs its own fixture the same way.
 
 ## Acceptance criteria
 

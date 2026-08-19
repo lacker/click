@@ -3442,6 +3442,23 @@ sole implementations of behavior the goal path does not subsume, and
 they retire only when the goal-based search provably covers them (or
 the coverage issue's fixtures pin the difference).
 
+### Correction (2026-08-18): the reachability probe was capture-blind
+
+The probe methodology was flawed: `cargo test` swallows stdout/stderr on
+*passing* tests, so every "zero hits" conclusion drawn from a passing run
+was unsound — including the corpus-wide reachability probe and the
+driver-subsumption finding. Re-run with `--nocapture`, the grouped
+fold-at-exit fixture routes through `replay_linear_tactics` (the
+terminal-effect fast path declines scripts not ending in a frame), defers
+the fold, and drives the drain's `Fold` projection arm — twice. The
+conclusions that survive are the panic-based ones (a panic fails the
+test): the fold applies through no `Proof` step path — consistent with
+deferral — and the deleted no-goal fallback arms are genuinely
+unreachable, proven not by the probe but by the post-deletion gates
+staying green with those arms as hard errors. Probe rule going forward:
+reachability probes must panic or run under `--nocapture`; silent
+`eprintln!` under a passing test proves nothing.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
