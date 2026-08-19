@@ -3735,9 +3735,13 @@ pub(super) fn finish_ordered_proof_replay(
                                         continue;
                                     }
                                     if direct_supported && !direct_claims.is_empty() {
+                                        let mut individually_closed: Vec<(
+                                            usize,
+                                            ProofCertificate,
+                                        )> = Vec::new();
                                         let direct_certificate =
                                             crate::kernel::with_search_attempt_rollback(|| {
-                                                let attempt = || -> Result<
+                                                let mut attempt = || -> Result<
                                                         Option<ProofCertificate>,
                                                         ClickError,
                                                     > {
@@ -3988,6 +3992,112 @@ pub(super) fn finish_ordered_proof_replay(
                                                     }
                                                     check_verification_deadline()?;
                                                 }
+                                                if !replay.grouped_contract
+                                                    && existence_candidate.is_none()
+                                                    && equalities.is_empty()
+                                                {
+                                                    let claim_index = direct_claims
+                                                        .iter()
+                                                        .find(|(_, candidate, _)| {
+                                                            candidate == surface_goal
+                                                        })
+                                                        .map(|(claim_index, _, _)| *claim_index)
+                                                        .expect(
+                                                            "the scope goal came from direct_claims",
+                                                        );
+                                                    let claim_label = function_claim_label(
+                                                        function_block.signature().name(),
+                                                        &claims[claim_index],
+                                                    );
+                                                    let mut certificate_replay = replay.clone();
+                                                    certificate_replay.surface_propositions =
+                                                        outcome_surface_propositions.clone();
+                                                    certificate_replay.unfolded_predicates =
+                                                        unfolded_predicates.clone();
+                                                    let certificate_facts = {
+                                                        let mut facts =
+                                                            surface_certificate_facts.to_vec();
+                                                        facts.extend(
+                                                            path.execution_facts()
+                                                                .iter()
+                                                                .filter(|fact| {
+                                                                    matches!(
+                                                                        fact.proposition(),
+                                                                        Proposition::CMemoryMutatesOnly { .. }
+                                                                            | Proposition::CMemoryEffectSummary { .. }
+                                                                            | Proposition::CHeapLifetimeRetired { .. }
+                                                                    )
+                                                                })
+                                                                .map(|fact| fact.proposition().clone()),
+                                                        );
+                                                        unfold_available_predicate_facts(
+                                                            predicate_environment,
+                                                            click_function_environment,
+                                                            &unfolded_predicates,
+                                                            &facts,
+                                                        )
+                                                    };
+                                                    if check_function_claim_by_simp(
+                                                        &claim_label,
+                                                        path_index,
+                                                        &path.execution_facts(),
+                                                        &direct_available,
+                                                        &claims[claim_index],
+                                                        parsed_function.parameters(),
+                                                        arguments,
+                                                        pre_state,
+                                                        &outcome,
+                                                        predicate_environment,
+                                                        click_function_environment,
+                                                        &replay.program_point_states,
+                                                        &unfolded_predicates,
+                                                    )
+                                                    .is_ok()
+                                                        && let Ok(goal) =
+                                                            lower_ensure_proposition_goal(
+                                                                &path_requirements,
+                                                                surface_goal,
+                                                                parsed_function.parameters(),
+                                                                arguments,
+                                                                pre_state,
+                                                                &outcome,
+                                                                predicate_environment,
+                                                                click_function_environment,
+                                                                &replay.program_point_states,
+                                                                &unfolded_predicates,
+                                                            )
+                                                        && let Ok(certificate_facts) =
+                                                            certificate_facts
+                                                        && let Ok(certificate) =
+                                                            certify_outcome_simp(
+                                                                &certificate_replay,
+                                                                surface_goal,
+                                                                &goal,
+                                                                &certificate_facts,
+                                                                parsed_function.parameters(),
+                                                                arguments,
+                                                                pre_state,
+                                                                post_state,
+                                                                result,
+                                                                predicate_environment,
+                                                                click_function_environment,
+                                                                theorem_environment,
+                                                                function_block.requires(),
+                                                                &claim_label,
+                                                                *tactic_index,
+                                                                path_index,
+                                                            )
+                                                    {
+                                                        if !direct_available.contains(&goal) {
+                                                            direct_available.push(goal);
+                                                        }
+                                                        individually_closed
+                                                            .push((claim_index, certificate));
+                                                        planner_closed.push(claim_index);
+                                                        continue;
+                                                    }
+                                                    check_verification_deadline()?;
+                                                }
                                                 selected = false;
                                                 break;
                                             };
@@ -4017,7 +4127,9 @@ pub(super) fn finish_ordered_proof_replay(
                                                 &surface_goals,
                                             )?
                                         };
-                                        let completed = if planner_closed.is_empty() {
+                                        let completed = if planner_closed.is_empty()
+                                            || !replay.grouped_contract
+                                        {
                                             completed
                                         } else {
                                             // Planner-closed claims take bare
@@ -4088,7 +4200,25 @@ pub(super) fn finish_ordered_proof_replay(
                                                         .extend(certificate.to_proof_tactics());
                                                 }
                                             } else {
+                                                for (claim_index, certificate) in
+                                                    &individually_closed
+                                                {
+                                                    closures[*claim_index] =
+                                                        ClaimClosure::by_checked_certificate(
+                                                            certificate,
+                                                        );
+                                                    if capturing_this_tactic {
+                                                        path_deferred_capture_tactics
+                                                            .extend(certificate.to_proof_tactics());
+                                                    }
+                                                }
                                                 for (claim_index, _, _) in direct_claims {
+                                                    if individually_closed
+                                                        .iter()
+                                                        .any(|(closed, _)| *closed == claim_index)
+                                                    {
+                                                        continue;
+                                                    }
                                                     closures[claim_index] =
                                                         ClaimClosure::by_checked_certificate(
                                                             &certificate,
