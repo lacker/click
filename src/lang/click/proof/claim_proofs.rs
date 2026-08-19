@@ -1950,8 +1950,8 @@ pub(super) fn finish_ordered_proof_replay(
                             }
                             PostExecutionTactic::UnfoldPredicate(name) => {
                                 let CFunctionOutcome::Return {
-                                    value: result,
-                                    state: post_state,
+                                    value: _result,
+                                    state: _post_state,
                                 } = &outcome
                                 else {
                                     return Err(ClickError::new(format!(
@@ -2013,8 +2013,8 @@ pub(super) fn finish_ordered_proof_replay(
                             }
                             PostExecutionTactic::Apply(application) => {
                                 let CFunctionOutcome::Return {
-                                    value: result,
-                                    state: post_state,
+                                    value: _result,
+                                    state: _post_state,
                                 } = &outcome
                                 else {
                                     return Err(ClickError::new(format!(
@@ -2079,8 +2079,8 @@ pub(super) fn finish_ordered_proof_replay(
                                 premises,
                             } => {
                                 let CFunctionOutcome::Return {
-                                    value: result,
-                                    state: post_state,
+                                    value: _result,
+                                    state: _post_state,
                                 } = &outcome
                                 else {
                                     return Err(ClickError::new(format!(
