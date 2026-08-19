@@ -593,7 +593,7 @@ pub(crate) fn is_canonical_load_defining_fact(proposition: &Proposition) -> bool
 
 thread_local! {
     static CANONICAL_LOAD_REGISTRY: std::cell::RefCell<
-        std::collections::HashMap<Variable, (SharedCMemory, Pointer)>,
+        std::collections::HashMap<Variable, (SharedCMemory, Pointer, SharedCMemory)>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
@@ -602,7 +602,28 @@ thread_local! {
 /// canonical variable in an equality query is viewed as its load exactly
 /// where a load term would have triggered provenance evidence.
 pub(crate) fn registered_canonical_load(variable: &Variable) -> Option<(SharedCMemory, Pointer)> {
-    CANONICAL_LOAD_REGISTRY.with(|registry| registry.borrow().get(variable).cloned())
+    CANONICAL_LOAD_REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .get(variable)
+            .map(|(memory, pointer, _)| (memory.clone(), pointer.clone()))
+    })
+}
+
+/// The first-seen live snapshot a canonical load variable was minted from.
+/// The canonical spelling is a jumped placeholder unsuited to frame checks;
+/// transport resolves through this origin, which is DAG-connected and
+/// cell-comparable to later effect snapshots. First-seen is deterministic
+/// because mint order is execution order.
+pub(crate) fn registered_canonical_load_origin(
+    variable: &Variable,
+) -> Option<(SharedCMemory, Pointer)> {
+    CANONICAL_LOAD_REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .get(variable)
+            .map(|(_, pointer, origin)| (origin.clone(), pointer.clone()))
+    })
 }
 
 /// Views a term as a memory load for equality reasoning: load terms pass
@@ -665,6 +686,14 @@ pub(crate) fn canonical_load_variables_name_matching_loads(
 /// registry detects hash collisions between distinct load identities and
 /// stops verification loudly instead of silently conflating them.
 pub(crate) fn canonical_load_variable(memory: &SharedCMemory, pointer: &Pointer) -> Variable {
+    canonical_load_variable_with_origin(memory, pointer, memory)
+}
+
+pub(crate) fn canonical_load_variable_with_origin(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+    origin: &SharedCMemory,
+) -> Variable {
     use std::hash::{Hash, Hasher};
     // Name by the cell's DAG epoch when one is recorded: snapshots that
     // differ only by effects provably disjoint from this cell then share
@@ -679,7 +708,7 @@ pub(crate) fn canonical_load_variable(memory: &SharedCMemory, pointer: &Pointer)
     let variable = Variable(LOAD_VARIABLE_BASE + hash % LOAD_VARIABLE_RANGE);
     CANONICAL_LOAD_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
-        if let Some((known_memory, known_pointer)) = registry.get(&variable) {
+        if let Some((known_memory, known_pointer, _)) = registry.get(&variable) {
             assert!(
                 known_memory == memory && known_pointer == pointer,
                 "canonical load-variable collision: {variable:?} names two distinct loads"
@@ -688,7 +717,7 @@ pub(crate) fn canonical_load_variable(memory: &SharedCMemory, pointer: &Pointer)
             if registry.len() >= 1_000_000 {
                 registry.clear();
             }
-            registry.insert(variable, (memory.clone(), pointer.clone()));
+            registry.insert(variable, (memory.clone(), pointer.clone(), origin.clone()));
         }
     });
     variable
@@ -708,7 +737,13 @@ pub(crate) fn canonical_load_variable_for_term(
     };
     let canonical = crate::kernel::memory_provenance::canonicalize_atomic_loads(bits);
     if let Bitvector32Term::MemoryLoad(memory, pointer) = &canonical {
-        return Some((canonical_load_variable(memory, pointer), canonical.clone()));
+        let Bitvector32Term::MemoryLoad(origin, _) = bits else {
+            unreachable!("the pattern above matched a memory load");
+        };
+        return Some((
+            canonical_load_variable_with_origin(memory, pointer, origin),
+            canonical.clone(),
+        ));
     }
     let Bitvector32Term::MemoryLoad(memory, pointer) = bits else {
         unreachable!("the pattern above matched a memory load");

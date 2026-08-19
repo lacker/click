@@ -27,14 +27,17 @@ pub(crate) use eval::is_canonical_load_defining_fact;
 pub(crate) use eval::is_canonical_load_variable;
 pub(crate) use eval::proposition_mentions_registered_canonical_load;
 pub(crate) use eval::registered_canonical_load;
+pub(crate) use eval::registered_canonical_load_origin;
 pub(crate) use eval::resolve_pending_heap_allocations;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
+pub(crate) use memory_provenance::c_memory_load_is_unchanged;
 pub use memory_provenance::*;
 pub use primitives::*;
 pub(crate) use reasoning::memory_effect_write_pointers;
 pub(crate) use reasoning::resolve_canonical_load_variables_from_registry;
 pub(crate) use reasoning::resolve_canonical_load_variables_via;
 pub(crate) use reasoning::resolve_minted_load_variables;
+pub(crate) use reasoning::with_isolated_memory_resolution_fuel;
 pub use termination::c_verified_function_termination_rules;
 
 /// The bitvector variables one condition fact mentions, including those

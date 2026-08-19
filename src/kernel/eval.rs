@@ -11,6 +11,7 @@ pub(crate) use memory_loads::is_canonical_load_defining_fact;
 pub(crate) use memory_loads::is_canonical_load_variable;
 pub(crate) use memory_loads::proposition_mentions_registered_canonical_load;
 pub(crate) use memory_loads::registered_canonical_load;
+pub(crate) use memory_loads::registered_canonical_load_origin;
 pub(crate) use memory_loads::viewed_as_memory_load;
 pub(super) use memory_loads::*;
 pub(super) use operators::*;

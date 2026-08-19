@@ -2898,7 +2898,7 @@ fn transport_framed_atomic_bitvector(
                     })
                 })
                 .or_else(|| {
-                    crate::kernel::eval::registered_canonical_load(variable).map(
+                    crate::kernel::eval::registered_canonical_load_origin(variable).map(
                         |(memory, pointer)| Bitvector32Term::MemoryLoad(memory, Box::new(pointer)),
                     )
                 });

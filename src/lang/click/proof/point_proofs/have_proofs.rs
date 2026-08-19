@@ -1098,6 +1098,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     // selecting the window.
                     let window_source =
                         crate::kernel::resolve_canonical_load_variables_from_registry(&source);
+                    let all_transition_facts = transition_facts;
                     let transition_facts =
                         fact_transport_transition_facts(transition_facts, &window_source);
                     let transport_assumptions = transition_facts
@@ -1127,14 +1128,26 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     // Canonical load variables are kernel-internal names;
                     // with the source assumed, the target may follow from
                     // recorded equalities chained through them.
-                    let reaches = reaches || {
-                        let mut chain_facts = available.clone();
-                        chain_facts.push(source.clone());
-                        super::super::fact_reasoning::premise_bridged_by_canonical_name_chain(
+                    let reaches = reaches
+                        || {
+                            let mut chain_facts = available.clone();
+                            chain_facts.push(source.clone());
+                            // The chain's origin-unchanged edges may cross
+                            // several effects, so they reason under every
+                            // recorded transition, not the single window
+                            // the store rewrite uses.
+                            let chain_assumptions = all_transition_facts.iter().fold(
+                                transport_assumptions.clone(),
+                                |assumptions, fact| {
+                                    assumptions.assume_proposition(fact.proposition().clone())
+                                },
+                            );
+                            super::super::fact_reasoning::premise_bridged_by_canonical_name_chain_with_origins(
                             &target,
                             &chain_facts,
+                            &chain_assumptions,
                         )
-                    };
+                        };
                     if !reaches {
                         let internal = std::env::var_os(FULL_DIAGNOSTICS_ENV).is_some().then(|| {
                             format!(

@@ -139,7 +139,7 @@ pub(in crate::kernel) fn with_memory_resolution_fuel<T>(body: impl FnOnce() -> T
 /// perturb fuel-coupled answers elsewhere, and certified spellings must
 /// replay byte-for-byte. Deterministic: the cap is a constant, so the answer
 /// depends only on the inputs.
-pub(in crate::kernel) fn with_isolated_memory_resolution_fuel<T>(
+pub(crate) fn with_isolated_memory_resolution_fuel<T>(
     budget: usize,
     body: impl FnOnce() -> T,
 ) -> T {

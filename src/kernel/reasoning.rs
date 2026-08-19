@@ -8,6 +8,7 @@ pub(crate) use substitution::resolve_canonical_load_variables_via;
 pub(crate) use substitution::resolve_minted_load_pointer;
 pub(crate) use substitution::resolve_minted_load_variables;
 pub(in crate::kernel) mod memory_resolution;
+pub(crate) use memory_resolution::with_isolated_memory_resolution_fuel;
 pub(in crate::kernel) mod variable_collection;
 pub(super) use memory_resolution::*;
 pub(super) use order_reasoning::*;

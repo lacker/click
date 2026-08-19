@@ -54,7 +54,8 @@ pub fn resolve_canonical_load_variables_from_registry(proposition: &Proposition)
         if !crate::kernel::eval::is_canonical_load_variable(&variable) {
             continue;
         }
-        let Some((memory, pointer)) = crate::kernel::eval::registered_canonical_load(&variable)
+        let Some((memory, pointer)) =
+            crate::kernel::eval::registered_canonical_load_origin(&variable)
         else {
             continue;
         };

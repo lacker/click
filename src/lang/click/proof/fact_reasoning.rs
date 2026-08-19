@@ -2284,6 +2284,107 @@ mod tests {
 /// equality through different intermediate names. The closure is bounded:
 /// only equality facts with a canonical-variable endpoint contribute
 /// edges, and the walk visits each such fact at most once.
+/// The chain closure with origin-unchanged implicit edges: two canonical
+/// names additionally connect when the loads they were minted from are
+/// provably unchanged between their origin snapshots under the supplied
+/// assumptions (call effect summaries and frame evidence). Reserved for
+/// once-per-tactic consumers such as explicit transport checks — the
+/// unchanged proof is assumption-based and must stay off hot fact paths.
+pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain_with_origins(
+    premise: &Proposition,
+    facts: &[Proposition],
+    assumptions: &PureFactContext,
+) -> bool {
+    if premise_bridged_by_canonical_name_chain(premise, facts) {
+        return true;
+    }
+    let offset_variable = |term: &PointerOffsetTerm| match term {
+        PointerOffsetTerm::Int32Scaled { value, .. } => match value.as_ref() {
+            Bitvector32Term::Variable(variable)
+                if crate::kernel::is_canonical_load_variable(variable) =>
+            {
+                Some(*variable)
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    let offset_sides = |proposition: &Proposition| {
+        let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) =
+            proposition
+        else {
+            return None;
+        };
+        Some((left.as_ref().clone(), right.as_ref().clone()))
+    };
+    let Some((start, goal)) = offset_sides(premise) else {
+        return false;
+    };
+    let origins_unchanged = |left: &Variable, right: &Variable| {
+        let (Some((left_memory, left_pointer)), Some((right_memory, right_pointer))) = (
+            crate::kernel::registered_canonical_load_origin(left),
+            crate::kernel::registered_canonical_load_origin(right),
+        ) else {
+            return false;
+        };
+        left_pointer == right_pointer
+            && (crate::kernel::c_memory_load_is_unchanged(
+                &left_memory,
+                &right_memory,
+                &left_pointer,
+                assumptions,
+            ) || crate::kernel::c_memory_load_is_unchanged(
+                &right_memory,
+                &left_memory,
+                &left_pointer,
+                assumptions,
+            ))
+    };
+    // One implicit hop only: rename the premise's canonical endpoints onto
+    // fact endpoints with provably identical loads, then ask the plain
+    // fact-edge closure.
+    let endpoints: Vec<PointerOffsetTerm> = facts
+        .iter()
+        .filter_map(offset_sides)
+        .flat_map(|(left, right)| [left, right])
+        .filter(|term| offset_variable(term).is_some())
+        .collect();
+    let renamed = |term: &PointerOffsetTerm| -> Vec<PointerOffsetTerm> {
+        let Some(variable) = offset_variable(term) else {
+            return vec![term.clone()];
+        };
+        let mut spellings = vec![term.clone()];
+        for endpoint in &endpoints {
+            let candidate = offset_variable(endpoint).expect("filtered above");
+            if candidate != variable
+                && origins_unchanged(&variable, &candidate)
+                && !spellings.contains(endpoint)
+            {
+                spellings.push(endpoint.clone());
+            }
+        }
+        spellings
+    };
+    for start_spelling in renamed(&start) {
+        for goal_spelling in renamed(&goal) {
+            if start_spelling == goal_spelling {
+                return true;
+            }
+            let candidate = Proposition::ConditionIs(
+                ConditionTerm::PointerOffsetEqual(
+                    Box::new(start_spelling.clone()),
+                    Box::new(goal_spelling.clone()),
+                ),
+                true,
+            );
+            if premise_bridged_by_canonical_name_chain(&candidate, facts) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain(
     premise: &Proposition,
     facts: &[Proposition],

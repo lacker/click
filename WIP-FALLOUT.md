@@ -361,3 +361,44 @@ why the load transport failed; if it is the directly-unchanged check,
 compare against what base did for the same load spelling (base
 transported these, so the same evidence must suffice — find which arm
 accepted it at base).
+
+## Origin registry and the shared transport-connect gap
+
+The registry now keeps, per canonical variable, the first-seen ORIGIN
+snapshot alongside the canonical (jumped) spelling
+(`registered_canonical_load_origin`): the canonical spelling is right
+for identity, but frame checks and snapshot indexing need the live,
+DAG-connected origin. The transport hook and the registry resolver use
+origins now; with that, the introduction respelling fires for some hops
+(probes showed moved=true where the origin's cell survives) but not
+across hops where the cell was clobbered and only effect-summary
+evidence connects.
+
+Both remaining gate failures are ONE capability gap, now precisely
+characterized: an explicit `transport(at(P, e) == X, e == X)` must
+connect a recorded-point canonical name to the current-point canonical
+name across intervening effects. The evidence exists (effect summaries
+/ store disjointness), but: (a) `c_memory_load_is_unchanged` on the two
+ORIGIN snapshots does not compose across multiple effect hops and its
+effect-fact arms demand exact memory identities that origin handles do
+not always meet; (b) the origin-unchanged chain edges
+(`premise_bridged_by_canonical_name_chain_with_origins`, wired into the
+have-transport check with full-transition assumptions) therefore fail;
+and (c) letting the resolved-load retry search freely reintroduces the
+giant-term recursion — the motivating metadata-write mdtest burned its
+full 2M-unit budget inside the have transport, and an isolated 8k fuel
+bound on the retry cut the cost but broke
+restricted_simp_certifies_unchanged_prefix_after_indexed_store (bound
+reverted; lib suite green again at 1062).
+
+The principled fix, for a fresh session: make the canonical name itself
+stable across provably-disjoint effects at MINT time — the DAG epoch
+keying (already in `canonical_load_variable`) returns None for these
+snapshots because point-state memories lack derivation records; either
+record derivations for replay point states, or extend
+`cell_epoch_for_canonical_naming` to walk effect facts. If the entry
+name and the current name coincide whenever the cell is untouched, the
+explicit transports connect syntactically and no bounded search is
+needed at all. Gate status on this branch: lib 1062/1062 green;
+mdtests 395/397 (field_derived metadata-write, leaf_flag_grouped_simp);
+examples red on input-cursor only.
