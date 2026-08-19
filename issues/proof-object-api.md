@@ -3065,6 +3065,22 @@ this chunk was transient load, per the two-consecutive-identical-tree-pass
 rule; suite wall-times have drifted upward across this long session and are
 worth one fresh-machine check.)
 
+### Progress (2026-08-18: `ProofBranches` is deleted)
+
+The first container retirement is complete. The proposition branch
+container, its `begin_cases`/`begin_if` constructors, the arm-marker
+construction, its per-arm operations and join, and the `ProofArm` selector
+are all deleted — not retained as fallbacks. Every former consumer runs on
+in-`Proof` splits: the disjunction-elimination search, the linear script
+driver's recursion, and the explicit certificate checker. The fork/join
+16-through-4096 curve and the structural Surface-sharing curve migrated to
+the split form with their bounds unchanged, which pins that the in-`Proof`
+split's costs match the container's; the container-identity regression is
+superseded by the split-identity regression, and the rejected-candidate
+transactionality assertion moved into it. `ExecutionProofBranches` and the
+outcome partition container remain, with the same retirement path once
+execution sibling goals exist.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
