@@ -27,6 +27,7 @@ pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub use memory_provenance::*;
 pub use primitives::*;
 pub(crate) use reasoning::memory_effect_write_pointers;
+pub(crate) use reasoning::resolve_minted_load_variables;
 pub use termination::c_verified_function_termination_rules;
 
 /// The bitvector variables one condition fact mentions, including those

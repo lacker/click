@@ -130,7 +130,9 @@ fn checked_surface_fact_at_point_with_assumptions(
             "kernel fact belongs to a different recorded memory snapshot: {kernel:?}"
         )));
     }
-    let candidate = synthesize_surface_proposition(kernel, parameters, arguments, state)
+    let resolved_kernel =
+        crate::kernel::resolve_minted_load_variables(kernel, &replay.effect_facts);
+    let candidate = synthesize_surface_proposition(&resolved_kernel, parameters, arguments, state)
         .ok_or_else(|| {
             ClickError::new(surface_synthesis_failure(
                 "kernel fact has no recorded or structurally synthesized Click spelling",
@@ -138,7 +140,13 @@ fn checked_surface_fact_at_point_with_assumptions(
             ))
         })?;
     let lowered = check(&candidate);
-    if lowered.as_ref().is_ok_and(|lowered| lowered == kernel) {
+    // The round trip is judged against the resolved fact: fresh lowering
+    // spells loads as load terms, while the original may name them through
+    // kernel-minted variables whose defining equations the resolution
+    // already substituted.
+    let round_trip_matches =
+        |lowered: &Proposition| lowered == kernel || *lowered == resolved_kernel;
+    if lowered.as_ref().is_ok_and(&round_trip_matches) {
         return Ok(candidate);
     }
     if let ClickProposition::Loadable { segment } = &candidate {
@@ -147,7 +155,11 @@ fn checked_surface_fact_at_point_with_assumptions(
         let old_candidate = ClickProposition::Loadable {
             segment: old_segment,
         };
-        if check(&old_candidate).ok().as_ref() == Some(kernel) {
+        if check(&old_candidate)
+            .ok()
+            .as_ref()
+            .is_some_and(round_trip_matches)
+        {
             return Ok(old_candidate);
         }
     }
@@ -440,14 +452,17 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     }
     let (exact_points, compatible_points) =
         snapshot_indexed_program_points(kernel, &replay.program_point_states);
-    if let Some(surface) = synthesize_surface_proposition(kernel, parameters, arguments, state)
+    let resolved_kernel =
+        crate::kernel::resolve_minted_load_variables(kernel, &replay.effect_facts);
+    if let Some(surface) =
+        synthesize_surface_proposition(&resolved_kernel, parameters, arguments, state)
         && !bases.contains(&surface)
     {
         bases.push(surface);
     }
     for (_, point_state) in exact_points.iter().chain(&compatible_points) {
         if let Some(surface) =
-            synthesize_surface_proposition(kernel, parameters, arguments, point_state)
+            synthesize_surface_proposition(&resolved_kernel, parameters, arguments, point_state)
             && !bases.contains(&surface)
         {
             bases.push(surface);
@@ -733,7 +748,10 @@ pub(super) fn append_simple_proof_step_for_operation(
                     .or_else(|| {
                         post_state.and_then(|state| {
                             synthesize_surface_proposition(
-                                &transport.target,
+                                &crate::kernel::resolve_minted_load_variables(
+                                    &transport.target,
+                                    &replay.effect_facts,
+                                ),
                                 parameters,
                                 arguments,
                                 state,

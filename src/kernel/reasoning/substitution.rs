@@ -1,5 +1,34 @@
 use super::*;
 
+/// Rewrites kernel-minted load variables back to their defining load terms,
+/// using the certified defining equations the canonicalizing loader pushed
+/// into the execution fact stream. Surface synthesis calls this before
+/// spelling a kernel fact, so a fact mentioning a minted variable spells as
+/// the loaded expression the source actually wrote.
+pub fn resolve_minted_load_variables(
+    proposition: &Proposition,
+    facts: &[ExecutionPureFact],
+) -> Proposition {
+    let mut resolved = proposition.clone();
+    for fact in facts {
+        if !fact.certified {
+            continue;
+        }
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+            &fact.proposition
+        else {
+            continue;
+        };
+        let (Bitvector32Term::Variable(variable), load @ Bitvector32Term::MemoryLoad(_, _)) =
+            (left.as_ref(), right.as_ref())
+        else {
+            continue;
+        };
+        resolved = substitute_bitvector_variable_in_proposition(&resolved, *variable, load);
+    }
+    resolved
+}
+
 pub(in crate::kernel) fn substitute_bitvector_variable_in_proposition(
     proposition: &Proposition,
     from: Variable,

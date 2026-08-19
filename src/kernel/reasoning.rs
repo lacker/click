@@ -4,6 +4,7 @@ mod memory_resolution;
 mod order_reasoning;
 mod path_facts;
 mod substitution;
+pub(crate) use substitution::resolve_minted_load_variables;
 mod variable_collection;
 pub(super) use memory_resolution::*;
 pub(super) use order_reasoning::*;
