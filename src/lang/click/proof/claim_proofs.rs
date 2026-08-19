@@ -2196,7 +2196,17 @@ pub(super) fn finish_ordered_proof_replay(
                                 // scope drivers, and a miss restores the
                                 // untouched evolving proof for the legacy
                                 // checker.
-                                let evolving_have = if let Some(evolving) = outcome_proof.take() {
+                                let Some(evolving_root) = outcome_proof.take() else {
+                                    // The unconditional substrate makes this
+                                    // unreachable; fail loudly rather than
+                                    // silently routing the whole `have`
+                                    // through the deleted legacy point root.
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for this path is unavailable"
+                                    )));
+                                };
+                                let evolving_have = {
+                                    let evolving = evolving_root;
                                     let attempt = (|| -> Result<
                                         Option<(Proof<'_>, Proposition, ProofCertificate)>,
                                         ClickError,
@@ -2240,10 +2250,12 @@ pub(super) fn finish_ordered_proof_replay(
                                             None
                                         }
                                     }
-                                } else {
-                                    None
                                 };
                                 if evolving_have.is_none() {
+                                    // A goal-based smart miss falls back to
+                                    // the legacy checker below, which mutates
+                                    // the working set without writing through
+                                    // the outcome goal.
                                     working_set_dirty = true;
                                 }
                                 let checked_smart_have = if evolving_have.is_some() {

@@ -3430,6 +3430,18 @@ and needs its own analysis — and the `Simp` legacy-planner escape stays
 with its entry flag until that analysis lands. `working_set_dirty` is
 now set at exactly those two sites.
 
+### Progress (2026-08-18: the smart-`have` fallback keeps only its miss half)
+
+The `have` arm's two `None` meanings are split. A missing outcome goal is
+now the same loud error as the other four arms — the whole `have` no
+longer routes through the deleted legacy point root — while a goal-based
+smart miss (the search legitimately declining) still falls back to the
+legacy checker, preserving smart-miss behavior exactly. The dirty flag
+now marks only that miss route and the `Simp` planner escape; both are
+sole implementations of behavior the goal path does not subsume, and
+they retire only when the goal-based search provably covers them (or
+the coverage issue's fixtures pin the difference).
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
