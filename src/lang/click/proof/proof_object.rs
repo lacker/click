@@ -1205,6 +1205,11 @@ pub(super) struct ProofFacts {
     /// indexed lookup instead of scanning every unrelated fact.
     normalized_exact: PersistentSet<Proposition>,
     by_snapshot_blind: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Proposition>>,
+    /// Exact true int32 equalities keyed by constant, variable, or interned
+    /// memory-load operands. Keys have bounded comparison cost; a goal-local
+    /// rewrite search walks only atoms named by the goal and their buckets.
+    bitvector_equalities_by_atom:
+        PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
     by_quantified_replay: PersistentMap<QuantifiedReplayKey, PersistentSequence<Proposition>>,
     /// Universal facts introduced specifically by a checked predicate unfold.
     /// Outcome smart search never probes ambient theorem or path universals.
@@ -1233,10 +1238,23 @@ struct ImplicationCandidate {
     consequent: Proposition,
 }
 
-/// A current/entry equality can use the entry expression's reflexivity as an
-/// explicit transport source. Keep this selector intentionally syntactic: the
-/// point checker remains the authority for whether the execution effects
-/// actually permit the transport.
+/// A bounded-comparison selector for equality rewrite provenance. Complex
+/// arithmetic operands remain on the kernel-derivation path; this index covers
+/// the atomic value/snapshot operands that outcome arithmetic rewrites need.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum BitvectorEqualityAtomKey {
+    Constant(u32),
+    Variable(Variable),
+    MemoryLoad {
+        memory: (u32, u32),
+        pointer_hash: u64,
+    },
+}
+
+/// An equality with an `old(...)` operand can use that entry expression's
+/// reflexivity as an explicit transport source. Keep this selector
+/// intentionally syntactic: the point checker remains the authority for
+/// whether execution effects and result provenance permit the transport.
 fn old_reflexive_transport_source(goal: &ClickProposition) -> Option<ClickProposition> {
     let ClickProposition::Comparison {
         left,
@@ -1247,8 +1265,8 @@ fn old_reflexive_transport_source(goal: &ClickProposition) -> Option<ClickPropos
         return None;
     };
     let old = match (left, right) {
-        (current, ContractExpression::Old(entry)) if current == entry.as_ref() => right,
-        (ContractExpression::Old(entry), current) if current == entry.as_ref() => left,
+        (_, ContractExpression::Old(_)) => right,
+        (ContractExpression::Old(_), _) => left,
         _ => return None,
     };
     Some(ClickProposition::Comparison {
@@ -6701,6 +6719,9 @@ impl<'a> Proof<'a> {
         if let Some(atomic) = atomic {
             return Ok(Some(atomic));
         }
+        if let Some(rewritten) = self.try_indexed_goal_equality_rewrite_closure() {
+            return Ok(Some(rewritten));
+        }
         if let Some(surface_goal) = self.surface_goal()
             && let Some(proof) = self.try_outcome_snapshot_transport_closure(surface_goal)?
         {
@@ -7071,45 +7092,20 @@ impl<'a> Proof<'a> {
         let SimpEvidence::Derivation(derivation) = plan else {
             return None;
         };
-        let replayable_surface = |kernel: &Proposition| {
-            let matches_kernel = |candidate: &ClickProposition| {
-                let lowered = self
-                    .lower_surface_proposition_direct(candidate, "typed simp premise spelling")
-                    .ok()?;
-                (lowered == *kernel || condition_polarity_equivalent(&lowered, kernel))
-                    .then_some(())
-            };
-            if let Some(surface) = surface_facts.surfaces(kernel).find(|surface| {
-                (proposition_contains_at_expression(surface)
-                    || proposition_contains_old_expression(surface))
-                    && matches_kernel(surface).is_some()
-            }) {
-                return Some(surface.clone());
-            }
-            if let Some(anchor) = premise_anchor
-                && let Some(anchored) = surface_facts.surfaces(kernel).find_map(|surface| {
-                    let anchored = surface_with_source_site(surface, anchor).ok()?;
-                    matches_kernel(&anchored).map(|()| anchored)
-                })
-            {
-                return Some(anchored);
-            }
-            surface_facts
-                .surfaces(kernel)
-                .find(|surface| matches_kernel(surface).is_some())
-                .cloned()
-        };
         let context_premises = derivation.context_premises();
         let premise_pairs = context_premises
             .iter()
             .filter_map(|premise| {
-                if let Some(surface) = replayable_surface(premise) {
+                if let Some(surface) =
+                    self.replayable_surface_fact(surface_facts, premise_anchor, premise)
+                {
                     return Some((premise.clone(), surface));
                 }
                 let pair = condition_polarity_spellings(premise)
                     .into_iter()
                     .find_map(|spelling| {
-                        let surface = replayable_surface(&spelling);
+                        let surface =
+                            self.replayable_surface_fact(surface_facts, premise_anchor, &spelling);
                         surface.map(|surface| (spelling, surface))
                     });
                 pair
@@ -7121,6 +7117,81 @@ impl<'a> Proof<'a> {
             premise_pairs,
             point_application_closes_goal,
         ))
+    }
+
+    /// Resolves one exact retained fact to a surface spelling that will lower
+    /// back to that same kernel proposition when the selected simple step is
+    /// replayed. Historical locals are anchored before ordinary spellings are
+    /// considered, so a same-spelled newer snapshot cannot be substituted.
+    fn replayable_surface_fact(
+        &self,
+        surface_facts: &SurfacePropositionMap,
+        premise_anchor: Option<&ProgramPointRef>,
+        kernel: &Proposition,
+    ) -> Option<ClickProposition> {
+        let matches_kernel = |candidate: &ClickProposition| {
+            let lowered = self
+                .lower_surface_proposition_direct(candidate, "typed simp premise spelling")
+                .ok()?;
+            (lowered == *kernel || condition_polarity_equivalent(&lowered, kernel)).then_some(())
+        };
+        if let Some(surface) = surface_facts.surfaces(kernel).find(|surface| {
+            (proposition_contains_at_expression(surface)
+                || proposition_contains_old_expression(surface))
+                && matches_kernel(surface).is_some()
+        }) {
+            return Some(surface.clone());
+        }
+        if let Some(anchor) = premise_anchor
+            && let Some(anchored) = surface_facts.surfaces(kernel).find_map(|surface| {
+                let anchored = surface_with_source_site(surface, anchor).ok()?;
+                matches_kernel(&anchored).map(|()| anchored)
+            })
+        {
+            return Some(anchored);
+        }
+        surface_facts
+            .surfaces(kernel)
+            .find(|surface| matches_kernel(surface).is_some())
+            .cloned()
+    }
+
+    /// Tries one equality attached to a term occurring in the current goal.
+    /// This complements the kernel derivation path for arithmetic goals whose
+    /// normal form is exposed only after a selected historical equality is
+    /// rewritten. Candidate lookup is goal-local and persistently indexed.
+    fn try_indexed_goal_equality_rewrite_closure(&self) -> Option<Self> {
+        let goal = self.goal()?;
+        let (surface_facts, premise_anchor) = match self.context.as_ref() {
+            ProofContext::Pure(context) => (&context.theorem_context.surface_requirements, None),
+            ProofContext::Point(context) => (
+                context.surface_propositions,
+                context.premise_anchor.as_ref(),
+            ),
+            ProofContext::Execution(_) => {
+                let point = self.focused_outcome_point()?;
+                (&point.surface_propositions, point.premise_anchor.as_ref())
+            }
+        };
+        for equality in self.facts().bitvector_equalities_mentioning(goal) {
+            let Some(surface) =
+                self.replayable_surface_fact(surface_facts, premise_anchor, &equality)
+            else {
+                continue;
+            };
+            let Ok(rewritten) = self.apply_step(SimpleProofStep::Rewrite(surface)) else {
+                continue;
+            };
+            if let Some(closed) = rewritten
+                .try_direct_logical_closure()
+                .ok()
+                .flatten()
+                .or_else(|| rewritten.try_typed_atomic_simp_closure())
+            {
+                return Some(closed);
+            }
+        }
+        None
     }
 
     /// Handles the first bounded equality-refinement search directly on
@@ -11068,6 +11139,7 @@ impl ProofFacts {
         let mut proper_conjuncts = PersistentSet::default();
         let mut normalized_exact = PersistentSet::default();
         let mut by_snapshot_blind = PersistentMap::default();
+        let mut bitvector_equalities_by_atom = PersistentMap::default();
         let mut by_quantified_replay = PersistentMap::default();
         let mut implications_by_consequent = PersistentMap::default();
         let mut assumptions = PureFactContext::new();
@@ -11089,6 +11161,8 @@ impl ProofFacts {
                 collect_owned_atomic_conjuncts(fact, &mut conjuncts);
                 for conjunct in conjuncts {
                     by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
+                    bitvector_equalities_by_atom =
+                        index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
                     let normalized = normalize_direct_atomic_memory_loads(&conjunct);
                     if normalized != conjunct {
                         normalized_exact = normalized_exact.with_value(normalized);
@@ -11102,6 +11176,8 @@ impl ProofFacts {
                 }
             }
             by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact);
+            bitvector_equalities_by_atom =
+                index_bitvector_equality_fact(bitvector_equalities_by_atom, fact);
             exact = exact.with_value(fact.clone());
             assumptions = assumptions.assume_proposition(fact.clone());
             implicit_transport_assumptions =
@@ -11115,6 +11191,7 @@ impl ProofFacts {
             proper_conjuncts,
             normalized_exact,
             by_snapshot_blind,
+            bitvector_equalities_by_atom,
             by_quantified_replay,
             predicate_unfolded_universal_facts: PersistentSequence::default(),
             implications_by_consequent,
@@ -11153,6 +11230,7 @@ impl ProofFacts {
         let mut proper_conjuncts = self.proper_conjuncts.clone();
         let mut normalized_exact = self.normalized_exact.clone();
         let mut by_snapshot_blind = self.by_snapshot_blind.clone();
+        let mut bitvector_equalities_by_atom = self.bitvector_equalities_by_atom.clone();
         let by_quantified_replay =
             index_quantified_replay_fact(self.by_quantified_replay.clone(), &fact);
         let implications_by_consequent =
@@ -11163,6 +11241,8 @@ impl ProofFacts {
             collect_owned_atomic_conjuncts(&fact, &mut conjuncts);
             for conjunct in conjuncts {
                 by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
+                bitvector_equalities_by_atom =
+                    index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
                 let normalized = normalize_direct_atomic_memory_loads(&conjunct);
                 if normalized != conjunct {
                     normalized_exact = normalized_exact.with_value(normalized);
@@ -11176,6 +11256,8 @@ impl ProofFacts {
             }
         }
         by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &fact);
+        bitvector_equalities_by_atom =
+            index_bitvector_equality_fact(bitvector_equalities_by_atom, &fact);
         exact = exact.with_value(fact.clone());
         let mut ordered = self.ordered.clone();
         ordered.push(fact.clone());
@@ -11189,6 +11271,7 @@ impl ProofFacts {
             proper_conjuncts,
             normalized_exact,
             by_snapshot_blind,
+            bitvector_equalities_by_atom,
             by_quantified_replay,
             predicate_unfolded_universal_facts: self.predicate_unfolded_universal_facts.clone(),
             implications_by_consequent,
@@ -11471,6 +11554,23 @@ impl ProofFacts {
             || directly_conflicts_with_normalized_index(&self.normalized_exact, &normalized)
     }
 
+    /// Returns exact equality facts attached to terms occurring in this
+    /// proposition. Selection cost follows the proposition and the matching
+    /// equality buckets; unrelated ambient equalities are never visited.
+    fn bitvector_equalities_mentioning(&self, proposition: &Proposition) -> Vec<Proposition> {
+        let mut atoms = BTreeSet::new();
+        collect_proposition_bitvector_atoms(proposition, &mut atoms);
+        let mut equalities = Vec::new();
+        for atom in atoms {
+            if let Some(bucket) = self.bitvector_equalities_by_atom.get(&atom) {
+                for equality in bucket.iter() {
+                    equalities.push(equality.clone());
+                }
+            }
+        }
+        equalities
+    }
+
     /// The facts this context introduced after `ancestor`, oldest first.
     ///
     /// Both fact stores are parent-linked and append-only, so the delta is
@@ -11533,6 +11633,12 @@ impl ProofFacts {
     fn lookup_comparisons(&self, fact: &Proposition) -> usize {
         self.exact.lookup_comparisons(fact)
     }
+
+    #[cfg(test)]
+    fn equality_atom_lookup_comparisons(&self, term: &Bitvector32Term) -> usize {
+        let key = bitvector_equality_atom_key(term).expect("test term should be an indexed atom");
+        self.bitvector_equalities_by_atom.lookup_comparisons(&key)
+    }
 }
 
 fn index_snapshot_fact(
@@ -11557,6 +11663,157 @@ fn index_snapshot_fact(
         }
     }
     by_snapshot_blind
+}
+
+fn index_bitvector_equality_fact(
+    mut index: PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
+    fact: &Proposition,
+) -> PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>> {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = fact else {
+        return index;
+    };
+    for term in [left.as_ref(), right.as_ref()] {
+        let Some(key) = bitvector_equality_atom_key(term) else {
+            continue;
+        };
+        let mut bucket = index.get(&key).cloned().unwrap_or_default();
+        bucket.push(fact.clone());
+        index = index.with_inserted(key, bucket);
+    }
+    index
+}
+
+fn bitvector_equality_atom_key(term: &Bitvector32Term) -> Option<BitvectorEqualityAtomKey> {
+    match term {
+        Bitvector32Term::Constant(value) => Some(BitvectorEqualityAtomKey::Constant(*value)),
+        Bitvector32Term::Variable(variable) => Some(BitvectorEqualityAtomKey::Variable(*variable)),
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(pointer.as_ref(), &mut hasher);
+            Some(BitvectorEqualityAtomKey::MemoryLoad {
+                memory: memory.arena_id(),
+                pointer_hash: std::hash::Hasher::finish(&hasher),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn collect_proposition_bitvector_atoms(
+    proposition: &Proposition,
+    atoms: &mut BTreeSet<BitvectorEqualityAtomKey>,
+) {
+    match proposition {
+        Proposition::ConditionIs(condition, _) => {
+            collect_condition_bitvector_atoms(condition, atoms)
+        }
+        Proposition::ForAll { body, .. }
+        | Proposition::Exists { body, .. }
+        | Proposition::Not(body) => collect_proposition_bitvector_atoms(body, atoms),
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            collect_proposition_bitvector_atoms(left, atoms);
+            collect_proposition_bitvector_atoms(right, atoms);
+        }
+        _ => {}
+    }
+}
+
+fn collect_condition_bitvector_atoms(
+    condition: &ConditionTerm,
+    atoms: &mut BTreeSet<BitvectorEqualityAtomKey>,
+) {
+    match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            collect_bitvector_atoms(left, atoms);
+            collect_bitvector_atoms(right, atoms);
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            collect_pointer_offset_bitvector_atoms(left, atoms);
+            collect_pointer_offset_bitvector_atoms(right, atoms);
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            collect_pointer_offset_bitvector_atoms(&left.offset, atoms);
+            collect_pointer_offset_bitvector_atoms(&right.offset, atoms);
+        }
+        ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {}
+    }
+}
+
+fn collect_bitvector_atoms(term: &Bitvector32Term, atoms: &mut BTreeSet<BitvectorEqualityAtomKey>) {
+    if let Some(atom) = bitvector_equality_atom_key(term) {
+        atoms.insert(atom);
+    }
+    match term {
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right) => {
+            collect_bitvector_atoms(left, atoms);
+            collect_bitvector_atoms(right, atoms);
+        }
+        Bitvector32Term::BitwiseNot(value) => collect_bitvector_atoms(value, atoms),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => {
+            collect_condition_bitvector_atoms(condition, atoms);
+            collect_bitvector_atoms(then_term, atoms);
+            collect_bitvector_atoms(else_term, atoms);
+        }
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            collect_bitvector_atoms(start, atoms);
+            collect_bitvector_atoms(end, atoms);
+            collect_bitvector_atoms(initial, atoms);
+            collect_bitvector_atoms(body, atoms);
+        }
+        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                collect_bitvector_atoms(argument, atoms);
+            }
+        }
+        Bitvector32Term::MemoryLoad(_, pointer) => {
+            collect_pointer_offset_bitvector_atoms(&pointer.offset, atoms)
+        }
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+    }
+}
+
+fn collect_pointer_offset_bitvector_atoms(
+    offset: &PointerOffsetTerm,
+    atoms: &mut BTreeSet<BitvectorEqualityAtomKey>,
+) {
+    match offset {
+        PointerOffsetTerm::Add(left, right) => {
+            collect_pointer_offset_bitvector_atoms(left, atoms);
+            collect_pointer_offset_bitvector_atoms(right, atoms);
+        }
+        PointerOffsetTerm::Int32Scaled { value, .. } => collect_bitvector_atoms(value, atoms),
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+    }
 }
 
 fn index_quantified_replay_fact(
@@ -15522,6 +15779,109 @@ mod tests {
             ));
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn goal_term_equality_rewrite_ignores_unrelated_equality_buckets() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let memory = CMemory::new();
+        let selected_term = Bitvector32Term::Variable(Variable(8_174_050));
+        let equality_fact = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(selected_term.clone()),
+                Box::new(Bitvector32Term::Constant(2)),
+            ),
+            true,
+        );
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Subtract(
+                    Box::new(selected_term.clone()),
+                    Box::new(Bitvector32Term::Constant(1)),
+                )),
+                Box::new(Bitvector32Term::Constant(1)),
+            ),
+            true,
+        );
+        let equality_surface = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                selected_term.clone(),
+            ))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(2))),
+        };
+        let goal_surface = ClickProposition::Comparison {
+            left: ContractExpression::Subtract(
+                Box::new(ContractExpression::CFragment(CExpression::Value(
+                    CValue::Int32(selected_term.clone()),
+                ))),
+                Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
+            ),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(1))),
+        };
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size)
+                .map(|index| {
+                    Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(Bitvector32Term::Variable(Variable(
+                                9_000_000 + u64::from(index),
+                            ))),
+                            Box::new(Bitvector32Term::Constant(10_000 + index)),
+                        ),
+                        true,
+                    )
+                })
+                .collect::<Vec<_>>();
+            facts.push(equality_fact.clone());
+            let mut surface_requirements = SurfacePropositionMap::default();
+            surface_requirements
+                .record_lowering(&equality_surface, &equality_fact)
+                .expect("the selected equality spelling should be indexed");
+            let theorem_context = PureTheoremContext {
+                memory: memory.clone(),
+                values: BTreeMap::new(),
+                array_refs: BTreeMap::new(),
+                requires: facts.clone(),
+                surface_requirements,
+            };
+            let root = Proof::for_pure_goal_with_surface(
+                "goal-term equality selection",
+                &facts,
+                goal.clone(),
+                Some(goal_surface.clone()),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let selected = root.facts().bitvector_equalities_mentioning(&goal);
+            assert_eq!(selected, vec![equality_fact.clone()]);
+            let comparisons = root
+                .facts()
+                .equality_atom_lookup_comparisons(&selected_term);
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            assert!(
+                comparisons <= 2 * logarithmic_height + 4,
+                "size {size} equality lookup made {comparisons} key comparisons"
+            );
+            let closed = root
+                .try_indexed_goal_equality_rewrite_closure()
+                .expect("the selected equality should rewrite and normalize the goal");
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [SimpleProofStep::Rewrite(_), SimpleProofStep::Normalize]
+            ));
         }
     }
 

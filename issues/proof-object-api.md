@@ -3825,6 +3825,30 @@ multi-size curve grows 4,096 unrelated universals and path facts while the
 smart selection visits only the one unfold-owned universal bucket. The
 proof-object migration board is now eight open leaves.
 
+### Progress (2026-08-19: snapshot and post-call outcome facts retain their selected steps)
+
+Outcome equality transport now admits the reflexive `old(...)` operand of any
+equality as its explicit source; the checked transport operation remains the
+authority for whether certified stores, separation, and result provenance
+reach the target. The symbolic unwritten-read fixture therefore retains its
+`TransportUsing` step directly instead of reconstructing it through outcome
+compatibility.
+
+Arithmetic claims exposed only after rewriting a historical memory value use
+a persistent equality index keyed by bounded-comparison constant, variable,
+and interned-load atoms. Smart selection visits the current goal's atoms and
+their provenance buckets, anchors the selected Surface equality at its source
+statement, and retains the checked `Rewrite` plus `Normalize` steps. It never
+scans unrelated ambient equalities or accepts a recorded older lowering as a
+new target.
+
+The post-call restore and symbolic unwritten-read fixtures now observe neither
+outcome fallback span, expand, pass deletion-based independent-replay checks,
+and pass focused expansion audits. A 16-through-4,096 curve grows unrelated
+equality buckets while the selected lookup remains logarithmic. The full
+repository gate is green with 1,226 tests plus both fixture gates, and the
+proof-object migration board is now seven open leaves.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

@@ -8442,6 +8442,93 @@ fn bound_universal_fixture_census_has_no_outcome_fallbacks() {
 }
 
 #[test]
+fn snapshot_and_post_call_transport_fixtures_have_no_outcome_fallbacks() {
+    for (filename, function, claim, retained_step) in [
+        (
+            "execute_expands_certified_post_call_fact.md",
+            "restore_one",
+            CProofClaim::Grouped,
+            "rewrite(at(statement(0).entry, cell->value)",
+        ),
+        (
+            "separate_symbolic_unwritten_read.md",
+            "write_i_read_j",
+            CProofClaim::Ensure(0),
+            "transport(old(p[j]) == old(p[j]), result == old(p[j]))",
+        ),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(filename);
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+        let mdtest = crate::cli::parse_mdtest(&path, &source)
+            .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+        let click_source = mdtest
+            .click_source
+            .as_deref()
+            .unwrap_or_else(|| panic!("`{}` has no Click source", path.display()));
+        let c_sources = mdtest
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let (verified, events) =
+            crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources));
+        verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
+        let fallback_events = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                        if name == "outcome simp legacy exit planning"
+                            || name == "outcome simp compatibility construction"
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            fallback_events.is_empty(),
+            "`{}` entered outcome fallback planning: {fallback_events:#?}",
+            path.display()
+        );
+
+        let expanded = expand_c0_claim_source(click_source, &c_sources, function, claim)
+            .unwrap_or_else(|error| panic!("failed to expand `{}`: {error:?}", path.display()));
+        assert!(expanded.contains(retained_step), "{expanded}");
+        verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
+            panic!(
+                "expanded proof from `{}` did not replay independently: {error:?}",
+                path.display()
+            )
+        });
+
+        let without_retained_step = expanded
+            .lines()
+            .filter(|line| !line.contains(retained_step))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            verify_c0_sources(&without_retained_step, &c_sources).is_err(),
+            "`{}` replayed after deleting its selected retained step",
+            path.display()
+        );
+        if filename == "separate_symbolic_unwritten_read.md" {
+            let without_separation = expanded
+                .lines()
+                .filter(|line| !line.contains("separate(memory("))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                verify_c0_sources(&without_separation, &c_sources).is_err(),
+                "`{}` replayed after deleting its required separation premises",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn frame_certified_outcome_claim_closes_on_the_checked_proof() {
     let c_source = r#"
         int32 preserve_after_loop(int32 p[], int32 n) {
