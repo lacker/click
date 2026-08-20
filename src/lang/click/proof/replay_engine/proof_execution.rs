@@ -1332,10 +1332,10 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
             let selected_source_index = context.replay.proof_site.as_ref().and_then(|site| {
                 selected_tactic_index_for_site(expansion_capture.as_deref(), site)
             });
-            let checked_capture_supported = selected_source_index.is_none_or(|wanted| {
-                wanted == *source_index
-                    || internal_proof_contains_source_index(continuation, wanted)
-            });
+            let capture_in_continuation = selected_source_index
+                .is_some_and(|wanted| internal_proof_contains_source_index(continuation, wanted));
+            let checked_capture_supported = selected_source_index
+                .is_none_or(|wanted| wanted == *source_index || capture_in_continuation);
             if checked_capture_supported
                 && let Some((then_tactics, else_tactics)) =
                     exportable_linear_execution_branch_pair(then_branch, else_branch, continuation)
@@ -1416,7 +1416,9 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
                         Some((branch_proof, None))
                     };
                     if let Some((proof, checked_continuation)) = advanced {
-                        if let Some(site) = context.replay.proof_site.as_ref() {
+                        if !capture_in_continuation
+                            && let Some(site) = context.replay.proof_site.as_ref()
+                        {
                             record_proof_site_tactic_expansion(
                                 expansion_capture.as_deref_mut(),
                                 site,

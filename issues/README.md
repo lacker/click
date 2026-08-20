@@ -18,18 +18,16 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Proof-object migration: 7 open
+## Proof-object migration: 6 open
 
 This is the countable endgame board. Each link is one independently closable
 unit; [Proof object API](proof-object-api.md) is the architectural design and
-history, not an eighth open item. The terminal retirement issue depends on the
-other six.
+history, not a seventh open item. The terminal retirement issue depends on the
+other five.
 
 - [Atomic derivation returns premises, not steps](atomic-derivation-returns-premises-not-steps.md):
   make scalar and statement/effect decisions return typed steps so outcome
   certificate construction no longer re-searches.
-- [Retire outcome compatibility after checked branch continuations](outcome-branch-continuation-compatibility.md):
-  close joined outcome claims on the same checked branch DAG.
 - [Keep resource-backed example pipelines on outcome Proof](outcome-resource-example-pipelines.md):
   remove compatibility construction from the linked-list and recursive-list
   vertical examples.

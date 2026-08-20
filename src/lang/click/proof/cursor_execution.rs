@@ -1211,6 +1211,52 @@ pub(super) fn predicate_call_source_site(surface: &ClickProposition) -> Option<P
     })
 }
 
+/// Returns a program point explicitly carried by a proposition produced by
+/// [`surface_with_source_site`]. This is a selector only: callers must still
+/// re-lower any newly anchored spelling and check that it denotes the exact
+/// retained kernel fact.
+pub(super) fn surface_source_site(surface: &ClickProposition) -> Option<ProgramPointRef> {
+    let expression_site = |expression: &ContractExpression| match expression {
+        ContractExpression::At {
+            selector: VisitSelector::ProgramPoint(point),
+            ..
+        } => Some(point.clone()),
+        _ => None,
+    };
+    match surface {
+        ClickProposition::Comparison { left, right, .. } => {
+            expression_site(left).or_else(|| expression_site(right))
+        }
+        ClickProposition::At {
+            selector: VisitSelector::ProgramPoint(point),
+            ..
+        } => Some(point.clone()),
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            surface_source_site(left).or_else(|| surface_source_site(right))
+        }
+        ClickProposition::Not(body)
+        | ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. } => surface_source_site(body),
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => expression_site(start)
+            .or_else(|| expression_site(end))
+            .or_else(|| surface_source_site(body)),
+        ClickProposition::PredicateCall { arguments, .. } => {
+            arguments.iter().find_map(expression_site)
+        }
+        ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. }
+        | ClickProposition::Defined { .. } => None,
+    }
+}
+
 fn proposition_tree_contains(root: &Proposition, target: &Proposition) -> bool {
     root == target
         || match root {

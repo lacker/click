@@ -3849,6 +3849,32 @@ equality buckets while the selected lookup remains logarithmic. The full
 repository gate is green with 1,226 tests plus both fixture gates, and the
 proof-object migration board is now seven open leaves.
 
+### Progress (2026-08-19: branch continuations retain their outcome premises)
+
+Outcome arithmetic after a checked branch join now resolves every premise
+from the atomic derivation's finite typed premise list. When the latest
+statement-entry anchor has moved past the point where those premises were
+established, an already selected explicit `at(...)` spelling may nominate the
+one common earlier point. The resolver re-synthesizes only the missing selected
+premises at that indexed state and accepts each spelling only when ordinary
+lowering recovers the exact retained kernel fact. It does not scan ambient
+facts or program points.
+
+The plain and resource-framed branch-continuation claims now avoid both outcome
+fallback spans. Their expansions retain the selected
+`int32_increment_strict_greater_lower_bound` application, independently
+replay, and fail after that application is deleted. A 16-through-4,096 curve
+pins logarithmic allocation while one recorded premise supplies the common
+anchor and one branch-exported premise is recovered there.
+
+The focused expansion audit also exposed and fixed a capture-boundary bug in
+the optimized branch executor: when a selected generated tactic's continuation
+contained the same source index, the executor re-recorded a later structured
+branch as a second expansion of the earlier tactic. The selected pre-branch
+`step()` now captures only its own checked step. Both fixtures pass their full
+expansion audits (11 smart sites total), and the proof-object migration board
+is now six open leaves.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

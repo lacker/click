@@ -7093,24 +7093,40 @@ impl<'a> Proof<'a> {
             return None;
         };
         let context_premises = derivation.context_premises();
-        let premise_pairs = context_premises
+        let resolve_premise = |premise: &Proposition, anchor: Option<&ProgramPointRef>| {
+            if let Some(surface) = self.replayable_surface_fact(surface_facts, anchor, premise) {
+                return Some((premise.clone(), surface));
+            }
+            condition_polarity_spellings(premise)
+                .into_iter()
+                .find_map(|spelling| {
+                    let surface = self.replayable_surface_fact(surface_facts, anchor, &spelling);
+                    surface.map(|surface| (spelling, surface))
+                })
+        };
+        let mut premise_pairs = context_premises
             .iter()
-            .filter_map(|premise| {
-                if let Some(surface) =
-                    self.replayable_surface_fact(surface_facts, premise_anchor, premise)
-                {
-                    return Some((premise.clone(), surface));
-                }
-                let pair = condition_polarity_spellings(premise)
-                    .into_iter()
-                    .find_map(|spelling| {
-                        let surface =
-                            self.replayable_surface_fact(surface_facts, premise_anchor, &spelling);
-                        surface.map(|surface| (spelling, surface))
-                    });
-                pair
-            })
+            .filter_map(|premise| resolve_premise(premise, premise_anchor))
             .collect::<Vec<_>>();
+        // A structured branch continuation can clear `last_step_entry`, or a
+        // later common statement can move it past the point where the
+        // selected premises were established. If the initially resolved
+        // subset already carries one common explicit `at(...)` spelling,
+        // retry this same finite premise list at that point. No ambient fact
+        // or program-point scan participates.
+        if premise_pairs.len() < context_premises.len() {
+            let anchors = premise_pairs
+                .iter()
+                .filter_map(|(_, surface)| surface_source_site(surface))
+                .collect::<BTreeSet<_>>();
+            if anchors.len() == 1 {
+                let inferred = anchors.first().expect("one inferred anchor");
+                premise_pairs = context_premises
+                    .iter()
+                    .filter_map(|premise| resolve_premise(premise, Some(inferred)))
+                    .collect();
+            }
+        }
         Some((
             goal,
             derivation,
@@ -7149,6 +7165,33 @@ impl<'a> Proof<'a> {
             })
         {
             return Some(anchored);
+        }
+        // A checked branch interface can export a kernel fact whose arm-local
+        // Surface recording does not survive as a common map entry. The
+        // statement-entry anchor still names the exact retained state. Rebuild
+        // only this selected fact at that indexed state, anchor it, and require
+        // the ordinary direct lowering to recover the same kernel premise.
+        if let Some(anchor) = premise_anchor {
+            let synthesis_context = match self.context.as_ref() {
+                ProofContext::Pure(_) => None,
+                ProofContext::Point(context) => Some((
+                    context.parameters,
+                    context.arguments,
+                    context.program_point_states,
+                )),
+                ProofContext::Execution(_) => self
+                    .outcome_point_view()
+                    .map(|view| (view.parameters, view.arguments, view.program_point_states)),
+            };
+            if let Some((parameters, arguments, program_points)) = synthesis_context
+                && let Some(state) = program_points.get(anchor)
+                && let Some(surface) =
+                    synthesize_surface_proposition(kernel, parameters, arguments, state)
+                && let Ok(anchored) = surface_with_source_site(&surface, anchor)
+                && matches_kernel(&anchored).is_some()
+            {
+                return Some(anchored);
+            }
         }
         surface_facts
             .surfaces(kernel)
@@ -16658,6 +16701,116 @@ mod tests {
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
                 assert!(pure_root.certificate().steps().is_empty());
             }
+        }
+    }
+
+    #[test]
+    fn branch_exported_premise_uses_one_selected_anchor_with_logarithmic_work() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("the standard increment theorem should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function = syntax::parse_function("int32 noop(int32 x) { return x; }")
+            .expect("test C function should parse");
+        let value = Bitvector32Term::Variable(Variable(8_177_900));
+        let arguments = vec![CExpression::Value(CValue::Int32(value))];
+        let state = CState::new();
+        let point = ProgramPointRef {
+            region: CodeRegionRef::Statement(0),
+            kind: ProgramPointKind::Entry,
+        };
+        let mut program_point_states = ProgramPointStates::new();
+        program_point_states.insert(point.clone(), state.clone());
+        let variable = || ContractExpression::CFragment(CExpression::Variable("x".to_string()));
+        let constant = |value| ContractExpression::CFragment(CExpression::Value(int32(value)));
+        let lower_premise = ClickProposition::Comparison {
+            left: variable(),
+            operator: ComparisonOperator::GreaterEqual,
+            right: constant(0),
+        };
+        let upper_premise = ClickProposition::Comparison {
+            left: variable(),
+            operator: ComparisonOperator::LessThan,
+            right: constant(i32::MAX as u32),
+        };
+        let goal_surface = ClickProposition::Comparison {
+            left: ContractExpression::Add(Box::new(variable()), Box::new(constant(1))),
+            operator: ComparisonOperator::GreaterThan,
+            right: constant(0),
+        };
+        let anchored_lower = surface_with_source_site(&lower_premise, &point)
+            .expect("the branch-exported lower bound should admit a point spelling");
+        let anchored_upper = surface_with_source_site(&upper_premise, &point)
+            .expect("the continuation upper bound should admit a point spelling");
+        let lower = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the selected point proposition should lower")
+        };
+        let kernel_lower = lower(&anchored_lower);
+        let kernel_upper = lower(&anchored_upper);
+        let goal = lower(&goal_surface);
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
+            .record_lowering(&anchored_upper, &kernel_upper)
+            .expect("only the continuation premise should carry the common point anchor");
+        let expected_premises = [anchored_lower, anchored_upper];
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.extend([kernel_lower.clone(), kernel_upper.clone()]);
+            let root = Proof::for_point_goal(
+                "branch-exported premise outcome simp",
+                0,
+                &facts,
+                goal.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
+                .expect("the selected anchor should retain the two-premise theorem step");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 96 * logarithmic_height + 384;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} anchored branch outcome simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                    if application.name == "int32_increment_strict_greater_lower_bound"
+                        && premises.as_slice() == expected_premises
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
         }
     }
 

@@ -8529,6 +8529,101 @@ fn snapshot_and_post_call_transport_fixtures_have_no_outcome_fallbacks() {
 }
 
 #[test]
+fn branch_continuation_claims_retain_their_selected_outcome_step() {
+    for (filename, function, claim, claim_label) in [
+        (
+            "proof_branch_continuation.md",
+            "joined_increment",
+            CProofClaim::Ensure(1),
+            "joined_increment.ensures_1",
+        ),
+        (
+            "proof_branch_interface_continuation.md",
+            "advance_nested_join",
+            CProofClaim::Ensure(0),
+            "advance_nested_join.ensures_0",
+        ),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(filename);
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+        let mdtest = crate::cli::parse_mdtest(&path, &source)
+            .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+        let click_source = mdtest
+            .click_source
+            .as_deref()
+            .unwrap_or_else(|| panic!("`{}` has no Click source", path.display()));
+        let c_sources = mdtest
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let (verified, events) =
+            crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources));
+        verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
+        let fallback_events = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    crate::instrumentation::VerificationEvent::OperationFinished {
+                        claim,
+                        name,
+                        ..
+                    } if claim == claim_label
+                        && (name == "outcome simp legacy exit planning"
+                            || name == "outcome simp compatibility construction")
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            fallback_events.is_empty(),
+            "`{claim_label}` entered outcome fallback planning: {fallback_events:#?}"
+        );
+        if filename == "proof_branch_continuation.md" {
+            let captured = crate::lang::click::proof::capture_c0_tactic_expansion(
+                click_source,
+                &c_sources,
+                crate::lang::click::expansion::ProofSite::FunctionClaim {
+                    function_name: function.to_string(),
+                    claim: CProofClaim::Ensure(1),
+                },
+                0,
+            )
+            .expect("the selected pre-branch step should have one stable expansion");
+            assert!(
+                matches!(captured.as_slice(), [ProofTactic::StepUsing(_)]),
+                "the selected step absorbed a later structured branch: {captured:#?}"
+            );
+        }
+
+        let retained_step = "apply(int32_increment_strict_greater_lower_bound(";
+        let expanded = expand_c0_claim_source(click_source, &c_sources, function, claim)
+            .unwrap_or_else(|error| panic!("failed to expand `{}`: {error:?}", path.display()));
+        assert!(expanded.contains(retained_step), "{expanded}");
+        verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
+            panic!(
+                "expanded proof from `{}` did not replay independently: {error:?}",
+                path.display()
+            )
+        });
+
+        let without_retained_step = expanded
+            .lines()
+            .filter(|line| !line.contains(retained_step))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            verify_c0_sources(&without_retained_step, &c_sources).is_err(),
+            "`{}` replayed after deleting its selected retained theorem step",
+            path.display()
+        );
+    }
+}
+
+#[test]
 fn frame_certified_outcome_claim_closes_on_the_checked_proof() {
     let c_source = r#"
         int32 preserve_after_loop(int32 p[], int32 n) {
