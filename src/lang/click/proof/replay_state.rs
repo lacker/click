@@ -268,6 +268,23 @@ impl<T> Default for PersistentSequence<T> {
     }
 }
 
+impl<T> Drop for PersistentSequence<T> {
+    fn drop(&mut self) {
+        // Dropping an `Arc`-owned parent chain recursively drops every unique
+        // parent and can exhaust the stack for ordinary large proof histories.
+        // Unwrap the unique suffix iteratively. At the first shared ancestor,
+        // releasing this sequence's reference is sufficient; whichever owner
+        // eventually becomes unique will perform the same iterative cleanup.
+        let mut tail = self.tail.take();
+        while let Some(node) = tail {
+            let Ok(node) = Arc::try_unwrap(node) else {
+                break;
+            };
+            tail = node.parent;
+        }
+    }
+}
+
 impl<T> PersistentSequence<T> {
     pub(super) fn push(&mut self, value: T) {
         self.tail = Some(Arc::new(PersistentSequenceNode {
@@ -1603,6 +1620,20 @@ mod proof_fact_store_tests {
         );
         assert!(!sequence.shares_tail_with(&ancestor));
         assert_eq!(ancestor.tail.as_ref().map(Arc::strong_count), Some(2));
+    }
+
+    #[test]
+    fn persistent_sequence_drops_large_shared_histories_iteratively() {
+        let mut sequence = PersistentSequence::default();
+        for value in 0..16_384 {
+            sequence.push(value);
+        }
+        let ancestor = sequence.clone();
+        sequence.push(16_384);
+
+        drop(sequence);
+        assert_eq!(ancestor.len(), 16_384);
+        drop(ancestor);
     }
 
     #[test]
