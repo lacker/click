@@ -616,3 +616,15 @@ observation regression now bypasses both outcome fallback spans, expands the
 retained assumption, and independently replays it. This removes the composite
 observation family from the positive fallback set without changing its C or
 Click proof source.
+
+## Introduced-antecedent contradiction landed (2026-08-19)
+
+Structural outcome `simp` now treats the antecedent just added by `intro` as
+the unique contradiction candidate and probes only its exact indexed opposite.
+If the current spelling does not name that opposite at the outcome snapshot,
+the search visits only Surface spellings recorded for the opposite fact.
+`Contradiction` itself now lowers result-aware proposition goals carried by an
+execution context through the same Proof-owned outcome point view as the other
+point operations. The focused branch regression expands and independently
+replays the retained `intro`/`contradiction` path, and the grouped `leaf_flag`
+fixture no longer enters either outcome fallback span.

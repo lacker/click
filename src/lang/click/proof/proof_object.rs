@@ -6736,6 +6736,15 @@ impl<'a> Proof<'a> {
                 else {
                     return Ok(None);
                 };
+                // The introduced antecedent itself is the uniquely selected
+                // contradiction candidate. This is a constant-size probe:
+                // `Contradiction` checks that exact fact and its indexed
+                // opposite, without scanning ambient path facts.
+                if let Some(closed) = introduced
+                    .try_introduced_antecedent_contradiction(surface_antecedent.as_ref())?
+                {
+                    return Ok(Some(closed));
+                }
                 let mut conjuncts = Vec::new();
                 if matches!(surface_antecedent.as_ref(), ClickProposition::And(_, _)) {
                     collect_surface_conjunct_leaves(surface_antecedent, &mut conjuncts);
@@ -6837,6 +6846,60 @@ impl<'a> Proof<'a> {
             }
             _ => Ok(None),
         }
+    }
+
+    /// Closes from the just-introduced antecedent and one exact indexed
+    /// opposite. The antecedent fixes the kernel pair; Surface lookup visits
+    /// only spellings recorded for those two facts, never the ambient set.
+    fn try_introduced_antecedent_contradiction(
+        &self,
+        surface_antecedent: &ClickProposition,
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(introduced) = self.checked_facts().first() else {
+            return Ok(None);
+        };
+        let opposite = match introduced {
+            Proposition::ConditionIs(condition, value) => {
+                Proposition::ConditionIs(condition.clone(), !value)
+            }
+            Proposition::Not(body) => body.as_ref().clone(),
+            proposition => Proposition::Not(Box::new(proposition.clone())),
+        };
+        if !self.facts().contains(&opposite) {
+            return Ok(None);
+        }
+        if let Some(closed) = attempt::candidate_outcome(
+            self.apply_step(SimpleProofStep::Contradiction(surface_antecedent.clone())),
+        )? {
+            return Ok(Some(closed));
+        }
+        let surfaces = match self.context.as_ref() {
+            ProofContext::Pure(context) => context
+                .theorem_context
+                .surface_requirements
+                .surfaces(&opposite)
+                .cloned()
+                .collect::<Vec<_>>(),
+            ProofContext::Point(context) => context
+                .surface_propositions
+                .surfaces(&opposite)
+                .cloned()
+                .collect::<Vec<_>>(),
+            ProofContext::Execution(_) => self
+                .outcome_point_view()
+                .into_iter()
+                .flat_map(|view| view.surface_propositions.surfaces(&opposite))
+                .cloned()
+                .collect::<Vec<_>>(),
+        };
+        for surface in surfaces {
+            if let Some(closed) = attempt::candidate_outcome(
+                self.apply_step(SimpleProofStep::Contradiction(surface)),
+            )? {
+                return Ok(Some(closed));
+            }
+        }
+        Ok(None)
     }
 
     /// Retains the kernel decision and every exact replayable Surface spelling
@@ -10104,47 +10167,7 @@ impl<'a> Proof<'a> {
     }
 
     fn apply_contradiction(&self, surface: &ClickProposition) -> Result<ProofState, ClickError> {
-        let fact = match self.context.as_ref() {
-            ProofContext::Pure(context) => lower_pure_theorem_proposition(
-                context.claim_label,
-                surface,
-                &context.theorem_context.values,
-                &context.theorem_context.array_refs,
-                &context.theorem_context.memory,
-                context.predicate_environment,
-                context.click_function_environment,
-            )
-            .map_err(|message| {
-                self.step_error(format!("could not lower `contradiction` fact: {message}"))
-            })?,
-            ProofContext::Point(context) => {
-                if let Some(recorded) = context
-                    .surface_propositions
-                    .available_kernel(surface, context.lowering_context.as_ref())
-                {
-                    recorded.clone()
-                } else {
-                    lower_point_proposition(
-                        surface,
-                        context.lowering_context.as_ref(),
-                        context.parameters,
-                        context.arguments,
-                        context.pre_state,
-                        context.state,
-                        context.result,
-                        context.program_point_states,
-                        context.predicate_environment,
-                        context.click_function_environment,
-                    )
-                    .map_err(|message| {
-                        self.step_error(format!("could not lower `contradiction` fact: {message}"))
-                    })?
-                }
-            }
-            ProofContext::Execution(_) => {
-                return Err(self.step_error("`contradiction` requires a proposition goal"));
-            }
-        };
+        let fact = self.lower_surface_proposition(surface, "`contradiction` fact")?;
         let negated = Proposition::Not(Box::new(fact.clone()));
         let opposite_condition = match &fact {
             Proposition::ConditionIs(condition, value) => {

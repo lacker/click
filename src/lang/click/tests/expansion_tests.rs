@@ -752,6 +752,50 @@ fn post_execution_simp_builds_recursive_conjunction_on_proof() {
 }
 
 #[test]
+fn post_execution_simp_uses_the_introduced_antecedent_for_contradiction() {
+    let c_source = r#"
+        int32 branch_value(int32 x) {
+            if (x != 0) {
+                return 0;
+            }
+            return 1;
+        }
+    "#;
+    let click_source = r#"
+        verifying "branch.c";
+
+        int32 branch_value(int32 x) {
+            ensures x == 0 implies result == 1;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let sources = [("branch.c", c_source)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the vacuous path implication should close through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp legacy exit planning"
+                    || name == "outcome simp compatibility construction"
+        )),
+        "introduced contradiction closure must bypass outcome compatibility planning: {events:#?}"
+    );
+
+    let expanded =
+        expand_c0_claim_source(click_source, &sources, "branch_value", CProofClaim::Grouped)
+            .expect("the retained introduced contradiction should expand");
+    assert!(expanded.contains("intro();"), "{expanded}");
+    assert!(expanded.contains("contradiction("), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the introduced contradiction should replay independently");
+}
+
+#[test]
 fn post_execution_smart_have_builds_recursive_conjunction_on_proof() {
     let c_source = r#"
         int32 first(int32 x, int32 y) {
