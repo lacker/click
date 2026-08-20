@@ -26,5 +26,5 @@ int32 identity(int32 x) {
 ```
 
 ```expect
-fail: grouped `simp` could not certify its complete claim transition
+fail: unclosed goal: result >= 0
 ```

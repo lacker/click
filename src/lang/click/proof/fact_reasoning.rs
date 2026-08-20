@@ -1766,25 +1766,6 @@ pub(super) fn minimal_proposition_derivation(
     Ok(Some(minimize_derivation_premises(initial, derive)?))
 }
 
-pub(super) fn minimal_simp_proposition_derivation(
-    proposition: &Proposition,
-    available: &[Proposition],
-) -> Result<Option<PropositionDerivation>, ClickError> {
-    if !proposition_has_contextual_derivation_rules(proposition) {
-        return Ok(None);
-    }
-    let derive = |facts: &[Proposition]| {
-        assumptions_from_propositions(facts).derive_simp_proposition(proposition)
-    };
-    check_verification_deadline()?;
-    let Some(initial) = derive(available) else {
-        check_verification_deadline()?;
-        return Ok(None);
-    };
-    check_verification_deadline()?;
-    Ok(Some(minimize_derivation_premises(initial, derive)?))
-}
-
 fn condition_search_budget_error(proposition: &Proposition, candidate_count: usize) -> ClickError {
     ClickError::new(format!(
         "condition-certificate premise search exceeded the active verification budget\n  target: {}\n  ambient condition facts: {candidate_count}\n  context: {}\nprovide the exact premises with simple tactics to continue",

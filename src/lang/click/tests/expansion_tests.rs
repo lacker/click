@@ -630,7 +630,7 @@ fn grouped_post_execution_simp_applies_planned_steps_once_through_proof() {
     )
     .expect("the planner-selected grouped certificate should expand");
     assert!(
-        expanded.contains("rewrite(at(statement(0).entry, x) == at(statement(0).entry, 0));"),
+        expanded.contains("rewrite(at(function.entry, x == 0));"),
         "{expanded}"
     );
     assert!(expanded.contains("normalize();"), "{expanded}");
@@ -683,9 +683,7 @@ fn post_execution_simp_builds_disjunction_cases_on_proof() {
     .expect("the checked case split should expand");
     assert!(!expanded.contains("simp();"), "{expanded}");
     assert!(
-        expanded.contains(
-            "cases (at(statement(0).entry, x) == at(statement(0).entry, 0) or at(statement(0).entry, x) == at(statement(0).entry, 1))"
-        ),
+        expanded.contains("cases (at(function.entry, x == 0 or x == 1))"),
         "{expanded}"
     );
     assert_eq!(expanded.matches("rewrite(").count(), 2, "{expanded}");
@@ -4103,18 +4101,15 @@ fn outcome_simp_consumes_its_recorded_bitvector_equality_path() {
     )
     .expect("the retained outcome equality path should expand");
     assert!(
-        expanded
-            .contains("rewrite(at(statement(0).entry, first) == at(statement(0).entry, second));"),
+        expanded.contains("rewrite(at(function.entry, first == second));"),
         "{expanded}"
     );
     assert!(
-        expanded
-            .contains("rewrite(at(statement(0).entry, second) == at(statement(0).entry, third));"),
+        expanded.contains("rewrite(at(function.entry, second == third));"),
         "{expanded}"
     );
     assert!(
-        expanded
-            .contains("rewrite(at(statement(0).entry, third) == at(statement(0).entry, last));"),
+        expanded.contains("rewrite(at(function.entry, third == last));"),
         "{expanded}"
     );
     assert!(expanded.contains("normalize();"), "{expanded}");
@@ -4168,13 +4163,13 @@ fn outcome_simp_applies_theorems_through_its_recorded_order_path() {
     .expect("the retained outcome theorem path should expand");
     assert!(
         expanded.contains(
-            "apply(int32_le_lt_transitive(at(statement(0).entry, first), at(statement(0).entry, second), at(statement(0).entry, third))) using"
+            "apply(int32_le_lt_transitive(at(function.entry, first), at(function.entry, second), at(function.entry, third))) using"
         ),
         "{expanded}"
     );
     assert!(
         expanded.contains(
-            "apply(int32_lt_le_transitive(at(statement(0).entry, first), at(statement(0).entry, third), at(statement(0).entry, last))) using"
+            "apply(int32_lt_le_transitive(at(function.entry, first), at(function.entry, third), at(function.entry, last))) using"
         ),
         "{expanded}"
     );
@@ -4552,7 +4547,7 @@ fn restricted_simp_inside_have_expands_to_explicit_equality_rewrites() {
         expanded_have.contains("rewrite(x == y);"),
         "{expanded_have}"
     );
-    assert!(expanded_have.contains("assumption();"), "{expanded_have}");
+    assert!(expanded_have.contains("normalize();"), "{expanded_have}");
     assert!(!expanded_have.contains("simp() using"), "{expanded_have}");
     assert!(!expanded_have.contains("derive using"), "{expanded_have}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
@@ -4619,7 +4614,22 @@ fn restricted_simp_expands_loadable_subrange_to_explicit_transport() {
     );
     assert!(expanded_have.contains("0 <= index;"), "{expanded_have}");
     assert!(expanded_have.contains("index < length;"), "{expanded_have}");
-    assert!(expanded_have.contains("assumption();"), "{expanded_have}");
+    let normalized_have = expanded_have
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        normalized_have,
+        "have loadable(data[index..(index + 1)]) by {\n\
+         transport(loadable(data[0..length]), loadable(data[index..(index + 1)])) using {\n\
+         loadable(data[0..length]);\n\
+         0 <= index;\n\
+         index < length;\n\
+         }\n\
+         }"
+    );
     assert!(!expanded_have.contains("simp() using"), "{expanded_have}");
     assert!(!expanded_have.contains("derive using"), "{expanded_have}");
     verify_c0_sources(&expanded, &sources).expect("explicit loadability transport should replay");
@@ -4751,7 +4761,7 @@ fn post_execution_restricted_simp_expands_without_derive() {
         + 1;
     let sources = [("identity.c", c_source)];
     let expanded = expand_c0_tactic_source_at(click_source, &sources, line, column).unwrap();
-    let selected = &expanded[offset..expanded.find("assumption();").unwrap()];
+    let selected = &expanded[offset..];
     assert!(selected.contains("rewrite((x + 1) == y);"), "{selected}");
     assert!(!selected.contains("derive using"), "{selected}");
     verify_c0_sources(&expanded, &sources).expect("explicit post-execution proof should replay");
@@ -8665,13 +8675,37 @@ fn resource_example_pipelines_have_no_outcome_fallbacks() {
             "linked-list",
             "linked_list.click",
             "list_roundtrip",
-            "rewrite(at(statement(4).entry, value) == at(statement(4).entry, node->value))",
+            "have observed == node->value by {",
+        ),
+        (
+            "input-cursor",
+            "input_cursor.click",
+            "input_cursor_take",
+            "transport(at(statement(2).entry, loadable(old(owner->data[0..owner->len])))",
+        ),
+        (
+            "owned-segmented-buffer",
+            "owned_segmented_buffer.click",
+            "owned_segmented_buffer_swap",
+            "apply(int32_successor_le_implies_lt(0, owner->first_len)) using {",
+        ),
+        (
+            "owned-string",
+            "owned_string.click",
+            "owned_string_init",
+            "rewrite(owner->cap == capacity);",
         ),
         (
             "recursive-zero-list",
             "recursive_zero_list.click",
             "zero_list_pipeline",
             "fold(zero_list(first));",
+        ),
+        (
+            "vector-push",
+            "vector_push.click",
+            "vector_push",
+            "apply(int32_increment_preserves_order(",
         ),
     ] {
         let path = manifest.join("examples").join(project).join(sidecar);

@@ -702,15 +702,10 @@ fn expanded_read_step_keeps_named_range_separation_premises() {
         smart: std::time::Duration::from_millis(100),
         control: std::time::Duration::from_secs(30),
     };
-    let deadline_error = crate::instrumentation::with_tactic_limits(strict_limits, || {
+    crate::instrumentation::with_tactic_limits(strict_limits, || {
         verify_c0_sources(&expanded, &[("owned_string_pop.c", c_source)])
     })
-    .expect_err("an over-budget deferred tactic should stop verification directly");
-    assert!(
-        deadline_error.message().contains("real-time limit"),
-        "unexpected deferred-tactic failure: {}",
-        deadline_error.message()
-    );
+    .expect("the expanded certificate should contain no deferred smart tactic");
 
     let generous_limits = crate::instrumentation::TacticLimits {
         simple: std::time::Duration::from_secs(30),

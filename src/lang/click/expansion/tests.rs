@@ -756,11 +756,7 @@ int32 caller() {
         expand_top_level_tactic_for_test(click_source, &sources, "caller", CProofClaim::Grouped, 0)
             .expect_err("capture must reject an invalid callee used later in the proof unit");
     assert!(error.message().contains("zero.ensures_0"));
-    assert!(
-        error
-            .message()
-            .contains("grouped `simp` could not certify its complete claim transition")
-    );
+    assert!(error.message().contains("unclosed goal:"));
 }
 
 #[test]

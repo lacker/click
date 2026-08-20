@@ -26,5 +26,5 @@ int32 branch_value(int32 flag) {
 ```
 
 ```expect
-fail: `have` failed
+fail: checked outcome `have` search did not retain a complete proof
 ```

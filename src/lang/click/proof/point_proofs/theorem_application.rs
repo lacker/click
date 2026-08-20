@@ -90,28 +90,36 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
 
     let mut explicit_premises = Vec::new();
     for surface_premise in surface_premises {
-        let premise = if let Some(recorded) = surface_propositions
-            .available_kernel_matching(surface_premise, |kernel| available.contains(kernel))
-        {
-            recorded.clone()
-        } else {
-            lower_point_proposition_with_assumptions(
-                surface_premise,
-                &lowering_assumptions,
-                parameters,
-                arguments,
-                pre_state,
-                state,
-                result,
-                program_point_states,
-                predicate_environment,
-                click_function_environment,
-            )
-            .map_err(|message| {
+        let freshly_lowered = lower_point_proposition_with_assumptions(
+            surface_premise,
+            &lowering_assumptions,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            result,
+            program_point_states,
+            predicate_environment,
+            click_function_environment,
+        );
+        // Prefer the current-state lowering when it is replayable. A retained
+        // Surface spelling can also name an older raw load whose value the
+        // current memory evaluates through (for example after swapping struct
+        // fields); that historical kernel remains the fallback for premises
+        // that cannot be replayed under the current spelling.
+        let recorded = || {
+            surface_propositions
+                .available_kernel_matching(surface_premise, |kernel| available.contains(kernel))
+                .cloned()
+        };
+        let premise = match freshly_lowered {
+            Ok(fresh) if available.replay_available_across_effects(&fresh, &[]) => fresh,
+            Ok(fresh) => recorded().unwrap_or(fresh),
+            Err(message) => recorded().ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: could not lower `apply using` premise: {message}"
                 ))
-            })?
+            })?,
         };
         if !available.replay_available_across_effects(&premise, &[]) {
             let available_facts = available.to_vec();

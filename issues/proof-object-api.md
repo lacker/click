@@ -1,8 +1,31 @@
 # Proof object API
 
-> DESIGN AND MIGRATION HISTORY. The ten independently closable endgame issues
-> are listed in `issues/README.md`; progress is counted from those leaves, not
-> from this architectural umbrella.
+> MIGRATION COMPLETE (2026-08-20). This file is the architectural design and
+> migration history; it is no longer an open issue.
+
+## Completion audit
+
+The endgame board is closed. The final audit maps the architecture to current
+code and gates as follows:
+
+- immutable `Proof` descendants, persistent typed goals, stable split/scope
+  identity, and ancestry-checked joins enforce the capability boundary;
+- smart `simp`, theorem application, transport, statement execution,
+  branching, resource operations, and outcome claims retain checked simple or
+  structural Proof transitions, while rejected candidates leave their root
+  unchanged;
+- function exits remain typed path-local outcome goals through result and
+  effect closure; production code contains no outcome compatibility
+  constructor, legacy exit planner, per-claim exit closer, dirty resync, or
+  legacy fact-vector adapter;
+- expansion regressions cover pure arithmetic/equality, quantified goals,
+  logical and execution branches, resources, calls/effects, snapshot
+  transport, and bounded negative diagnostics; each representative expansion
+  independently reparses and verifies;
+- persistent-fork, indexed-selection, branch/join, outcome, and certificate
+  regressions enforce the deterministic scaling contract; and
+- `scripts/check.sh` is the final acceptance gate, including the library,
+  mdtest, example, expansion, and audit surfaces.
 
 ## Summary
 
@@ -19,9 +42,9 @@ reconstruct a certificate from semantic aftermath or rerun search. Arbitrary
 smart tactics can be incomplete, expensive up to their enforced budget, or
 produce inelegant proofs without entering the soundness boundary.
 
-This is the next architectural priority. Do not repair individual smart-tactic
-certificate failures by adding another planner record, evidence wrapper,
-lowering pass, or independent replay. Migrate them onto this API.
+Future smart-tactic work must preserve this boundary: do not repair a proof
+failure by adding another semantic-after-the-fact certificate constructor or
+independent compatibility replay.
 
 ## Current strategy: continuations and multiple outcome goals
 

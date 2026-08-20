@@ -115,9 +115,7 @@ fn grouped_function_proof_checks_every_claim() {
         error.message()
     );
     assert!(
-        error
-            .message()
-            .contains("grouped `simp` could not certify its complete claim transition"),
+        error.message().contains("unclosed goal: result != value"),
         "unexpected error: {}",
         error.message()
     );

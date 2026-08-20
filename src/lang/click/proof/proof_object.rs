@@ -391,7 +391,7 @@ fn collect_statement_variable_names(statement: &CStatement, names: &mut BTreeSet
 
 pub(super) fn script_contains_linear_search(tactics: &[ProofTactic]) -> bool {
     tactics.iter().any(|tactic| match tactic {
-        ProofTactic::ApplyTheorem(_) | ProofTactic::Simp => true,
+        ProofTactic::ApplyTheorem(_) | ProofTactic::Simp | ProofTactic::SimpUsing(_) => true,
         ProofTactic::Have(have) => source_proof_contains_linear_search(&have.proof),
         ProofTactic::If(proof_if) => {
             script_contains_linear_search(&proof_if.then_tactics)
@@ -579,6 +579,7 @@ fn linear_script_is_supported(tactics: &[ProofTactic]) -> bool {
             .all(|(index, tactic)| match tactic {
                 ProofTactic::ApplyTheorem(_) => true,
                 ProofTactic::Simp => index + 1 == tactics.len(),
+                ProofTactic::SimpUsing(_) => index + 1 == tactics.len(),
                 ProofTactic::Have(have) => source_proof_is_supported(&have.proof),
                 ProofTactic::If(proof_if) => {
                     index + 1 == tactics.len()
@@ -998,6 +999,10 @@ struct OutcomePointData {
     /// selects its source by requirement index, which persistent
     /// deduplication would misalign.
     requirement_facts: Arc<Vec<Proposition>>,
+    /// Original proposition requirements keyed by their checked entry fact.
+    /// Typed outcome evidence uses this persistent index to recover an exact
+    /// function-entry Surface premise without scanning unrelated facts.
+    requirement_surfaces: Arc<PersistentMap<Proposition, ClickProposition>>,
 }
 
 /// The path-local semantic context owned by one goal.
@@ -2527,7 +2532,9 @@ impl<'a> Proof<'a> {
                     scope = scope.apply_step(SimpleProofStep::Assumption)?;
                 }
             } else {
-                scope.body = scope.body.check_certificate_with_origin(proof, origin)?;
+                scope.body = scope
+                    .body
+                    .check_certificate_with_origin(proof, origin, false)?;
             }
             checked = scope.join()?;
         }
@@ -2829,19 +2836,19 @@ impl<'a> Proof<'a> {
     fn apply_assumption(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
         let available = match self.context.as_ref() {
-            ProofContext::Point(_) => self.facts().pure_replay_available(goal),
+            ProofContext::Point(_) => {
+                self.facts().pure_replay_available(goal) || normalizes_context_free(goal)
+            }
             // A judgment stated at a function outcome closes with the same
             // point-level replay availability its legacy point root used.
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
-                self.facts().pure_replay_available(goal)
+                self.facts().pure_replay_available(goal) || normalizes_context_free(goal)
             }
             ProofContext::Pure(_) | ProofContext::Execution(_) => self.facts().contains(goal),
         };
         if !available {
-            return Err(self.step_error(format!(
-                "`assumption` requires the exact current goal as an available fact: {:?}",
-                goal
-            )));
+            return Err(self
+                .step_error("`assumption` requires the exact current goal as an available fact"));
         }
         Ok(self.closed_state())
     }
@@ -2850,10 +2857,7 @@ impl<'a> Proof<'a> {
     fn apply_normalize(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`normalize` requires a proposition goal")?;
         if !normalizes_context_free(goal) {
-            return Err(self.step_error(format!(
-                "`normalize` requires a context-free true goal: {:?}",
-                goal
-            )));
+            return Err(self.step_error("`normalize` goal did not normalize to true"));
         }
         Ok(self.closed_state())
     }
@@ -2986,15 +2990,15 @@ impl<'a> Proof<'a> {
     fn apply_enumerate(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`enumerate` requires a proposition goal")?;
         let Some(instances) = crate::kernel::finite_forall_goal_instances(goal) else {
-            return Err(self.step_error(format!(
-                "`enumerate` requires a constant-bounded universal goal, got {goal:?}"
-            )));
+            return Err(
+                self.step_error("`enumerate` requires a universal goal with constant bounds")
+            );
         };
         for (_, instance) in instances {
             if !normalizes_context_free(&instance) && !self.facts().contains(&instance) {
-                return Err(self.step_error(format!(
-                    "`enumerate` requires an unavailable exact instance: {instance:?}"
-                )));
+                return Err(self.step_error(
+                    "`enumerate` requires each in-range instance as an exact available fact",
+                ));
             }
         }
         Ok(self.closed_state())
@@ -3667,6 +3671,19 @@ impl<'a> Proof<'a> {
         };
         let body_kernel = self.lower_surface_goal(&structural_proposition, "`have` body")?;
         let mut body_facts = self.facts().with_selected_resource_separation(&body_kernel);
+        let selected_surface_separation = match &structural_proposition {
+            ClickProposition::Separate { .. } => true,
+            ClickProposition::At { proposition, .. } => {
+                matches!(proposition.as_ref(), ClickProposition::Separate { .. })
+            }
+            _ => false,
+        };
+        if selected_surface_separation
+            && !body_facts.contains(&body_kernel)
+            && body_facts.assumptions().proves(&body_kernel)
+        {
+            body_facts = body_facts.with_fact(body_kernel.clone());
+        }
         for name in self.focused_goal_unfolds().iter() {
             let recorded_bodies = match self.context.as_ref() {
                 ProofContext::Pure(context) => context
@@ -5775,13 +5792,25 @@ impl<'a> Proof<'a> {
         &self,
         certificate: &ProofCertificate,
     ) -> Result<Self, ClickError> {
-        self.check_certificate_with_origin(certificate, None)
+        self.check_certificate_with_origin(certificate, None, false)
+    }
+
+    /// Checks a planner-generated certificate while omitting a trailing
+    /// `assumption()` when the preceding retained step already closed the
+    /// goal. Explicit source certificates remain strict through
+    /// `check_certificate`.
+    fn check_generated_certificate(
+        &self,
+        certificate: &ProofCertificate,
+    ) -> Result<Self, ClickError> {
+        self.check_certificate_with_origin(certificate, None, true)
     }
 
     fn check_certificate_with_origin(
         &self,
         certificate: &ProofCertificate,
         origin: Option<ProofStepOrigin>,
+        generated: bool,
     ) -> Result<Self, ClickError> {
         enum CheckFrame<'certificate, 'proof> {
             Continue {
@@ -5869,6 +5898,9 @@ impl<'a> Proof<'a> {
                         steps = body.steps();
                         next = 0;
                     }
+                    _ if generated
+                        && matches!(step, SimpleProofStep::Assumption)
+                        && proof.is_complete() => {}
                     _ => proof = proof.apply_step_with_origin(step.clone(), origin)?,
                 }
                 continue;
@@ -6668,8 +6700,8 @@ impl<'a> Proof<'a> {
                 &proof,
                 &mut budget,
                 [
-                    SimpleProofStep::Assumption,
                     SimpleProofStep::Normalize,
+                    SimpleProofStep::Assumption,
                     SimpleProofStep::Split,
                     SimpleProofStep::Left,
                     SimpleProofStep::Right,
@@ -6697,6 +6729,11 @@ impl<'a> Proof<'a> {
         if let Some(proof) = self.try_direct_logical_closure()? {
             return Ok(Some(proof));
         }
+        if let Some(surface_goal) = self.surface_goal()
+            && let Some(proof) = self.try_selected_unchanged_load_forall_goal(surface_goal, &[])
+        {
+            return Ok(Some(proof));
+        }
         let atomic = (|| {
             let (goal, derivation, premise_pairs, point_application_closes_goal) =
                 self.selected_simp_derivation()?;
@@ -6706,11 +6743,14 @@ impl<'a> Proof<'a> {
                 &premise_pairs,
                 point_application_closes_goal,
             )
-            .or_else(|| self.try_single_selected_equality_rewrite_closure(&premise_pairs))
+            .or_else(|| self.try_selected_equality_rewrite_chain(&premise_pairs))
             .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
             .or_else(|| {
                 self.surface_goal().and_then(|surface_goal| {
-                    self.try_selected_forall_goal(&goal, surface_goal, &premise_pairs)
+                    self.try_selected_unchanged_load_forall_goal(surface_goal, &premise_pairs)
+                        .or_else(|| {
+                            self.try_selected_forall_goal(&goal, surface_goal, &premise_pairs)
+                        })
                 })
             })
             .or_else(|| self.try_selected_forall_instantiation(&goal, &premise_pairs))
@@ -6718,6 +6758,16 @@ impl<'a> Proof<'a> {
         })();
         if let Some(atomic) = atomic {
             return Ok(Some(atomic));
+        }
+        let anchored_pairs = self
+            .selected_simp_derivation()
+            .map(|(_, _, pairs, _)| pairs)
+            .unwrap_or_default();
+        if let Some(anchored) = self
+            .try_outcome_anchored_order_transitivity(&anchored_pairs)
+            .or_else(|| self.try_outcome_anchored_increment_order(&anchored_pairs))
+        {
+            return Ok(Some(anchored));
         }
         if let Some(rewritten) = self.try_indexed_goal_equality_rewrite_closure() {
             return Ok(Some(rewritten));
@@ -6738,6 +6788,155 @@ impl<'a> Proof<'a> {
             return Ok(None);
         };
         self.try_structural_simp_closure(&surface_goal)
+    }
+
+    /// Proves a two-edge non-strict outcome bound at the return entry or its
+    /// immediate predecessor. Outcome lowering deliberately keeps selected
+    /// premises in their source spelling; anchoring those exact premises at
+    /// the execution boundary lets the ordinary theorem checker connect a
+    /// returned local to its result without consulting the retired planner.
+    fn try_outcome_anchored_order_transitivity(
+        &self,
+        premise_pairs: &[(Proposition, ClickProposition)],
+    ) -> Option<Self> {
+        let point = self.focused_outcome_point()?;
+        let anchor = point.premise_anchor.as_ref()?;
+        let predecessor = match anchor.region {
+            CodeRegionRef::Statement(index) if index > 0 => Some(ProgramPointRef {
+                region: CodeRegionRef::Statement(index - 1),
+                kind: anchor.kind,
+            }),
+            _ => None,
+        };
+        for anchor in predecessor
+            .as_ref()
+            .into_iter()
+            .chain(std::iter::once(anchor))
+        {
+            let ordered = premise_pairs
+                .iter()
+                .filter_map(|(_, surface)| {
+                    let anchored = surface_with_source_site(surface, anchor).ok()?;
+                    let parts = surface_nonstrict_parts(&anchored)?;
+                    Some((anchored, parts))
+                })
+                .collect::<Vec<_>>();
+            for (first_surface, (first, middle)) in &ordered {
+                for (second_surface, (second_middle, last)) in &ordered {
+                    if middle != second_middle {
+                        continue;
+                    }
+                    let theorem = SimpleProofStep::ApplyTheoremUsing {
+                        application: TheoremApplication {
+                            name: "int32_ge_transitive".to_string(),
+                            arguments: vec![last.clone(), middle.clone(), first.clone()],
+                        },
+                        premises: vec![second_surface.clone(), first_surface.clone()],
+                    };
+                    let Ok(applied) = self.apply_step(theorem) else {
+                        continue;
+                    };
+                    if applied.is_complete() {
+                        return Some(applied);
+                    }
+                    if let Some(closed) = applied.try_direct_logical_closure().ok().flatten() {
+                        return Some(closed);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Proves an outcome increment bound at the return entry or its immediate
+    /// predecessor. The latter is the assignment boundary that can connect a
+    /// named return local to the increment expression. The two propositions
+    /// come only from the atomic derivation's selected requirements; the
+    /// ordinary theorem, nested-`have`, and assumption checkers decide whether
+    /// either constant-size historical application establishes the current
+    /// result-aware goal.
+    fn try_outcome_anchored_increment_order(
+        &self,
+        premise_pairs: &[(Proposition, ClickProposition)],
+    ) -> Option<Self> {
+        let point = self.focused_outcome_point()?;
+        let anchor = point.premise_anchor.as_ref()?;
+        let predecessor = match anchor.region {
+            CodeRegionRef::Statement(index) if index > 0 => Some(ProgramPointRef {
+                region: CodeRegionRef::Statement(index - 1),
+                kind: anchor.kind,
+            }),
+            _ => None,
+        };
+        let surface_goal = self.surface_goal()?.clone();
+        if surface_nonstrict_parts(&surface_goal).is_none() {
+            return None;
+        }
+        for anchor in predecessor
+            .as_ref()
+            .into_iter()
+            .chain(std::iter::once(anchor))
+        {
+            let mut lower_bounds = Vec::new();
+            let mut upper_bounds = Vec::new();
+            for (_, surface) in premise_pairs {
+                let anchored = surface_with_source_site(surface, anchor).ok()?;
+                if let Some(parts) = surface_nonstrict_parts(&anchored) {
+                    lower_bounds.push((anchored.clone(), parts));
+                }
+                if let Some(parts) = surface_strict_parts(&anchored) {
+                    upper_bounds.push((anchored, parts));
+                }
+            }
+            for (lower_surface, (surface_lower, lower_value)) in &lower_bounds {
+                for (upper_surface, (upper_value, surface_upper)) in &upper_bounds {
+                    if lower_value != upper_value {
+                        continue;
+                    }
+                    let theorem = SimpleProofStep::ApplyTheoremUsing {
+                        application: TheoremApplication {
+                            name: "int32_increment_preserves_order".to_string(),
+                            arguments: vec![
+                                lower_value.clone(),
+                                surface_lower.clone(),
+                                surface_upper.clone(),
+                            ],
+                        },
+                        premises: vec![lower_surface.clone(), upper_surface.clone()],
+                    };
+                    let Ok(applied) = self.apply_step(theorem) else {
+                        continue;
+                    };
+                    if applied.is_complete() {
+                        return Some(applied);
+                    }
+                    let one = ContractExpression::CFragment(CExpression::Value(int32(1)));
+                    let theorem_conclusion = ClickProposition::Comparison {
+                        left: ContractExpression::Add(
+                            Box::new(surface_lower.clone()),
+                            Box::new(one.clone()),
+                        ),
+                        operator: ComparisonOperator::LessEqual,
+                        right: ContractExpression::Add(
+                            Box::new(lower_value.clone()),
+                            Box::new(one),
+                        ),
+                    };
+                    if let Some(closed) = applied
+                        .apply_step(SimpleProofStep::TransportUsing {
+                            source: theorem_conclusion,
+                            target: surface_goal.clone(),
+                            premises: Vec::new(),
+                        })
+                        .ok()
+                        .or_else(|| applied.try_direct_logical_closure().ok().flatten())
+                    {
+                        return Some(closed);
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Tries the focused outcome goal itself as one explicit fact transport
@@ -6842,7 +7041,6 @@ impl<'a> Proof<'a> {
                     }
                 }
                 if !conjuncts.is_empty()
-                    && !proposition_contains_old_expression(surface_antecedent)
                     && let Some(surface_goal) = introduced.surface_goal()
                     && let Some(source) = old_reflexive_transport_source(surface_goal)
                 {
@@ -7082,7 +7280,11 @@ impl<'a> Proof<'a> {
                     };
                     (
                         &point.surface_propositions,
-                        true,
+                        // Entry-anchored premises can add a replay-equivalent
+                        // outcome fact without discharging the exact goal
+                        // spelling. Keep the ordinary trailing assumption so
+                        // the checked successor decides whether it is needed.
+                        false,
                         point.premise_anchor.as_ref(),
                     )
                 }
@@ -7147,6 +7349,15 @@ impl<'a> Proof<'a> {
         kernel: &Proposition,
     ) -> Option<ClickProposition> {
         let matches_kernel = |candidate: &ClickProposition| {
+            if self.focused_outcome_point().is_some()
+                && surface_facts
+                    .available_kernel_matching(candidate, |fact| self.facts().contains(fact))
+                    .is_some_and(|lowered| {
+                        lowered == kernel || condition_polarity_equivalent(lowered, kernel)
+                    })
+            {
+                return Some(());
+            }
             let lowered = self
                 .lower_surface_proposition_direct(candidate, "typed simp premise spelling")
                 .ok()?;
@@ -7158,6 +7369,51 @@ impl<'a> Proof<'a> {
                 && matches_kernel(surface).is_some()
         }) {
             return Some(surface.clone());
+        }
+        // Function requirements retain their original unanchored Surface
+        // spelling while their kernel fact is entry-relative. Probe that one
+        // canonical source site before the moving statement-entry anchor;
+        // the direct lowering check below rejects non-entry facts, and the
+        // lookup visits only spellings indexed under this selected premise.
+        let function_entry = ProgramPointRef {
+            region: CodeRegionRef::Function,
+            kind: ProgramPointKind::Entry,
+        };
+        if let Some(point) = self.focused_outcome_point()
+            && let Some(surface) = point.requirement_surfaces.get(kernel)
+        {
+            let anchored = ClickProposition::At {
+                selector: VisitSelector::ProgramPoint(function_entry.clone()),
+                proposition: Box::new(surface.clone()),
+            };
+            if matches_kernel(&anchored).is_some() {
+                return Some(anchored);
+            }
+            if let Ok(anchored) = surface_with_source_site(surface, &function_entry)
+                && matches_kernel(&anchored).is_some()
+            {
+                return Some(anchored);
+            }
+        }
+        if self.focused_outcome_point().is_some() {
+            if let Some(anchored) = surface_facts.surfaces(kernel).find_map(|surface| {
+                let anchored = surface_with_source_site(surface, &function_entry).ok()?;
+                matches_kernel(&anchored).map(|()| anchored)
+            }) {
+                return Some(anchored);
+            }
+            if let Some(view) = self.outcome_point_view()
+                && let Some(surface) = synthesize_surface_proposition(
+                    kernel,
+                    view.parameters,
+                    view.arguments,
+                    view.pre_state,
+                )
+                && let Ok(anchored) = surface_with_source_site(&surface, &function_entry)
+                && matches_kernel(&anchored).is_some()
+            {
+                return Some(anchored);
+            }
         }
         if let Some(anchor) = premise_anchor
             && let Some(anchored) = surface_facts.surfaces(kernel).find_map(|surface| {
@@ -7250,9 +7506,9 @@ impl<'a> Proof<'a> {
     /// This complements the kernel derivation path for arithmetic goals whose
     /// normal form is exposed only after selected historical equalities are
     /// rewritten. Candidate lookup is goal-local and persistently indexed.
-    /// A non-closing refinement is retained only when it strictly removes a
-    /// distinct goal atom, so chained search terminates structurally without
-    /// a tactic cap or an ambient-fact walk.
+    /// Atomic goals may retain a same-width renaming, but each selected
+    /// equality is used at most once; structural goals keep only a closing
+    /// rewrite so their recursive connective proof remains visible.
     fn try_indexed_goal_equality_rewrite_closure(&self) -> Option<Self> {
         let (surface_facts, premise_anchor) = match self.context.as_ref() {
             ProofContext::Pure(context) => (&context.theorem_context.surface_requirements, None),
@@ -7266,13 +7522,15 @@ impl<'a> Proof<'a> {
             }
         };
         let mut proof = self.clone();
+        let mut used = BTreeSet::new();
         loop {
-            let goal = proof.goal()?;
+            let goal = proof.goal()?.clone();
             let allows_chain = matches!(goal, Proposition::ConditionIs(_, _));
-            let mut goal_atoms = BTreeSet::new();
-            collect_proposition_bitvector_atoms(goal, &mut goal_atoms);
-            let mut shrinking_refinement = None;
-            for equality in proof.facts().bitvector_equalities_mentioning(goal) {
+            let mut refinement = None;
+            for equality in proof.facts().bitvector_equalities_mentioning(&goal) {
+                if used.contains(&equality) {
+                    continue;
+                }
                 let Some(surface) =
                     proof.replayable_surface_fact(surface_facts, premise_anchor, &equality)
                 else {
@@ -7295,41 +7553,53 @@ impl<'a> Proof<'a> {
                     {
                         return Some(closed);
                     }
-                    if allows_chain && shrinking_refinement.is_none() {
-                        let mut rewritten_atoms = BTreeSet::new();
-                        collect_proposition_bitvector_atoms(
-                            rewritten.goal()?,
-                            &mut rewritten_atoms,
-                        );
-                        if rewritten_atoms.len() < goal_atoms.len() {
-                            shrinking_refinement = Some(rewritten);
-                        }
+                    if allows_chain && refinement.is_none() && rewritten.goal() != Some(&goal) {
+                        refinement = Some((equality.clone(), rewritten));
                     }
                 }
             }
-            proof = shrinking_refinement?;
+            let (equality, rewritten) = refinement?;
+            used.insert(equality);
+            proof = rewritten;
         }
     }
 
-    /// Handles the first bounded equality-refinement search directly on
-    /// `Proof`: each equality explicitly selected by the kernel derivation is
-    /// tried as one transactional rewrite of the root, after which an
-    /// already-audited direct or typed atomic closer must finish it.
-    fn try_single_selected_equality_rewrite_closure(
+    /// Rewrites with only the explicitly selected equality premises, at most
+    /// once each. Every candidate rewrite is checked transactionally, and
+    /// the finite user-written premise list is the entire search space.
+    fn try_selected_equality_rewrite_chain(
         &self,
         premise_pairs: &[(Proposition, ClickProposition)],
     ) -> Option<Self> {
-        for (kernel, surface) in premise_pairs {
-            if !matches!(
-                kernel,
-                Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
-                    | Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), true)
-            ) {
-                continue;
+        let mut proof = self.clone();
+        let mut remaining = premise_pairs
+            .iter()
+            .filter(|(kernel, _)| {
+                matches!(
+                    kernel,
+                    Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
+                        | Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), true)
+                )
+            })
+            .map(|(_, surface)| surface.clone())
+            .collect::<Vec<_>>();
+        while !remaining.is_empty() {
+            let mut selected = None;
+            for (index, surface) in remaining.iter().enumerate() {
+                for oriented in
+                    std::iter::once(surface.clone()).chain(reverse_surface_equality(surface))
+                {
+                    if let Ok(rewritten) = proof.apply_step(SimpleProofStep::Rewrite(oriented)) {
+                        selected = Some((index, rewritten));
+                        break;
+                    }
+                }
+                if selected.is_some() {
+                    break;
+                }
             }
-            let Ok(rewritten) = self.apply_step(SimpleProofStep::Rewrite(surface.clone())) else {
-                continue;
-            };
+            let (index, rewritten) = selected?;
+            remaining.remove(index);
             if let Some(closed) = rewritten
                 .try_direct_logical_closure()
                 .ok()
@@ -7338,6 +7608,7 @@ impl<'a> Proof<'a> {
             {
                 return Some(closed);
             }
+            proof = rewritten;
         }
         None
     }
@@ -7451,8 +7722,29 @@ impl<'a> Proof<'a> {
             if self.facts().contains(left) || self.facts().contains(right) {
                 continue;
             }
-            let ClickProposition::Or(surface_left, surface_right) = surface else {
-                continue;
+            let (surface_left, surface_right) = match surface {
+                ClickProposition::Or(left, right) => {
+                    (left.as_ref().clone(), right.as_ref().clone())
+                }
+                ClickProposition::At {
+                    selector,
+                    proposition,
+                } => {
+                    let ClickProposition::Or(left, right) = proposition.as_ref() else {
+                        continue;
+                    };
+                    (
+                        ClickProposition::At {
+                            selector: selector.clone(),
+                            proposition: Box::new(left.as_ref().clone()),
+                        },
+                        ClickProposition::At {
+                            selector: selector.clone(),
+                            proposition: Box::new(right.as_ref().clone()),
+                        },
+                    )
+                }
+                _ => continue,
             };
             // The in-`Proof` split: both case goals coexist in one state,
             // each arm is proven by focusing its recorded id on this one
@@ -7462,7 +7754,7 @@ impl<'a> Proof<'a> {
                 continue;
             };
             let marker = split_proof.checkpoint();
-            let branch_surfaces = [surface_left.as_ref(), surface_right.as_ref()];
+            let branch_surfaces = [&surface_left, &surface_right];
             let mut proof = split_proof;
             let mut complete = true;
             for (id, assumed_surface) in ids.into_iter().zip(branch_surfaces) {
@@ -7905,6 +8197,131 @@ impl<'a> Proof<'a> {
         checked.is_complete().then_some(checked)
     }
 
+    /// Retains the point-wise unchanged-load certificate for a guarded
+    /// universal outcome. The kernel derivation has already selected the
+    /// finite context premises relevant to this goal; after introducing the
+    /// binder and guard, transport searches only those spellings plus the
+    /// freshly extracted guard leaves.
+    fn try_selected_unchanged_load_forall_goal(
+        &self,
+        surface_goal: &ClickProposition,
+        premise_pairs: &[(Proposition, ClickProposition)],
+    ) -> Option<Self> {
+        if self.focused_outcome_point().is_none() {
+            return None;
+        }
+        let mut cursor = surface_goal;
+        let mut proof = self.clone();
+        let mut introduced_forall = false;
+        while let ClickProposition::ForAll { body, .. } = cursor {
+            proof = proof.apply_step(SimpleProofStep::Intro).ok()?;
+            cursor = body;
+            introduced_forall = true;
+        }
+        if !introduced_forall {
+            return None;
+        }
+        let ClickProposition::Implies(antecedent, _) = cursor else {
+            return None;
+        };
+        proof = proof.apply_step(SimpleProofStep::Intro).ok()?;
+        let mut guard_surfaces = Vec::new();
+        collect_surface_conjunct_leaves(antecedent, &mut guard_surfaces);
+        for guard in &guard_surfaces {
+            proof = proof
+                .apply_step(SimpleProofStep::Extract(guard.clone()))
+                .ok()?;
+        }
+        let target = proof.surface_goal()?.clone();
+        let source = old_reflexive_transport_source(&target)?;
+        let source_pairs = proof
+            .lower_surface_proposition(&source, "unchanged-load transport source")
+            .ok()
+            .and_then(|kernel| {
+                proof
+                    .facts()
+                    .assumptions()
+                    .derive_atomic_proposition(&kernel)
+            })
+            .map(|derivation| {
+                let point = proof.focused_outcome_point()?;
+                let pairs = derivation
+                    .context_premises()
+                    .into_iter()
+                    .filter_map(|premise| {
+                        proof
+                            .replayable_surface_fact(
+                                &point.surface_propositions,
+                                point.premise_anchor.as_ref(),
+                                &premise,
+                            )
+                            .map(|surface| (premise, surface))
+                    })
+                    .collect::<Vec<_>>();
+                Some(pairs)
+            })
+            .flatten()
+            .unwrap_or_default();
+        let point = proof.focused_outcome_point()?;
+        let anchor = point.premise_anchor.as_ref()?;
+        let view = proof.outcome_point_view()?;
+        let anchor_state = view.program_point_states.get(anchor)?;
+        let mut anchored_candidates = Vec::new();
+        for (kernel, _) in premise_pairs.iter().chain(&source_pairs) {
+            let Some(surface) = synthesize_surface_proposition(
+                kernel,
+                view.parameters,
+                view.arguments,
+                anchor_state,
+            ) else {
+                continue;
+            };
+            let Ok(surface) = surface_with_source_site(&surface, anchor) else {
+                continue;
+            };
+            let Some((left, right)) = surface_nonstrict_parts(&surface) else {
+                continue;
+            };
+            let left_is_atomic_variable = match &left {
+                ContractExpression::CFragment(CExpression::Variable(_)) => true,
+                ContractExpression::At { expression, .. } => matches!(
+                    expression.as_ref(),
+                    ContractExpression::CFragment(CExpression::Variable(_))
+                ),
+                _ => false,
+            };
+            if left == right || !left_is_atomic_variable || anchored_candidates.contains(&surface) {
+                continue;
+            }
+            let Ok(lowered) =
+                proof.lower_surface_proposition(&surface, "unchanged-load transport premise")
+            else {
+                continue;
+            };
+            if lowered == *kernel || condition_polarity_equivalent(&lowered, kernel) {
+                anchored_candidates.push(surface);
+            }
+        }
+        // The source derivation must identify one exact non-strict bound at
+        // the outcome anchor. Ambiguity is a prompt miss, never permission to
+        // probe combinations of historical facts.
+        let [anchored_candidate] = anchored_candidates.as_slice() else {
+            return None;
+        };
+        let candidates = std::iter::once(anchored_candidate.clone()).chain(guard_surfaces);
+        let transported = match proof.search_point_fact_transport(&source, &target, candidates) {
+            Ok(transported) => transported,
+            Err(error) => {
+                let _ = error;
+                return None;
+            }
+        };
+        if transported.is_complete() {
+            return Some(transported);
+        }
+        transported.try_direct_logical_closure().ok().flatten()
+    }
+
     fn try_typed_atomic_simp_closure(&self) -> Option<Self> {
         let (goal, derivation, premise_pairs, point_application_closes_goal) =
             self.selected_simp_derivation()?;
@@ -7924,9 +8341,6 @@ impl<'a> Proof<'a> {
         &self,
         surfaces: &[ClickProposition],
     ) -> Option<Self> {
-        if !matches!(self.context.as_ref(), ProofContext::Pure(_)) {
-            return None;
-        }
         let goal = self.goal()?;
         let premise_pairs = surfaces
             .iter()
@@ -7934,8 +8348,11 @@ impl<'a> Proof<'a> {
                 let kernel = self
                     .lower_surface_proposition(surface, "restricted simp premise")
                     .ok()?;
-                self.facts()
-                    .contains_top_level(&kernel)
+                // A listed premise that lowers to a context-free truth needs
+                // no ambient fact authority. Retaining it lets the restricted
+                // derivation erase reflexive field equalities after the
+                // outcome state has evaluated their loads.
+                (self.facts().contains_top_level(&kernel) || normalizes_context_free(&kernel))
                     .then_some((kernel, surface.clone()))
             })
             .collect::<Option<Vec<_>>>()?;
@@ -7948,6 +8365,9 @@ impl<'a> Proof<'a> {
             return None;
         };
         self.check_typed_atomic_simp_candidate(goal, derivation, &premise_pairs, false)
+            .or_else(|| self.try_selected_equality_rewrite_chain(&premise_pairs))
+            .or_else(|| self.try_outcome_anchored_order_transitivity(&premise_pairs))
+            .or_else(|| self.try_outcome_anchored_increment_order(&premise_pairs))
     }
 
     fn check_typed_atomic_simp_candidate(
@@ -7970,6 +8390,9 @@ impl<'a> Proof<'a> {
                 let recorded =
                     recorded_bitvector_equality_rewrite_path_pairs(derivation, &premise_pairs)?;
                 plan_recorded_bitvector_equality_rewrite_paths(goal, derivation, &recorded)
+            })
+            .or_else(|| {
+                plan_explicit_loadability_transport(goal, self.surface_goal()?, premise_pairs)
             })
             .or_else(|| {
                 let recorded =
@@ -8256,7 +8679,7 @@ impl<'a> Proof<'a> {
                 )
             })?;
         let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
-        let proof = self.check_certificate(&candidate).ok()?;
+        let proof = self.check_generated_certificate(&candidate).ok()?;
         proof.is_complete().then_some(proof)
     }
 
@@ -8321,6 +8744,12 @@ impl<'a> Proof<'a> {
                 }
                 ProofTactic::Simp => {
                     let Some(closed) = proof.try_simp_closure()? else {
+                        return Ok(None);
+                    };
+                    proof = closed;
+                }
+                ProofTactic::SimpUsing(simp) => {
+                    let Some(closed) = proof.try_restricted_simp_closure(&simp.premises) else {
                         return Ok(None);
                     };
                     proof = closed;
@@ -8664,51 +9093,60 @@ impl<'a> Proof<'a> {
             })
     }
 
-    /// Materializes the focused goal's ordered fact context for a legacy
-    /// vector consumer. This is an explicit adapter boundary: the drain
-    /// migration deletes its callers as tactic kinds move onto goal-backed
-    /// proofs.
-    pub(super) fn available_fact_vector(&self) -> Vec<Proposition> {
-        self.facts().to_vec()
-    }
-
-    /// Resynchronizes the focused outcome goal's fact context from the
-    /// drain's legacy working set.
-    ///
-    /// This is the interim adapter for the tactic-by-tactic drain migration:
-    /// tactic kinds that have not yet moved onto the goal still mutate the
-    /// legacy vector, so a migrated tactic re-imports the current set before
-    /// its checked step. Every resync disappears as the remaining kinds
-    /// migrate, and the adapter dies with the drain migration's final slice.
-    pub(super) fn with_drained_outcome(
+    /// Updates the focused outcome goal's immutable result/state snapshot
+    /// after a separately checked resource transition.
+    pub(super) fn with_outcome_snapshot(
         &self,
         outcome: &CFunctionOutcome,
-        facts: &[Proposition],
     ) -> Result<Self, ClickError> {
         let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
-            return Err(self.step_error("the drain adapter requires a focused outcome goal"));
+            return Err(self.step_error("an outcome snapshot requires a focused outcome goal"));
         };
         let CFunctionOutcome::Return { value, state } = outcome else {
-            return Err(self.step_error("the drain adapter requires a return outcome"));
-        };
-        // The requirement-fact prefix must track the drain's live working
-        // set: path preparation unfolds predicate requirements in place, so
-        // an index-selected `choose` source reflects the current unfolding,
-        // exactly as the legacy per-tactic roots saw it.
-        let requires = match self.context.as_ref() {
-            ProofContext::Execution(context) => context.function_block.requires().len(),
-            _ => 0,
+            return Err(self.step_error("an outcome snapshot requires a return outcome"));
         };
         let mut point = (*goal.point).clone();
-        // Resource-producing post-execution tactics replace the legacy
-        // outcome state after this goal was derived. Carry that persistent
-        // snapshot root together with the re-imported facts; otherwise later
+        // Resource-producing post-execution tactics can replace the outcome
+        // state after this goal was derived. Carry that persistent snapshot
+        // root forward; otherwise later
         // checked point operations lower resource counts against the stale
         // pre-fold state. CState's components are shared immutable roots, so
         // this update is constant-size rather than a resource/history
         // materialization.
         point.result = Arc::new(value.clone());
         point.state = state.clone().into();
+        let mut updated = goal.clone();
+        updated.point = Arc::new(point);
+        let mut state = (*self.state).clone();
+        state.goals = state
+            .goals
+            .replace_at(self.focused, Goal::FunctionOutcome(updated));
+        Ok(Self {
+            context: self.context.clone(),
+            state: Arc::new(state),
+            node: self.node.clone(),
+            focused: self.focused,
+        })
+    }
+
+    /// Installs an already checked post-execution fact context on the focused
+    /// outcome goal while preserving retained Surface provenance for facts
+    /// that survive the transition.
+    pub(super) fn with_checked_outcome_facts(
+        &self,
+        facts: &[Proposition],
+    ) -> Result<Self, ClickError> {
+        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
+            return Err(self.step_error("outcome facts require a focused outcome goal"));
+        };
+        // Path preparation can unfold predicate requirements in place. Keep
+        // the point view's requirement prefix aligned with the checked fact
+        // context so indexed `choose` sources use that exact spelling.
+        let requires = match self.context.as_ref() {
+            ProofContext::Execution(context) => context.function_block.requires().len(),
+            _ => 0,
+        };
+        let mut point = (*goal.point).clone();
         point.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
         let mut updated = goal.clone();
         updated.point = Arc::new(point);
@@ -8793,7 +9231,31 @@ impl<'a> Proof<'a> {
                 .proof_certificate_builder
                 .last_step_entry
                 .clone()
+                .or_else(|| {
+                    execution
+                        .replay
+                        .program_point_states
+                        .keys()
+                        .next_back()
+                        .cloned()
+                })
         });
+        let requirement_surfaces = match self.context.as_ref() {
+            ProofContext::Execution(context) => requirement_facts
+                .iter()
+                .zip(context.function_block.requires())
+                .filter_map(|(fact, requirement)| {
+                    requirement
+                        .proposition()
+                        .cloned()
+                        .map(|surface| (fact.clone(), surface))
+                })
+                .fold(PersistentMap::default(), |index, (fact, surface)| {
+                    index.with_inserted(fact, surface)
+                }),
+            _ => PersistentMap::default(),
+        };
+        let requirement_surfaces = Arc::new(requirement_surfaces);
         let mut goals = self.state.goals.discharge_at(self.focused);
         let mut outcome_ids = Vec::new();
         for (path_index, path) in checked.paths().iter().enumerate() {
@@ -8807,14 +9269,14 @@ impl<'a> Proof<'a> {
                     )));
                 }
             };
-            // The goal's pure fact context mirrors the drain's per-path
-            // working set exactly: path-local pure facts only. Effect-region
-            // facts remain tracked by the retained execution snapshot until
-            // effect continuations migrate onto goals.
+            // The goal owns the path-local pure facts. Effect-region facts
+            // stay in the execution snapshot and are consumed only by the
+            // checked point operations that explicitly cross effects.
             let mut facts = self.facts().clone();
             for fact in path.facts() {
                 facts = facts.with_fact(fact.proposition().clone());
             }
+            let execution_facts = path.execution_facts();
             let id = GoalId(goals.next_id);
             goals = ProofGoals {
                 open: goals.open.with_inserted(
@@ -8825,9 +9287,10 @@ impl<'a> Proof<'a> {
                             result: Arc::new(result),
                             state: state.into(),
                             surface_propositions: frontier_surface.clone(),
-                            effect_facts: Arc::new(path.execution_facts()),
+                            effect_facts: Arc::new(execution_facts),
                             premise_anchor: frontier_anchor.clone(),
                             requirement_facts: requirement_facts.clone(),
+                            requirement_surfaces: requirement_surfaces.clone(),
                         }),
                         context: GoalContext {
                             facts,
@@ -10730,24 +11193,6 @@ impl<'a> ProofScope<'a> {
         &self.body
     }
 
-    /// The exact current kernel goal owned by this nested scope.
-    pub(super) fn goal(&self) -> Option<&Proposition> {
-        self.body.goal()
-    }
-
-    /// Reports a conclusive atomic rejection without trying to construct a
-    /// proof. An unclosed or opaque goal is not false; only an indexed exact
-    /// conflict or normalization to false crosses this negative boundary.
-    pub(super) fn goal_is_definitely_false(&self) -> bool {
-        self.body.goal().is_some_and(|goal| {
-            self.body.facts().directly_conflicts_with(goal)
-                || matches!(
-                    simp_proposition(goal, self.body.facts().assumptions()),
-                    SimpProposition::False
-                )
-        })
-    }
-
     /// Opens one proposition subproof at the current scope body's frontier.
     ///
     /// The returned scope is rooted at this scope's current checked body. It
@@ -10796,6 +11241,20 @@ impl<'a> ProofScope<'a> {
             }
         }
         next.body = body;
+        Ok(next)
+    }
+
+    /// Checks a post-execution `have` body while accepting the historical
+    /// generated `assumption()` suffix when the preceding retained step has
+    /// already closed the goal. The returned scope contains only steps that
+    /// actually advanced this Proof, so expansion does not serialize a
+    /// no-op suffix.
+    pub(super) fn check_outcome_certificate(
+        &self,
+        certificate: &ProofCertificate,
+    ) -> Result<Self, ClickError> {
+        let mut next = self.clone();
+        next.body = self.body.check_generated_certificate(certificate)?;
         Ok(next)
     }
 
@@ -11434,8 +11893,10 @@ impl ProofFacts {
     /// remain implicit, while a successful result is an exact fact for the
     /// ordinary `Assumption` checker in the new point goal.
     fn with_selected_resource_separation(&self, goal: &Proposition) -> Self {
-        if matches!(goal, Proposition::CResourceSeparate { .. })
-            && !self.contains(goal)
+        if matches!(
+            goal,
+            Proposition::CResourceSeparate { .. } | Proposition::CMemoryDisjoint { .. }
+        ) && !self.contains(goal)
             && self.assumptions.proves(goal)
         {
             self.with_fact(goal.clone())

@@ -237,6 +237,16 @@ fn lower_point_proposition_with_memory_resolution(
 pub(in crate::lang::click::proof) fn reverse_surface_equality(
     proposition: &ClickProposition,
 ) -> Option<ClickProposition> {
+    if let ClickProposition::At {
+        selector,
+        proposition,
+    } = proposition
+    {
+        return reverse_surface_equality(proposition).map(|reversed| ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(reversed),
+        });
+    }
     let ClickProposition::Comparison {
         left,
         operator: ComparisonOperator::Equal,

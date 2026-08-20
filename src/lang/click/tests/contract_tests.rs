@@ -998,9 +998,7 @@ fn old_memory_postcondition_fails_for_overwritten_cell() {
         .expect_err("old memory postcondition for overwritten cell should fail");
 
     assert!(
-        error
-            .message()
-            .contains("left side evaluated to 9, right side evaluated to load(p[1])"),
+        error.message().contains("unclosed goal: p[1] == old(p[1])"),
         "{}",
         error.message()
     );

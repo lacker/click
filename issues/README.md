@@ -18,17 +18,6 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Proof-object migration: 1 open
-
-This is the countable endgame board. Each link is one independently closable
-unit; [Proof object API](proof-object-api.md) is the architectural design and
-history, not a third open item. The terminal retirement issue depends on the
-other remaining leaf.
-
-- [Delete outcome compatibility and legacy exit infrastructure](outcome-fallback-retirement.md):
-  remove the adapters and planners, prove a zero-event corpus census, and run
-  the final requirement-by-requirement acceptance audit.
-
 ## Other open issues: 5
 
 - [Canonical load names do not connect across effects](canonical-name-transport-across-effects.md):
