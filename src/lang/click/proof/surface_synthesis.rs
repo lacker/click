@@ -125,6 +125,23 @@ pub(in crate::lang::click) fn synthesize_surface_proposition(
     )
 }
 
+pub(in crate::lang::click) fn synthesize_surface_proposition_with_bound_variable_names(
+    proposition: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ClickProposition> {
+    let _scope = SurfaceSynthesisScope::enter();
+    synthesize_surface_proposition_with_bound_variables(
+        proposition,
+        parameters,
+        arguments,
+        state,
+        bound_variables,
+    )
+}
+
 fn synthesize_surface_proposition_with_bound_variables(
     proposition: &Proposition,
     parameters: &[syntax::C0Parameter],

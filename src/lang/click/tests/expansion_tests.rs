@@ -8306,6 +8306,142 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
 }
 
 #[test]
+fn bound_universal_outcome_retains_instantiation_and_transport() {
+    let c_source = r#"
+        int32 bubble_pass3(int32 p[3]) {
+            int32 j;
+            int32 tmp;
+            j = 0;
+            while (j < 2) {
+                if (p[j + 1] < p[j]) {
+                    tmp = p[j];
+                    p[j] = p[j + 1];
+                    p[j + 1] = tmp;
+                }
+                j = j + 1;
+            }
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "bubble_pass3.c";
+
+        predicate all_le_range(p: int32[], lo: int32, hi: int32, x: int32) {
+            forall (k: int32) {
+                0 <= k and lo <= k and k < hi implies p[k] <= x
+            }
+        }
+
+        int32 bubble_pass3(int32 p[3]) {
+            requires loadable(p[0..3]);
+            consumes p[0..3];
+            ensures all_le_range(p, 0, 2, p[2]);
+        } by {
+            step();
+            step();
+            step();
+            loop {
+                invariant j >= 0 and j <= 2;
+                invariant all_le_range(p, 0, j, p[j]);
+                initialize by {
+                    unfold(all_le_range);
+                    simp();
+                }
+                preserve by {
+                    unfold(all_le_range);
+                }
+                mutable p[0..3] by frame;
+            }
+            step();
+            unfold(all_le_range);
+            simp();
+        }
+    "#;
+    let sources = [("bubble_pass3.c", c_source)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the bound universal outcome should close through Proof");
+    let fallback_events = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "outcome simp legacy exit planning"
+                        || name == "outcome simp compatibility construction"
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        fallback_events.is_empty(),
+        "bound universal closure must not enter outcome compatibility planning: {fallback_events:#?}"
+    );
+
+    let expanded =
+        expand_c0_claim_source(click_source, &sources, "bubble_pass3", CProofClaim::Grouped)
+            .expect("the retained bound universal proof should expand");
+    assert!(expanded.contains("instantiate("), "{expanded}");
+    assert!(expanded.contains("transport("), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the retained bound universal proof should replay independently");
+}
+
+#[test]
+fn bound_universal_fixture_census_has_no_outcome_fallbacks() {
+    for (filename, function) in [
+        ("bubble_pass3_max_suffix.md", "bubble_pass3"),
+        ("bubble_sort3_two_pass_sorted.md", "bubble_sort3_two_pass"),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(filename);
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+        let mdtest = crate::cli::parse_mdtest(&path, &source)
+            .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+        let click_source = mdtest
+            .click_source
+            .as_deref()
+            .unwrap_or_else(|| panic!("`{}` has no Click source", path.display()));
+        let c_sources = mdtest
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let (verified, events) =
+            crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources));
+        verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
+        let fallback_events = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                        if name == "outcome simp legacy exit planning"
+                            || name == "outcome simp compatibility construction"
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            fallback_events.is_empty(),
+            "`{}` entered outcome fallback planning: {fallback_events:#?}",
+            path.display()
+        );
+
+        let expanded =
+            expand_c0_claim_source(click_source, &c_sources, function, CProofClaim::Grouped)
+                .unwrap_or_else(|error| panic!("failed to expand `{}`: {error:?}", path.display()));
+        verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
+            panic!(
+                "expanded proof from `{}` did not replay independently: {error:?}",
+                path.display()
+            )
+        });
+    }
+}
+
+#[test]
 fn frame_certified_outcome_claim_closes_on_the_checked_proof() {
     let c_source = r#"
         int32 preserve_after_loop(int32 p[], int32 n) {

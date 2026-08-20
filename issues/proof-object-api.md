@@ -3801,6 +3801,30 @@ pins the provenance delta, and the loop, sorting-network, and loop-shaped
 sorting fixtures now avoid both outcome fallback spans. The sorting certificate
 expands its retained nested predicate `have` and independently replays.
 
+### Progress (2026-08-19: bound universal outcomes specialize and transport on Proof)
+
+Predicate-unfolded universal facts now remain in a narrow provenance sequence,
+and Surface lowerings carry a predicate-name index that recovers the exact
+checked body spelling without an ambient fact scan. Nested `have` scopes
+inherit those buckets for every active checked unfold. Proof-local binder names
+are available to Surface synthesis, so an outcome goal can retain an explicit
+`InstantiateUsing` at its introduced binder, name only the guard derivation's
+premises, and retain `TransportUsing` when exit equalities connect the
+specialized conclusion to the target.
+
+Constant-bounded universal goals use the kernel's deterministic finite
+instance table as an output-sensitive structural plan: each non-vacuous
+instance is proved in a checked nested `have`, then the ordinary `Enumerate`
+step closes the original goal. No semantic result is accepted before those
+simple and structured transitions check on the same Proof.
+
+The two bubble-sort census fixtures now observe neither outcome compatibility
+construction nor legacy exit planning. Both expand and independently replay;
+the focused certificate contains the retained instantiate/transport path. A
+multi-size curve grows 4,096 unrelated universals and path facts while the
+smart selection visits only the one unfold-owned universal bucket. The
+proof-object migration board is now eight open leaves.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

@@ -444,6 +444,10 @@ struct SurfacePropositionStorage {
     /// local. Assignment-step search probes only the assigned local's bucket
     /// instead of scanning every recorded fact.
     by_current_c_variable: PersistentMap<String, PersistentSet<Proposition>>,
+    /// Kernel facts whose recorded Surface spelling is one top-level
+    /// predicate call. Checked predicate unfolds use this narrow bucket to
+    /// recover an already-materialized body without scanning ambient facts.
+    by_predicate: PersistentMap<String, PersistentSet<Proposition>>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -696,6 +700,10 @@ impl SurfacePropositionMap {
                 .storage
                 .by_current_c_variable
                 .shares_root_with(&other.storage.by_current_c_variable)
+            && self
+                .storage
+                .by_predicate
+                .shares_root_with(&other.storage.by_predicate)
     }
 
     pub fn record_lowering(
@@ -708,6 +716,16 @@ impl SurfacePropositionMap {
         let surface_key = format!("{surface:?}");
         {
             let storage = std::sync::Arc::make_mut(&mut self.storage);
+            if let ClickProposition::PredicateCall { name, .. } = surface {
+                let existing = storage.by_predicate.get(name);
+                if !existing.is_some_and(|facts| facts.contains(kernel)) {
+                    let facts = existing
+                        .cloned()
+                        .unwrap_or_default()
+                        .with_value(kernel.clone());
+                    storage.by_predicate = storage.by_predicate.with_inserted(name.clone(), facts);
+                }
+            }
             for name in current_c_variables {
                 let existing = storage.by_current_c_variable.get(&name);
                 if existing.is_some_and(|facts| facts.contains(kernel)) {
@@ -800,6 +818,17 @@ impl SurfacePropositionMap {
             ))),
             _ => Ok(()),
         }
+    }
+
+    pub(in crate::lang::click) fn kernels_spelled_by_predicate(
+        &self,
+        name: &String,
+    ) -> impl Iterator<Item = &Proposition> {
+        self.storage
+            .by_predicate
+            .get(name)
+            .into_iter()
+            .flat_map(PersistentSet::iter)
     }
 
     pub fn surface(&self, kernel: &Proposition) -> Result<&ClickProposition, ClickError> {

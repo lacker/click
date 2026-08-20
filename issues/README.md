@@ -18,16 +18,13 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Proof-object migration: 9 open
+## Proof-object migration: 8 open
 
 This is the countable endgame board. Each link is one independently closable
 unit; [Proof object API](proof-object-api.md) is the architectural design and
-history, not a tenth open item. The terminal retirement issue depends on the
-other eight.
+history, not a ninth open item. The terminal retirement issue depends on the
+other seven.
 
-- [Close bound universal outcomes with explicit specialization and transport](outcome-bound-universal-transport.md):
-  remove the last two passing legacy-exit sites by retaining binder-aware
-  instantiate/transport certificates.
 - [Atomic derivation returns premises, not steps](atomic-derivation-returns-premises-not-steps.md):
   make scalar and statement/effect decisions return typed steps so outcome
   certificate construction no longer re-searches.

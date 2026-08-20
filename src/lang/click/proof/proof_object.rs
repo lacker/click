@@ -3648,7 +3648,35 @@ impl<'a> Proof<'a> {
             proposition.clone()
         };
         let body_kernel = self.lower_surface_goal(&structural_proposition, "`have` body")?;
-        let body_facts = self.facts().with_selected_resource_separation(&body_kernel);
+        let mut body_facts = self.facts().with_selected_resource_separation(&body_kernel);
+        for name in self.focused_goal_unfolds().iter() {
+            let recorded_bodies = match self.context.as_ref() {
+                ProofContext::Pure(context) => context
+                    .theorem_context
+                    .surface_requirements
+                    .kernels_spelled_by_predicate(name)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                ProofContext::Point(context) => context
+                    .surface_propositions
+                    .kernels_spelled_by_predicate(name)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                ProofContext::Execution(_) => self
+                    .outcome_point_view()
+                    .into_iter()
+                    .flat_map(|view| view.surface_propositions.kernels_spelled_by_predicate(name))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            };
+            for recorded in recorded_bodies {
+                if matches!(recorded, Proposition::ForAll { .. })
+                    && body_facts.contains_top_level(&recorded)
+                {
+                    body_facts = body_facts.with_predicate_unfold_fact(recorded);
+                }
+            }
+        }
         let body_context = GoalContext {
             facts: body_facts,
             unfolded_predicates: self.focused_goal_unfolds().clone(),
@@ -6753,6 +6781,9 @@ impl<'a> Proof<'a> {
         };
         match (surface_goal, goal) {
             (ClickProposition::ForAll { .. }, Proposition::ForAll { .. }) => {
+                if let Some(enumerated) = self.try_finite_forall_enumeration(surface_goal)? {
+                    return Ok(Some(enumerated));
+                }
                 match attempt::candidate_outcome(self.apply_step(SimpleProofStep::Intro))? {
                     Some(introduced) => introduced.try_simp_closure(),
                     None => Ok(None),
@@ -6874,6 +6905,75 @@ impl<'a> Proof<'a> {
             }
             _ => Ok(None),
         }
+    }
+
+    /// Proves the kernel's deterministic constant-bounded universal table as
+    /// checked nested `have` scopes, then closes with the ordinary
+    /// `Enumerate` rule. Candidate discovery is output-sensitive in the
+    /// explicit instance table; each non-vacuous instance recursively uses
+    /// the same retained Proof search and no ambient universal scan.
+    fn try_finite_forall_enumeration(
+        &self,
+        surface_goal: &ClickProposition,
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(goal) = self.goal() else {
+            return Ok(None);
+        };
+        let Some(instances) = crate::kernel::finite_forall_goal_instances(goal) else {
+            return Ok(None);
+        };
+        let mut binder_names = Vec::new();
+        let mut surface_body = surface_goal;
+        while let ClickProposition::ForAll { name, body, .. } = surface_body {
+            binder_names.push(name.clone());
+            surface_body = body;
+        }
+        if binder_names.is_empty() {
+            return Ok(None);
+        }
+
+        let mut proof = self.clone();
+        for (values, instance) in instances {
+            check_verification_deadline()?;
+            if values.len() != binder_names.len() {
+                return Ok(None);
+            }
+            if matches!(normalize_proposition(&instance), SimpProposition::True) {
+                continue;
+            }
+            let Some(value_expressions) = values
+                .iter()
+                .map(|value| {
+                    u32::try_from(*value)
+                        .ok()
+                        .map(|bits| ContractExpression::CFragment(CExpression::Value(int32(bits))))
+                })
+                .collect::<Option<Vec<_>>>()
+            else {
+                return Ok(None);
+            };
+            let substitutions = binder_names
+                .iter()
+                .cloned()
+                .zip(value_expressions)
+                .collect::<BTreeMap<_, _>>();
+            let Ok(surface_instance) = substitute_click_proposition(surface_body, &substitutions)
+            else {
+                return Ok(None);
+            };
+            let Some(scope) = attempt::candidate_outcome(proof.begin_have(surface_instance))?
+            else {
+                return Ok(None);
+            };
+            let Some(scope) = scope.try_simp_closure()? else {
+                return Ok(None);
+            };
+            let Some(joined) = attempt::candidate_outcome(scope.join())? else {
+                return Ok(None);
+            };
+            proof = joined;
+        }
+        attempt::candidate_outcome(proof.apply_step(SimpleProofStep::Enumerate))
     }
 
     /// Closes from the just-introduced antecedent and one exact indexed
@@ -7232,33 +7332,76 @@ impl<'a> Proof<'a> {
         let outcome_view = matches!(self.context.as_ref(), ProofContext::Execution(_))
             .then(|| self.outcome_point_view())
             .flatten();
+        let bound_variable_names = match self.focused_goal() {
+            Some(Goal::Proposition(goal)) => goal
+                .surface_bindings
+                .iter()
+                .filter_map(|(name, binding)| match binding {
+                    ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                        Bitvector32Term::Variable(variable),
+                    ))) => Some((*variable, name.clone())),
+                    _ => None,
+                })
+                .collect::<BTreeMap<_, _>>(),
+            _ => BTreeMap::new(),
+        };
+        let surface_spelling = |fact: &Proposition| {
+            let recorded = match self.context.as_ref() {
+                ProofContext::Pure(context) => context
+                    .theorem_context
+                    .surface_requirements
+                    .surfaces(fact)
+                    .next()
+                    .cloned(),
+                ProofContext::Point(context) => {
+                    context.surface_propositions.surfaces(fact).next().cloned()
+                }
+                ProofContext::Execution(_) => outcome_view
+                    .as_ref()?
+                    .surface_propositions
+                    .surfaces(fact)
+                    .next()
+                    .cloned(),
+            };
+            let synthesized = match self.context.as_ref() {
+                ProofContext::Pure(_) => None,
+                ProofContext::Point(context) => {
+                    synthesize_surface_proposition_with_bound_variable_names(
+                        fact,
+                        context.parameters,
+                        context.arguments,
+                        context.state,
+                        &bound_variable_names,
+                    )
+                }
+                ProofContext::Execution(_) => {
+                    let view = outcome_view.as_ref()?;
+                    synthesize_surface_proposition_with_bound_variable_names(
+                        fact,
+                        view.parameters,
+                        view.arguments,
+                        view.state,
+                        &bound_variable_names,
+                    )
+                }
+            };
+            recorded.or(synthesized)
+        };
         for quantified in self.facts().predicate_unfolded_universal_facts.iter() {
             // Reject shape-incompatible universals before Surface lookup or
             // synthesis. Candidate extraction is structural and bounded by
             // this one indexed fact and the focused goal; the expensive
             // spelling work is reserved for a specialization that can
             // actually mention the goal's concrete argument.
-            let mut candidate_values =
+            let candidate_values =
                 crate::kernel::forall_guided_instantiation_candidate_values(quantified, goal);
-            candidate_values.retain(|value| matches!(value, Bitvector32Term::Constant(_)));
             let Proposition::ForAll { var, body, .. } = quantified else {
                 unreachable!("the predicate-unfolded universal index contains only universals")
             };
-            let normalized_goal = normalize_direct_atomic_memory_loads(goal);
-            candidate_values.retain(|value| {
-                let instantiated =
-                    substitute_int32_variable_in_proposition(body, *var, value.clone());
-                let mut conclusion = &instantiated;
-                while let Proposition::Implies(_, body) = conclusion {
-                    conclusion = body;
-                }
-                conclusion == goal
-                    || normalize_direct_atomic_memory_loads(conclusion) == normalized_goal
-            });
             if candidate_values.is_empty() {
                 continue;
             }
-            let mut surfaces = match self.context.as_ref() {
+            let recorded_surfaces = match self.context.as_ref() {
                 ProofContext::Pure(context) => context
                     .theorem_context
                     .surface_requirements
@@ -7276,6 +7419,28 @@ impl<'a> Proof<'a> {
                     .cloned()
                     .collect::<Vec<_>>(),
             };
+            let predicate_environment = match self.context.as_ref() {
+                ProofContext::Pure(context) => context.predicate_environment,
+                ProofContext::Point(context) => context.predicate_environment,
+                ProofContext::Execution(context) => context.predicate_environment,
+            };
+            let mut surfaces = Vec::new();
+            for recorded in recorded_surfaces {
+                let candidate = match recorded {
+                    ClickProposition::PredicateCall {
+                        ref name,
+                        ref arguments,
+                    } => predicate_environment.get(name).and_then(|definition| {
+                        instantiate_click_predicate_definition(definition, arguments).ok()
+                    }),
+                    other => Some(other),
+                };
+                if let Some(candidate) = candidate
+                    && !surfaces.contains(&candidate)
+                {
+                    surfaces.push(candidate);
+                }
+            }
             let synthesized = match self.context.as_ref() {
                 ProofContext::Pure(_) => None,
                 ProofContext::Point(context) => synthesize_surface_proposition(
@@ -7304,11 +7469,6 @@ impl<'a> Proof<'a> {
             // from only the active predicate indexes when generic synthesis
             // cannot express it (notably byte-indexed loads).
             if surfaces.is_empty() {
-                let predicate_environment = match self.context.as_ref() {
-                    ProofContext::Pure(context) => context.predicate_environment,
-                    ProofContext::Point(context) => context.predicate_environment,
-                    ProofContext::Execution(context) => context.predicate_environment,
-                };
                 let click_function_environment = match self.context.as_ref() {
                     ProofContext::Pure(context) => context.click_function_environment,
                     ProofContext::Point(context) => context.click_function_environment,
@@ -7368,7 +7528,35 @@ impl<'a> Proof<'a> {
             }
             for surface in surfaces {
                 for value in candidate_values.iter().cloned() {
-                    let instantiated = substitute_int32_variable_in_proposition(body, *var, value);
+                    let argument = match &value {
+                        Bitvector32Term::Constant(bits) => Some(ContractExpression::CFragment(
+                            CExpression::Value(CValue::Int32(Bitvector32Term::Constant(*bits))),
+                        )),
+                        Bitvector32Term::Variable(variable) => {
+                            let Some(Goal::Proposition(goal)) = self.focused_goal() else {
+                                continue;
+                            };
+                            goal.surface_bindings.iter().find_map(|(name, binding)| {
+                                matches!(
+                                    binding,
+                                    ContractExpression::CFragment(CExpression::Value(
+                                        CValue::Int32(Bitvector32Term::Variable(bound))
+                                    )) if bound == variable
+                                )
+                                .then(|| {
+                                    ContractExpression::CFragment(CExpression::Variable(
+                                        name.clone(),
+                                    ))
+                                })
+                            })
+                        }
+                        _ => None,
+                    };
+                    let Some(argument) = argument else {
+                        continue;
+                    };
+                    let instantiated =
+                        substitute_int32_variable_in_proposition(body, *var, value.clone());
                     let mut guard_facts = Vec::new();
                     let mut current = &instantiated;
                     let mut guards_available = true;
@@ -7379,58 +7567,33 @@ impl<'a> Proof<'a> {
                             if matches!(normalize_proposition(conjunct), SimpProposition::True) {
                                 continue;
                             }
-                            let actual = std::iter::once(conjunct.clone())
+                            let exact = std::iter::once(conjunct.clone())
                                 .chain(condition_polarity_spellings(conjunct))
                                 .find(|candidate| self.facts().contains(candidate));
-                            let Some(actual) = actual else {
+                            let selected = exact.map(|fact| vec![fact]).or_else(|| {
+                                self.facts()
+                                    .assumptions()
+                                    .derive_simp_atomic_proposition(conjunct)
+                                    .map(|derivation| derivation.context_premises())
+                            });
+                            let Some(selected) = selected else {
                                 guards_available = false;
                                 break;
                             };
-                            let recorded = match self.context.as_ref() {
-                                ProofContext::Pure(context) => context
-                                    .theorem_context
-                                    .surface_requirements
-                                    .surfaces(&actual)
-                                    .next()
-                                    .cloned(),
-                                ProofContext::Point(context) => context
-                                    .surface_propositions
-                                    .surfaces(&actual)
-                                    .next()
-                                    .cloned(),
-                                ProofContext::Execution(_) => outcome_view?
-                                    .surface_propositions
-                                    .surfaces(&actual)
-                                    .next()
-                                    .cloned(),
-                            };
-                            let synthesized = match self.context.as_ref() {
-                                ProofContext::Pure(_) => None,
-                                ProofContext::Point(context) => synthesize_surface_proposition(
-                                    &actual,
-                                    context.parameters,
-                                    context.arguments,
-                                    context.state,
-                                ),
-                                ProofContext::Execution(_) => {
-                                    let view = outcome_view?;
-                                    synthesize_surface_proposition(
-                                        &actual,
-                                        view.parameters,
-                                        view.arguments,
-                                        view.state,
-                                    )
+                            for actual in selected {
+                                let Some(spelling) = surface_spelling(&actual) else {
+                                    guards_available = false;
+                                    break;
+                                };
+                                if !guard_facts
+                                    .iter()
+                                    .any(|(candidate, _)| candidate == &actual)
+                                {
+                                    guard_facts.push((actual, spelling));
                                 }
-                            };
-                            let Some(spelling) = recorded.or(synthesized) else {
-                                guards_available = false;
+                            }
+                            if !guards_available {
                                 break;
-                            };
-                            if !guard_facts
-                                .iter()
-                                .any(|(candidate, _)| candidate == &actual)
-                            {
-                                guard_facts.push((actual, spelling));
                             }
                         }
                         if !guards_available {
@@ -7441,16 +7604,98 @@ impl<'a> Proof<'a> {
                     if !guards_available {
                         continue;
                     }
-                    let mut pairs = vec![(quantified.clone(), surface.clone())];
-                    pairs.extend(guard_facts);
-                    let Some(tactics) = plan_explicit_forall_instantiation(goal, &pairs) else {
+                    let instantiated_proof =
+                        match self.apply_step(SimpleProofStep::InstantiateUsing {
+                            quantified: surface.clone(),
+                            argument: argument.clone(),
+                            premises: guard_facts
+                                .iter()
+                                .map(|(_, surface)| surface.clone())
+                                .collect(),
+                        }) {
+                            Ok(proof) => proof,
+                            Err(_) => continue,
+                        };
+                    let conclusion = current.clone();
+                    if &conclusion == goal
+                        || normalize_direct_atomic_memory_loads(&conclusion)
+                            == normalize_direct_atomic_memory_loads(goal)
+                    {
+                        if let Ok(closed) =
+                            instantiated_proof.apply_step(SimpleProofStep::Assumption)
+                        {
+                            return Some(closed);
+                        }
+                        continue;
+                    }
+
+                    let transport_assumptions = self
+                        .facts()
+                        .assumptions()
+                        .clone()
+                        .assume_proposition(conclusion.clone());
+                    let Some(transport_derivation) =
+                        transport_assumptions.derive_simp_atomic_proposition(goal)
+                    else {
                         continue;
                     };
-                    let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
-                    if let Ok(checked) = self.check_certificate(&candidate)
-                        && checked.is_complete()
-                    {
-                        return Some(checked);
+                    let mut transport_surfaces = Vec::new();
+                    let mut transport_spelled = true;
+                    for premise in transport_derivation.context_premises() {
+                        if premise == conclusion {
+                            continue;
+                        }
+                        let Some(spelling) = surface_spelling(&premise) else {
+                            transport_spelled = false;
+                            break;
+                        };
+                        if !transport_surfaces.contains(&spelling) {
+                            transport_surfaces.push(spelling);
+                        }
+                    }
+                    if !transport_spelled {
+                        continue;
+                    }
+                    let (selector, quantified_surface) = match &surface {
+                        ClickProposition::At {
+                            selector,
+                            proposition,
+                        } => (Some(selector.clone()), proposition.as_ref()),
+                        other => (None, other),
+                    };
+                    let ClickProposition::ForAll {
+                        name,
+                        body: surface_body,
+                        ..
+                    } = quantified_surface
+                    else {
+                        continue;
+                    };
+                    let substitutions = std::iter::once((name.clone(), argument.clone()))
+                        .collect::<BTreeMap<_, _>>();
+                    let Ok(mut source) = substitute_click_proposition(surface_body, &substitutions)
+                    else {
+                        continue;
+                    };
+                    while let ClickProposition::Implies(_, body) = source {
+                        source = *body;
+                    }
+                    if let Some(selector) = selector {
+                        source = ClickProposition::At {
+                            selector,
+                            proposition: Box::new(source),
+                        };
+                    }
+                    transport_surfaces.insert(0, source.clone());
+                    let target = self.surface_goal()?.clone();
+                    match instantiated_proof.search_fact_transport_from_candidates(
+                        &source,
+                        &target,
+                        transport_surfaces,
+                        "indexed universal conclusion transport",
+                    ) {
+                        Ok(transported) if transported.is_complete() => return Some(transported),
+                        Ok(_) | Err(_) => {}
                     }
                 }
             }
@@ -13913,7 +14158,18 @@ mod tests {
         let kernel_quantified = lower(&quantified_surface);
 
         for size in [16_u32, 64, 256, 1024, 4096] {
-            let mut available = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            let mut available = (0..size)
+                .flat_map(|index| {
+                    [
+                        indexed_fact(index),
+                        Proposition::ForAll {
+                            var: Variable(9_000_000 + u64::from(index)),
+                            sort: Sort::CInt32,
+                            body: Box::new(indexed_fact(100_000 + index)),
+                        },
+                    ]
+                })
+                .collect::<Vec<_>>();
             available.push(kernel_premise.clone());
             available.push(kernel_quantified.clone());
             let root = Proof::for_point_goal(
@@ -13951,8 +14207,34 @@ mod tests {
             assert_eq!(
                 unfolded_facts.predicate_unfolded_universal_facts.len(),
                 1,
-                "unrelated ambient facts must not enter predicate-unfold search"
+                "unrelated ambient facts and universals must not enter predicate-unfold search"
             );
+
+            let mut indexed_root = root.clone();
+            let mut indexed_state = Arc::unwrap_or_clone(indexed_root.state);
+            indexed_state.goals = indexed_state
+                .goals
+                .with_facts_at(indexed_root.focused, unfolded_facts);
+            indexed_root.state = Arc::new(indexed_state);
+            let before = fact_node_allocations();
+            let selected = indexed_root.try_indexed_forall_instantiation().expect(
+                "the unfold-owned universal should close without scanning ambient universals",
+            );
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 96 * logarithmic_height + 384;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} indexed specialization allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(selected.is_complete());
+            assert!(matches!(
+                selected.certificate().steps(),
+                [
+                    SimpleProofStep::InstantiateUsing { .. },
+                    SimpleProofStep::Assumption
+                ]
+            ));
 
             let step = SimpleProofStep::InstantiateUsing {
                 quantified: quantified_surface.clone(),

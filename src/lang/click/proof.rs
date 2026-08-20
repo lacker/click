@@ -71,7 +71,10 @@ use surface_replay::*;
 pub(super) use surface_synthesis::synthesize_surface_proposition;
 #[cfg(test)]
 use surface_synthesis::{SURFACE_SYNTHESIS_DEPTH_LIMIT, bitvector_term_is_load_free};
-use surface_synthesis::{surface_synthesis_exhaustion_description, surface_synthesis_failure};
+use surface_synthesis::{
+    surface_synthesis_exhaustion_description, surface_synthesis_failure,
+    synthesize_surface_proposition_with_bound_variable_names,
+};
 use theorem_application::*;
 pub(super) use timing::{SourceTacticClass, source_tactic_class};
 use timing::{TacticTiming, has_independent_source_timing};
