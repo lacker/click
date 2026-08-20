@@ -2008,6 +2008,12 @@ impl<'a> Proof<'a> {
                 self.step_error("a proposition goal can be focused only from a point frontier")
             );
         }
+        // Resource compositions retain same-block separation compactly in
+        // `PureFactContext`; materialize only the selected external
+        // separation goal. This keeps the proof state proportional to its
+        // checked inputs while making the kernel-certified, goal-indexed
+        // projection an exact fact for the ordinary `Assumption` step.
+        let facts = self.facts().with_selected_resource_separation(&goal);
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
@@ -2015,7 +2021,7 @@ impl<'a> Proof<'a> {
 
                 goals: ProofGoals::root({
                     let context = GoalContext {
-                        facts: self.facts().clone(),
+                        facts,
                         unfolded_predicates: match &outcome {
                             Some(_) => self.focused_goal_unfolds().clone(),
                             None => PersistentOrderedSet::default(),
@@ -3614,8 +3620,9 @@ impl<'a> Proof<'a> {
             }
         }
         let kernel = self.lower_surface_goal(&proposition, "`have` proposition")?;
+        let body_facts = self.facts().with_selected_resource_separation(&kernel);
         let body_context = GoalContext {
-            facts: self.facts().clone(),
+            facts: body_facts,
             unfolded_predicates: self.focused_goal_unfolds().clone(),
             execution: self.goal_execution().cloned(),
         };
@@ -10893,6 +10900,21 @@ impl ProofFacts {
             successor.predicate_unfolded_universal_facts.push(fact);
         }
         successor
+    }
+
+    /// Materializes one selected separation from the compact resource-
+    /// composition index. This is target-driven: unrelated resource pairs
+    /// remain implicit, while a successful result is an exact fact for the
+    /// ordinary `Assumption` checker in the new point goal.
+    fn with_selected_resource_separation(&self, goal: &Proposition) -> Self {
+        if matches!(goal, Proposition::CResourceSeparate { .. })
+            && !self.contains(goal)
+            && self.assumptions.proves(goal)
+        {
+            self.with_fact(goal.clone())
+        } else {
+            self.clone()
+        }
     }
 
     pub(super) fn assumptions(&self) -> &PureFactContext {

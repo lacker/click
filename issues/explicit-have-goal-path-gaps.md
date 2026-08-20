@@ -604,3 +604,15 @@ bound transport and independently replays it. The byte-slice and shifted-copy
 positive fixtures now verify without outcome compatibility construction or
 legacy exit planning. The remaining positive fallback set is tracked by the
 next full timing census.
+
+## Targeted resource-composition separation landed (2026-08-19)
+
+Point and outcome `have` roots now materialize a selected
+`CResourceSeparate` goal from the kernel's compact resource-composition index.
+The operation is target-driven: it does not restore eager pairwise separation
+facts or scan unrelated path state, and the certified result becomes one exact
+fact consumed by the ordinary checked `Assumption` step. The nested composite
+observation regression now bypasses both outcome fallback spans, expands the
+retained assumption, and independently replays it. This removes the composite
+observation family from the positive fallback set without changing its C or
+Click proof source.

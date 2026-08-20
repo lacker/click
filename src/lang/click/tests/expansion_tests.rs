@@ -8464,6 +8464,76 @@ fn outcome_simp_instantiates_an_unfolded_byte_predicate_on_the_checked_proof() {
 }
 
 #[test]
+fn outcome_simp_materializes_selected_composite_separation_on_the_checked_proof() {
+    let c_source = r#"
+        struct owner {
+            int32 len;
+            int32 cap;
+            int32* data;
+        };
+
+        int32 observe_nested_separate_contains(struct owner* owner) {
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        resource backing_buffer(owner: struct owner*) {
+            owns owner->data[0..owner->cap];
+        }
+
+        resource nested_owned_buffer(owner: struct owner*) {
+            owns owner->len;
+            owns owner->cap;
+            owns owner->data;
+            contains backing_buffer(owner);
+            fact 0 <= owner->len;
+            fact owner->len <= owner->cap;
+        }
+
+        verifying "observe.c";
+
+        int32 observe_nested_separate_contains(struct owner* owner) {
+            consumes nested_owned_buffer(owner);
+            ensures separate(
+                memory(owner[0..3]),
+                memory(owner->data[0..owner->cap])
+            ) by {
+                observe(nested_owned_buffer(owner));
+                observe(backing_buffer(owner));
+                execute();
+                simp();
+            }
+        }
+    "#;
+    let sources = [("observe.c", c_source)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified
+        .expect("the observed composition should certify its selected separation through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp legacy exit planning"
+                    || name == "outcome simp compatibility construction"
+        )),
+        "selected resource separation must not enter outcome compatibility planning: {events:#?}"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "observe_nested_separate_contains",
+        CProofClaim::Ensure(0),
+    )
+    .expect("the retained resource separation should expand");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the selected resource separation should replay independently");
+}
+
+#[test]
 fn quantified_old_transport_substitutes_its_introduced_binder_on_the_checked_proof() {
     let c_source = r#"
         int32 shifted_copy(int32 dst[], int32 src[], int32 n) {
