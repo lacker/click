@@ -18,16 +18,13 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Proof-object migration: 10 open
+## Proof-object migration: 9 open
 
 This is the countable endgame board. Each link is one independently closable
 unit; [Proof object API](proof-object-api.md) is the architectural design and
-history, not an eleventh open item. The terminal retirement issue depends on
-the other nine.
+history, not a tenth open item. The terminal retirement issue depends on the
+other eight.
 
-- [Preserve predicate-unfold provenance through outcome goals](outcome-predicate-unfold-provenance.md):
-  keep the checked unfold-owned universal index through drain resync and pair
-  active predicate haves with their structural Surface bodies.
 - [Close bound universal outcomes with explicit specialization and transport](outcome-bound-universal-transport.md):
   remove the last two passing legacy-exit sites by retaining binder-aware
   instantiate/transport certificates.

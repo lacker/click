@@ -8238,6 +8238,74 @@ fn outcome_predicate_unfold_uses_the_checked_frame_population_transition() {
 }
 
 #[test]
+fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
+    let c_source = r#"
+        int32 sort_three_cells(int32 p[3]) {
+            int32 tmp;
+            if (p[1] < p[0]) {
+                tmp = p[0];
+                p[0] = p[1];
+                p[1] = tmp;
+            }
+            if (p[2] < p[1]) {
+                tmp = p[1];
+                p[1] = p[2];
+                p[2] = tmp;
+            }
+            if (p[1] < p[0]) {
+                tmp = p[0];
+                p[0] = p[1];
+                p[1] = tmp;
+            }
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "sort_three_cells.c";
+
+        int32 sort_three_cells(int32 p[3]) {
+            requires loadable(p[0..3]);
+            consumes p[0..3];
+            ensures permutation(p, old(p), 0, 3) by {
+                execute();
+                unfold(permutation);
+                simp();
+            }
+        }
+    "#;
+    let sources = [("sort_three_cells.c", c_source)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the surviving unfold-owned universal should close through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp legacy exit planning"
+                    || name == "outcome simp compatibility construction"
+        )),
+        "the retained predicate body must not enter outcome compatibility planning: {events:#?}"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "sort_three_cells",
+        CProofClaim::Ensure(0),
+    )
+    .expect("the retained nested predicate proof should expand");
+    assert!(
+        expanded.contains("have permutation(p, old(p), 0, 3) by {"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("normalize();"), "{expanded}");
+    assert!(expanded.contains("unfold(permutation);"), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the retained nested predicate proof should replay independently");
+}
+
+#[test]
 fn frame_certified_outcome_claim_closes_on_the_checked_proof() {
     let c_source = r#"
         int32 preserve_after_loop(int32 p[], int32 n) {

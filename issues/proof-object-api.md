@@ -3787,6 +3787,20 @@ population regression and the complete bounded-pool project verify with no
 planning` spans, expand, and independently replay. The full repository gate is
 green at this checkpoint.
 
+### Progress (2026-08-19: predicate-unfold provenance survives outcome resync)
+
+The temporary outcome drain adapter now preserves the narrow universal-fact
+index owned by checked predicate unfolds, but only for indexed facts that
+remain present in the successor's ordered fact set. It neither scans ambient
+universals for inferred provenance nor carries provenance for removed facts.
+When an active unfold lets a nested `have predicate(...)` prove the opaque
+predicate through its structural body, the body kernel is paired with the same
+unfolded Surface proposition while the enclosing `Have` still publishes the
+opaque proposition the user stated. A deterministic multi-size regression
+pins the provenance delta, and the loop, sorting-network, and loop-shaped
+sorting fixtures now avoid both outcome fallback spans. The sorting certificate
+expands its retained nested predicate `have` and independently replays.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

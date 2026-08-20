@@ -3620,7 +3620,35 @@ impl<'a> Proof<'a> {
             }
         }
         let kernel = self.lower_surface_goal(&proposition, "`have` proposition")?;
-        let body_facts = self.facts().with_selected_resource_separation(&kernel);
+        // A post-execution unfold lets a predicate-call `have` prove the
+        // predicate through its structural body. Pair that body kernel with
+        // the same unfolded Surface view so `intro` retains binder names and
+        // subsequent simple steps serialize an independently replayable
+        // proof. Joining still publishes the opaque `kernel` named by the
+        // enclosing Have step.
+        let structural_proposition = if let ClickProposition::PredicateCall { name, .. } =
+            &proposition
+            && self.focused_goal_unfolds().contains(name)
+        {
+            let predicate_environment = match self.context.as_ref() {
+                ProofContext::Pure(context) => context.predicate_environment,
+                ProofContext::Point(context) => context.predicate_environment,
+                ProofContext::Execution(context) => context.predicate_environment,
+            };
+            let active_unfolds = self.focused_goal_unfolds().to_vec();
+            unfold_structural_invariant_proposition(
+                predicate_environment,
+                &proposition,
+                &active_unfolds,
+            )
+            .map_err(|message| {
+                self.step_error(format!("could not unfold `have` goal: {message}"))
+            })?
+        } else {
+            proposition.clone()
+        };
+        let body_kernel = self.lower_surface_goal(&structural_proposition, "`have` body")?;
+        let body_facts = self.facts().with_selected_resource_separation(&body_kernel);
         let body_context = GoalContext {
             facts: body_facts,
             unfolded_predicates: self.focused_goal_unfolds().clone(),
@@ -3636,10 +3664,10 @@ impl<'a> Proof<'a> {
             Some(point) => Goal::surface_proposition_at_outcome(
                 body_context,
                 point.clone(),
-                kernel.clone(),
-                proposition.clone(),
+                body_kernel.clone(),
+                structural_proposition,
             ),
-            None => Goal::surface_proposition_in(body_context, kernel.clone(), proposition.clone()),
+            None => Goal::surface_proposition_in(body_context, body_kernel, structural_proposition),
         };
         if let (Some(Goal::Proposition(parent)), Goal::Proposition(body)) =
             (self.focused_goal(), &mut body_goal)
@@ -8251,9 +8279,10 @@ impl<'a> Proof<'a> {
         state.goals = state
             .goals
             .replace_at(self.focused, Goal::FunctionOutcome(updated));
-        state.goals = state
-            .goals
-            .with_facts_at(self.focused, ProofFacts::from_ordered(facts));
+        state.goals = state.goals.with_facts_at(
+            self.focused,
+            self.facts().resync_ordered_preserving_provenance(facts),
+        );
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(state),
@@ -10850,6 +10879,19 @@ impl ProofFacts {
         }
     }
 
+    /// Rebuilds a legacy drain view while retaining the exact provenance
+    /// indexes owned by facts that remain available. The adapter iterates
+    /// only the explicit predicate-unfold delta, never the ambient fact set.
+    fn resync_ordered_preserving_provenance(&self, facts: &[Proposition]) -> Self {
+        let mut successor = Self::from_ordered(facts);
+        for fact in self.predicate_unfolded_universal_facts.iter() {
+            if successor.contains_top_level(fact) {
+                successor = successor.with_predicate_unfold_fact(fact.clone());
+            }
+        }
+        successor
+    }
+
     pub(in crate::lang::click::proof) fn contains(&self, fact: &Proposition) -> bool {
         self.exact.contains(fact)
     }
@@ -12327,6 +12369,62 @@ mod tests {
             assert_eq!(
                 facts.mentioning_predicate(&name).collect::<Vec<_>>(),
                 vec![&predicate]
+            );
+        }
+    }
+
+    #[test]
+    fn outcome_fact_resync_preserves_only_surviving_unfold_provenance() {
+        let universal = |index: u64| Proposition::ForAll {
+            var: Variable(index),
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(Variable(index))),
+                    Box::new(Bitvector32Term::Variable(Variable(index))),
+                ),
+                true,
+            )),
+        };
+        let surviving = universal(9_000_000);
+        let removed = universal(9_000_001);
+
+        for size in [16_u64, 64, 256, 1024, 4096] {
+            let ambient = (0..size)
+                .map(|index| universal(10_000_000 + index))
+                .collect::<Vec<_>>();
+            let mut original_order = ambient.clone();
+            original_order.push(surviving.clone());
+            original_order.push(removed.clone());
+            let original = ProofFacts::from_ordered(&original_order)
+                .with_predicate_unfold_fact(surviving.clone())
+                .with_predicate_unfold_fact(removed.clone());
+
+            let mut successor_order = ambient;
+            successor_order.push(surviving.clone());
+            let before_baseline = fact_node_allocations();
+            let _baseline = ProofFacts::from_ordered(&successor_order);
+            let baseline_allocations = fact_node_allocations() - before_baseline;
+            let before_resync = fact_node_allocations();
+            let successor = original.resync_ordered_preserving_provenance(&successor_order);
+            let resync_allocations = fact_node_allocations() - before_resync;
+
+            assert_eq!(
+                successor
+                    .predicate_unfolded_universal_facts
+                    .iter()
+                    .collect::<Vec<_>>(),
+                vec![&surviving],
+                "size {size} must retain only surviving checked-unfold provenance"
+            );
+            assert!(successor.contains_top_level(&surviving));
+            assert!(!successor.contains_top_level(&removed));
+            let logarithmic_height = (u64::BITS - size.leading_zeros()) as usize;
+            let provenance_overhead = resync_allocations.saturating_sub(baseline_allocations);
+            let overhead_bound = 16 * logarithmic_height + 32;
+            assert!(
+                provenance_overhead <= overhead_bound,
+                "size {size} provenance resync added {provenance_overhead} persistent nodes over the legacy rebuild (bound {overhead_bound})"
             );
         }
     }
