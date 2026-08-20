@@ -20,14 +20,13 @@ when evidence exposes one.
 
 ## Other open issues: 5
 
-- [Canonical load names do not connect across effects](canonical-name-transport-across-effects.md):
-  explicit transports cannot connect recorded-point and current-point
-  canonical names across call havocs or undecided-alias stores; blocks
-  the last two check.sh failures on the canonicalization branch, with
-  the design options and both reproductions characterized.
-- [Load terms in arithmetic positions](load-terms-in-arithmetic-positions.md):
-  the canonicalization fix landed; deterministic position, budget, scaling,
-  and owned-vector acceptance evidence remains before closure.
+- [Canonical pointer offsets need a production invariant](canonical-pointer-offset-invariant.md):
+  loaded pointer values are canonicalized today, but no regression walks
+  production-generated pointers and rejects a nested `MemoryLoad` in their
+  offset arithmetic.
+- [Canonical loaded offsets need a scaling curve](canonical-loaded-offset-scaling.md):
+  the motivating metadata-write proof is green, but its deterministic work
+  is not pinned over multiple input sizes.
 - [Expansion replay recursion exhausts the stack](expansion-replay-recursion-exhausts-the-stack.md):
   ordinary edits — a local, a closure, an unboxed enum payload — abort an
   unrelated expansion test with a stack overflow and no backtrace; the
@@ -37,10 +36,6 @@ when evidence exposes one.
   the mdtest and example harnesses enforce real-time limits, so machine
   load flips `scripts/check.sh`'s verdict on an unchanged tree; the
   verifier already has load-independent unit budgets to decide with.
-- [Push contract path dropped by laundered inconsistency](push-contract-path-dropped-by-laundered-inconsistency.md):
-  the silent sibling-path drop now has a structural guard; honest
-  `allocated_vector_push.contract` verification still stalls in giant-term
-  verified-call ensure lowering during independent kernel certification, so
-  owned-vector remains quarantined. A generated-step deadline was separately
-  isolated as outer smart expansion-validation attribution, not a slow simple
-  checker.
+- [Observed views survive reallocation](observed-views-survive-reallocation.md):
+  owned-vector now fails promptly because child views observed from an owned
+  allocation remain usable after `vector_grow` retires that allocation.

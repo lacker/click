@@ -2141,8 +2141,90 @@ mod tests {
     use super::*;
     use crate::kernel::{
         CMemory, CMemoryRange, CResource, CValue, Pointer, PointerBlock, PointerOffsetTerm,
-        Variable, intern_c_memory,
+        Variable, canonical_load_variable_with_origin, intern_c_memory,
     };
+
+    #[test]
+    fn canonical_origin_transport_suppresses_general_snapshot_alias_search() {
+        let preserved = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let written = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let before = CMemory::new();
+        let after = before
+            .clone()
+            .store(written.clone(), CValue::Int32(Bitvector32Term::Constant(1)));
+        let assumptions =
+            PureFactContext::new().assume_proposition(Proposition::CMemoryMutatesOnly {
+                before: before.clone(),
+                after: after.clone(),
+                pointers: vec![written],
+            });
+        let left = canonical_load_variable_with_origin(
+            &intern_c_memory(CMemory::new().with_block("canonical:left", 0)),
+            &preserved,
+            &intern_c_memory(before.clone()),
+        );
+        let right = canonical_load_variable_with_origin(
+            &intern_c_memory(CMemory::new().with_block("canonical:right", 0)),
+            &preserved,
+            &intern_c_memory(after.clone()),
+        );
+
+        let unchanged = OriginsUnchanged::new(&assumptions).decide(left, right);
+        assert!(
+            unchanged,
+            "the effect fact should transport the preserved cell"
+        );
+
+        // Also force the snapshot-comparison fallback with a write to the
+        // queried cell. The answer is false, but the canonical-name bridge
+        // must reach that answer through the bounded alias route rather than
+        // re-entering the general alias search it exists to avoid.
+        let loaded = preserved;
+        let changed_before =
+            CMemory::new().store(loaded.clone(), CValue::Int32(Bitvector32Term::Constant(1)));
+        let changed_after = changed_before
+            .clone()
+            .store(loaded.clone(), CValue::Int32(Bitvector32Term::Constant(2)));
+        let changed_left = canonical_load_variable_with_origin(
+            &intern_c_memory(CMemory::new().with_block("canonical:changed-left", 0)),
+            &loaded,
+            &intern_c_memory(changed_before),
+        );
+        let changed_right = canonical_load_variable_with_origin(
+            &intern_c_memory(CMemory::new().with_block("canonical:changed-right", 0)),
+            &loaded,
+            &intern_c_memory(changed_after),
+        );
+        let (changed_unchanged, events) = crate::instrumentation::collect(|| {
+            OriginsUnchanged::new(&PureFactContext::new()).decide(changed_left, changed_right)
+        });
+        assert!(
+            !changed_unchanged,
+            "a write to the loaded cell must not be transported as unchanged"
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "snapshot comparison: bounded alias"
+            )),
+            "the regression must exercise bounded snapshot comparison: {events:#?}"
+        );
+        assert!(
+            events.iter().all(|event| !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "snapshot comparison: general alias"
+            )),
+            "canonical-origin transport must not re-enter general alias search: {events:#?}"
+        );
+    }
 
     #[test]
     fn quantified_replay_key_is_alpha_invariant_and_preserves_free_variables() {

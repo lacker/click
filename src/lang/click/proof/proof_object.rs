@@ -658,7 +658,8 @@ struct ProofState {
 /// Allocation is monotonic per lineage. Ids allocated after divergent forks
 /// may collide numerically; identity comparison is meaningful only along one
 /// ancestry chain or against the recorded structure that allocated the id.
-/// See the goal and split identity rules in `issues/proof-object-api.md`.
+/// See the goal and split identity rules in
+/// `docs/advanced/proof-object-api.md`.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct GoalId(u64);
 

@@ -3650,7 +3650,8 @@ expansion fixtures at captured-stream replay — the expansion capture
 assembly, not certificate construction, is the difference to align.
 Separately, the load-canonicalization campaign (its own branch) is
 green on the lib suite with the remaining gate failures reduced to one
-filed design issue (`canonical-name-transport-across-effects.md`).
+canonical-name transport design issue, since resolved with a bounded
+frame-only bridge and a no-general-alias regression.
 
 ### Progress (2026-08-19: searchless outcome haves check their certificates in Proof)
 

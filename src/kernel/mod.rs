@@ -23,6 +23,8 @@ pub(crate) use assumptions::{
     record_implicit_reasoning_provenance, with_search_attempt_rollback,
 };
 pub(crate) use eval::canonical_load_variable_for_term;
+#[cfg(test)]
+pub(crate) use eval::canonical_load_variable_with_origin;
 pub(crate) use eval::is_canonical_load_defining_fact;
 pub(crate) use eval::is_canonical_load_variable;
 pub(crate) use eval::offsets_match_modulo_canonical_names;
