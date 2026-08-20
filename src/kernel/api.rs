@@ -895,6 +895,30 @@ pub fn forall_instantiation_candidate_values(
     candidates.into_iter().collect()
 }
 
+/// Returns only target-guided universal-instantiation values.
+///
+/// Unlike [`forall_instantiation_candidate_values`], this query does not
+/// enumerate or solve the quantified body's finite range. Proof-object smart
+/// search uses it while probing indexed universals so an irrelevant retained
+/// range cannot trigger project-scale reasoning before a candidate is known
+/// to match the focused atomic goal.
+pub fn forall_guided_instantiation_candidate_values(
+    quantified: &Proposition,
+    target: &Proposition,
+) -> Vec<Bitvector32Term> {
+    let Proposition::ForAll { var, body, .. } = quantified else {
+        return Vec::new();
+    };
+    match target {
+        Proposition::ConditionIs(condition, _) => {
+            PureFactContext::guided_forall_condition_candidates(*var, body, condition)
+                .into_iter()
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Chooses a variable identity absent from both the free variables and logical
 /// binders of the supplied propositions.
 pub fn fresh_int32_variable_for_propositions(propositions: &[Proposition]) -> Variable {

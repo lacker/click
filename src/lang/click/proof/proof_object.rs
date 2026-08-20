@@ -918,6 +918,7 @@ enum OutcomeEffectContext {
     Replay,
 }
 
+#[derive(Clone, Copy)]
 struct PointOperationView<'p> {
     claim_label: &'p str,
     tactic_index: usize,
@@ -1205,6 +1206,9 @@ pub(super) struct ProofFacts {
     normalized_exact: PersistentSet<Proposition>,
     by_snapshot_blind: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Proposition>>,
     by_quantified_replay: PersistentMap<QuantifiedReplayKey, PersistentSequence<Proposition>>,
+    /// Universal facts introduced specifically by a checked predicate unfold.
+    /// Outcome smart search never probes ambient theorem or path universals.
+    predicate_unfolded_universal_facts: PersistentSequence<Proposition>,
     implications_by_consequent:
         PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>>,
     assumptions: PureFactContext,
@@ -6144,6 +6148,39 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Substitutes only logical binders introduced while refining this
+    /// proposition goal. General proof locals participate in source-level
+    /// selection elsewhere; eagerly substituting them into every transport
+    /// candidate turns prompt spelling rejection into expensive semantic
+    /// alias search.
+    fn substitute_goal_surface_bindings_in_proposition(
+        &self,
+        proposition: &ClickProposition,
+    ) -> Result<ClickProposition, ClickError> {
+        let Some(Goal::Proposition(goal)) = self.focused_goal() else {
+            return Ok(proposition.clone());
+        };
+        let mut names = BTreeSet::new();
+        collect_click_proposition_referenced_names(proposition, &mut names);
+        let substitutions = names
+            .into_iter()
+            .filter_map(|name| {
+                goal.surface_bindings
+                    .get(&name)
+                    .cloned()
+                    .map(|value| (name, value))
+            })
+            .collect::<BTreeMap<_, _>>();
+        if substitutions.is_empty() {
+            return Ok(proposition.clone());
+        }
+        substitute_click_proposition(proposition, &substitutions).map_err(|message| {
+            self.step_error(format!(
+                "could not substitute proposition-goal binders: {message}"
+            ))
+        })
+    }
+
     fn substitute_point_locals_in_expression(
         &self,
         expression: &ContractExpression,
@@ -6606,6 +6643,9 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(proof));
         }
+        if let Some(instantiated) = self.try_indexed_forall_instantiation() {
+            return Ok(Some(instantiated));
+        }
         // The atomic helpers still classify their internal candidate misses
         // as `Option`; surface a deadline that fired inside them here rather
         // than continuing into structural search with it exceeded.
@@ -6683,11 +6723,46 @@ impl<'a> Proof<'a> {
                     None => Ok(None),
                 }
             }
-            (ClickProposition::Implies(_, _), Proposition::Implies(_, _)) => {
-                match attempt::candidate_outcome(self.apply_step(SimpleProofStep::Intro))? {
-                    Some(introduced) => introduced.try_simp_closure(),
-                    None => Ok(None),
+            (ClickProposition::Implies(surface_antecedent, _), Proposition::Implies(_, _)) => {
+                let Some(mut introduced) =
+                    attempt::candidate_outcome(self.apply_step(SimpleProofStep::Intro))?
+                else {
+                    return Ok(None);
+                };
+                let mut conjuncts = Vec::new();
+                if matches!(surface_antecedent.as_ref(), ClickProposition::And(_, _)) {
+                    collect_surface_conjunct_leaves(surface_antecedent, &mut conjuncts);
                 }
+                for conjunct in &conjuncts {
+                    let Some(extracted) = attempt::candidate_outcome(
+                        introduced.apply_step(SimpleProofStep::Extract(conjunct.clone())),
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    introduced = extracted;
+                    if introduced.is_complete() {
+                        return Ok(Some(introduced));
+                    }
+                }
+                if !conjuncts.is_empty()
+                    && !proposition_contains_old_expression(surface_antecedent)
+                    && let Some(surface_goal) = introduced.surface_goal()
+                    && let Some(source) = old_reflexive_transport_source(surface_goal)
+                {
+                    match introduced.search_point_fact_transport(
+                        &source,
+                        surface_goal,
+                        conjuncts.iter().cloned(),
+                    ) {
+                        Ok(transported) if transported.is_complete() => {
+                            return Ok(Some(transported));
+                        }
+                        Ok(_) => {}
+                        Err(_) => check_verification_deadline()?,
+                    }
+                }
+                introduced.try_simp_closure()
             }
             (ClickProposition::And(surface_left, surface_right), Proposition::And(_, _)) => {
                 let Some(left) =
@@ -7048,6 +7123,241 @@ impl<'a> Proof<'a> {
         let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
         let checked = self.check_certificate(&candidate).ok()?;
         checked.is_complete().then_some(checked)
+    }
+
+    /// Tries only universal facts introduced by checked predicate unfolds when
+    /// the atomic decision cannot name an instantiated premise. Candidate
+    /// discovery is read-only; a specialization is retained only after the
+    /// ordinary `InstantiateUsing` certificate checks and closes this Proof.
+    fn try_indexed_forall_instantiation(&self) -> Option<Self> {
+        let goal = self.goal()?;
+        let outcome_view = matches!(self.context.as_ref(), ProofContext::Execution(_))
+            .then(|| self.outcome_point_view())
+            .flatten();
+        for quantified in self.facts().predicate_unfolded_universal_facts.iter() {
+            // Reject shape-incompatible universals before Surface lookup or
+            // synthesis. Candidate extraction is structural and bounded by
+            // this one indexed fact and the focused goal; the expensive
+            // spelling work is reserved for a specialization that can
+            // actually mention the goal's concrete argument.
+            let mut candidate_values =
+                crate::kernel::forall_guided_instantiation_candidate_values(quantified, goal);
+            candidate_values.retain(|value| matches!(value, Bitvector32Term::Constant(_)));
+            let Proposition::ForAll { var, body, .. } = quantified else {
+                unreachable!("the predicate-unfolded universal index contains only universals")
+            };
+            let normalized_goal = normalize_direct_atomic_memory_loads(goal);
+            candidate_values.retain(|value| {
+                let instantiated =
+                    substitute_int32_variable_in_proposition(body, *var, value.clone());
+                let mut conclusion = &instantiated;
+                while let Proposition::Implies(_, body) = conclusion {
+                    conclusion = body;
+                }
+                conclusion == goal
+                    || normalize_direct_atomic_memory_loads(conclusion) == normalized_goal
+            });
+            if candidate_values.is_empty() {
+                continue;
+            }
+            let mut surfaces = match self.context.as_ref() {
+                ProofContext::Pure(context) => context
+                    .theorem_context
+                    .surface_requirements
+                    .surfaces(quantified)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                ProofContext::Point(context) => context
+                    .surface_propositions
+                    .surfaces(quantified)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                ProofContext::Execution(_) => outcome_view?
+                    .surface_propositions
+                    .surfaces(quantified)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            };
+            let synthesized = match self.context.as_ref() {
+                ProofContext::Pure(_) => None,
+                ProofContext::Point(context) => synthesize_surface_proposition(
+                    quantified,
+                    context.parameters,
+                    context.arguments,
+                    context.state,
+                ),
+                ProofContext::Execution(_) => {
+                    let view = outcome_view?;
+                    synthesize_surface_proposition(
+                        quantified,
+                        view.parameters,
+                        view.arguments,
+                        view.state,
+                    )
+                }
+            };
+            if let Some(synthesized) = synthesized
+                && !surfaces.contains(&synthesized)
+            {
+                surfaces.push(synthesized);
+            }
+            // Unfolding retains the opaque predicate fact alongside its
+            // checked body. Reconstruct that body's exact Surface spelling
+            // from only the active predicate indexes when generic synthesis
+            // cannot express it (notably byte-indexed loads).
+            if surfaces.is_empty() {
+                let predicate_environment = match self.context.as_ref() {
+                    ProofContext::Pure(context) => context.predicate_environment,
+                    ProofContext::Point(context) => context.predicate_environment,
+                    ProofContext::Execution(context) => context.predicate_environment,
+                };
+                let click_function_environment = match self.context.as_ref() {
+                    ProofContext::Pure(context) => context.click_function_environment,
+                    ProofContext::Point(context) => context.click_function_environment,
+                    ProofContext::Execution(context) => context.click_function_environment,
+                };
+                for name in self.focused_goal_unfolds().iter() {
+                    for opaque in self.facts().mentioning_predicate(name) {
+                        let opaque_surfaces = match self.context.as_ref() {
+                            ProofContext::Pure(context) => context
+                                .theorem_context
+                                .surface_requirements
+                                .surfaces(opaque)
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                            ProofContext::Point(context) => context
+                                .surface_propositions
+                                .surfaces(opaque)
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                            ProofContext::Execution(_) => outcome_view?
+                                .surface_propositions
+                                .surfaces(opaque)
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                        };
+                        for opaque_surface in opaque_surfaces {
+                            let ClickProposition::PredicateCall {
+                                name: surface_name,
+                                arguments,
+                            } = opaque_surface
+                            else {
+                                continue;
+                            };
+                            let Some(definition) = predicate_environment.get(&surface_name) else {
+                                continue;
+                            };
+                            let Ok(body_surface) =
+                                instantiate_click_predicate_definition(definition, &arguments)
+                            else {
+                                continue;
+                            };
+                            if unfold_predicates_in_proposition(
+                                predicate_environment,
+                                click_function_environment,
+                                std::slice::from_ref(name),
+                                opaque,
+                                self.facts().assumptions(),
+                            )
+                            .is_ok_and(|kernel| kernel == *quantified)
+                                && !surfaces.contains(&body_surface)
+                            {
+                                surfaces.push(body_surface);
+                            }
+                        }
+                    }
+                }
+            }
+            for surface in surfaces {
+                for value in candidate_values.iter().cloned() {
+                    let instantiated = substitute_int32_variable_in_proposition(body, *var, value);
+                    let mut guard_facts = Vec::new();
+                    let mut current = &instantiated;
+                    let mut guards_available = true;
+                    while let Proposition::Implies(guard, consequent) = current {
+                        let mut conjuncts = Vec::new();
+                        atomic_conjuncts(guard, &mut conjuncts);
+                        for conjunct in conjuncts {
+                            if matches!(normalize_proposition(conjunct), SimpProposition::True) {
+                                continue;
+                            }
+                            let actual = std::iter::once(conjunct.clone())
+                                .chain(condition_polarity_spellings(conjunct))
+                                .find(|candidate| self.facts().contains(candidate));
+                            let Some(actual) = actual else {
+                                guards_available = false;
+                                break;
+                            };
+                            let recorded = match self.context.as_ref() {
+                                ProofContext::Pure(context) => context
+                                    .theorem_context
+                                    .surface_requirements
+                                    .surfaces(&actual)
+                                    .next()
+                                    .cloned(),
+                                ProofContext::Point(context) => context
+                                    .surface_propositions
+                                    .surfaces(&actual)
+                                    .next()
+                                    .cloned(),
+                                ProofContext::Execution(_) => outcome_view?
+                                    .surface_propositions
+                                    .surfaces(&actual)
+                                    .next()
+                                    .cloned(),
+                            };
+                            let synthesized = match self.context.as_ref() {
+                                ProofContext::Pure(_) => None,
+                                ProofContext::Point(context) => synthesize_surface_proposition(
+                                    &actual,
+                                    context.parameters,
+                                    context.arguments,
+                                    context.state,
+                                ),
+                                ProofContext::Execution(_) => {
+                                    let view = outcome_view?;
+                                    synthesize_surface_proposition(
+                                        &actual,
+                                        view.parameters,
+                                        view.arguments,
+                                        view.state,
+                                    )
+                                }
+                            };
+                            let Some(spelling) = recorded.or(synthesized) else {
+                                guards_available = false;
+                                break;
+                            };
+                            if !guard_facts
+                                .iter()
+                                .any(|(candidate, _)| candidate == &actual)
+                            {
+                                guard_facts.push((actual, spelling));
+                            }
+                        }
+                        if !guards_available {
+                            break;
+                        }
+                        current = consequent;
+                    }
+                    if !guards_available {
+                        continue;
+                    }
+                    let mut pairs = vec![(quantified.clone(), surface.clone())];
+                    pairs.extend(guard_facts);
+                    let Some(tactics) = plan_explicit_forall_instantiation(goal, &pairs) else {
+                        continue;
+                    };
+                    let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
+                    if let Ok(checked) = self.check_certificate(&candidate)
+                        && checked.is_complete()
+                    {
+                        return Some(checked);
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Builds the binder-introduction chain from only the universal premises
@@ -9536,10 +9846,22 @@ impl<'a> Proof<'a> {
         premises: &[ClickProposition],
         view: &PointOperationView<'_>,
     ) -> Result<ProofState, ClickError> {
+        let (source, target, premises) = if premises.is_empty() {
+            (source.clone(), target.clone(), premises.to_vec())
+        } else {
+            (
+                self.substitute_goal_surface_bindings_in_proposition(source)?,
+                self.substitute_goal_surface_bindings_in_proposition(target)?,
+                premises
+                    .iter()
+                    .map(|premise| self.substitute_goal_surface_bindings_in_proposition(premise))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+        };
         let checked = check_point_fact_transport_using_facts(
-            source,
-            target,
-            premises,
+            &source,
+            &target,
+            &premises,
             view.claim_label,
             view.tactic_index,
             &self.facts(),
@@ -9570,10 +9892,10 @@ impl<'a> Proof<'a> {
             let mut point = (*updated.point).clone();
             point
                 .surface_propositions
-                .record_lowering(source, &checked_facts[0])?;
+                .record_lowering(&source, &checked_facts[0])?;
             point
                 .surface_propositions
-                .record_lowering(target, &checked_facts[1])?;
+                .record_lowering(&target, &checked_facts[1])?;
             updated.point = Arc::new(point);
             updated.context = GoalContext {
                 facts,
@@ -10490,6 +10812,7 @@ impl ProofFacts {
             normalized_exact,
             by_snapshot_blind,
             by_quantified_replay,
+            predicate_unfolded_universal_facts: PersistentSequence::default(),
             implications_by_consequent,
             assumptions,
             implicit_transport_assumptions,
@@ -10550,11 +10873,26 @@ impl ProofFacts {
             normalized_exact,
             by_snapshot_blind,
             by_quantified_replay,
+            predicate_unfolded_universal_facts: self.predicate_unfolded_universal_facts.clone(),
             implications_by_consequent,
             assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
             implicit_transport_assumptions,
             by_predicate: index_predicate_fact(self.by_predicate.clone(), &fact),
         }
+    }
+
+    pub(super) fn with_predicate_unfold_fact(&self, fact: Proposition) -> Self {
+        let is_universal = matches!(fact, Proposition::ForAll { .. });
+        let mut successor = self.with_fact(fact.clone());
+        if is_universal
+            && !successor
+                .predicate_unfolded_universal_facts
+                .iter()
+                .any(|candidate| candidate == &fact)
+        {
+            successor.predicate_unfolded_universal_facts.push(fact);
+        }
+        successor
     }
 
     pub(super) fn assumptions(&self) -> &PureFactContext {
@@ -10944,6 +11282,19 @@ fn index_proper_conjuncts(
         index = index_proper_conjuncts(index, conjunct);
     }
     index
+}
+
+fn collect_surface_conjunct_leaves(
+    proposition: &ClickProposition,
+    leaves: &mut Vec<ClickProposition>,
+) {
+    match proposition {
+        ClickProposition::And(left, right) => {
+            collect_surface_conjunct_leaves(left, leaves);
+            collect_surface_conjunct_leaves(right, leaves);
+        }
+        leaf => leaves.push(leaf.clone()),
+    }
 }
 
 fn index_implicit_transport_context(
@@ -13381,7 +13732,7 @@ mod tests {
         let goal_surface = ClickProposition::Comparison {
             left: value(7),
             operator: ComparisonOperator::Equal,
-            right: value(7),
+            right: variable("x"),
         };
         let quantified_surface = ClickProposition::ForAll {
             c_type: C0Type::Int32,
@@ -13395,7 +13746,7 @@ mod tests {
                 Box::new(ClickProposition::Comparison {
                     left: variable("k"),
                     operator: ComparisonOperator::Equal,
-                    right: variable("k"),
+                    right: variable("x"),
                 }),
             )),
         };
@@ -13451,7 +13802,20 @@ mod tests {
                 1,
                 "unrelated facts must not enter the selected universal bucket"
             );
+            let unfolded_facts = root
+                .facts()
+                .with_predicate_unfold_fact(kernel_quantified.clone());
+            assert_eq!(
+                unfolded_facts.predicate_unfolded_universal_facts.len(),
+                1,
+                "unrelated ambient facts must not enter predicate-unfold search"
+            );
 
+            let step = SimpleProofStep::InstantiateUsing {
+                quantified: quantified_surface.clone(),
+                argument: value(7),
+                premises: vec![premise.clone()],
+            };
             let omitted = SimpleProofStep::InstantiateUsing {
                 quantified: quantified_surface.clone(),
                 argument: value(7),
@@ -13464,11 +13828,6 @@ mod tests {
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());
 
-            let step = SimpleProofStep::InstantiateUsing {
-                quantified: quantified_surface.clone(),
-                argument: value(7),
-                premises: vec![premise.clone()],
-            };
             let before = fact_node_allocations();
             let instantiated = root
                 .apply_step(step.clone())

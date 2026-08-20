@@ -45,7 +45,7 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_in_facts(
             ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
         })?;
         if &unfolded != proposition && !facts.contains(&unfolded) {
-            facts = facts.with_fact(unfolded.clone());
+            facts = facts.with_predicate_unfold_fact(unfolded.clone());
             added_facts.push(unfolded);
         }
     }

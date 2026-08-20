@@ -578,3 +578,29 @@ no outcome compatibility-construction or legacy-exit-planning span, and the
 focused regression independently replays the expanded certificate. Remaining
 work is determined by the fresh repository-wide fallback census rather than
 the former bounded-pool sample.
+
+## Indexed unfolded universals and bound outcome transport landed (2026-08-19)
+
+Outcome `simp` now searches only the persistent index of universals introduced
+by checked predicate unfolds when the atomic selector cannot name a
+specialization. Target-guided candidate discovery does not enumerate the
+quantified range, and only constant candidates whose conclusion matches the
+focused goal proceed to Surface reconstruction. For each candidate the tactic
+names only the instantiated guard conjuncts available through exact fact
+indexes; ambient theorem, path, and atomic facts never enter the search. If an
+unfolded predicate body cannot be synthesized generically (notably a `uint8`
+indexed load), its Surface spelling is recovered from only the active predicate
+and predicate-fact indexes, and the ordinary checked `InstantiateUsing` step
+remains the sole transition. A multi-size unit regression fixes the
+predicate-unfold bucket at one entry, and the byte-slice expansion regression
+forbids both outcome fallback spans and independently replays the retained
+specialization.
+
+Point transport now substitutes a proposition goal's persistent `intro`
+bindings into its source, target, and every named premise before invoking the
+result-aware checker. This lets a quantified unchanged-memory conclusion use
+one checked recorded-point transport after `intro`; expansion retains the
+bound transport and independently replays it. The byte-slice and shifted-copy
+positive fixtures now verify without outcome compatibility construction or
+legacy exit planning. The remaining positive fallback set is tracked by the
+next full timing census.

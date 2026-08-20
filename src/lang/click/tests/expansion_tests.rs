@@ -8417,6 +8417,122 @@ fn outcome_simp_transports_unchanged_old_equality_on_the_checked_proof() {
 }
 
 #[test]
+fn outcome_simp_instantiates_an_unfolded_byte_predicate_on_the_checked_proof() {
+    let c_source = r#"
+        int32 byte_prefix(uint8 p[], int32 n) {
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "byte_prefix.c";
+
+        int32 byte_prefix(uint8 p[], int32 n) {
+            requires loadable(p[0..3]);
+            requires no_y: bytes_all_not_eq(p, 0, 3, 'y');
+            ensures p[1] != 'y' by {
+                execute();
+                unfold(bytes_all_not_eq);
+                simp();
+            }
+        }
+    "#;
+    let sources = [("byte_prefix.c", c_source)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the unfolded byte universal should instantiate through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp legacy exit planning"
+                    || name == "outcome simp compatibility construction"
+        )),
+        "unfolded universal closure must not enter outcome compatibility planning: {events:#?}"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "byte_prefix",
+        CProofClaim::Ensure(0),
+    )
+    .expect("the retained universal specialization should expand");
+    assert!(expanded.contains("instantiate("), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the unfolded universal specialization should replay independently");
+}
+
+#[test]
+fn quantified_old_transport_substitutes_its_introduced_binder_on_the_checked_proof() {
+    let c_source = r#"
+        int32 shifted_copy(int32 dst[], int32 src[], int32 n) {
+            int32 i;
+            i = 1;
+            while (i < n) {
+                dst[i] = src[i];
+                i = i + 1;
+            }
+            return i;
+        }
+    "#;
+    let click_source = r#"
+        verifying "shifted_copy.c";
+
+        int32 shifted_copy(int32 dst[], int32 src[], int32 n) {
+            requires n >= 1;
+            requires n <= 2147483647;
+            requires loadable(dst[0..n]);
+            requires loadable(src[0..n]);
+            consumes dst[0..n];
+            views src[0..n];
+            requires separate(memory(dst[0..n]), memory(src[0..n]));
+            ensures forall (k: int32) {
+                0 <= k and k < n implies src[k] == old(src[k])
+            };
+            ensures result == n;
+        } by {
+            step();
+            step();
+            loop {
+                invariant i >= 1;
+                invariant i <= n;
+                mutable (dst + 1)[0..n - 1] by frame;
+            }
+            step();
+            simp();
+        }
+    "#;
+    let sources = [("shifted_copy.c", c_source)];
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the quantified old equality should transport through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp legacy exit planning"
+                    || name == "outcome simp compatibility construction"
+        )),
+        "quantified old transport must not enter outcome compatibility planning: {events:#?}"
+    );
+
+    let expanded =
+        expand_c0_claim_source(click_source, &sources, "shifted_copy", CProofClaim::Grouped)
+            .expect("the retained quantified transport should expand");
+    assert!(expanded.contains("intro();"), "{expanded}");
+    assert!(expanded.contains("extract(0 <= k);"), "{expanded}");
+    assert!(expanded.contains("extract(k < n);"), "{expanded}");
+    assert!(
+        expanded.contains("transport(old(src[k]) == old(src[k]), src[k] == old(src[k])) using {"),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &sources)
+        .expect("the quantified old transport should replay independently");
+}
+
+#[test]
 fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {
