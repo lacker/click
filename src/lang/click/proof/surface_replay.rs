@@ -295,6 +295,7 @@ pub(super) fn checked_surface_comparison_fact_at_point(
         available,
         &assumptions,
         None,
+        false,
         parameters,
         arguments,
         state,
@@ -323,6 +324,36 @@ pub(super) fn checked_surface_comparison_fact_at_point_with_indexed_facts(
         &[],
         assumptions,
         Some(available),
+        false,
+        parameters,
+        arguments,
+        state,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn checked_surface_comparison_fact_for_typed_derivation(
+    replay: &TacticReplayState,
+    kernel: &Proposition,
+    match_kind: SurfaceFactMatch,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<ClickProposition, ClickError> {
+    let assumptions = assumptions_from_propositions(available);
+    checked_surface_comparison_fact_at_point_with_availability(
+        replay,
+        kernel,
+        match_kind,
+        available,
+        &assumptions,
+        None,
+        true,
         parameters,
         arguments,
         state,
@@ -339,6 +370,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     available: &[Proposition],
     assumptions: &PureFactContext,
     indexed_available: Option<&ProofFacts>,
+    allow_snapshot_blind_candidates: bool,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
@@ -357,6 +389,15 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             || materialization_equivalent_available_fact(&kernel, std::slice::from_ref(&lowered))
                 .is_some()
             || quantified_binder_equivalent(&lowered, &kernel)
+            || (allow_snapshot_blind_candidates
+                && (snapshot_bridged_fact_is_available_under(
+                    &kernel,
+                    std::slice::from_ref(&lowered),
+                    assumptions,
+                    &[],
+                ) || assumptions_from_propositions(std::slice::from_ref(&lowered))
+                    .derive_simp_atomic_proposition(&kernel)
+                    .is_some()))
     };
     let fact_is_available = |fact: &Proposition| {
         indexed_available.map_or_else(
@@ -394,10 +435,20 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     // it to lower again against the current heap would incorrectly demand that
     // old loads remain loadable now. Current-state spellings do not have that
     // stable anchor and still go through `strictly_replayable` below.
-    let recorded_surfaces = replay
+    let mut recorded_surfaces = replay
         .surface_propositions
         .surfaces(kernel)
+        .cloned()
         .collect::<Vec<_>>();
+    if allow_snapshot_blind_candidates {
+        for candidate in replay.surface_propositions.snapshot_blind_kernels(kernel) {
+            for surface in replay.surface_propositions.surfaces(candidate) {
+                if !recorded_surfaces.contains(surface) {
+                    recorded_surfaces.push(surface.clone());
+                }
+            }
+        }
+    }
     let parameter_names = parameters
         .iter()
         .map(syntax::C0Parameter::name)
@@ -415,10 +466,10 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             .available_kernel_matching(surface, &fact_is_available)
             == Some(kernel)
         {
-            return Ok((*surface).clone());
+            return Ok(surface.clone());
         }
     }
-    for surface in recorded_surfaces.into_iter().rev() {
+    for surface in recorded_surfaces.iter().rev() {
         if (proposition_contains_at_expression(surface)
             || proposition_contains_old_expression(surface))
             && replay
@@ -460,7 +511,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     }
 
     let mut bases = Vec::new();
-    for surface in replay.surface_propositions.surfaces(kernel) {
+    for surface in &recorded_surfaces {
         if !bases.contains(surface) {
             bases.push(surface.clone());
         }

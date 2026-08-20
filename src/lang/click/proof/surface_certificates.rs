@@ -134,18 +134,34 @@ pub(super) fn lower_surface_atomic_derivation(
         .cloned()
         .collect();
     for premise in derivation.context_premises() {
-        match checked_surface_comparison_fact_at_point(
-            replay,
-            &premise,
-            SurfaceFactMatch::ReplayEquivalent,
-            available,
-            parameters,
-            arguments,
-            state,
-            predicate_environment,
-            click_function_environment,
-        )
-        .or_else(|error| {
+        let spell_premise = |premise: &Proposition| {
+            if derivation.has_typed_atomic_evidence() {
+                checked_surface_comparison_fact_for_typed_derivation(
+                    replay,
+                    premise,
+                    SurfaceFactMatch::ReplayEquivalent,
+                    available,
+                    parameters,
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                )
+            } else {
+                checked_surface_comparison_fact_at_point(
+                    replay,
+                    premise,
+                    SurfaceFactMatch::ReplayEquivalent,
+                    available,
+                    parameters,
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                )
+            }
+        };
+        match spell_premise(&premise).or_else(|error| {
             let resolved =
                 crate::kernel::resolve_canonical_load_variables_via(&premise, &defining_premises);
             let resolved = if resolved == premise {
@@ -156,17 +172,7 @@ pub(super) fn lower_surface_atomic_derivation(
             if resolved == premise {
                 return Err(error);
             }
-            checked_surface_comparison_fact_at_point(
-                replay,
-                &resolved,
-                SurfaceFactMatch::ReplayEquivalent,
-                available,
-                parameters,
-                arguments,
-                state,
-                predicate_environment,
-                click_function_environment,
-            )
+            spell_premise(&resolved)
         }) {
             Ok(surface) => {
                 let surface = match anchor_point {
@@ -298,6 +304,14 @@ pub(super) fn lower_surface_atomic_derivation(
         .filter(|pairs| replay_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_bitvector_equality_path(&lowered_conclusion, derivation, pairs)
+        });
+    let typed_equality_rewrite_paths =
+        recorded_bitvector_equality_rewrite_path_pairs(derivation, &premise_pairs);
+    let typed_equality_rewrite_plan = typed_equality_rewrite_paths
+        .as_ref()
+        .filter(|paths| replay_kind(&paths.iter().flatten().cloned().collect::<Vec<_>>()).is_some())
+        .and_then(|paths| {
+            plan_recorded_bitvector_equality_rewrite_paths(&lowered_conclusion, derivation, paths)
         });
     let typed_increment_pairs =
         recorded_int32_increment_upper_bound_pairs(derivation, &premise_pairs);
@@ -625,6 +639,7 @@ pub(super) fn lower_surface_atomic_derivation(
         });
     let typed_path_spelled = typed_order_plan.is_some()
         || typed_equality_plan.is_some()
+        || typed_equality_rewrite_plan.is_some()
         || typed_increment_plan.is_some()
         || typed_increment_constant_upper_plan.is_some()
         || typed_strict_increment_plan.is_some()
@@ -657,6 +672,12 @@ pub(super) fn lower_surface_atomic_derivation(
     } else if typed_equality_plan.is_some() {
         premise_pairs =
             typed_equality_pairs.expect("a typed equality plan retains its path premises");
+    } else if typed_equality_rewrite_plan.is_some() {
+        premise_pairs = typed_equality_rewrite_paths
+            .expect("a typed equality-rewrite plan retains its exact path premises")
+            .into_iter()
+            .flatten()
+            .collect();
     } else if typed_increment_plan.is_some() {
         premise_pairs =
             typed_increment_pairs.expect("a typed increment-bound plan retains its exact premise");
@@ -743,117 +764,11 @@ pub(super) fn lower_surface_atomic_derivation(
         && !typed_path_spelled
         && (premise_pairs.is_empty() || replay_kind(&premise_pairs).is_none())
     {
-        // Internal derivations are minimized before their kernel facts are
-        // translated back to Click. A surface spelling can denote a
-        // different snapshot at the replay point, so recover from the full
-        // expressible context and minimize again in the representation that
-        // will actually be checked.
-        let _recovery_span = crate::instrumentation::OperationTiming::new(
-            "have",
-            "atomic derivation lowering",
-            "derivation lowering: full-context surface recovery",
-        );
-        // A premise spelled through canonical load variables has no direct
-        // Click spelling; resolving the internal names back to their load
-        // spellings through the defining equations recovers one.
-        let defining_facts: Vec<Proposition> = available
-            .iter()
-            .filter(|premise| crate::kernel::is_canonical_load_defining_fact(premise))
-            .cloned()
-            .collect();
-        for premise in available {
-            if premise_pairs.iter().any(|(kernel, _)| kernel == premise) {
-                continue;
-            }
-            let surface_spelling = checked_surface_comparison_fact_at_point(
-                replay,
-                premise,
-                SurfaceFactMatch::ReplayEquivalent,
-                available,
-                parameters,
-                arguments,
-                state,
-                predicate_environment,
-                click_function_environment,
-            )
-            .or_else(|error| {
-                let resolved =
-                    crate::kernel::resolve_canonical_load_variables_via(premise, &defining_facts);
-                if &resolved == premise {
-                    return Err(error);
-                }
-                checked_surface_comparison_fact_at_point(
-                    replay,
-                    &resolved,
-                    SurfaceFactMatch::ReplayEquivalent,
-                    available,
-                    parameters,
-                    arguments,
-                    state,
-                    predicate_environment,
-                    click_function_environment,
-                )
-            });
-            if let Ok(surface) = surface_spelling {
-                let surface = match anchor_point {
-                    Some(point) => surface_with_source_site(&surface, point)?,
-                    None => surface,
-                };
-                if !premise_pairs
-                    .iter()
-                    .any(|(_, existing)| existing == &surface)
-                {
-                    premise_pairs.push((premise.clone(), surface));
-                }
-            }
-        }
-        // A recovered spelling can reference a C local that has left scope
-        // by the outcome point; such a pair would fail certificate replay's
-        // own premise lowering, so it is dropped rather than listed. The
-        // derivation check below still validates that the surviving
-        // premises suffice.
-        premise_pairs.retain(|(_, surface)| {
-            replay
-                .surface_propositions
-                .available_kernel(surface, available)
-                .is_some()
-                || lower_point_proposition(
-                    surface,
-                    available,
-                    parameters,
-                    arguments,
-                    replay.old_reference_state(state),
-                    state,
-                    None,
-                    &replay.program_point_states,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .is_ok()
-        });
-        if replay_kind(&premise_pairs).is_none() {
-            return Err(ClickError::new(format!(
-                "surface premises do not replay the atomic derivation of {}\nunexpressed derivation premises: {}",
-                describe_pure_fact(&lowered_conclusion, parameters, arguments),
-                describe_unexpressed_pure_facts(&unexpressed_premises, parameters, arguments,),
-            )));
-        }
-    }
-    if !typed_path_spelled {
-        let mut index = 0;
-        while index < premise_pairs.len() {
-            let mut reduced = premise_pairs.clone();
-            reduced.remove(index);
-            if reduced.is_empty() && !surface_normalizes_context_free {
-                index += 1;
-                continue;
-            }
-            if replay_kind(&reduced).is_some() {
-                premise_pairs = reduced;
-            } else {
-                index += 1;
-            }
-        }
+        return Err(ClickError::new(format!(
+            "surface premises do not replay the atomic derivation of {}\nunexpressed derivation premises: {}",
+            describe_pure_fact(&lowered_conclusion, parameters, arguments),
+            describe_unexpressed_pure_facts(&unexpressed_premises, parameters, arguments,),
+        )));
     }
     if premise_pairs.is_empty() && surface_normalizes_context_free {
         return Ok((
@@ -882,6 +797,14 @@ pub(super) fn lower_surface_atomic_derivation(
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "recorded bitvector-equality path produced a non-simple expansion: {error:?}"
+            ))
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
+    }
+    if let Some(tactics) = typed_equality_rewrite_plan {
+        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded bitvector equality-rewrite paths produced a non-simple expansion: {error:?}"
             ))
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
@@ -1138,7 +1061,7 @@ pub(super) fn lower_surface_atomic_derivation(
             })
             .is_ok_and(|lowered| propositions_match_up_to_canonical_loads(&lowered, kernel))
     };
-    let mut rewrite_pairs = premise_pairs
+    let rewrite_pairs = premise_pairs
         .iter()
         .filter(|(kernel, surface)| surface_replays_kernel(kernel, surface))
         .cloned()
@@ -1158,56 +1081,9 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
     }
-    let _harvest_span = crate::instrumentation::OperationTiming::new(
-        "have",
-        "atomic derivation lowering",
-        "derivation lowering: ambient rewrite harvest",
-    );
-    // Atomic premise minimization can legitimately discard an execution
-    // equality after the kernel has used it to resolve a named local to the
-    // arithmetic term that a selected order rule proves. Certificate
-    // construction still needs that equality to spell the rewrite from the
-    // surface goal. Recover only exact, replayable int32 equalities from the
-    // available state; the rewrite planner retains only the ones it selects.
-    for premise in available {
-        if !matches!(
-            premise,
-            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
-        ) || rewrite_pairs.iter().any(|(kernel, _)| kernel == premise)
-        {
-            continue;
-        }
-        let Ok(surface) = checked_surface_comparison_fact_at_point(
-            replay,
-            premise,
-            SurfaceFactMatch::ReplayEquivalent,
-            available,
-            parameters,
-            arguments,
-            state,
-            predicate_environment,
-            click_function_environment,
-        ) else {
-            continue;
-        };
-        let surface = match anchor_point {
-            Some(point) => surface_with_source_site(&surface, point)?,
-            None => surface,
-        };
-        if surface_replays_kernel(premise, &surface) {
-            rewrite_pairs.push((premise.clone(), surface));
-        }
-    }
-    if let Some(tactics) =
-        plan_explicit_equality_rewrites(&lowered_conclusion, &rewrite_pairs, available)
-    {
-        ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
-            ClickError::new(format!(
-                "atomic derivation produced a non-simple expansion: {error:?}"
-            ))
-        })?;
-        return Ok((conclusion, SourceProof::Script(tactics)));
-    }
+    // These planners consume only the derivation-selected premise pairs.
+    // Try them before any compatibility-era equality recovery so a typed
+    // named rule or structural universal never pays for an ambient harvest.
     if let Some(tactics) = plan_explicit_named_signed_rule(&lowered_conclusion, &premise_pairs) {
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
@@ -1251,11 +1127,6 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
     }
-    let _rewrites_span = crate::instrumentation::OperationTiming::new(
-        "have",
-        "atomic derivation lowering",
-        "derivation lowering: equality rewrite planning",
-    );
     if let Some(tactics) = plan_explicit_equality_rewrites_then(
         &lowered_conclusion,
         &rewrite_pairs,
@@ -1269,7 +1140,6 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
     }
-    drop(_rewrites_span);
     let _transport_span = crate::instrumentation::OperationTiming::new(
         "have",
         "atomic derivation lowering",
@@ -4636,6 +4506,17 @@ fn recorded_bitvector_equality_pairs(
         .and_then(|path| recorded_bitvector_equality_path_pairs(path, premise_pairs))
 }
 
+pub(super) fn recorded_bitvector_equality_rewrite_path_pairs(
+    derivation: &PropositionDerivation,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<Vec<(Proposition, ClickProposition)>>> {
+    derivation
+        .bitvector_equality_rewrite_paths()?
+        .iter()
+        .map(|path| recorded_bitvector_equality_path_pairs(path, premise_pairs))
+        .collect()
+}
+
 /// Transcribe the exact equality path retained by the kernel. Each edge is
 /// oriented in the direction selected by the path, even when its source
 /// premise was written in reverse. Rewriting the goal along every edge must
@@ -4667,6 +4548,50 @@ pub(super) fn plan_recorded_bitvector_equality_path(
         current =
             rewrite_proposition_by_exact_equality(&current, &oriented_kernel, &available).ok()?;
         tactics.push(ProofTactic::Rewrite(oriented_surface));
+    }
+    if !normalizes_context_free(&current) {
+        return None;
+    }
+    tactics.push(ProofTactic::Normalize);
+    Some(tactics)
+}
+
+/// Transcribe the exact equality paths retained for variables occurring
+/// inside a larger atomic goal. Each path is applied in kernel-selected order;
+/// the rewritten proposition must then normalize without context.
+pub(super) fn plan_recorded_bitvector_equality_rewrite_paths(
+    goal: &Proposition,
+    derivation: &PropositionDerivation,
+    premise_paths: &[Vec<(Proposition, ClickProposition)>],
+) -> Option<Vec<ProofTactic>> {
+    let paths = derivation.bitvector_equality_rewrite_paths()?;
+    if paths.len() != premise_paths.len() {
+        return None;
+    }
+    let available = premise_paths
+        .iter()
+        .flatten()
+        .map(|(kernel, _)| kernel.clone())
+        .collect::<Vec<_>>();
+    let mut current = goal.clone();
+    let mut tactics = Vec::new();
+    for (path, pairs) in paths.iter().zip(premise_paths) {
+        if path.len() != pairs.len() {
+            return None;
+        }
+        for (step, (_, surface)) in path.iter().zip(pairs) {
+            let oriented_surface = orient_surface_bitvector_equality(step, surface)?;
+            let oriented_kernel = Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(step.source().clone()),
+                    Box::new(step.target().clone()),
+                ),
+                true,
+            );
+            current = rewrite_proposition_by_exact_equality(&current, &oriented_kernel, &available)
+                .ok()?;
+            tactics.push(ProofTactic::Rewrite(oriented_surface));
+        }
     }
     if !normalizes_context_free(&current) {
         return None;

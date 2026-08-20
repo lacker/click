@@ -1907,6 +1907,43 @@ fn bitvector_equality_derivation_retains_its_exact_oriented_path() {
 }
 
 #[test]
+fn arithmetic_normalization_retains_its_exact_equality_rewrite_paths() {
+    let left = Bitvector32Term::Variable(Variable(218));
+    let right = Bitvector32Term::Variable(Variable(219));
+    let one = Bitvector32Term::Constant(1);
+    let left_is_one =
+        Proposition::ConditionIs(ConditionTerm::equal(left.clone(), one.clone()), true);
+    let right_is_one =
+        Proposition::ConditionIs(ConditionTerm::equal(one.clone(), right.clone()), true);
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::Add(Box::new(left.clone()), Box::new(right.clone())),
+            Bitvector32Term::Constant(2),
+        ),
+        true,
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(left_is_one.clone())
+        .assume_proposition(right_is_one.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("the two selected equalities should normalize the arithmetic goal");
+    let paths = derivation
+        .bitvector_equality_rewrite_paths()
+        .expect("the atomic decision should retain both rewrite paths");
+    assert_eq!(paths.len(), 2);
+    assert_eq!(paths[0][0].source(), &left);
+    assert_eq!(paths[0][0].target(), &one);
+    assert_eq!(paths[0][0].premise(), &left_is_one);
+    assert_eq!(paths[1][0].source(), &right);
+    assert_eq!(paths[1][0].target(), &one);
+    assert_eq!(paths[1][0].premise(), &right_is_one);
+    assert!(derivation.replay(&assumptions));
+    assert!(!derivation.replay(&PureFactContext::new().assume_proposition(left_is_one)));
+}
+
+#[test]
 fn signed_less_equal_and_inequality_derive_strict_order() {
     let left = Bitvector32Term::Variable(Variable(9_004));
     let right = Bitvector32Term::Variable(Variable(9_005));
@@ -2509,6 +2546,75 @@ fn quantified_int32_fact_certifies_an_instantiated_load() {
             ))
             .proves(&target)
     );
+}
+
+#[test]
+fn quantified_atomic_derivation_retains_its_specialization_and_guards() {
+    let memory = CMemory::new();
+    let data = Pointer {
+        block: "typed-quantified-data".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let index = Variable(2_100_100);
+    let exit = Bitvector32Term::Variable(Variable(2_100_101));
+    let indexed_load = |value| {
+        Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&memory),
+            Box::new(data.offset_by_int32_elements(value)),
+        )
+    };
+    let quantified = forall_int32(
+        index,
+        Proposition::Implies(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Variable(index),
+                    ),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(Bitvector32Term::Variable(index), exit.clone()),
+                    true,
+                )),
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    indexed_load(Bitvector32Term::Variable(index)),
+                    Bitvector32Term::Variable(index),
+                ),
+                true,
+            )),
+        ),
+    );
+    let exit_guard = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(exit.clone(), Bitvector32Term::Constant(3)),
+        false,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            indexed_load(Bitvector32Term::Constant(2)),
+            Bitvector32Term::Constant(2),
+        ),
+        true,
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(quantified.clone())
+        .assume_proposition(exit_guard.clone());
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("the selected universal instance should prove the concrete cell");
+    let (selected, argument, guards) = derivation
+        .forall_int32_instantiation()
+        .expect("the atomic decision should retain its specialization");
+    assert_eq!(selected, &quantified);
+    assert_eq!(argument, &Bitvector32Term::Constant(2));
+    assert_eq!(guards, std::slice::from_ref(&exit_guard));
+    assert!(derivation.replay(&assumptions));
+    assert!(!derivation.replay(&PureFactContext::new().assume_proposition(quantified)));
+    assert!(!derivation.replay(&PureFactContext::new().assume_proposition(exit_guard)));
 }
 
 #[test]

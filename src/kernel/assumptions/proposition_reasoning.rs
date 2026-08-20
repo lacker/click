@@ -390,6 +390,22 @@ impl PureFactContext {
             Proposition::Not(body) => matches!(body.as_ref(), Proposition::ConditionIs(_, _)),
             _ => false,
         };
+        if let Some(selected) =
+            self.select_forall_int32_instantiation_evidence(proposition, for_simp)
+        {
+            let mut candidate = PureFactContext::new().assume_proposition(selected.quantified);
+            for premise in selected.guard_premises {
+                candidate = candidate.assume_proposition(premise);
+            }
+            let (evidence, premises_id) =
+                candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
+            if matches!(
+                evidence,
+                Some(AtomicPropositionDerivationEvidence::ForallInt32Instantiation(_))
+            ) {
+                return evidence.map(|evidence| (candidate, premises_id, evidence));
+            }
+        }
         if atomic_premise_minimization_disabled() {
             let (evidence, premises_id) =
                 self.proves_atomic_for_derivation_with_id(proposition, for_simp);
@@ -968,6 +984,82 @@ impl PureFactContext {
             .is_some()
     }
 
+    /// Select one concrete specialization of an available int32 universal,
+    /// retaining the exact context facts used to discharge its guards. This
+    /// is planning work: replay consumes only the recorded fact, argument,
+    /// and guard premises and never scans the ambient proposition set.
+    fn select_forall_int32_instantiation_evidence(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+    ) -> Option<ForallInt32InstantiationEvidence> {
+        fn conjuncts(proposition: &Proposition, into: &mut Vec<Proposition>) {
+            if let Proposition::And(left, right) = proposition {
+                conjuncts(left, into);
+                conjuncts(right, into);
+            } else {
+                into.push(proposition.clone());
+            }
+        }
+
+        let target_condition = match proposition {
+            Proposition::ConditionIs(condition, value) => Some((condition, *value)),
+            _ => None,
+        };
+        for quantified in self.prop_facts.iter() {
+            let Proposition::ForAll {
+                var,
+                sort: Sort::CInt32,
+                body,
+            } = quantified
+            else {
+                continue;
+            };
+            let candidates = match target_condition {
+                Some((condition, _)) => {
+                    Self::guided_forall_condition_candidates(*var, body, condition)
+                }
+                None => BTreeSet::new(),
+            };
+            for argument in candidates {
+                let mut conclusion =
+                    substitute_bitvector_variable_in_proposition(body, *var, &argument);
+                let mut guards = Vec::new();
+                while let Proposition::Implies(guard, body) = conclusion {
+                    conjuncts(&guard, &mut guards);
+                    conclusion = *body;
+                }
+                let conclusion_matches = conclusion == *proposition
+                    || target_condition.is_some_and(|(condition, value)| {
+                        self.proposition_proves_condition(&conclusion, condition, value)
+                    });
+                if !conclusion_matches {
+                    continue;
+                }
+                let mut guard_premises = BTreeSet::new();
+                let mut all_guards_proved = true;
+                for guard in guards {
+                    if solve_builtin_prop(&guard) {
+                        continue;
+                    }
+                    let Some(derivation) = self.derive_proposition_using(&guard, for_simp) else {
+                        all_guards_proved = false;
+                        break;
+                    };
+                    guard_premises.extend(derivation.context_premises());
+                }
+                if all_guards_proved {
+                    return Some(ForallInt32InstantiationEvidence {
+                        quantified: quantified.clone(),
+                        argument,
+                        guard_premises: guard_premises.into_iter().collect(),
+                    });
+                }
+            }
+        }
+        None
+    }
+
     fn proves_atomic_for_derivation_with_id(
         &self,
         proposition: &Proposition,
@@ -1013,6 +1105,29 @@ impl PureFactContext {
                 .exact_bitvector_equality_path_evidence(left, right)
                 .map(AtomicPropositionDerivationEvidence::BitvectorEqualityPath),
             _ => None,
+        };
+        let equality_rewrite_paths_evidence = {
+            let mut variables = BTreeSet::new();
+            collect_proposition_bitvector_variables(proposition, &mut variables);
+            let mut rewritten = proposition.clone();
+            let mut paths = Vec::new();
+            for variable in variables {
+                let source = Bitvector32Term::Variable(variable);
+                let target = self.canonical_bitvector_from_direct_equalities(&source);
+                if target == source {
+                    continue;
+                }
+                let Some(path) = self.exact_bitvector_equality_path_evidence(&source, &target)
+                else {
+                    continue;
+                };
+                rewritten =
+                    substitute_bitvector_variable_in_proposition(&rewritten, variable, &target);
+                paths.push(path);
+            }
+            (!paths.is_empty() && solve_builtin_prop(&rewritten)).then_some(
+                AtomicPropositionDerivationEvidence::BitvectorEqualityRewritePaths(paths),
+            )
         };
         let le_and_not_lt_equality_evidence = match proposition {
             Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
@@ -1465,6 +1580,11 @@ impl PureFactContext {
             }
             _ => None,
         };
+        let forall_instantiation_evidence = self
+            .select_forall_int32_instantiation_evidence(proposition, for_simp)
+            .map(|evidence| {
+                AtomicPropositionDerivationEvidence::ForallInt32Instantiation(Box::new(evidence))
+            });
         let result = memory_evidence
             .or(equality_path_evidence)
             .or(le_and_not_lt_equality_evidence)
@@ -1495,6 +1615,8 @@ impl PureFactContext {
             .or(one_le_predecessor_is_nonnegative_evidence)
             .or(one_le_predecessor_strictly_decreases_evidence)
             .or(equal_one_predecessor_is_zero_evidence)
+            .or(forall_instantiation_evidence)
+            .or(equality_rewrite_paths_evidence)
             .or_else(|| {
                 let proved = if for_simp {
                     match proposition {
@@ -1557,6 +1679,70 @@ impl PureFactContext {
                 return false;
             };
             return self.replays_exact_bitvector_equality_path(path, left, right);
+        }
+        if let AtomicPropositionDerivationEvidence::BitvectorEqualityRewritePaths(paths) = evidence
+        {
+            let mut rewritten = proposition.clone();
+            for path in paths {
+                let (Some(first), Some(last)) = (path.first(), path.last()) else {
+                    return false;
+                };
+                let Bitvector32Term::Variable(variable) = first.source else {
+                    return false;
+                };
+                if !self.replays_exact_bitvector_equality_path(path, &first.source, &last.target) {
+                    return false;
+                }
+                rewritten = substitute_bitvector_variable_in_proposition(
+                    &rewritten,
+                    variable,
+                    &last.target,
+                );
+            }
+            return solve_builtin_prop(&rewritten);
+        }
+        if let AtomicPropositionDerivationEvidence::ForallInt32Instantiation(selected) = evidence {
+            let Proposition::ForAll {
+                var,
+                sort: Sort::CInt32,
+                body,
+            } = &selected.quantified
+            else {
+                return false;
+            };
+            if !self.prop_facts.contains(&selected.quantified)
+                || selected
+                    .guard_premises
+                    .iter()
+                    .any(|premise| !self.proves_exact(premise))
+            {
+                return false;
+            }
+            let guard_context = selected
+                .guard_premises
+                .iter()
+                .fold(PureFactContext::new(), |context, premise| {
+                    context.assume_proposition(premise.clone())
+                });
+            let mut conclusion =
+                substitute_bitvector_variable_in_proposition(body, *var, &selected.argument);
+            while let Proposition::Implies(guard, body) = conclusion {
+                let proved = solve_builtin_prop(&guard)
+                    || guard_context
+                        .derive_proposition_using(&guard, for_simp)
+                        .is_some();
+                if !proved {
+                    return false;
+                }
+                conclusion = *body;
+            }
+            return conclusion == *proposition
+                || match proposition {
+                    Proposition::ConditionIs(condition, value) => {
+                        self.proposition_proves_condition(&conclusion, condition, *value)
+                    }
+                    _ => false,
+                };
         }
         if let AtomicPropositionDerivationEvidence::SignedOrderPath(path) = evidence {
             let Proposition::ConditionIs(condition, value) = proposition else {

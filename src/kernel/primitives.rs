@@ -1757,10 +1757,19 @@ pub(super) struct Int32LeAndNeqStrictEvidence {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ForallInt32InstantiationEvidence {
+    pub(super) quantified: Proposition,
+    pub(super) argument: Bitvector32Term,
+    pub(super) guard_premises: Vec<Proposition>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum AtomicPropositionDerivationEvidence {
     MemoryDag(AtomicMemoryLoadEqualityEvidence),
     PointerOffsetMemoryDag(PointerOffsetEqualityEvidence),
     BitvectorEqualityPath(Vec<BitvectorEqualityDerivationStep>),
+    BitvectorEqualityRewritePaths(Vec<Vec<BitvectorEqualityDerivationStep>>),
+    ForallInt32Instantiation(Box<ForallInt32InstantiationEvidence>),
     SignedOrderPath(Vec<SignedOrderDerivationStep>),
     Int32IncrementUpperBound(SignedOrderDerivationStep),
     Int32IncrementConstantUpperBound(SignedOrderDerivationStep),

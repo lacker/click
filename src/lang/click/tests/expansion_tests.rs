@@ -695,6 +695,135 @@ fn post_execution_simp_builds_disjunction_cases_on_proof() {
 }
 
 #[test]
+fn symbolic_max_outcomes_retain_selected_branch_order_paths() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests")
+        .join("max_symbolic.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("max_symbolic should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources));
+    verified.expect("both symbolic max claims should verify through Proof");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp compatibility construction"
+                    || name == "outcome simp legacy exit planning"
+        )),
+        "selected branch order paths must bypass outcome fallbacks: {events:#?}"
+    );
+
+    for claim in [CProofClaim::Ensure(0), CProofClaim::Ensure(1)] {
+        let expanded = expand_c0_claim_source(click_source, &c_sources, "max", claim)
+            .expect("the retained branch order proof should expand");
+        verify_c0_sources(&expanded, &c_sources)
+            .expect("the expanded branch order proof should replay independently");
+    }
+}
+
+#[test]
+fn outcome_arithmetic_normalization_retains_selected_equality_paths() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests")
+        .join("later_loop_preserve.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("later_loop_preserve should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources));
+    verified.expect("the return expression should normalize through retained equalities");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp compatibility construction"
+                    || name == "outcome simp legacy exit planning"
+        )),
+        "selected equality paths must bypass outcome fallbacks: {events:#?}"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &c_sources,
+        "later_loop_preserve",
+        CProofClaim::Ensure(0),
+    )
+    .expect("the retained equality paths should expand");
+    assert!(expanded.matches("rewrite(").count() >= 2, "{expanded}");
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("the expanded equality paths should replay independently");
+}
+
+#[test]
+fn outcome_quantified_cells_retain_selected_instantiations() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests")
+        .join("fill3_array_loop.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("fill3_array_loop should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources));
+    verified.expect("all three concrete cells should specialize the retained loop invariant");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "outcome simp compatibility construction"
+                    || name == "outcome simp legacy exit planning"
+        )),
+        "selected universal instances must bypass outcome fallbacks: {events:#?}"
+    );
+
+    for claim in [
+        CProofClaim::Ensure(0),
+        CProofClaim::Ensure(1),
+        CProofClaim::Ensure(2),
+    ] {
+        let expanded = expand_c0_claim_source(click_source, &c_sources, "fill3_array_loop", claim)
+            .expect("the retained universal instance should expand");
+        assert!(expanded.contains("instantiate("), "{expanded}");
+        verify_c0_sources(&expanded, &c_sources)
+            .expect("the expanded universal instance should replay independently");
+    }
+}
+
+#[test]
 fn post_execution_simp_builds_recursive_conjunction_on_proof() {
     let c_source = r#"
         int32 first(int32 x, int32 y) {

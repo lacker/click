@@ -7114,17 +7114,18 @@ impl<'a> Proof<'a> {
         // subset already carries one common explicit `at(...)` spelling,
         // retry this same finite premise list at that point. No ambient fact
         // or program-point scan participates.
-        if premise_pairs.len() < context_premises.len() {
-            let anchors = premise_pairs
+        let anchors = premise_pairs
+            .iter()
+            .filter_map(|(_, surface)| surface_source_site(surface))
+            .collect::<BTreeSet<_>>();
+        if anchors.len() == 1 {
+            let inferred = anchors.first().expect("one inferred anchor");
+            let anchored_pairs = context_premises
                 .iter()
-                .filter_map(|(_, surface)| surface_source_site(surface))
-                .collect::<BTreeSet<_>>();
-            if anchors.len() == 1 {
-                let inferred = anchors.first().expect("one inferred anchor");
-                premise_pairs = context_premises
-                    .iter()
-                    .filter_map(|premise| resolve_premise(premise, Some(inferred)))
-                    .collect();
+                .filter_map(|premise| resolve_premise(premise, Some(inferred)))
+                .collect::<Vec<_>>();
+            if anchored_pairs.len() >= premise_pairs.len() {
+                premise_pairs = anchored_pairs;
             }
         }
         Some((
@@ -7193,10 +7194,56 @@ impl<'a> Proof<'a> {
                 return Some(anchored);
             }
         }
-        surface_facts
+        if let Some(surface) = surface_facts
             .surfaces(kernel)
             .find(|surface| matches_kernel(surface).is_some())
             .cloned()
+        {
+            return Some(surface);
+        }
+        // Quantified execution facts may be retained in the canonical memory
+        // spelling used by the kernel while their recorded Surface form
+        // lowers to a replay-equivalent snapshot spelling. Probe only the
+        // persistent alpha/canonical-load bucket for this selected premise;
+        // `InstantiateUsing` validates the same equivalence on replay.
+        if matches!(kernel, Proposition::ForAll { .. }) {
+            for candidate in self.facts().matching_quantified_replay_facts(kernel) {
+                for surface in surface_facts.surfaces(&candidate) {
+                    let lowered = self
+                        .lower_surface_proposition_direct(
+                            surface,
+                            "typed quantified simp premise spelling",
+                        )
+                        .ok()?;
+                    if quantified_replay_equivalent_available_fact(
+                        kernel,
+                        std::slice::from_ref(&lowered),
+                    )
+                    .is_some()
+                    {
+                        return Some(surface.clone());
+                    }
+                }
+            }
+        }
+        // Branch-condition facts are checked execution outputs, but their
+        // arm-local Surface map entry need not survive at the shared outcome.
+        // Reconstruct only this derivation-selected premise at the current
+        // semantic point and accept it only when ordinary lowering recovers
+        // the exact kernel fact. This is constant work per typed proof edge,
+        // not an ambient spelling search.
+        let synthesis_context = match self.context.as_ref() {
+            ProofContext::Pure(_) => None,
+            ProofContext::Point(context) => {
+                Some((context.parameters, context.arguments, context.state))
+            }
+            ProofContext::Execution(_) => self
+                .outcome_point_view()
+                .map(|view| (view.parameters, view.arguments, view.state)),
+        };
+        let (parameters, arguments, state) = synthesis_context?;
+        let surface = synthesize_surface_proposition(kernel, parameters, arguments, state)?;
+        matches_kernel(&surface).map(|()| surface)
     }
 
     /// Tries equalities attached to terms occurring in the current goal.
@@ -7919,6 +7966,11 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| plan_recorded_bitvector_equality_path(goal, derivation, &premise_pairs))
+            .or_else(|| {
+                let recorded =
+                    recorded_bitvector_equality_rewrite_path_pairs(derivation, &premise_pairs)?;
+                plan_recorded_bitvector_equality_rewrite_paths(goal, derivation, &recorded)
+            })
             .or_else(|| {
                 let recorded =
                     recorded_int32_increment_upper_bound_pairs(derivation, &premise_pairs)?;
@@ -11546,11 +11598,17 @@ impl ProofFacts {
     }
 
     fn matching_quantified_replay_fact(&self, required: &Proposition) -> Option<Proposition> {
+        self.matching_quantified_replay_facts(required)
+            .into_iter()
+            .next()
+    }
+
+    fn matching_quantified_replay_facts(&self, required: &Proposition) -> Vec<Proposition> {
         quantified_replay_index_key(required)
             .and_then(|key| self.by_quantified_replay.get(&key))
             .into_iter()
             .flat_map(PersistentSequence::iter)
-            .find(|candidate| {
+            .filter(|candidate| {
                 quantified_binder_equivalent(required, candidate)
                     || quantified_replay_equivalent_available_fact(
                         required,
@@ -11559,6 +11617,7 @@ impl ProofFacts {
                     .is_some()
             })
             .cloned()
+            .collect()
     }
 
     fn quantified_replay_available(&self, required: &Proposition) -> bool {
@@ -16286,6 +16345,110 @@ mod tests {
                 closed.certificate().steps(),
                 [
                     SimpleProofStep::Rewrite(_),
+                    SimpleProofStep::Rewrite(_),
+                    SimpleProofStep::Rewrite(_),
+                    SimpleProofStep::Normalize,
+                ]
+            ));
+            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.certificate().steps().is_empty());
+        }
+    }
+
+    #[test]
+    fn point_arithmetic_rewrite_paths_ignore_unrelated_facts() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let parsed_function =
+            syntax::parse_function("void noop() {}").expect("test C function should parse");
+        let state = CState::new();
+        let arguments = Vec::new();
+        let program_point_states = ProgramPointStates::new();
+        let left = Bitvector32Term::Variable(Variable(8_176_000));
+        let right = Bitvector32Term::Variable(Variable(8_176_001));
+        let one = Bitvector32Term::Constant(1);
+        let expression = |term: &Bitvector32Term| {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(term.clone())))
+        };
+        let equality =
+            |left: &Bitvector32Term, right: &Bitvector32Term| ClickProposition::Comparison {
+                left: expression(left),
+                operator: ComparisonOperator::Equal,
+                right: expression(right),
+            };
+        let surfaces = vec![equality(&left, &one), equality(&one, &right)];
+        let lower = |surface: &ClickProposition| {
+            lower_point_proposition_with_assumptions(
+                surface,
+                &PureFactContext::new(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                None,
+                &program_point_states,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the fixed equality should lower")
+        };
+        let premises = surfaces.iter().map(lower).collect::<Vec<_>>();
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Add(Box::new(left), Box::new(right))),
+                Box::new(Bitvector32Term::Constant(2)),
+            ),
+            true,
+        );
+        let mut surface_propositions = SurfacePropositionMap::default();
+        for (kernel, surface) in premises.iter().zip(&surfaces) {
+            surface_propositions
+                .record_lowering(surface, kernel)
+                .expect("the exact point spelling should be indexed");
+        }
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            facts.extend(premises.iter().cloned());
+            let root = Proof::for_point_goal(
+                "persistent point arithmetic rewrite simp",
+                0,
+                &facts,
+                goal.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                &state,
+                &program_point_states,
+                &surface_propositions,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &[],
+                &[],
+            );
+            let retained_root = root.clone();
+            let before = fact_node_allocations();
+            let closed = root
+                .try_simp_closure()
+                .expect("smart search must not exceed its deadline")
+                .expect("the retained equality paths should close the arithmetic goal");
+            let allocations = fact_node_allocations() - before;
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            let allocation_bound = 128 * logarithmic_height + 512;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} arithmetic rewrite simp allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [
                     SimpleProofStep::Rewrite(_),
                     SimpleProofStep::Rewrite(_),
                     SimpleProofStep::Normalize,

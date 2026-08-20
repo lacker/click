@@ -908,6 +908,69 @@ fn indexed_surface_resolution_ignores_unrelated_available_facts() {
 }
 
 #[test]
+fn snapshot_blind_surface_selection_scales_by_index_height() {
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let load_fact = |memory: CMemory, upper: u32| {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessThan(
+                Box::new(Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory(memory),
+                    Box::new(pointer.clone()),
+                )),
+                Box::new(Bitvector32Term::Constant(upper)),
+            ),
+            true,
+        )
+    };
+    let recorded = load_fact(CMemory::new().with_block("entry-marker", 0), 7);
+    let query = load_fact(CMemory::new().with_block("later-marker", 0), 7);
+    let surface = ClickProposition::Comparison {
+        left: current_var("x"),
+        operator: ComparisonOperator::LessThan,
+        right: current_int(7),
+    };
+    let samples = [16_u32, 64, 256, 1024, 4096]
+        .into_iter()
+        .map(|size| {
+            let mut spellings = SurfacePropositionMap::default();
+            spellings.record_lowering(&surface, &recorded).unwrap();
+            for index in 0..size {
+                let unrelated_surface = ClickProposition::Comparison {
+                    left: ContractExpression::CBinding(format!("unrelated_{index}")),
+                    operator: ComparisonOperator::Equal,
+                    right: current_int(index),
+                };
+                let unrelated = Proposition::ConditionIs(
+                    ConditionTerm::Variable(Variable((200_000 + index).into())),
+                    true,
+                );
+                spellings
+                    .record_lowering(&unrelated_surface, &unrelated)
+                    .unwrap();
+            }
+            let (matches, work) = crate::instrumentation::measure_deterministic_work(|| {
+                spellings
+                    .snapshot_blind_kernels(&query)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            });
+            assert_eq!(matches, vec![recorded.clone()]);
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+
+    let first = samples.first().unwrap().1;
+    let last = samples.last().unwrap().1;
+    assert!(
+        last <= first * 4 + 8,
+        "snapshot-blind lookup should grow only by index height: {samples:?}"
+    );
+}
+
+#[test]
 fn surface_lowering_map_forks_and_local_updates_scale_logarithmically() {
     fn indexed_pair(index: u32) -> (ClickProposition, Proposition) {
         (

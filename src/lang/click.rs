@@ -436,6 +436,11 @@ pub struct SurfacePropositionMap {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct SurfacePropositionStorage {
     by_kernel: PersistentMap<Proposition, KernelSurfaceSpellings>,
+    /// Recorded kernel facts grouped by a structural key that forgets only
+    /// memory snapshot identities. Typed proof steps use this to recover a
+    /// replay-equivalent Surface spelling without scanning ambient facts.
+    by_snapshot_blind:
+        PersistentMap<proof::SnapshotBlindPropositionKey, PersistentSet<Proposition>>,
     // The debug spelling is a deterministic structural bucket key. Exact
     // equality inside the bucket preserves soundness even if two future
     // syntax variants ever acquire the same debug rendering.
@@ -698,6 +703,10 @@ impl SurfacePropositionMap {
                 .shares_root_with(&other.storage.by_surface)
             && self
                 .storage
+                .by_snapshot_blind
+                .shares_root_with(&other.storage.by_snapshot_blind)
+            && self
+                .storage
                 .by_current_c_variable
                 .shares_root_with(&other.storage.by_current_c_variable)
             && self
@@ -741,6 +750,16 @@ impl SurfacePropositionMap {
             let mut spellings = storage.by_kernel.get(kernel).cloned().unwrap_or_default();
             spellings.insert(surface, &surface_key);
             storage.by_kernel = storage.by_kernel.with_inserted(kernel.clone(), spellings);
+            let snapshot_key = proof::snapshot_blind_proposition_key(kernel);
+            let snapshot_facts = storage
+                .by_snapshot_blind
+                .get(&snapshot_key)
+                .cloned()
+                .unwrap_or_default()
+                .with_value(kernel.clone());
+            storage.by_snapshot_blind = storage
+                .by_snapshot_blind
+                .with_inserted(snapshot_key, snapshot_facts);
             let mut bucket = storage
                 .by_surface
                 .get(&surface_key)
@@ -849,6 +868,18 @@ impl SurfacePropositionMap {
             .get(kernel)
             .into_iter()
             .flat_map(|spellings| spellings.ordered.iter())
+    }
+
+    pub(in crate::lang::click) fn snapshot_blind_kernels(
+        &self,
+        kernel: &Proposition,
+    ) -> impl Iterator<Item = &Proposition> {
+        let key = proof::snapshot_blind_proposition_key(kernel);
+        self.storage
+            .by_snapshot_blind
+            .get(&key)
+            .into_iter()
+            .flat_map(PersistentSet::iter)
     }
 
     pub fn kernel_facts(&self) -> impl Iterator<Item = &Proposition> {

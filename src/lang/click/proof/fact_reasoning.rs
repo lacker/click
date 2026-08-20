@@ -77,7 +77,7 @@ pub(super) fn condition_polarity_spellings(proposition: &Proposition) -> Vec<Pro
 /// load atoms. A matching key only selects candidates; the kernel snapshot
 /// bridge still proves that a selected candidate denotes the required fact.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(super) enum SnapshotBlindPropositionKey {
+pub(in crate::lang::click) enum SnapshotBlindPropositionKey {
     Condition(SnapshotBlindConditionKey, bool),
     Implies(Box<Self>, Box<Self>),
     And(Box<Self>, Box<Self>),
@@ -91,7 +91,7 @@ pub(super) enum SnapshotBlindPropositionKey {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(super) struct SnapshotBlindMemoryRangeKey {
+pub(in crate::lang::click) struct SnapshotBlindMemoryRangeKey {
     block: PointerBlock,
     offset: SnapshotBlindPointerOffsetKey,
     start: SnapshotBlindBitvectorKey,
@@ -99,7 +99,7 @@ pub(super) struct SnapshotBlindMemoryRangeKey {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(super) enum SnapshotBlindConditionKey {
+pub(in crate::lang::click) enum SnapshotBlindConditionKey {
     Constant(bool),
     Variable(Variable),
     SignedLessThan(SnapshotBlindBitvectorKey, SnapshotBlindBitvectorKey),
@@ -117,7 +117,7 @@ pub(super) enum SnapshotBlindConditionKey {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(super) enum SnapshotBlindBitvectorKey {
+pub(in crate::lang::click) enum SnapshotBlindBitvectorKey {
     Load(Box<SnapshotBlindPointerKey>),
     Add(Box<Self>, Box<Self>),
     Subtract(Box<Self>, Box<Self>),
@@ -126,13 +126,13 @@ pub(super) enum SnapshotBlindBitvectorKey {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(super) struct SnapshotBlindPointerKey {
+pub(in crate::lang::click) struct SnapshotBlindPointerKey {
     block: PointerBlock,
     offset: Box<SnapshotBlindPointerOffsetKey>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(super) enum SnapshotBlindPointerOffsetKey {
+pub(in crate::lang::click) enum SnapshotBlindPointerOffsetKey {
     Add(Box<Self>, Box<Self>),
     Int32Scaled {
         value: SnapshotBlindBitvectorKey,
@@ -321,7 +321,7 @@ impl SnapshotBlindPointerOffsetKey {
     }
 }
 
-pub(super) fn snapshot_blind_proposition_key(
+pub(in crate::lang::click) fn snapshot_blind_proposition_key(
     proposition: &Proposition,
 ) -> SnapshotBlindPropositionKey {
     match proposition {

@@ -3916,6 +3916,34 @@ goal-index regressions continue to pin transactional misses and logarithmic
 unrelated-fact lookup. The proof-object migration board is now two open leaves:
 typed atomic derivations and terminal fallback retirement.
 
+### Progress (2026-08-19: atomic derivations retain their complete selected proof)
+
+The remaining arithmetic normalization decisions now retain the exact ordered
+equality-rewrite path for each rewritten goal operand, and quantified atomic
+decisions retain the selected universal, specialization argument, and exact
+guard derivations. Replay checks those recorded choices directly. Outcome
+certificate construction transcribes the selected rewrites, theorem
+applications, and instantiations instead of rediscovering them from an
+unordered premise bag.
+
+Typed premise spelling now uses a persistent snapshot-blind index in the
+Surface proposition map. The index selects only facts with the required
+structure; ordinary lowering and the kernel snapshot bridge remain the
+authority for every candidate. This preserves the stable `at(...)` spelling
+needed by grouped resource proofs without scanning their ambient fact set.
+The final modular-call shape already retained `1 <= cap` and `len == 0`; its
+selected-premise rewrite-then-named-rule composition now runs before any
+compatibility logic.
+
+`lower_surface_atomic_derivation` no longer contains deletion minimization,
+full-context Surface recovery, or ambient equality harvesting. The fresh
+1,099-test library census passes after those paths are physically deleted, and
+the instrumented outcome fixture censuses remain at zero compatibility and
+legacy-exit events. Deterministic 16-through-4,096 regressions cover arithmetic
+rewrite selection, quantified specialization, and logarithmic snapshot-blind
+Surface indexing. The atomic-derivation leaf is closed; terminal fallback
+retirement is the one remaining proof-object migration leaf.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

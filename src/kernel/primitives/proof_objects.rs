@@ -17,6 +17,16 @@ impl PropositionDerivation {
         &self.conclusion
     }
 
+    /// Whether an atomic leaf retained a concrete theory rule rather than
+    /// the compatibility-era opaque success marker.
+    pub fn has_typed_atomic_evidence(&self) -> bool {
+        matches!(
+            &self.rule,
+            PropositionDerivationRule::ContextualAtomic { evidence, .. }
+                if !matches!(evidence, AtomicPropositionDerivationEvidence::Legacy)
+        )
+    }
+
     /// Return the checked child derivations when this proof concludes a
     /// conjunction. Certificate lowering can preserve this structure instead
     /// of rediscovering it from a flattened premise set.
@@ -66,6 +76,38 @@ impl PropositionDerivation {
                 evidence: AtomicPropositionDerivationEvidence::BitvectorEqualityPath(path),
                 ..
             } => Some(path),
+            _ => None,
+        }
+    }
+
+    /// Return the exact equality paths selected to rewrite variables in a
+    /// larger atomic proposition before context-free normalization.
+    pub fn bitvector_equality_rewrite_paths(
+        &self,
+    ) -> Option<&[Vec<BitvectorEqualityDerivationStep>]> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::BitvectorEqualityRewritePaths(paths),
+                ..
+            } => Some(paths),
+            _ => None,
+        }
+    }
+
+    /// Return the exact universal specialization selected by the atomic
+    /// prover: the quantified fact, concrete argument, and guard premises.
+    pub fn forall_int32_instantiation(
+        &self,
+    ) -> Option<(&Proposition, &Bitvector32Term, &[Proposition])> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::ForallInt32Instantiation(evidence),
+                ..
+            } => Some((
+                &evidence.quantified,
+                &evidence.argument,
+                &evidence.guard_premises,
+            )),
             _ => None,
         }
     }
