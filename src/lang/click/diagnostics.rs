@@ -166,6 +166,27 @@ pub(super) fn describe_pure_fact(
             describe_c_resource(parent, parameters, arguments),
             describe_c_resource(child, parameters, arguments)
         ),
+        Proposition::CMemoryMutatesOnly { pointers, .. } => format!(
+            "memory mutates only at {}",
+            describe_bounded_list(pointers, |pointer| {
+                describe_pointer(pointer, parameters, arguments)
+            })
+        ),
+        Proposition::CMemoryEffectSummary { mutable_ranges, .. } => format!(
+            "memory effect ranges {}",
+            describe_bounded_list(mutable_ranges, |range| {
+                describe_memory_range(range, parameters, arguments)
+            })
+        ),
+        Proposition::CHeapLifetimeRetired {
+            allocation_base,
+            bytes,
+            ..
+        } => format!(
+            "retired heap allocation {} ({} bytes)",
+            describe_pointer(allocation_base, parameters, arguments),
+            describe_bitvector_with_context(bytes, parameters, arguments)
+        ),
         Proposition::ForAll { sort, .. } => {
             format!("universal proposition over {sort:?}")
         }
@@ -202,7 +223,9 @@ pub(super) fn describe_execution_pure_facts(facts: &[ExecutionPureFact]) -> Stri
         return "[]".to_string();
     }
 
-    describe_bounded_list(facts, |fact| bounded_debug(fact.proposition()))
+    describe_bounded_list(facts, |fact| {
+        describe_pure_fact(fact.proposition(), &[], &[])
+    })
 }
 
 pub(super) fn describe_available_facts(

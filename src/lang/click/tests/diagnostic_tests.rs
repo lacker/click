@@ -196,6 +196,58 @@ fn verifier_diagnostics_are_bounded_deterministically_at_utf8_boundaries() {
 }
 
 #[test]
+fn execution_effect_diagnostics_omit_raw_memory_snapshots() {
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(8),
+    };
+    let before = CMemory::new().store(pointer.clone(), int32(1));
+    let after = before.clone().store(pointer.clone(), int32(2));
+    let facts = vec![
+        ExecutionPureFact::new(Proposition::CMemoryMutatesOnly {
+            before: before.clone(),
+            after: after.clone(),
+            pointers: vec![pointer.clone()],
+        }),
+        ExecutionPureFact::new(Proposition::CMemoryEffectSummary {
+            before: before.clone(),
+            after: after.clone(),
+            mutable_ranges: vec![CMemoryRange::new(
+                pointer.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )],
+        }),
+        ExecutionPureFact::new(Proposition::CHeapLifetimeRetired {
+            before,
+            after,
+            allocation_base: pointer,
+            bytes: Bitvector32Term::Constant(4),
+        }),
+    ];
+
+    let description = super::diagnostics::describe_execution_pure_facts(&facts);
+
+    assert!(
+        description.contains("memory mutates only at"),
+        "{description}"
+    );
+    assert!(
+        description.contains("memory effect ranges"),
+        "{description}"
+    );
+    assert!(
+        description.contains("retired heap allocation"),
+        "{description}"
+    );
+    assert!(!description.contains("CMemory"), "{description}");
+    assert!(
+        !description.contains("diagnostic truncated"),
+        "{description}"
+    );
+}
+
+#[test]
 fn missing_contract_load_diagnostic_omits_raw_memory_snapshots() {
     let error = super::checking::evaluate_contract_memory_load_from_memory(
         &CMemory::new(),
