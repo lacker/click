@@ -10683,6 +10683,19 @@ impl<'a> ProofScope<'a> {
         self.body.goal()
     }
 
+    /// Reports a conclusive atomic rejection without trying to construct a
+    /// proof. An unclosed or opaque goal is not false; only an indexed exact
+    /// conflict or normalization to false crosses this negative boundary.
+    pub(super) fn goal_is_definitely_false(&self) -> bool {
+        self.body.goal().is_some_and(|goal| {
+            self.body.facts().directly_conflicts_with(goal)
+                || matches!(
+                    simp_proposition(goal, self.body.facts().assumptions()),
+                    SimpProposition::False
+                )
+        })
+    }
+
     /// Opens one proposition subproof at the current scope body's frontier.
     ///
     /// The returned scope is rooted at this scope's current checked body. It

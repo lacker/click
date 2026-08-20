@@ -8586,6 +8586,115 @@ fn resource_example_pipelines_have_no_outcome_fallbacks() {
 }
 
 #[test]
+fn negative_outcome_diagnostic_manifests_have_no_fallbacks() {
+    let manifests = [
+        (
+            "pure/type",
+            &[
+                "c_multiplication.md",
+                "c_nonzero_integer_rejected_as_pointer.md",
+                "contract_let_type_mismatch.md",
+                "max_bad_ensure.md",
+                "grouped_post_tactics_respect_order.md",
+                "grouped_top_level_witness_rejected.md",
+            ][..],
+        ),
+        (
+            "memory/mutation",
+            &[
+                "fill3_bad_memory_postcondition.md",
+                "fill_tail_rejects_tail_segment_unchanged.md",
+                "forall_array_segment_rejects_overwritten_cell.md",
+                "loop_rejects_stale_address_escaped_local.md",
+                "loop_rejects_stale_pre_loop_store.md",
+                "pointer_params_may_alias_without_separate.md",
+                "proof_branch_hides_arm_facts.md",
+                "write_second_old_rejects_overwritten_cell.md",
+            ][..],
+        ),
+        (
+            "resource/call",
+            &[
+                "composite_resource_folded_nested_fact_projection.md",
+                "composite_resource_nested_observe_not_automatic.md",
+                "grouped_fold_after_simp_does_not_close.md",
+                "grouped_post_tactics_respect_order.md",
+                "grouped_unfold_respects_order.md",
+                "opaque_call_does_not_preserve_overlapping_field.md",
+                "opaque_call_rejects_weak_postcondition.md",
+                "permission_call_consumes_write_without_return.md",
+                "resource_summary_requires_returned_write.md",
+            ][..],
+        ),
+    ];
+    let mdtests = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests");
+    let mut checked = BTreeSet::new();
+    for (class, filenames) in manifests {
+        for filename in filenames {
+            if !checked.insert(*filename) {
+                continue;
+            }
+            let path = mdtests.join(filename);
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+            let mdtest = crate::cli::parse_mdtest(&path, &source)
+                .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+            let click_source = mdtest
+                .click_source
+                .as_deref()
+                .unwrap_or_else(|| panic!("`{}` has no Click source", path.display()));
+            let c_sources = mdtest
+                .c_sources
+                .iter()
+                .map(|(name, source)| (name.as_str(), source.as_str()))
+                .collect::<Vec<_>>();
+            let crate::cli::MdTestExpectation::FailContains(expected) = mdtest
+                .expectation
+                .as_ref()
+                .unwrap_or_else(|| panic!("`{}` has no expectation", path.display()))
+            else {
+                panic!("`{}` is not an expected failure", path.display());
+            };
+
+            let (result, events) =
+                crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources));
+            let error = match result {
+                Ok(_) => panic!("`{}` unexpectedly verified", path.display()),
+                Err(error) => error,
+            };
+            assert!(
+                error.message().contains(expected),
+                "{class} fixture `{}` expected `{expected}`, got `{}`",
+                path.display(),
+                error.message()
+            );
+            assert!(
+                error.message().len() < 16 * 1024,
+                "{class} fixture `{}` produced an unbounded diagnostic ({} bytes)",
+                path.display(),
+                error.message().len()
+            );
+            let fallback_events = events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                            if name == "outcome simp legacy exit planning"
+                                || name == "outcome simp compatibility construction"
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                fallback_events.is_empty(),
+                "{class} fixture `{}` entered outcome fallback planning: {fallback_events:#?}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn branch_continuation_claims_retain_their_selected_outcome_step() {
     for (filename, function, claim, claim_label) in [
         (

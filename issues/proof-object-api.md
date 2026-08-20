@@ -3894,6 +3894,28 @@ replay, and pass full expansion audits (42 smart sites total). A 16-through-
 keeps logarithmic lookup and allocation bounds. The proof-object migration
 board is now five open leaves.
 
+### Progress (2026-08-19: negative outcomes reject before compatibility)
+
+A failed direct outcome Proof now reaches an authoritative semantic rejection
+before either compatibility span begins for concrete comparisons, quantified
+preservation claims, resource predicates, indexed contradictions, and lowering
+errors. This preserves value/type/memory diagnostics rather than replacing them
+with the smart tactic's generic unclosed-goal message. Resource production uses
+its checked resource operation and preserves the ordinary final-closure wrapper.
+A one-proposition grouped transition keeps the established grouped ordering
+diagnostic once both its direct Proof and semantic check reject; it cannot gain
+evidence from a sibling proposition because none exists. Positive and opaque
+misses still continue to compatibility construction until their remaining
+typed operation is migrated.
+
+The three negative manifests pin 22 unique pure/type, stale-memory/mutation,
+and resource/call fixtures. Every fixture retains its existing `fail:`
+substring, emits a bounded source-facing diagnostic, and observes neither
+outcome fallback span. The existing 16-through-4,096 rejected-selection and
+goal-index regressions continue to pin transactional misses and logarithmic
+unrelated-fact lookup. The proof-object migration board is now two open leaves:
+typed atomic derivations and terminal fallback retirement.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and

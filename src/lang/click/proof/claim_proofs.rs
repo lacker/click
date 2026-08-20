@@ -3773,21 +3773,23 @@ pub(super) fn finish_ordered_proof_replay(
                                                 function_block.signature().name(),
                                                 &claims[*claim_index],
                                             );
-                                            if crate::lang::click::checking::prove_ensure_resource(
-                                                &claim_label,
-                                                path_index,
-                                                &path.execution_facts(),
-                                                &path_requirements,
-                                                resource,
-                                                parsed_function.parameters(),
-                                                arguments,
-                                                pre_state,
-                                                &outcome,
-                                            )
-                                            .is_err()
+                                            if let Err(error) =
+                                                crate::lang::click::checking::prove_ensure_resource(
+                                                    &claim_label,
+                                                    path_index,
+                                                    &path.execution_facts(),
+                                                    &path_requirements,
+                                                    resource,
+                                                    parsed_function.parameters(),
+                                                    arguments,
+                                                    pre_state,
+                                                    &outcome,
+                                                )
                                             {
-                                                direct_supported = false;
-                                                break;
+                                                return Err(ClickError::new(format!(
+                                                    "`{proof_label}` path {path_index} left `{claim_label}` unproved; use `simp()` after establishing the facts and resources it needs (claim index {claim_index})\nlast closing attempt:\n{}",
+                                                    error.message()
+                                                )));
                                             }
                                         }
                                     }
@@ -3981,6 +3983,47 @@ pub(super) fn finish_ordered_proof_replay(
                                             } else if existence_candidate.is_none()
                                                 && !replay.grouped_contract
                                             {
+                                                let claim_index = direct_claims
+                                                    .iter()
+                                                    .find(|(_, candidate, _)| {
+                                                        candidate == surface_goal
+                                                    })
+                                                    .map(|(claim_index, _, _)| *claim_index)
+                                                    .expect(
+                                                        "the scope goal came from direct_claims",
+                                                    );
+                                                let claim_label = function_claim_label(
+                                                    function_block.signature().name(),
+                                                    &claims[claim_index],
+                                                );
+                                                if (matches!(
+                                                    surface_goal,
+                                                    ClickProposition::Comparison { .. }
+                                                        | ClickProposition::ForAll { .. }
+                                                        | ClickProposition::RangeAll { .. }
+                                                        | ClickProposition::Separate { .. }
+                                                        | ClickProposition::Contains { .. }
+                                                        | ClickProposition::Loadable { .. }
+                                                        | ClickProposition::Defined { .. }
+                                                ) || scope.goal_is_definitely_false())
+                                                    && let Err(error) = check_function_claim(
+                                                        &claim_label,
+                                                        path_index,
+                                                        &path.execution_facts(),
+                                                        &direct_available,
+                                                        &claims[claim_index],
+                                                        parsed_function.parameters(),
+                                                        arguments,
+                                                        pre_state,
+                                                        &outcome,
+                                                        predicate_environment,
+                                                        click_function_environment,
+                                                        &replay.program_point_states,
+                                                        &unfolded_predicates,
+                                                    )
+                                                {
+                                                    return Err(error);
+                                                }
                                                 // Grouped sets that need the
                                                 // compatibility lowering fall
                                                 // back to the legacy grouped
@@ -4033,6 +4076,59 @@ pub(super) fn finish_ordered_proof_replay(
                                             };
                                             let Some(scope) = selected_scope else {
                                                 check_verification_deadline()?;
+                                                // A checked Proof miss is also
+                                                // the direct negative boundary:
+                                                // if the authoritative outcome
+                                                // checker rejects this claim,
+                                                // compatibility construction
+                                                // cannot turn it into a proof
+                                                // and must not be invoked just
+                                                // to rediscover the diagnostic.
+                                                if replay.grouped_contract
+                                                    && existence_candidate.is_none()
+                                                    && direct_claims.len() == 1
+                                                {
+                                                    let claim_index = direct_claims
+                                                        .iter()
+                                                        .find(|(_, candidate, _)| {
+                                                            candidate == surface_goal
+                                                        })
+                                                        .map(|(claim_index, _, _)| *claim_index)
+                                                        .expect(
+                                                            "the scope goal came from direct_claims",
+                                                        );
+                                                    let claim_label = function_claim_label(
+                                                        function_block.signature().name(),
+                                                        &claims[claim_index],
+                                                    );
+                                                    if let Err(error) =
+                                                        check_function_claim_by_simp(
+                                                            &claim_label,
+                                                            path_index,
+                                                            &path.execution_facts(),
+                                                            &direct_available,
+                                                            &claims[claim_index],
+                                                            parsed_function.parameters(),
+                                                            arguments,
+                                                            pre_state,
+                                                            &outcome,
+                                                            predicate_environment,
+                                                            click_function_environment,
+                                                            &replay.program_point_states,
+                                                            &unfolded_predicates,
+                                                        )
+                                                    {
+                                                        // With one grouped
+                                                        // proposition there is
+                                                        // no sibling claim that
+                                                        // a retry could prove
+                                                        // first to make progress.
+                                                        return Err(ClickError::new(format!(
+                                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: grouped `simp` could not certify its complete claim transition\nclaim {claim_index} (`{claim_label}`): {}",
+                                                            error.message()
+                                                        )));
+                                                    }
+                                                }
                                                 // A grouped goal beyond the scope
                                                 // closures is planned by the same
                                                 // nested-have certifier the legacy
@@ -4390,6 +4486,67 @@ pub(super) fn finish_ordered_proof_replay(
                                                 }
                                             }
                                             continue;
+                                        }
+                                    }
+                                }
+                                // Lowering failures are authoritative negative
+                                // results, not incomplete Proof search. Report
+                                // them before attributing work to legacy exit
+                                // planning. A successfully lowered goal remains
+                                // eligible for compatibility proof construction.
+                                if !replay.grouped_contract && existence_tactics.is_empty() {
+                                    for (claim_index, claim) in claims.iter().enumerate() {
+                                        if closures[claim_index].is_closed()
+                                            || rewritten_claim_goals[claim_index].is_some()
+                                            || frame_certified_claim_goals[claim_index].is_some()
+                                        {
+                                            continue;
+                                        }
+                                        let FunctionClaimRef::Ensure(_, ensure_clause) = claim
+                                        else {
+                                            continue;
+                                        };
+                                        let Ensure::Proposition(surface_goal) =
+                                            ensure_clause.ensure()
+                                        else {
+                                            continue;
+                                        };
+                                        if lower_ensure_proposition_goal(
+                                            &path_requirements,
+                                            surface_goal,
+                                            parsed_function.parameters(),
+                                            arguments,
+                                            pre_state,
+                                            &outcome,
+                                            predicate_environment,
+                                            click_function_environment,
+                                            &replay.program_point_states,
+                                            &unfolded_predicates,
+                                        )
+                                        .is_ok()
+                                        {
+                                            continue;
+                                        }
+                                        let claim_label = function_claim_label(
+                                            function_block.signature().name(),
+                                            claim,
+                                        );
+                                        if let Err(error) = check_function_claim(
+                                            &claim_label,
+                                            path_index,
+                                            &path.execution_facts(),
+                                            &path_requirements,
+                                            claim,
+                                            parsed_function.parameters(),
+                                            arguments,
+                                            pre_state,
+                                            &outcome,
+                                            predicate_environment,
+                                            click_function_environment,
+                                            &replay.program_point_states,
+                                            &unfolded_predicates,
+                                        ) {
+                                            return Err(error);
                                         }
                                     }
                                 }
