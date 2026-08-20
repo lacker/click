@@ -1,5 +1,9 @@
 # Proof object API
 
+> DESIGN AND MIGRATION HISTORY. The ten independently closable endgame issues
+> are listed in `issues/README.md`; progress is counted from those leaves, not
+> from this architectural umbrella.
+
 ## Summary
 
 Click needs one immutable checked proof object as the boundary between the
@@ -3491,7 +3495,8 @@ the suffix, the strict path rejects — a policy decision), and one
 certificate consumes the entire deterministic control budget inside the
 strict scope check where the legacy checker is cheap — a
 scalable-verification violation. Both blockers, the reproduction, and
-the acceptance criteria are in `issues/explicit-have-goal-path-gaps.md`;
+the acceptance criteria are now distributed across the proof-object migration
+leaves in `issues/README.md`;
 the drain's smart-`have` fallback and `Simp` escape remain load-bearing
 until it lands.
 
@@ -3614,7 +3619,7 @@ nested-have certifier the legacy transition uses, applied at the proof
 level with the kernel goal lowered under active unfolds — the spelling
 condition that makes the claim-closing replay match. Census across both
 fixture corpora: legacy-exit-closer entries 154 -> 74, with the residue
-characterized per class in `explicit-have-goal-path-gaps.md` (43
+characterized per class in the proof-object migration leaves (43
 ungrouped per-claim certificate closes; 31 grouped planner-misses and
 gate-bailed special cases). One banked negative result: routing
 ungrouped scope failures through the per-claim certifier breaks three

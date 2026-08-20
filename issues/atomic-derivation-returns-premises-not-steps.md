@@ -1,5 +1,7 @@
 # Atomic derivation returns premises, not steps
 
+## Violated invariant
+
 Smart proposition search ends in `SimpEvidence::Derivation(PropositionDerivation)`,
 which records the conclusion and the premise facts but not how the prover
 combined them. The prover decided through concrete theory rules — an order
@@ -23,6 +25,24 @@ reorder is relief, not the fix: the harvest, the deletion loop, and the
 cascade still run whenever the premise pairs alone cannot spell the proof,
 and each remains an ambient-context search inside what the complexity
 contract requires to be certificate-proportional work.
+
+## Outcome-migration scope (2026-08-19)
+
+This issue is one of the ten countable proof-object migration leaves. The
+fresh outcome census still records compatibility construction, but no legacy
+exit planning, for passing scalar and statement/effect claims including:
+
+- `fill3_array_loop.writes_first`, `.writes_second`, and `.writes_third`;
+- `fill_n_segment_invariant.filled_segment`;
+- `later_loop_preserve.ensures_0`; and
+- `max.ensures_0` and `max.ensures_1`.
+
+Before implementation, attribute each site to the exact typed atomic rule or
+statement/effect equation it needs. Sites whose selected proof is a snapshot
+transport or branch-continuation operation belong to their narrower sibling
+issues instead. This leaf closes only when the typed derivation result makes
+the listed scalar/equation class bypass compatibility construction and the
+general ambient re-search machinery is deleted per the criteria below.
 
 ## Required design
 

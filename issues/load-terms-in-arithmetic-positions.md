@@ -183,8 +183,7 @@ fallout settles, with allocator provenance from the replay counter.
 - No `MemoryLoad` term reachable inside `PointerOffsetTerm` after
   execution lowering; a debug assertion or probe run over the gates
   demonstrates it.
-- The regressions above are green, and
-  `issues/explicit-have-goal-path-gaps.md`'s dispatch lands without any
-  bounded checking mode.
+- The regressions above are green, and the searchless explicit-have dispatch
+  remains on the checked `Proof` path without any bounded checking mode.
 - This file and its Open-list line are deleted when the fix, its
   regressions, and the linked issues' updates land.
