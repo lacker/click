@@ -8,9 +8,9 @@ outcome through the legacy exit planner. Even if every current passing fixture
 chooses the direct path, retaining live fallbacks makes future tactic families
 silently regress to the old architecture.
 
-This is the terminal migration leaf. It depends on the other nine leaves; it
-must delete infrastructure rather than add a zero-corpus guard around dead
-code.
+This is the terminal migration leaf. It depends on the other eight open
+leaves; it must delete infrastructure rather than add a zero-corpus guard
+around dead code.
 
 ## Deletion inventory
 
@@ -48,4 +48,3 @@ certificates.
   audited requirement by requirement against current code and tests.
 - `scripts/check.sh` passes, the fallback census is zero, and expansion/audit
   independently verify the retained certificates.
-
