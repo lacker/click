@@ -7199,12 +7199,14 @@ impl<'a> Proof<'a> {
             .cloned()
     }
 
-    /// Tries one equality attached to a term occurring in the current goal.
+    /// Tries equalities attached to terms occurring in the current goal.
     /// This complements the kernel derivation path for arithmetic goals whose
-    /// normal form is exposed only after a selected historical equality is
+    /// normal form is exposed only after selected historical equalities are
     /// rewritten. Candidate lookup is goal-local and persistently indexed.
+    /// A non-closing refinement is retained only when it strictly removes a
+    /// distinct goal atom, so chained search terminates structurally without
+    /// a tactic cap or an ambient-fact walk.
     fn try_indexed_goal_equality_rewrite_closure(&self) -> Option<Self> {
-        let goal = self.goal()?;
         let (surface_facts, premise_anchor) = match self.context.as_ref() {
             ProofContext::Pure(context) => (&context.theorem_context.surface_requirements, None),
             ProofContext::Point(context) => (
@@ -7216,32 +7218,56 @@ impl<'a> Proof<'a> {
                 (&point.surface_propositions, point.premise_anchor.as_ref())
             }
         };
-        for equality in self.facts().bitvector_equalities_mentioning(goal) {
-            let Some(surface) =
-                self.replayable_surface_fact(surface_facts, premise_anchor, &equality)
-            else {
-                continue;
-            };
-            let Ok(rewritten) = self.apply_step(SimpleProofStep::Rewrite(surface)) else {
-                continue;
-            };
-            if let Some(closed) = rewritten
-                .try_direct_logical_closure()
-                .ok()
-                .flatten()
-                .or_else(|| rewritten.try_typed_atomic_simp_closure())
-            {
-                return Some(closed);
+        let mut proof = self.clone();
+        loop {
+            let goal = proof.goal()?;
+            let allows_chain = matches!(goal, Proposition::ConditionIs(_, _));
+            let mut goal_atoms = BTreeSet::new();
+            collect_proposition_bitvector_atoms(goal, &mut goal_atoms);
+            let mut shrinking_refinement = None;
+            for equality in proof.facts().bitvector_equalities_mentioning(goal) {
+                let Some(surface) =
+                    proof.replayable_surface_fact(surface_facts, premise_anchor, &equality)
+                else {
+                    continue;
+                };
+                // Rewriting is directional even when its admitted premise is
+                // a symmetric equality. Keep the selected fact fixed, but
+                // try both Surface orientations so the side occurring in the
+                // focused goal can be replaced.
+                let reverse = reverse_surface_equality(&surface);
+                for oriented in std::iter::once(surface).chain(reverse) {
+                    let Ok(rewritten) = proof.apply_step(SimpleProofStep::Rewrite(oriented)) else {
+                        continue;
+                    };
+                    if let Some(closed) = rewritten
+                        .try_direct_logical_closure()
+                        .ok()
+                        .flatten()
+                        .or_else(|| rewritten.try_typed_atomic_simp_closure())
+                    {
+                        return Some(closed);
+                    }
+                    if allows_chain && shrinking_refinement.is_none() {
+                        let mut rewritten_atoms = BTreeSet::new();
+                        collect_proposition_bitvector_atoms(
+                            rewritten.goal()?,
+                            &mut rewritten_atoms,
+                        );
+                        if rewritten_atoms.len() < goal_atoms.len() {
+                            shrinking_refinement = Some(rewritten);
+                        }
+                    }
+                }
             }
+            proof = shrinking_refinement?;
         }
-        None
     }
 
     /// Handles the first bounded equality-refinement search directly on
     /// `Proof`: each equality explicitly selected by the kernel derivation is
     /// tried as one transactional rewrite of the root, after which an
-    /// already-audited direct or typed atomic closer must finish it. Chained
-    /// rewrite search remains on the compatibility path.
+    /// already-audited direct or typed atomic closer must finish it.
     fn try_single_selected_equality_rewrite_closure(
         &self,
         premise_pairs: &[(Proposition, ClickProposition)],
@@ -15924,6 +15950,123 @@ mod tests {
             assert!(matches!(
                 closed.certificate().steps(),
                 [SimpleProofStep::Rewrite(_), SimpleProofStep::Normalize]
+            ));
+        }
+    }
+
+    #[test]
+    fn goal_term_equality_rewrite_chain_shrinks_independently_of_unrelated_buckets() {
+        let click_file = crate::lang::click::parse("")
+            .expect("an empty source should still admit the standard theorem prelude");
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment = ClickFunctionEnvironment::new(&[]);
+        let theorem_definitions = combined_theorem_definitions(&click_file)
+            .expect("standard theorem prelude should load");
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        let memory = CMemory::new();
+        let left = Bitvector32Term::Variable(Variable(8_174_060));
+        let right = Bitvector32Term::Variable(Variable(8_174_061));
+        let zero = Bitvector32Term::Constant(0);
+        let equality = |term: &Bitvector32Term| {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(Box::new(term.clone()), Box::new(zero.clone())),
+                true,
+            )
+        };
+        let surface_equality = |term: &Bitvector32Term| ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(CValue::Int32(term.clone()))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Add(
+                    Box::new(left.clone()),
+                    Box::new(right.clone()),
+                )),
+                Box::new(zero.clone()),
+            ),
+            true,
+        );
+        let goal_surface = ClickProposition::Comparison {
+            left: ContractExpression::Add(
+                Box::new(ContractExpression::CFragment(CExpression::Value(
+                    CValue::Int32(left.clone()),
+                ))),
+                Box::new(ContractExpression::CFragment(CExpression::Value(
+                    CValue::Int32(right.clone()),
+                ))),
+            ),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+        let selected = [equality(&left), equality(&right)];
+        let surfaces = [surface_equality(&left), surface_equality(&right)];
+
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut facts = (0..size)
+                .map(|index| {
+                    Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(Bitvector32Term::Variable(Variable(
+                                9_100_000 + u64::from(index),
+                            ))),
+                            Box::new(Bitvector32Term::Constant(20_000 + index)),
+                        ),
+                        true,
+                    )
+                })
+                .collect::<Vec<_>>();
+            facts.extend(selected.iter().cloned());
+            let mut surface_requirements = SurfacePropositionMap::default();
+            for (surface, kernel) in surfaces.iter().zip(selected.iter()) {
+                surface_requirements
+                    .record_lowering(surface, kernel)
+                    .expect("the selected equality spelling should be indexed");
+            }
+            let theorem_context = PureTheoremContext {
+                memory: memory.clone(),
+                values: BTreeMap::new(),
+                array_refs: BTreeMap::new(),
+                requires: facts.clone(),
+                surface_requirements,
+            };
+            let root = Proof::for_pure_goal_with_surface(
+                "shrinking goal-term equality chain",
+                &facts,
+                goal.clone(),
+                Some(goal_surface.clone()),
+                &theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
+            for term in [&left, &right] {
+                let comparisons = root.facts().equality_atom_lookup_comparisons(term);
+                assert!(
+                    comparisons <= 2 * logarithmic_height + 4,
+                    "size {size} equality lookup made {comparisons} key comparisons"
+                );
+            }
+            let before = fact_node_allocations();
+            let closed = root
+                .try_indexed_goal_equality_rewrite_closure()
+                .expect("the two selected equalities should shrink and normalize the goal");
+            let allocations = fact_node_allocations() - before;
+            let allocation_bound = 128 * logarithmic_height + 512;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} equality chain allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(closed.is_complete());
+            assert!(matches!(
+                closed.certificate().steps(),
+                [
+                    SimpleProofStep::Rewrite(_),
+                    SimpleProofStep::Rewrite(_),
+                    SimpleProofStep::Normalize
+                ]
             ));
         }
     }

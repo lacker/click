@@ -8529,6 +8529,63 @@ fn snapshot_and_post_call_transport_fixtures_have_no_outcome_fallbacks() {
 }
 
 #[test]
+fn resource_example_pipelines_have_no_outcome_fallbacks() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (project, sidecar, function, retained_step) in [
+        (
+            "linked-list",
+            "linked_list.click",
+            "list_roundtrip",
+            "rewrite(at(statement(4).entry, value) == at(statement(4).entry, node->value))",
+        ),
+        (
+            "recursive-zero-list",
+            "recursive_zero_list.click",
+            "zero_list_pipeline",
+            "fold(zero_list(first));",
+        ),
+    ] {
+        let path = manifest.join("examples").join(project).join(sidecar);
+        let click_source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+        let sources = crate::cli::read_verifying_sources(&path, &click_source)
+            .unwrap_or_else(|error| panic!("failed to load `{}`: {error}", path.display()));
+        let c_sources = crate::cli::source_refs(&sources);
+
+        let (verified, events) =
+            crate::instrumentation::collect(|| verify_c0_sources(&click_source, &c_sources));
+        verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
+        let fallback_events = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                        if name == "outcome simp legacy exit planning"
+                            || name == "outcome simp compatibility construction"
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            fallback_events.is_empty(),
+            "`{}` entered outcome fallback planning: {fallback_events:#?}",
+            path.display()
+        );
+
+        let expanded =
+            expand_c0_claim_source(&click_source, &c_sources, function, CProofClaim::Grouped)
+                .unwrap_or_else(|error| panic!("failed to expand `{}`: {error:?}", path.display()));
+        assert!(expanded.contains(retained_step), "{expanded}");
+        verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
+            panic!(
+                "expanded proof from `{}` did not replay independently: {error:?}",
+                path.display()
+            )
+        });
+    }
+}
+
+#[test]
 fn branch_continuation_claims_retain_their_selected_outcome_step() {
     for (filename, function, claim, claim_label) in [
         (

@@ -3875,6 +3875,25 @@ branch as a second expansion of the earlier tactic. The selected pre-branch
 expansion audits (11 smart sites total), and the proof-object migration board
 is now six open leaves.
 
+### Progress (2026-08-19: resource-backed example pipelines stay on outcome Proof)
+
+Goal-indexed outcome rewriting now tries both Surface orientations of one
+selected symmetric equality. This lets the checked rewrite replace whichever
+side actually occurs in the focused goal while the admitted kernel fact stays
+fixed. When one rewrite is not enough, the same Proof may retain a short chain:
+a non-closing successor is accepted only when it strictly reduces the focused
+goal's distinct bitvector atoms. The chain therefore terminates structurally
+and queries only the persistent equality buckets for the current goal; it does
+not restore ambient harvesting or an arbitrary tactic cap.
+
+The complete `linked-list` and `recursive-zero-list` projects now observe
+neither outcome fallback span. Their grouped expansions retain the historical
+rewrite/transport and two-rewrite arithmetic paths respectively, independently
+replay, and pass full expansion audits (42 smart sites total). A 16-through-
+4,096 curve grows unrelated equality buckets while the selected two-step chain
+keeps logarithmic lookup and allocation bounds. The proof-object migration
+board is now five open leaves.
+
 ## Acceptance criteria
 
 - The canonical vocabulary above is reflected in Rust type names and
