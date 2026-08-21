@@ -1,4 +1,4 @@
-# Contributing To Click
+# Contributing to Click
 
 Most Click changes should start from a proof need, not from an isolated syntax
 idea.
@@ -15,7 +15,7 @@ The default workflow is:
 
 The feature playbook is the detailed checklist.
 
-## Where New Concepts Belong
+## Where new concepts belong
 
 Prefer this order:
 
@@ -26,7 +26,7 @@ Prefer this order:
 
 This keeps the language smaller and makes kernel support more reusable.
 
-## Contributor Reading Path
+## Contributor reading path
 
 If you are changing Click itself, read:
 
@@ -36,7 +36,7 @@ If you are changing Click itself, read:
 4. the kernel internals page, for Rust module boundaries,
 5. the proof landscape and roadmap, for feature prioritization.
 
-## Documentation Ownership
+## Documentation ownership
 
 The beginner chapters should optimize for teaching and trust. They may be
 rewritten by humans over time.

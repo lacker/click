@@ -1,28 +1,36 @@
 # Standard library
 
-The standard library currently lives in:
+The Click standard library is the public Surface Click API loaded from
+`stdlib/prelude.click` with every user sidecar. It isn't the Rust crate's
+internal `pub` API.
 
-```text
-stdlib/prelude.click
-```
+Every declaration below is copied exactly from the prelude and checked by the
+documentation gate. The same gate compares declaration names bidirectionally,
+so adding, removing, or changing a public symbol requires a matching reference
+update.
 
-It is parsed as ordinary Click source by `src/lang/click.rs`. Standard-library
-definitions are not hard-coded predicates or functions in the Click parser.
+Pure functions are definitionally expanded when Click lowers a call. Predicates
+remain opaque until a proof explicitly unfolds them or applies a theorem that
+exposes the needed consequence. Theorems can be applied when their stated
+requirements are available. An abstract resource has no body to unfold.
 
-## Current prelude
+## Allocation authority
 
-The prelude begins with the abstract allocation resource:
+### `allocation`
 
 ```click
 abstract resource allocation(base: int32*, bytes: int32);
 ```
 
-`allocation(base, bytes)` represents ownership of a heap allocation beginning
-at `base` with the stated byte extent. It is abstract: user proofs can transfer
-or consume the resource only through the operations and contracts that expose
-it; it has no user-defined composite body to unfold.
+**Meaning:** Owns the lifetime authority for the heap allocation whose base pointer is `base` and whose extent is `bytes`. The resource is abstract and cannot be unfolded.
 
-The remaining first family contains kernel-backed signed-order theorems:
+**Kind:** abstract resource. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+## Signed `int32` theorems
+
+### `int32_increment_upper_bound`
 
 ```click
 theorem int32_increment_upper_bound(value: int32, upper: int32) {
@@ -30,104 +38,264 @@ theorem int32_increment_upper_bound(value: int32, upper: int32) {
 
     ensures value + 1 <= upper;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `value + 1 <= upper`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_increment_strictly_increases`
+
+```click
 theorem int32_increment_strictly_increases(value: int32, upper: int32) {
     requires value < upper;
 
     ensures value < value + 1;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `value < value + 1`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_increment_lower_bound`
+
+```click
 theorem int32_increment_lower_bound(value: int32, lower: int32, upper: int32) {
     requires lower <= value;
     requires value < upper;
 
     ensures lower <= value + 1;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `lower <= value + 1`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_increment_greater_equal_lower_bound`
+
+```click
 theorem int32_increment_greater_equal_lower_bound(value: int32, lower: int32, upper: int32) {
     requires value >= lower;
     requires value < upper;
 
     ensures value + 1 >= lower;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `value + 1 >= lower`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_increment_strict_greater_lower_bound`
+
+```click
 theorem int32_increment_strict_greater_lower_bound(value: int32, lower: int32, upper: int32) {
     requires value >= lower;
     requires value < upper;
 
     ensures value + 1 > lower;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `value + 1 > lower`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_increment_preserves_order`
+
+```click
 theorem int32_increment_preserves_order(value: int32, lower: int32, upper: int32) {
     requires lower <= value;
     requires value < upper;
 
     ensures lower + 1 <= value + 1;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `lower + 1 <= value + 1`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_successor_le_implies_lt`
+
+```click
 theorem int32_successor_le_implies_lt(lower: int32, value: int32) {
     requires lower < lower + 1;
     requires lower + 1 <= value;
 
     ensures lower < value;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `lower < value`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_positive_is_nonnegative`
+
+```click
 theorem int32_positive_is_nonnegative(value: int32) {
     requires 1 <= value;
 
     ensures 0 <= value;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `0 <= value`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_lt_implies_le`
+
+```click
 theorem int32_lt_implies_le(left: int32, right: int32) {
     requires left < right;
 
     ensures left <= right;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `left <= right`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_not_lt_implies_ge`
+
+```click
 theorem int32_not_lt_implies_ge(left: int32, right: int32) {
     requires not (left < right);
 
     ensures left >= right;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `left >= right`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_strictly_positive_is_nonnegative`
+
+```click
 theorem int32_strictly_positive_is_nonnegative(value: int32) {
     requires 0 < value;
 
     ensures value >= 0;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `value >= 0`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_increment_below_max_is_defined`
+
+```click
 theorem int32_increment_below_max_is_defined(value: int32) {
     requires value < 2147483647;
 
     ensures defined(value + 1);
 }
+```
 
+**Meaning:** Given its listed requirements, proves `defined(value + 1)`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_one_plus_below_max_is_defined`
+
+```click
 theorem int32_one_plus_below_max_is_defined(value: int32) {
     requires value < 2147483647;
 
     ensures defined(1 + value);
 }
+```
 
+**Meaning:** Given its listed requirements, proves `defined(1 + value)`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_one_plus_strictly_increases`
+
+```click
 theorem int32_one_plus_strictly_increases(value: int32) {
     requires value < 2147483647;
 
     ensures value < 1 + value;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `value < 1 + value`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_nonnegative_add_within_max_is_defined`
+
+```click
 theorem int32_nonnegative_add_within_max_is_defined(value: int32, amount: int32) {
     requires 0 <= amount;
     requires value <= 2147483647 - amount;
 
     ensures defined(value + amount);
 }
+```
 
+**Meaning:** Given its listed requirements, proves `defined(value + amount)`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_nonnegative_subtract_within_value_is_defined`
+
+```click
 theorem int32_nonnegative_subtract_within_value_is_defined(value: int32, amount: int32) {
     requires 0 <= amount;
     requires amount <= value;
 
     ensures defined(value - amount);
 }
+```
 
+**Meaning:** Given its listed requirements, proves `defined(value - amount)`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_move_one_from_right_to_left_preserves_sum`
+
+```click
 theorem int32_move_one_from_right_to_left_preserves_sum(
     total: int32,
     left: int32,
@@ -139,7 +307,17 @@ theorem int32_move_one_from_right_to_left_preserves_sum(
 
     ensures total == (left + 1) + (right - 1);
 }
+```
 
+**Meaning:** Given its listed requirements, proves `total == (left + 1) + (right - 1)`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_subtract_equal_sum_right_cancels`
+
+```click
 theorem int32_subtract_equal_sum_right_cancels(value: int32, left: int32, amount: int32) {
     requires defined(left + amount) and value == left + amount;
     requires defined(value - amount);
@@ -149,107 +327,267 @@ theorem int32_subtract_equal_sum_right_cancels(value: int32, left: int32, amount
         simp();
     }
 }
+```
 
+**Meaning:** Given its listed requirements, proves `value - amount == left`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_add_nonnegative_right_is_at_least_left`
+
+```click
 theorem int32_add_nonnegative_right_is_at_least_left(left: int32, right: int32) {
     requires 0 <= right;
     requires defined(left + right);
 
     ensures left <= left + right;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `left <= left + right`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_add_nonnegative_left_is_at_least_right`
+
+```click
 theorem int32_add_nonnegative_left_is_at_least_right(left: int32, right: int32) {
     requires 0 <= left;
     requires defined(left + right);
 
     ensures right <= left + right;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `right <= left + right`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_positive_predecessor_is_nonnegative`
+
+```click
 theorem int32_positive_predecessor_is_nonnegative(value: int32) {
     requires 0 < value;
 
     ensures 0 <= value - 1;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `0 <= value - 1`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_above_one_predecessor_is_at_least_one`
+
+```click
 theorem int32_above_one_predecessor_is_at_least_one(value: int32) {
     requires 1 < value;
 
     ensures value - 1 >= 1;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `value - 1 >= 1`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_positive_predecessor_strictly_decreases`
+
+```click
 theorem int32_positive_predecessor_strictly_decreases(value: int32) {
     requires 0 < value;
 
     ensures value - 1 < value;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `value - 1 < value`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_nonnegative_predecessor_upper_bound`
+
+```click
 theorem int32_nonnegative_predecessor_upper_bound(value: int32, bound: int32) {
     requires 0 <= value;
     requires value <= bound;
 
     ensures value - 1 <= bound;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `value - 1 <= bound`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_le_lt_transitive`
+
+```click
 theorem int32_le_lt_transitive(first: int32, middle: int32, last: int32) {
     requires first <= middle;
     requires middle < last;
 
     ensures first < last;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `first < last`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_le_transitive`
+
+```click
 theorem int32_le_transitive(first: int32, middle: int32, last: int32) {
     requires first <= middle;
     requires middle <= last;
 
     ensures first <= last;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `first <= last`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_lt_transitive`
+
+```click
 theorem int32_lt_transitive(first: int32, middle: int32, last: int32) {
     requires first < middle;
     requires middle < last;
 
     ensures first < last;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `first < last`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_lt_le_transitive`
+
+```click
 theorem int32_lt_le_transitive(first: int32, middle: int32, last: int32) {
     requires first < middle;
     requires middle <= last;
 
     ensures first < last;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `first < last`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_ge_transitive`
+
+```click
 theorem int32_ge_transitive(last: int32, middle: int32, first: int32) {
     requires last >= middle;
     requires middle >= first;
 
     ensures last >= first;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `last >= first`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_ge_implies_reversed_le`
+
+```click
 theorem int32_ge_implies_reversed_le(greater: int32, lower: int32) {
     requires greater >= lower;
 
     ensures lower <= greater;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `lower <= greater`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_le_implies_reversed_ge`
+
+```click
 theorem int32_le_implies_reversed_ge(lower: int32, greater: int32) {
     requires lower <= greater;
 
     ensures greater >= lower;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `greater >= lower`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_le_and_not_lt_implies_eq`
+
+```click
 theorem int32_le_and_not_lt_implies_eq(left: int32, right: int32) {
     requires left <= right;
     requires not (left < right);
 
     ensures left == right;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `left == right`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_le_and_neq_implies_lt`
+
+```click
 theorem int32_le_and_neq_implies_lt(left: int32, right: int32) {
     requires left <= right;
     requires left != right;
 
     ensures left < right;
 }
+```
 
+**Meaning:** Given its listed requirements, proves `left < right`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `int32_ge_and_not_gt_implies_eq`
+
+```click
 theorem int32_ge_and_not_gt_implies_eq(left: int32, right: int32) {
     requires left >= right;
     requires not (left > right);
@@ -258,31 +596,15 @@ theorem int32_ge_and_not_gt_implies_eq(left: int32, right: int32) {
 }
 ```
 
-The strict upper premise rules out signed overflow. It proves that increment
-strictly increases the value, proves the resulting upper bound directly, lets
-an existing lower bound survive the increment, or lets both sides of an
-established order increment together.
-The successor theorem states its no-overflow condition separately, allowing a
-concrete condition such as `1 < 2` to be discharged by context-free kernel
-normalization while an adjacent non-strict bound is supplied explicitly.
-The positivity theorem records the common signed-order weakening from
-`1 <= value` to `0 <= value`.
-The positive-predecessor theorem records the corresponding safe signed
-decrement rule from `0 < value` to `0 <= value - 1`.
-Its strict-decrease companion records `value - 1 < value` under the same
-no-underflow premise.
-The nonnegative-predecessor bound theorem carries a non-strict upper bound
-across a decrement: `0 <= value` rules out the `INT_MIN` wraparound, so
-`value <= bound` gives `value - 1 <= bound`.
-The transitivity theorem combines a non-strict bound with a following strict
-bound without asking simplification to rediscover the order chain.
-The loop-exit equality theorem combines an upper bound with the negation of
-the corresponding strict loop condition.
-Smart simplification may select these theorems, while expansion records an
-ordinary simple `apply(...) using { ... }` step with the exact premises. Each
-declaration is checked against its fixed kernel axiom; users cannot introduce
-additional kernel-backed theorems by writing a declaration with a similar
-shape.
+**Meaning:** Given its listed requirements, proves `left == right`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+## Array specifications
+
+### `count`
 
 ```click
 function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 {
@@ -290,67 +612,191 @@ function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 {
         acc + if p[k] == x { 1 } else { 0 }
     })
 }
+```
 
+**Meaning:** Returns the number of elements equal to `x` in the half-open range `lo..hi` of the `int32` array reference `p`.
+
+**Kind:** function. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `permutation`
+
+```click
 predicate permutation(a: int32[], b: int32[], lo: int32, hi: int32) {
     forall (x: int32) {
         count(a, lo, hi, x) == count(b, lo, hi, x)
     }
 }
+```
 
+**Meaning:** States that `a` and `b` contain every `int32` value the same number of times in `lo..hi`. Unfolding exposes equality of two `count` calls under a universal quantifier.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(permutation)` when a proof needs the predicate body.
+
+## Byte-range specifications
+
+### `byte_count`
+
+```click
 function byte_count(bytes: uint8[], lo: int32, hi: int32, value: uint8) -> int32 {
     (lo..hi).fold(0, |acc, k| {
         acc + if bytes[k] == value { 1 } else { 0 }
     })
 }
+```
 
+**Meaning:** Returns the number of bytes equal to `value` in the half-open range `lo..hi`.
+
+**Kind:** function. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `bytes_equal`
+
+```click
 predicate bytes_equal(left: uint8[], left_lo: int32, right: uint8[], right_lo: int32, len: int32) {
     (0..len).all(|k| {
         left[left_lo + k] == right[right_lo + k]
     })
 }
+```
 
+**Meaning:** States that the `len` bytes starting at `left_lo` and `right_lo` are pairwise equal.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_equal)` when a proof needs the predicate body.
+
+### `bytes_equal_range`
+
+```click
 predicate bytes_equal_range(left: uint8[], right: uint8[], lo: int32, hi: int32) {
     (lo..hi).all(|k| {
         left[k] == right[k]
     })
 }
+```
 
+**Meaning:** States that `left` and `right` are pairwise equal throughout the same half-open range `lo..hi`.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_equal_range)` when a proof needs the predicate body.
+
+### `bytes_all_eq`
+
+```click
 predicate bytes_all_eq(bytes: uint8[], lo: int32, hi: int32, value: uint8) {
     (lo..hi).all(|k| {
         bytes[k] == value
     })
 }
+```
 
+**Meaning:** States that every byte in `lo..hi` equals `value`.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_all_eq)` when a proof needs the predicate body.
+
+### `bytes_contains`
+
+```click
 predicate bytes_contains(bytes: uint8[], lo: int32, hi: int32, value: uint8) {
     (lo..hi).any(|k| {
         bytes[k] == value
     })
 }
+```
 
+**Meaning:** States that at least one byte in `lo..hi` equals `value`.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_contains)` when a proof needs the predicate body.
+
+### `bytes_all_not_eq`
+
+```click
 predicate bytes_all_not_eq(bytes: uint8[], lo: int32, hi: int32, value: uint8) {
     (lo..hi).all(|k| {
         bytes[k] != value
     })
 }
+```
 
+**Meaning:** States that every byte in `lo..hi` differs from `value`.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_all_not_eq)` when a proof needs the predicate body.
+
+## C-string specifications
+
+### `cstr_prefix`
+
+```click
 predicate cstr_prefix(bytes: uint8[], len: int32) {
     bytes_all_not_eq(bytes, 0, len, '\0')
 }
+```
 
+**Meaning:** States that the first `len` bytes contain no null terminator.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_prefix)` when a proof needs the predicate body.
+
+### `cstr_len`
+
+```click
 predicate cstr_len(bytes: uint8[], len: int32) {
     0 <= len and cstr_prefix(bytes, len) and bytes_contains(bytes, len, len + 1, '\0')
 }
+```
 
+**Meaning:** States that `len` is nonnegative, the preceding bytes contain no null terminator, and byte `len` is a null terminator.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_len)` when a proof needs the predicate body.
+
+### `cstr`
+
+```click
 predicate cstr(bytes: uint8[]) {
     exists (len: int32) {
         cstr_len(bytes, len)
     }
 }
+```
 
+**Meaning:** States that the byte array has some exact specification-level C-string length.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr)` when a proof needs the predicate body.
+
+### `cstr_bounded`
+
+```click
 predicate cstr_bounded(bytes: uint8[], max: int32) {
     bytes_contains(bytes, 0, max, '\0')
 }
+```
 
+**Meaning:** States that a null terminator occurs before the exclusive bound `max`.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_bounded)` when a proof needs the predicate body.
+
+### `cstr_len_nonnegative`
+
+```click
 theorem cstr_len_nonnegative(bytes: uint8[], len: int32) {
     requires cstr_len(bytes, len);
 
@@ -359,7 +805,17 @@ theorem cstr_len_nonnegative(bytes: uint8[], len: int32) {
         simp();
     }
 }
+```
 
+**Meaning:** Given its listed requirements, proves `0 <= len`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `cstr_len_has_prefix`
+
+```click
 theorem cstr_len_has_prefix(bytes: uint8[], len: int32) {
     requires cstr_len(bytes, len);
 
@@ -368,7 +824,17 @@ theorem cstr_len_has_prefix(bytes: uint8[], len: int32) {
         simp();
     }
 }
+```
 
+**Meaning:** Given its listed requirements, proves `cstr_prefix(bytes, len)`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `cstr_len_has_terminator`
+
+```click
 theorem cstr_len_has_terminator(bytes: uint8[], len: int32) {
     requires cstr_len(bytes, len);
 
@@ -379,129 +845,25 @@ theorem cstr_len_has_terminator(bytes: uint8[], len: int32) {
 }
 ```
 
-`count` is a pure Click function over a range. `permutation` is a Click
-predicate saying every `int32` value has the same count in both arrays over the
-same half-open range. The array parameters are Click array refs, so callers can
-write `permutation(p, old(p), lo, hi)` to compare current memory with
-entry-state memory.
+**Meaning:** Given its listed requirements, proves `bytes_contains(bytes, len, len + 1, '\0')`.
 
-`byte_count` is the byte-oriented version of `count`. The byte predicates use
-explicit half-open ranges or offset+length slices:
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-- `bytes_equal(left, left_lo, right, right_lo, len)` compares two byte slices
-  with possibly different starting offsets.
-- `bytes_equal_range(left, right, lo, hi)` compares the same half-open range in
-  two byte arrays, including current-vs-old comparisons such as
-  `bytes_equal_range(p, old(p), 0, n)`.
-- `bytes_all_eq(bytes, lo, hi, value)` says every byte in a range is equal to a
-  given `uint8` value.
-- `bytes_contains(bytes, lo, hi, value)` says some byte in a range is equal to a
-  given value.
-- `bytes_all_not_eq(bytes, lo, hi, value)` says no byte in a range is equal to a
-  given value.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
-The C-string predicates are still facts over C memory, not first-class Click
-string values:
+## Namespace and extension rules
 
-- `cstr_prefix(bytes, len)` says the first `len` bytes contain no terminator.
-- `cstr_len(bytes, len)` says `len` is the exact spec length: no terminator
-  before `len`, and a terminator at `len`.
-- `cstr(bytes)` says some exact spec length exists. This matches a plain
-  `char*`/`uint8*` API shape, but byte-level consequences still need enough
-  memory-loadability facts when unfolded.
-- `cstr_bounded(bytes, max)` says a terminator exists somewhere before `max`.
-  This matches bounded scanning APIs.
+Standard-library definitions share the logic-declaration namespace with user
+Click definitions. A user predicate, pure function, resource, or theorem can't
+redefine a prelude name. A C function contract can have the same name as a
+prelude pure function when no user Click definition creates a conflict.
 
-The C-string projection theorems expose the public consequences of
-`cstr_len(bytes, len)` without requiring user proofs to unfold the predicate:
+To add a public symbol:
 
-- `cstr_len_nonnegative(bytes, len)` proves `0 <= len`.
-- `cstr_len_has_prefix(bytes, len)` proves `cstr_prefix(bytes, len)`.
-- `cstr_len_has_terminator(bytes, len)` proves
-  `bytes_contains(bytes, len, len + 1, '\0')`.
-
-These definitions are ordinary Click. They are not generic overloads and they
-are not special kernel names.
-
-## Kernel support
-
-The names `count` and `permutation` are library names, not kernel concepts.
-However, the kernel has general term/proof support that makes these definitions
-usable:
-
-- `Bitvector32Term::RangeFold` represents symbolic folds.
-- Bounded range `.all`/`.any` bodies lower under their range-membership facts,
-  while the final kernel proposition keeps the explicit range guard.
-- Small bounded forall facts can be instantiated when proving matching
-  conditions.
-- Empty folds simplify to the initial value.
-- One-step folds substitute the item and accumulator once.
-- Small concrete folds unroll.
-- Symbolic folds compare equal modulo accumulator/item binder names.
-- Count-shaped folds can be matched across a split range.
-- Count sums are compared modulo addend order.
-
-This is the intended pattern: keep definitions in Click where possible, and add
-general proof support to the kernel only when the proof engine needs it.
-
-## Namespace behavior
-
-Stdlib definitions are combined with user Click definitions during validation.
-A user Click function, predicate, resource, or theorem cannot redefine a stdlib
-name. A C function spec may still have the same name as a stdlib Click function
-when there is no user Click definition conflict.
-
-## Current examples
-
-`mdtests/compare_swap2_permutation.md` proves that a two-cell compare-swap
-preserves `permutation(p, old(p), 0, 2)` without copying the original values
-into a separate snapshot array.
-
-`mdtests/sort3_permutation.md` proves the same stdlib predicate for a three-cell
-sorting network:
-
-```click
-permutation(p, old(p), 0, 3)
-```
-
-`mdtests/bubble_sort3_loop_permutation.md` proves the same predicate for a
-loop-shaped fixed-size bubble sort using bounded execution.
-
-`mdtests/loop_stdlib_permutation_invariant.md` proves the same predicate as a
-direct loop invariant. The invariant and the postcondition both unfold
-`permutation`; the unfolded `count` calls elaborate to pure fold terms over
-explicit current and entry memory snapshots.
-
-`mdtests/loop_old_count_invariant.md` is a focused regression for
-`old(count(...))` inside a loop invariant. It checks that old-state pure
-functions are elaborated through the same stdlib definition rather than through
-a separate eager old-state evaluator.
-
-`mdtests/byte_slice_stdlib.md` checks the first byte-slice layer:
-`byte_count`, `bytes_equal`, `bytes_equal_range`, and `bytes_all_eq` over
-`uint8[]` arrays.
-
-`mdtests/byte_slice_range_predicates.md` checks `bytes_contains` and
-`bytes_all_not_eq`, including `choose` over an explicitly unfolded existential
-predicate requirement.
-
-`mdtests/cstr_stdlib.md` checks the first C-string predicate layer:
-`cstr_prefix`, `cstr_len`, `cstr`, and `cstr_bounded`. It also checks that C
-function proof scripts can apply the `cstr_len` projection theorems.
-
-`mdtests/stdlib_theorem_apply.md` checks that pure theorem proofs can apply
-theorems from the standard library.
-
-## Add a library definition
-
-1. Add the definition to `stdlib/prelude.click`.
-2. Add an mdtest using it from an ordinary `.click` sidecar.
-3. If the proof does not close, decide whether the missing support is:
-   - a general kernel/prover law
-   - a missing tactic
-   - a language feature
-   - a bad library abstraction
-4. Update this document.
-
-Avoid putting domain-specific definitions directly in the kernel just because
-they are useful. Prefer stdlib definitions backed by general proof support.
+1. Add its declaration to `stdlib/prelude.click`.
+2. Add a focused mdtest that uses it from an ordinary sidecar.
+3. Add its semantic entry here; the inventory and exact-declaration checks fail
+   until this page agrees with the source.
+4. Add general prover or kernel support only when the definition exposes a
+   reusable reasoning gap. Don't hard-code a domain-specific library name into
+   the kernel merely because it is useful.

@@ -2,6 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use click::lang::c::syntax::C0_PUBLIC_FORMS;
+use click::lang::click::SURFACE_CLICK_WORDS;
+
 #[derive(Debug)]
 struct InventoryItem {
     id: String,
@@ -164,6 +167,34 @@ fn every_page_has_structural_markdown_and_navigation() {
                 ));
             }
         }
+        for (line, text) in source.lines().enumerate() {
+            let Some(heading) = text
+                .strip_prefix('#')
+                .map(|text| text.trim_start_matches('#').trim())
+            else {
+                continue;
+            };
+            for word in heading.split_whitespace().skip(1) {
+                let word = word.trim_matches(|ch: char| !ch.is_ascii_alphabetic() && ch != '`');
+                if word.starts_with('`')
+                    || matches!(word, "Click" | "Surface" | "Kernel" | "Rust" | "Git")
+                    || word.chars().all(|ch| !ch.is_ascii_lowercase())
+                {
+                    continue;
+                }
+                if word
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_uppercase())
+                {
+                    failures.push(format!(
+                        "{relative}:{}: heading is not sentence case: {heading}",
+                        line + 1
+                    ));
+                    break;
+                }
+            }
+        }
 
         let mut open_fence = None;
         for (line, text) in source.lines().enumerate() {
@@ -286,6 +317,43 @@ fn standard_library_inventory_is_bidirectional() {
         }
     }
     assert_eq!(declarations, inventory_ids("stdlib."));
+}
+
+#[test]
+fn surface_click_word_inventory_is_bidirectional() {
+    let implementation = SURFACE_CLICK_WORDS
+        .iter()
+        .map(|word| (*word).to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        implementation.len(),
+        SURFACE_CLICK_WORDS.len(),
+        "duplicate word in registry"
+    );
+    assert_eq!(implementation, inventory_ids("language.word."));
+
+    let reference = fs::read_to_string(root().join("docs/reference/language/grammar.md"))
+        .expect("read grammar reference");
+    for word in SURFACE_CLICK_WORDS {
+        assert!(
+            reference.contains(&format!("`{word}`")),
+            "Surface Click word `{word}` has no visible word-index entry"
+        );
+    }
+}
+
+#[test]
+fn c0_surface_inventory_is_bidirectional() {
+    let implementation = C0_PUBLIC_FORMS
+        .iter()
+        .map(|form| (*form).to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        implementation.len(),
+        C0_PUBLIC_FORMS.len(),
+        "duplicate C0 form in registry"
+    );
+    assert_eq!(implementation, inventory_ids("c0."));
 }
 
 #[test]

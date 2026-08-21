@@ -88,7 +88,9 @@ remains migration compatibility and should not be used in new proofs.
 | `have P by { ... }` | structural control; source class inherited | Prove `P` in a nested proof and add it to the surrounding context. |
 | `if P { ... } else { ... }` | control | Split the proof on the exact condition `P`. This does not execute a C `if`. |
 | `cases (A or B) { ... } { ... }` | control | Eliminate an exact available disjunction: the first block proves the goal assuming `A`, the second assuming `B`. Both blocks are always spelled. |
-| `witness ...` / `choose ...` | control | Introduce or select existential evidence in the supported proposition contexts. |
+| `open(resource) { ... }` | control | Temporarily unfold a held composite resource, check the nested tactics with its members available, and fold the resource again at scope exit. |
+| `witness(name = value)` | simple | Supply `value` for the named existential binder in the current goal. The resulting instantiated body becomes the remaining goal. |
+| `choose(name from requirement(label))` | simple | Select the named existential binder from an exact available existential fact and add its instantiated body to the context. |
 
 `by simp;` is sugar for a script containing the same `simp()` operation at the
 same proof state. Neither form implicitly executes a function. Write

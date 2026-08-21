@@ -1,4 +1,4 @@
-# Aliasing And Frames
+# Aliasing and frames
 
 C pointer parameters may alias by default. Click follows that model.
 
@@ -18,7 +18,7 @@ non-overlap, state it:
 requires separate(memory(dst[0..1]), memory(src[0..1]));
 ```
 
-## Why Aliasing Matters
+## Why aliasing matters
 
 Suppose a function writes `dst[0]`. A postcondition about `src[0]` is not
 automatically safe unless Click knows the write could not have changed the same
@@ -31,7 +31,7 @@ That fact can come from:
 - a loop effect summary,
 - or an explicit invariant.
 
-## Frame Clauses
+## Frame clauses
 
 Frame clauses describe what memory a function preserves or may mutate:
 
@@ -51,7 +51,7 @@ if the function later updates `owner->len`. Click transports unchanged field
 loads across certified writes when matching the executed stores to that
 footprint.
 
-## Old-Memory Postconditions
+## Old-Memory postconditions
 
 You can also state preservation directly:
 
@@ -70,7 +70,7 @@ ensures forall (k: int32) {
 Frame facts and separation often make these postconditions provable without
 copying every old value into a separate variable.
 
-## Loop Frames
+## Loop frames
 
 Loops need their own frame reasoning. A loop can have a whole-loop effect:
 

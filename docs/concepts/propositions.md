@@ -15,7 +15,7 @@ ensures result == x + 1 by auto;
 
 The expressions `x >= 0` and `result == x + 1` are propositions.
 
-## Propositions Are Not C Expressions
+## Propositions are not C expressions
 
 Click lets you write C-like fragments inside specs:
 
@@ -55,7 +55,7 @@ Read `forall` as "for every" and `exists` as "there is some".
 Quantifiers are powerful, but they often need explicit proof structure. For
 ranges of memory, range forms are usually easier to prove.
 
-## Range Propositions
+## Range propositions
 
 Click has range forms for array-shaped facts:
 
@@ -75,7 +75,7 @@ These forms are useful because Click can lower the body under the fact that
 `k` is in the range. That matters for memory safety: a read such as `p[k]` is
 safe only when Click knows `k` is within a loadable range.
 
-## Old Values
+## Old values
 
 `old(expr)` means the value of `expr` in the function-entry state:
 

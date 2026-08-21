@@ -1,4 +1,4 @@
-# What Click Is
+# What Click is
 
 Click is a verifier for C-like code.
 
@@ -17,7 +17,7 @@ program, or ask you to move your implementation into a theorem prover. The C
 function remains the thing being verified. The `.click` file is a specification
 and proof layer beside it.
 
-## Existing C Comes First
+## Existing C comes first
 
 A fundamental goal of Click is to verify existing C code, including code whose
 control flow, helper boundaries, naming, or memory access patterns were chosen
@@ -38,7 +38,7 @@ behavior, make a program change it wanted independently of verification, or
 translate unsupported syntax into the C0 subset while preserving its semantics.
 Those are program or frontend-boundary changes, not proof workarounds.
 
-## What Click Proves
+## What Click proves
 
 A Click proof says:
 
@@ -60,7 +60,7 @@ Click also treats C undefined behavior as part of verification. If a function
 can overflow signed `int32`, read invalid memory, or divide by zero under its
 requirements, the proof should fail.
 
-## The Current C Target
+## The current C target
 
 The current C subset is called C0. It is intentionally small: `int32`, `uint8`,
 pointers, arrays, loops, function calls, and a pilot slice of structs. C0 exists
@@ -70,7 +70,7 @@ real C.
 The long-term goal is to verify realistic C codebases. The current system is a
 small but working path toward that goal.
 
-## The Main Pieces
+## The main pieces
 
 You will see these terms throughout the book:
 

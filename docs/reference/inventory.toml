@@ -2,8 +2,686 @@
 # IDs are stable review keys; paths are relative to docs/.
 
 [[item]]
+id = "c0.type.void"
+path = "reference/language/c0.md#supported-types"
+
+[[item]]
+id = "c0.type.int32"
+path = "reference/language/c0.md#supported-types"
+
+[[item]]
+id = "c0.type.uint8"
+path = "reference/language/c0.md#supported-types"
+
+[[item]]
+id = "c0.type.pointer"
+path = "reference/language/c0.md#supported-types"
+
+[[item]]
+id = "c0.type.array-parameter"
+path = "reference/language/c0.md#supported-types"
+
+[[item]]
+id = "c0.type.local-array"
+path = "reference/language/c0.md#supported-types"
+
+[[item]]
+id = "c0.type.struct-pointer"
+path = "reference/language/c0.md#supported-types"
+
+[[item]]
+id = "c0.declaration.function"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.declaration.struct"
+path = "reference/language/c0.md#struct-subset"
+
+[[item]]
+id = "c0.declaration.local"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.empty"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.block"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.assignment"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.initializer"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.call"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.call-assignment"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.return"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.if"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.while"
+path = "reference/language/c0.md#loops"
+
+[[item]]
+id = "c0.statement.for"
+path = "reference/language/c0.md#loops"
+
+[[item]]
+id = "c0.statement.store"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.malloc"
+path = "reference/language/c0.md#heap-allocation"
+
+[[item]]
+id = "c0.statement.free"
+path = "reference/language/c0.md#heap-allocation"
+
+[[item]]
+id = "c0.statement.increment"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.decrement"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.add-assign"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.subtract-assign"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.multiply-assign"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.xor-assign"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.variable"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.int-literal"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.char-literal"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.null-pointer"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.address-of"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.sizeof-struct"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.call"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.index"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.field"
+path = "reference/language/c0.md#struct-subset"
+
+[[item]]
+id = "c0.expression.dereference"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.pointer-arithmetic"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.logical-not"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.logical-and"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.logical-or"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.equal"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.not-equal"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.less-than"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.less-equal"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.greater-than"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.greater-equal"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.add"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.subtract"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.multiply"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.divide"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.remainder"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.shift-left"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.shift-right"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.bitwise-and"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.bitwise-or"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.bitwise-xor"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.operator.bitwise-not"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+
+[[item]]
+id = "language.word.abstract"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.all"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.and"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.any"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.apply"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.apply_loop_summary"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.as"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.assumption"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.at"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.auto"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.bounded_execute"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.branch"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.by"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.byte_offset"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.c"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.calculate"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.cases"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.choose"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.close_invariants"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.conjunction"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.consumes"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.contains"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.contradiction"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.count"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.counted"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.decreases"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.defined"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.double_negation"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.else"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.ensures"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.ensuring"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.entry"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.enumerate"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.execute"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.execute_else_step"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.execute_rest"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.execute_step"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.execute_then_step"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.execute_until"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.exists"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.exit"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.extract"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.fact"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.fold"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.forall"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.frame"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.from"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.function"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.have"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.if"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.immutable"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.implies"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.induct"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.initialize"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.instantiate"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.int32"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.intro"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.invariant"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.left"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.let"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.load_int32"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.load_int32_pointer"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.load_uint8"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.load_uint8_pointer"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.loadable"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.loop"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.mark"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.memory"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.mutable"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.normalize"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.not"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.object"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.observe"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.of"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.old"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.open"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.or"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.owns"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.predicate"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.preserve"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.produces"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.read"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.requirement"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.requires"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.resource"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.rewrite"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.right"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.separate"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.simp"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.sizeof"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.split"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.statement"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.step"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.struct"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.summarize"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.symbolic_execute"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.theorem"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.then"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.transport"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.uint8"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.unfold"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.using"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.vacuous"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.verifying"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.views"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.void"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.where"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.witness"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.write"
+path = "reference/language/grammar.md#word-index"
+
+
+[[item]]
 id = "stdlib.resource.allocation"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#allocation"
 
 [[item]]
 id = "language.verifying"
@@ -587,199 +1265,199 @@ path = "reference/cli/audit.md#options-and-defaults"
 
 [[item]]
 id = "stdlib.theorem.int32_increment_upper_bound"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_increment_upper_bound"
 
 [[item]]
 id = "stdlib.theorem.int32_increment_strictly_increases"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_increment_strictly_increases"
 
 [[item]]
 id = "stdlib.theorem.int32_increment_lower_bound"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_increment_lower_bound"
 
 [[item]]
 id = "stdlib.theorem.int32_increment_greater_equal_lower_bound"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_increment_greater_equal_lower_bound"
 
 [[item]]
 id = "stdlib.theorem.int32_increment_strict_greater_lower_bound"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_increment_strict_greater_lower_bound"
 
 [[item]]
 id = "stdlib.theorem.int32_increment_preserves_order"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_increment_preserves_order"
 
 [[item]]
 id = "stdlib.theorem.int32_successor_le_implies_lt"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_successor_le_implies_lt"
 
 [[item]]
 id = "stdlib.theorem.int32_positive_is_nonnegative"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_positive_is_nonnegative"
 
 [[item]]
 id = "stdlib.theorem.int32_lt_implies_le"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_lt_implies_le"
 
 [[item]]
 id = "stdlib.theorem.int32_not_lt_implies_ge"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_not_lt_implies_ge"
 
 [[item]]
 id = "stdlib.theorem.int32_strictly_positive_is_nonnegative"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_strictly_positive_is_nonnegative"
 
 [[item]]
 id = "stdlib.theorem.int32_increment_below_max_is_defined"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_increment_below_max_is_defined"
 
 [[item]]
 id = "stdlib.theorem.int32_one_plus_below_max_is_defined"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_one_plus_below_max_is_defined"
 
 [[item]]
 id = "stdlib.theorem.int32_one_plus_strictly_increases"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_one_plus_strictly_increases"
 
 [[item]]
 id = "stdlib.theorem.int32_nonnegative_add_within_max_is_defined"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_nonnegative_add_within_max_is_defined"
 
 [[item]]
 id = "stdlib.theorem.int32_nonnegative_subtract_within_value_is_defined"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_nonnegative_subtract_within_value_is_defined"
 
 [[item]]
 id = "stdlib.theorem.int32_move_one_from_right_to_left_preserves_sum"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_move_one_from_right_to_left_preserves_sum"
 
 [[item]]
 id = "stdlib.theorem.int32_subtract_equal_sum_right_cancels"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_subtract_equal_sum_right_cancels"
 
 [[item]]
 id = "stdlib.theorem.int32_add_nonnegative_right_is_at_least_left"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_add_nonnegative_right_is_at_least_left"
 
 [[item]]
 id = "stdlib.theorem.int32_add_nonnegative_left_is_at_least_right"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_add_nonnegative_left_is_at_least_right"
 
 [[item]]
 id = "stdlib.theorem.int32_positive_predecessor_is_nonnegative"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_positive_predecessor_is_nonnegative"
 
 [[item]]
 id = "stdlib.theorem.int32_above_one_predecessor_is_at_least_one"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_above_one_predecessor_is_at_least_one"
 
 [[item]]
 id = "stdlib.theorem.int32_positive_predecessor_strictly_decreases"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_positive_predecessor_strictly_decreases"
 
 [[item]]
 id = "stdlib.theorem.int32_nonnegative_predecessor_upper_bound"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_nonnegative_predecessor_upper_bound"
 
 [[item]]
 id = "stdlib.theorem.int32_le_lt_transitive"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_le_lt_transitive"
 
 [[item]]
 id = "stdlib.theorem.int32_le_transitive"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_le_transitive"
 
 [[item]]
 id = "stdlib.theorem.int32_lt_transitive"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_lt_transitive"
 
 [[item]]
 id = "stdlib.theorem.int32_lt_le_transitive"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_lt_le_transitive"
 
 [[item]]
 id = "stdlib.theorem.int32_ge_transitive"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_ge_transitive"
 
 [[item]]
 id = "stdlib.theorem.int32_ge_implies_reversed_le"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_ge_implies_reversed_le"
 
 [[item]]
 id = "stdlib.theorem.int32_le_implies_reversed_ge"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_le_implies_reversed_ge"
 
 [[item]]
 id = "stdlib.theorem.int32_le_and_not_lt_implies_eq"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_le_and_not_lt_implies_eq"
 
 [[item]]
 id = "stdlib.theorem.int32_le_and_neq_implies_lt"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_le_and_neq_implies_lt"
 
 [[item]]
 id = "stdlib.theorem.int32_ge_and_not_gt_implies_eq"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#int32_ge_and_not_gt_implies_eq"
 
 [[item]]
 id = "stdlib.function.count"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#count"
 
 [[item]]
 id = "stdlib.predicate.permutation"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#permutation"
 
 [[item]]
 id = "stdlib.function.byte_count"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#byte_count"
 
 [[item]]
 id = "stdlib.predicate.bytes_equal"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#bytes_equal"
 
 [[item]]
 id = "stdlib.predicate.bytes_equal_range"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#bytes_equal_range"
 
 [[item]]
 id = "stdlib.predicate.bytes_all_eq"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#bytes_all_eq"
 
 [[item]]
 id = "stdlib.predicate.bytes_contains"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#bytes_contains"
 
 [[item]]
 id = "stdlib.predicate.bytes_all_not_eq"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#bytes_all_not_eq"
 
 [[item]]
 id = "stdlib.predicate.cstr_prefix"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#cstr_prefix"
 
 [[item]]
 id = "stdlib.predicate.cstr_len"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#cstr_len"
 
 [[item]]
 id = "stdlib.predicate.cstr"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#cstr"
 
 [[item]]
 id = "stdlib.predicate.cstr_bounded"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#cstr_bounded"
 
 [[item]]
 id = "stdlib.theorem.cstr_len_nonnegative"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#cstr_len_nonnegative"
 
 [[item]]
 id = "stdlib.theorem.cstr_len_has_prefix"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#cstr_len_has_prefix"
 
 [[item]]
 id = "stdlib.theorem.cstr_len_has_terminator"
-path = "reference/library/index.md#current-prelude"
+path = "reference/library/index.md#cstr_len_has_terminator"
 
 [[item]]
 id = "glossary.alias"

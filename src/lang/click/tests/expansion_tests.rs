@@ -2177,7 +2177,7 @@ fn restricted_simp_expands_strict_order_to_nonstrict_theorem_application() {
         expanded.contains("apply(int32_lt_implies_le(x, y)) using"),
         "{expanded}"
     );
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded strict-order proof should replay");
@@ -3097,7 +3097,7 @@ fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
         "{expanded}"
     );
     assert!(expanded.contains("value < upper;"), "{expanded}");
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded theorem application should replay");
@@ -3147,7 +3147,7 @@ fn restricted_simp_expands_positive_to_nonnegative_theorem_application() {
         "{expanded}"
     );
     assert!(expanded.contains("1 <= value;"), "{expanded}");
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded theorem application should replay");
@@ -3197,7 +3197,7 @@ fn restricted_simp_expands_strictly_positive_to_nonnegative_theorem_application(
         "{expanded}"
     );
     assert!(expanded.contains("0 < value;"), "{expanded}");
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded theorem application should replay");
 }
@@ -3246,7 +3246,7 @@ fn restricted_simp_expands_positive_predecessor_to_theorem_application() {
         "{expanded}"
     );
     assert!(expanded.contains("0 < value;"), "{expanded}");
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded theorem application should replay");
@@ -3296,7 +3296,7 @@ fn restricted_simp_expands_positive_predecessor_decrease_to_theorem_application(
         "{expanded}"
     );
     assert!(expanded.contains("0 < value;"), "{expanded}");
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded theorem application should replay");
@@ -3338,7 +3338,7 @@ fn restricted_simp_expands_predecessor_upper_bound_to_theorem_application() {
     );
     assert!(expanded.contains("0 <= value;"), "{expanded}");
     assert!(expanded.contains("value <= bound;"), "{expanded}");
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded predecessor theorem should replay");
@@ -3640,7 +3640,7 @@ fn restricted_simp_expands_increment_lower_bound_to_theorem_application() {
     );
     assert!(expanded.contains("lower <= value;"), "{expanded}");
     assert!(expanded.contains("value < upper;"), "{expanded}");
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded theorem application should replay");
@@ -3697,7 +3697,7 @@ fn restricted_simp_expands_increment_order_to_theorem_application() {
     );
     assert!(expanded.contains("lower <= value;"), "{expanded}");
     assert!(expanded.contains("value < upper;"), "{expanded}");
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded theorem application should replay");
@@ -3881,7 +3881,7 @@ fn restricted_simp_expands_adjacent_order_to_theorem_application() {
         "{expanded}"
     );
     assert!(expanded.contains("2 <= value;"), "{expanded}");
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded theorem application should replay");
@@ -4235,7 +4235,7 @@ fn restricted_simp_expands_constant_order_weakening_to_theorem_application() {
         "{expanded}"
     );
     assert!(expanded.contains("3 <= value;"), "{expanded}");
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded theorem application should replay");
@@ -4274,7 +4274,7 @@ fn restricted_simp_expands_constant_strict_upper_bound_to_theorem_application() 
         "{expanded}"
     );
     assert!(expanded.contains("value <= 3;"), "{expanded}");
-    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     verify_click_theorems(&expanded).expect("expanded strict upper-bound proof should replay");
 }

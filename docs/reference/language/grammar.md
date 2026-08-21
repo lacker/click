@@ -17,6 +17,49 @@ the ordinary C escapes accepted by the parser. String literals occur in source
 locations and other explicitly documented string positions; Click doesn't
 have a first-class string type.
 
+## Word index
+
+Surface Click uses contextual words rather than a separate token kind for
+keywords. A spelling can be an ordinary identifier where the surrounding
+grammar doesn't give it a special meaning. The implementation registry and
+documentation inventory keep the following accepted words synchronized.
+
+| Words | Context and status |
+| --- | --- |
+| `verifying` | C-source declaration. |
+| `predicate`, `function`, `theorem` | Top-level logic declarations; `function` also starts a C contract. |
+| `abstract`, `resource` | Abstract and composite resource declarations. |
+| `counted` | Compatibility-only rejected spelling for the former `counted resource`; use `resource`. |
+| `int32`, `uint8`, `void`, `struct` | Type words. `void` is available only where the detailed type rules allow it. |
+| `let`, `where` | Value abbreviation and existential-binding forms. |
+| `requires`, `ensures`, `decreases` | Contract, theorem, function-totality, and loop-termination clauses. |
+| `owns`, `views`, `consumes`, `produces` | Resource transfer clauses. |
+| `immutable`, `mutable` | Effect clauses and structural effect items. |
+| `invariant`, `step`, `initialize`, `preserve` | Loop structural items and phase proofs. |
+| `contains`, `fact`, `if` | Composite-resource members and optional resource guard. `if` also forms expressions and proof splits. |
+| `read`, `write`, `object`, `memory`, `of`, `count` | Memory-resource forms, quantified resources, and resource-population expressions. |
+| `and`, `or`, `implies`, `not` | Proposition connectives in increasing precedence, except right-associative `implies`. |
+| `forall`, `exists` | Universal and existential quantifiers. |
+| `all`, `any`, `fold` | Range proposition and expression methods. |
+| `defined`, `loadable`, `separate` | Definedness, readable-memory, and resource-separation propositions. |
+| `old`, `at`, `c` | Snapshot selection and embedded C-fragment forms. |
+| `sizeof`, `byte_offset` | Struct-layout size and byte-granularity pointer-offset expressions. |
+| `load_int32`, `load_uint8`, `load_int32_pointer`, `load_uint8_pointer` | Typed memory-load expressions used by checked expansion when no higher-level source spelling is available. |
+| `by`, `auto`, `using` | Proof introduction, default smart proof, and exact-premise syntax. |
+| `mark`, `step`, `execute`, `execute_until`, `frame` | Execution and framing tactics. |
+| `unfold`, `fold`, `observe`, `open` | Predicate and resource tactics. |
+| `apply`, `have`, `if`, `cases`, `branch`, `loop` | Theorem application and structural proof tactics. |
+| `witness`, `choose`, `from`, `requirement` | Existential evidence and fact selection. |
+| `assumption`, `extract`, `normalize`, `intro`, `split`, `left`, `right`, `enumerate`, `contradiction` | Explicit proposition tactics. |
+| `rewrite`, `transport`, `instantiate`, `simp`, `induct`, `close_invariants` | Equality, snapshot, quantifier, simplification, induction, and loop-certificate tactics. |
+| `as`, `else`, `ensuring`, `then` | Names and branches inside structural proof forms. |
+| `function`, `loop`, `statement`, `entry`, `exit` | Program-region and program-point selectors. |
+| `apply_loop_summary`, `bounded_execute`, `calculate`, `conjunction`, `double_negation`, `execute_else_step`, `execute_rest`, `execute_step`, `execute_then_step`, `summarize`, `symbolic_execute`, `vacuous` | Compatibility-only tactic spellings that produce focused migration diagnostics. |
+
+See [Tactics](../tactics/index.md) for tactic syntax and classification. A word
+listed here isn't necessarily valid in every identifier or expression
+position; the construct entry defines its allowed context.
+
 ## File-level declarations
 
 The following schematic grammar uses `...` for content defined on the linked

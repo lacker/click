@@ -1,11 +1,11 @@
-# C0 And C Fragments
+# C0 and C fragments
 
 Click verifies C0, the repository's current C subset.
 
 C0 is not intended to be a new production language. It is the precise target
 Click can reason about today while it grows toward more realistic C.
 
-## C0 Source
+## C0 source
 
 C0 source is the implementation language. It currently includes scalar integer
 code, pointer code, arrays, loops, function calls, byte buffers, and a pilot
@@ -13,7 +13,7 @@ slice of struct support.
 
 For the full list, see the C0 subset reference.
 
-## C Fragments In Click
+## C fragments in Click
 
 Click specs can contain C-like expressions:
 
@@ -33,7 +33,7 @@ The distinction matters:
 - `and`, `or`, `not`, `forall`, and `exists` are Click proposition syntax, not
   C operators.
 
-## Three Layers
+## Three layers
 
 Click has three layers:
 
@@ -51,7 +51,7 @@ Tools never ask users to copy that representation into a sidecar:
 `click-expand` and diagnostics render documented Surface Click, and their
 output is expected to round-trip through the normal parser.
 
-## Why This Exists
+## Why this exists
 
 The goal is to let specifications stay close to C while still having precise
 logic underneath.

@@ -1,4 +1,4 @@
-# Your First Proof
+# Your first proof
 
 Start with a C0 function that cannot fail:
 
@@ -28,7 +28,7 @@ The claim is small, but it contains the whole Click shape:
 Click symbolically executes the C function, sees that every path returns `0`,
 and proves the postcondition.
 
-## A Proof With A Requirement
+## A proof with A requirement
 
 Now consider:
 
@@ -59,7 +59,7 @@ int32 increment(int32 x) {
 This is an important Click habit: requirements are not just mathematical
 assumptions. They also rule out bad C executions.
 
-## What Failure Means
+## What failure means
 
 When a proof fails, it usually means one of three things:
 

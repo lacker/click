@@ -3063,10 +3063,9 @@ pub(super) fn plan_recorded_signed_order_path(
     plan_recorded_signed_order_path_for_context(goal, path, false)
 }
 
-/// Point theorem applications complete an exact matching proposition goal,
-/// while pure theorem applications add their conclusion and leave the goal
-/// for `assumption`. Keep that semantic distinction in the path planner so
-/// the checked point successor never contains a redundant, invalid closer.
+/// A theorem application can complete an exact matching proposition goal.
+/// Outcome replay can instead add an equivalent snapshot fact, so callers
+/// specify whether the checked application closes this particular goal.
 pub(super) fn plan_recorded_signed_order_path_for_context(
     goal: &Proposition,
     path: &[(Proposition, ClickProposition)],
@@ -3164,7 +3163,7 @@ pub(super) fn plan_recorded_signed_order_path_for_context(
     Some(tactics)
 }
 
-fn remove_trailing_theorem_assumption(tactics: &mut Vec<ProofTactic>) -> Option<()> {
+pub(super) fn remove_trailing_theorem_assumption(tactics: &mut Vec<ProofTactic>) -> Option<()> {
     if !matches!(tactics.last(), Some(ProofTactic::Assumption))
         || !matches!(
             tactics.get(tactics.len().checked_sub(2)?),

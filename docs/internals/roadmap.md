@@ -13,7 +13,7 @@ is:
 > functions in a real library, with enough local specifications that another
 > agent can extend the proof without redesigning the system.
 
-## Design Principles
+## Design principles
 
 - **Verify the C as written.** Existing source is the adoption boundary. For C
   inside the supported semantics, do not change control flow, helper boundaries,
@@ -41,7 +41,7 @@ is:
 - Surface Click is closed under tooling: expansion, profiling hints, and
   diagnostics emit only documented syntax accepted by the ordinary parser.
 
-## Milestone 0: Keep The Current Core Coherent
+## Milestone 0: keep the current core coherent
 
 Current status: mostly done, but this remains a maintenance milestone.
 
@@ -70,7 +70,7 @@ Done means:
 - A fresh agent can read `docs/index.md`, run an mdtest, and identify where a
   C0, Surface Click, Kernel Click, or stdlib change belongs.
 
-## Milestone 1: Make C0 Big Enough For Real Library Kernels
+## Milestone 1: make C0 big enough for real library kernels
 
 The next C work should be driven by small real-library examples, not by trying
 to clone C all at once.
@@ -112,7 +112,7 @@ Done means:
 - mdtests cover each new C feature with both a successful proof and at least
   one representative failure.
 
-## Milestone 2: Spec State, Permissions, Heap, And Real Frames
+## Milestone 2: spec state, permissions, heap, and real frames
 
 json-c-shaped code allocates, stores pointers inside objects, shares objects,
 and releases them. Click needs a disciplined memory story before that is
@@ -170,7 +170,7 @@ Done means:
 - Function contracts can express ownership transfer and frame preservation
   without exposing raw kernel internals to the user.
 
-## Milestone 3: Proof Language And Standard Library Maturity
+## Milestone 3: proof language and standard library maturity
 
 The current proof language can prove useful examples, but real libraries need
 more reusable specifications and more predictable proof scripts.
@@ -215,7 +215,7 @@ Done means:
 - Common range/string/frame facts are proved by named stdlib theorems or stable
   tactic scripts, not by adding ad hoc special cases every time.
 
-## Milestone 4: Modular Verification At Library Scale
+## Milestone 4: modular verification at library scale
 
 A real library cannot be verified as one giant symbolic execution.
 
@@ -249,7 +249,7 @@ Done means:
 - A changed helper only invalidates the proofs that depend on that helper's
   specification.
 
-## Milestone 5: Real C Frontend Strategy
+## Milestone 5: real C frontend strategy
 
 The hand-written C0 parser is useful for design, but a real-library target
 needs a plan for C as written.
@@ -275,7 +275,7 @@ Done means:
 - The target library slice is checked from source that stays close to upstream
   C, and unsupported constructs fail with actionable diagnostics.
 
-## Milestone 6: json-c-Shaped Pilot
+## Milestone 6: json-c-Shaped pilot
 
 The pilot should be narrow but real. Pick a small, stable subset of a real C
 library and verify it end to end.
@@ -310,7 +310,7 @@ Done means:
 - The docs explain the proof architecture well enough that a fresh agent can add
   the next function from the same library.
 
-## Near-Term Work Queue
+## Near-Term work queue
 
 Good next tasks from the current state:
 

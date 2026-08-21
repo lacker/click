@@ -1,4 +1,4 @@
-# Triaging Proof Failures
+# Triaging proof failures
 
 A failed proof is evidence, but it does not by itself identify a Click bug.
 Classify the failure before changing the proof engine, the specification, or
@@ -12,7 +12,7 @@ adaptation or fix in the contract, proof, language, verifier, or kernel.
 
 ## Triage order
 
-### 1. Check the claim and its assumptions
+### 1. check the claim and its assumptions
 
 First ask whether the property is true on every execution admitted by the
 contract and Click's C semantics. Look for a false postcondition, a missing
@@ -24,7 +24,7 @@ the specification or proof. That is ordinary proof development, not a Click
 issue. Do not add a precondition merely because it makes automation succeed;
 the precondition must describe a real requirement of the C operation.
 
-### 2. Check the supported-semantics boundary
+### 2. check the supported-semantics boundary
 
 Determine whether the C construct and the desired property are within Click's
 documented semantics. A deliberately unsupported construct is a current
@@ -35,7 +35,7 @@ A semantics-preserving translation into Click's documented C0 subset may be
 useful while support is incomplete, but it must be identified as such. It is
 not evidence that Click verifies the unchanged source form.
 
-### 3. Replace broad search with explicit proof steps
+### 3. replace broad search with explicit proof steps
 
 Smart tactics are bounded, incomplete heuristics. A prompt and actionable
 failure from `auto`, `execute()`, `simp()`, `frame()`, or another smart tactic
@@ -57,7 +57,7 @@ These labels describe the boundary that needs work. An ergonomic problem can
 later justify a language feature, and investigation of an apparent missing
 operation can reveal a correctness bug in an existing one.
 
-### 4. Separate tooling reliability from proof search
+### 4. separate tooling reliability from proof search
 
 Some behavior is a tooling defect regardless of whether the underlying claim
 is easy to prove. Treat the failure as a high-priority **tooling reliability

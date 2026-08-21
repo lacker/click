@@ -1,4 +1,4 @@
-# Proof Landscape
+# Proof landscape
 
 This document tracks the proof capabilities Click should grow, how they relate
 to familiar verification systems, and which mdtests currently exercise
@@ -39,7 +39,7 @@ execution and specification-checking axioms in the kernel. Surface Click
 may contain **C fragments**: pieces of C0 syntax that keep C-like local syntax
 and typing but elaborate into explicit Kernel Click.
 
-## Competitor Families
+## Competitor families
 
 Click should borrow ordinary ideas from existing systems rather than inventing
 new proof workflow concepts too early.
@@ -57,7 +57,7 @@ new proof workflow concepts too early.
   Relevant concepts include bounded execution, path splitting, overflow/undefined behavior
   checks, memory-safety checks, and counterexample-oriented diagnostics.
 
-## Capability Matrix
+## Capability matrix
 
 | Capability | Common source | Click axiom family | Click tactic surface | Current mdtest |
 | --- | --- | --- | --- | --- |
@@ -79,7 +79,7 @@ new proof workflow concepts too early.
 | Stdlib folds and permutation | functional array specs, multiset proofs | `RangeFold`, finite forall/range facts, count-shaped fold reasoning | `unfold`, `simp`, loop invariants | `mdtests/compare_swap2_permutation.md`, `mdtests/sort3_permutation.md`, `mdtests/bubble_sort3_loop_permutation.md`, `mdtests/loop_stdlib_permutation_invariant.md` |
 | Pure-function induction | Lean/Coq/Isabelle strong induction | nonnegative `int32` theorem induction with exact local-hypothesis instantiation | `induct(n) as ih`, `apply(ih(m))` | `mdtests/pure_induction_countdown.md`, `mdtests/pure_induction_two_step.md` |
 
-## Current C0 Boundary
+## Current C0 boundary
 
 The current C0 subset is enough to make the first several categories
 executable: scalar code, signed undefined behavior, bitwise and shift

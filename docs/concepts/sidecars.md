@@ -1,4 +1,4 @@
-# Files And Sidecars
+# Files and sidecars
 
 Click specs live beside C0 source files. The C file contains executable code.
 The `.click` file names the C file and gives contracts for functions in it.
@@ -33,7 +33,7 @@ The function signature in the `.click` file must match the C function. The body
 of the Click function is not executable C; it is the contract and proof surface
 for the C function.
 
-## The `verifying` Clause
+## The `verifying` clause
 
 Each sidecar starts with one or more source declarations:
 
@@ -44,7 +44,7 @@ verifying "file.c";
 This tells Click which C source files are part of the verification unit. Larger
 sidecars can name multiple C files when a proof depends on helper functions.
 
-## Contracts Are Per Function
+## Contracts are per function
 
 Each function block in a sidecar describes one C function:
 
@@ -58,7 +58,7 @@ int32 function_name(int32 x) {
 The `requires` clauses describe what callers must provide. The `ensures`
 clauses describe what the function promises when those requirements hold.
 
-## Where Examples Live
+## Where examples live
 
 There are two kinds of example material in this repository:
 

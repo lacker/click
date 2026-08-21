@@ -1,4 +1,4 @@
-# Proof Workflow
+# Proof workflow
 
 Click proofs live in `by` clauses.
 
@@ -8,7 +8,7 @@ tooling defect. The [proof-failure triage guide](proof-failure-triage.md)
 gives the canonical classification and reduction workflow. In particular, a
 prompt failure from an incomplete smart tactic is not by itself an engine bug.
 
-## Proof Kinds
+## Proof kinds
 
 A **pure proof** derives a proposition from facts at one execution point. It
 does not execute C, move between program points, or transform resource facts.
@@ -96,7 +96,7 @@ reasoning. The simple exact form is `frame() using { P; ... }`.
 The exhaustive simple/smart classification is in the
 [proof tactics reference](../reference/tactics/index.md).
 
-## Explicit Proof Scripts
+## Explicit proof scripts
 
 Explicit proof scripts use function-call-shaped tactics:
 
@@ -367,7 +367,7 @@ ensures again: bytes_contains(p, 0, n, 'x') by {
 }
 ```
 
-## Frontier Facts And Loop Proofs
+## Frontier facts and loop proofs
 
 Use `have` to prove an intermediate proposition at the current execution
 frontier. Loop proofs likewise operate where the frontier encounters a loop:
@@ -508,7 +508,7 @@ symbolic loop-entry state and its required assumptions. The `loop` tactic
 applies it immediately and advances the enclosing frontier. There is no later
 summary tactic and no detached traversal from function entry.
 
-## Loop Effects
+## Loop effects
 
 Whole-loop effects:
 
@@ -552,7 +552,7 @@ closing `simp`. A labeled loop (`loop as fill { ... }`) can be named the same
 way with `frame(fill)`. The qualified frame requires the referenced `loop`
 tactic to declare a `mutable` or `immutable` clause.
 
-## Debugging Failed Proofs
+## Debugging failed proofs
 
 Failure messages usually include:
 

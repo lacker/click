@@ -1,4 +1,4 @@
-# Undefined Behavior
+# Undefined behavior
 
 Click proves more than postconditions. It also checks that the modeled C0
 execution is safe under the function's requirements.
@@ -26,7 +26,7 @@ undefined behavior. The proof needs:
 requires x < 2147483647;
 ```
 
-## Common UB Obligations
+## Common UB obligations
 
 Click currently models obligations for cases such as:
 
@@ -40,7 +40,7 @@ Click currently models obligations for cases such as:
 
 The C0 subset reference has the full current list.
 
-## Requirements Are Safety Facts
+## Requirements are safety facts
 
 A requirement can be needed even when the mathematical postcondition looks
 obvious:
@@ -53,7 +53,7 @@ ensures result == x / y by auto;
 The requirement is not just saying "assume division is meaningful." It rules out
 a bad C execution.
 
-## Debugging UB Failures
+## Debugging UB failures
 
 When a proof fails because of undefined behavior, look for the operation that
 needs a safety fact:

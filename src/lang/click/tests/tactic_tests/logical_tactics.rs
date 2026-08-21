@@ -1756,6 +1756,28 @@ fn smart_pure_have_theorem_search_retains_the_checked_scope_body_directly() {
 }
 
 #[test]
+fn smart_pure_theorem_application_discharges_exact_goal() {
+    let click_source = r#"
+        theorem move_one_preserves_sum(
+            total: int32,
+            left: int32,
+            right: int32
+        ) {
+            requires 0 <= left;
+            requires 1 <= right;
+            requires total == left + right;
+
+            ensures total == (left + 1) + (right - 1) by {
+                apply(int32_move_one_from_right_to_left_preserves_sum(total, left, right));
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect("an applied pure theorem should discharge an exact matching goal");
+}
+
+#[test]
 fn smart_point_nested_have_theorem_search_retains_checked_scopes() {
     let c_source = r#"
         int32 keep(int32 x) {
@@ -2354,7 +2376,6 @@ fn apply_predecessor_upper_bound_closes_from_both_listed_legs() {
                     0 <= value;
                     value <= bound;
                 };
-                assumption();
             }
         }
     "#;

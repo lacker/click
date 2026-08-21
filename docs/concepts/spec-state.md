@@ -1,4 +1,4 @@
-# Spec State
+# Spec state
 
 Spec state is extra state used by the specification and proof. It is not stored
 in the C program, but it helps the verifier describe facts about the C program.
@@ -16,7 +16,7 @@ described in [Permissions](permissions.md). This page records the intended
 place of the broader feature so future permission and ownership work has a
 clean target.
 
-## Why Spec State Matters
+## Why spec state matters
 
 Some useful facts are not directly stored in C memory.
 
@@ -41,7 +41,7 @@ let len: int32 = strlen_model(src);
 That is an immutable abbreviation for a specification expression. It is useful,
 but it is not mutable state.
 
-## What Click Has Today
+## What Click has today
 
 Click already has a few spec-only mechanisms:
 
@@ -67,7 +67,7 @@ follow the callee's resource verbs. `owns` receives and returns ownership;
 `consumes` receives it; `produces` returns it. Click can split a covered
 subrange out of a larger owned range and rejoin adjacent returned ranges.
 
-## The Design Constraint
+## The design constraint
 
 Spec state should feel like ordinary Click facts. A user should be able to
 state, carry, unfold, and prove model facts without switching to a completely
@@ -79,7 +79,7 @@ some resource facts must not be copied freely. Click's viewed and owned memory
 elements therefore live in a resource context rather than as
 classical predicate facts.
 
-## Relationship To Permission Logic
+## Relationship to permission logic
 
 The current implementation starts with a narrow resource context before general
 model variables. That lets Click pressure-test the permission machinery on the
@@ -97,7 +97,7 @@ This keeps Click flexible. The kernel should not bake in json-c ownership as a
 primitive concept. It should provide enough general spec-state and permission
 support for libraries to define the ownership concepts they need.
 
-## What Not To Assume Yet
+## What not to assume yet
 
 Do not assume:
 

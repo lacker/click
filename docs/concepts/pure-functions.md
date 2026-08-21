@@ -1,4 +1,4 @@
-# Pure Click Functions
+# Pure Click functions
 
 Pure Click functions compute specification values. They do not run as C code.
 
@@ -29,7 +29,7 @@ The annotation is optional when the value's type is already clear:
 let next = x + 1;
 ```
 
-## Functions Versus Predicates
+## Functions versus predicates
 
 A pure Click function returns a value:
 
@@ -49,7 +49,7 @@ predicate permutation(a: int32[], b: int32[], lo: int32, hi: int32) {
 
 Use functions for reusable computed values. Use predicates for reusable facts.
 
-## Array Refs
+## Array refs
 
 When a pure Click function takes `int32 p[]` or `uint8 p[]`, the parameter is a
 specification-level array ref. It contains:
@@ -81,7 +81,7 @@ The kernel has selected reasoning support for the current standard-library
 folds, especially `count` and `permutation`. It is not yet a general induction
 engine for arbitrary folds.
 
-## Well-Founded Recursion
+## Well-Founded recursion
 
 A pure function may recurse when it declares an integer measure:
 
@@ -113,7 +113,7 @@ unknown-depth call as an opaque pure-function application. The same application
 is structurally equal to itself, but Click does not recursively normalize it by
 an arbitrary depth budget.
 
-## Proving Recursive Results
+## Proving recursive results
 
 `decreases` establishes that a recursive definition denotes a value. It does
 not prove every property of that value. Use explicit strong induction in a
@@ -153,7 +153,7 @@ Pure theorem induction is also unrelated to a C function's optional
 termination evidence: it proves a proposition about specification values, not
 that a C call returns.
 
-## When To Use Pure Functions
+## When to use pure functions
 
 Use a pure Click function when:
 

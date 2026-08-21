@@ -7277,10 +7277,10 @@ impl<'a> Proof<'a> {
         Vec<(Proposition, ClickProposition)>,
         bool,
     )> {
-        let (surface_facts, point_application_closes_goal, premise_anchor) =
+        let (surface_facts, theorem_application_closes_goal, premise_anchor) =
             match self.context.as_ref() {
                 ProofContext::Pure(context) => {
-                    (&context.theorem_context.surface_requirements, false, None)
+                    (&context.theorem_context.surface_requirements, true, None)
                 }
                 ProofContext::Point(context) => (
                     context.surface_propositions,
@@ -7349,7 +7349,7 @@ impl<'a> Proof<'a> {
             goal,
             derivation,
             premise_pairs,
-            point_application_closes_goal,
+            theorem_application_closes_goal,
         ))
     }
 
@@ -8379,10 +8379,17 @@ impl<'a> Proof<'a> {
         let SimpEvidence::Derivation(derivation) = &plan else {
             return None;
         };
-        self.check_typed_atomic_simp_candidate(goal, derivation, &premise_pairs, false)
-            .or_else(|| self.try_selected_equality_rewrite_chain(&premise_pairs))
-            .or_else(|| self.try_outcome_anchored_order_transitivity(&premise_pairs))
-            .or_else(|| self.try_outcome_anchored_increment_order(&premise_pairs))
+        let theorem_application_closes_goal =
+            !matches!(self.context.as_ref(), ProofContext::Execution(_));
+        self.check_typed_atomic_simp_candidate(
+            goal,
+            derivation,
+            &premise_pairs,
+            theorem_application_closes_goal,
+        )
+        .or_else(|| self.try_selected_equality_rewrite_chain(&premise_pairs))
+        .or_else(|| self.try_outcome_anchored_order_transitivity(&premise_pairs))
+        .or_else(|| self.try_outcome_anchored_increment_order(&premise_pairs))
     }
 
     fn check_typed_atomic_simp_candidate(
@@ -10148,10 +10155,14 @@ impl<'a> Proof<'a> {
             }
             facts = facts.with_fact(fact);
         }
+        let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self.state.goals.with_facts_at(self.focused, facts),
+            goals: self
+                .state
+                .goals
+                .discharged_if_at(self.focused, complete, facts),
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
         })
@@ -16309,7 +16320,6 @@ mod tests {
                 [
                     SimpleProofStep::Have { .. },
                     SimpleProofStep::ApplyTheoremUsing { .. },
-                    SimpleProofStep::Assumption
                 ]
             ));
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
@@ -17457,10 +17467,8 @@ mod tests {
                 match shape {
                     ArithmeticProofShape::Direct => assert!(matches!(
                         pure_closed.certificate().steps(),
-                        [
-                            SimpleProofStep::ApplyTheoremUsing { application, premises },
-                            SimpleProofStep::Assumption,
-                        ] if application.name == theorem_name
+                        [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                            if application.name == theorem_name
                             && premises == std::slice::from_ref(surface_premise)
                     )),
                     ArithmeticProofShape::ComposedNegatedSuccessor => assert!(matches!(
@@ -17469,13 +17477,10 @@ mod tests {
                             SimpleProofStep::Have { proof: first, .. },
                             SimpleProofStep::Have { proof: second, .. },
                             SimpleProofStep::ApplyTheoremUsing { application, .. },
-                            SimpleProofStep::Assumption,
                         ] if matches!(
                             first.steps(),
-                            [
-                                SimpleProofStep::ApplyTheoremUsing { application, premises },
-                                SimpleProofStep::Assumption,
-                            ] if application.name == "int32_not_lt_implies_ge"
+                            [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                                if application.name == "int32_not_lt_implies_ge"
                                 && premises == std::slice::from_ref(surface_premise)
                         ) && matches!(second.steps(), [SimpleProofStep::Normalize])
                             && application.name == theorem_name
@@ -17491,7 +17496,6 @@ mod tests {
                                 application: second,
                                 premises: second_premises,
                             },
-                            SimpleProofStep::Assumption,
                         ] if first.name == "int32_le_lt_transitive"
                             && first_premises == std::slice::from_ref(surface_premise)
                             && second.name == theorem_name
@@ -17802,10 +17806,8 @@ mod tests {
                 assert!(pure_closed.is_complete());
                 assert!(matches!(
                     pure_closed.certificate().steps(),
-                    [
-                        SimpleProofStep::ApplyTheoremUsing { application, premises },
-                        SimpleProofStep::Assumption,
-                    ] if application.name == *theorem_name
+                    [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                        if application.name == *theorem_name
                         && premises.as_slice() == selected_premises
                 ));
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
@@ -17921,7 +17923,6 @@ mod tests {
                 [
                     SimpleProofStep::ApplyTheoremUsing { application: first, .. },
                     SimpleProofStep::ApplyTheoremUsing { application: second, .. },
-                    SimpleProofStep::Assumption,
                 ] if first.name == "int32_lt_implies_le"
                     && second.name == "int32_increment_strict_greater_lower_bound"
             ));
@@ -18107,7 +18108,7 @@ mod tests {
             let planned = plan_recorded_int32_le_and_not_lt_implies_equality_for_context(
                 &kernel_equality,
                 &recorded,
-                false,
+                true,
             )
             .expect("the typed equality evidence should select the named theorem");
             let planned_certificate = ProofCertificate::from_proof_tactics(&planned)
@@ -18120,10 +18121,8 @@ mod tests {
                 .expect("restricted simp should retain the checked equality theorem");
             assert!(matches!(
                 pure_closed.certificate().steps(),
-                [
-                    SimpleProofStep::ApplyTheoremUsing { application, premises },
-                    SimpleProofStep::Assumption,
-                ] if application.name == "int32_le_and_not_lt_implies_eq"
+                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                    if application.name == "int32_le_and_not_lt_implies_eq"
                     && premises.as_slice() == selected
             ));
             assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
@@ -18521,10 +18520,8 @@ mod tests {
                 );
                 assert!(matches!(
                     pure_closed.certificate().steps(),
-                    [
-                        SimpleProofStep::ApplyTheoremUsing { application, premises },
-                        SimpleProofStep::Assumption,
-                        ] if application.name == *theorem_name
+                    [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                        if application.name == *theorem_name
                             && premises.as_slice() == selected
                 ));
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
@@ -19107,25 +19104,20 @@ mod tests {
                         [
                             SimpleProofStep::Have { proof, .. },
                             SimpleProofStep::ApplyTheoremUsing { application, premises },
-                            SimpleProofStep::Assumption,
                         ] if application.name == *theorem_name
                             && premises.len() == 1
                             && matches!(
                                 proof.steps(),
-                                [
-                                    SimpleProofStep::ApplyTheoremUsing { application, premises },
-                                    SimpleProofStep::Assumption,
-                                ] if application.name == "int32_successor_le_implies_lt"
+                                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                                    if application.name == "int32_successor_le_implies_lt"
                                     && premises == selected
                             )
                     ));
                 } else {
                     assert!(matches!(
                         pure_closed.certificate().steps(),
-                        [
-                            SimpleProofStep::ApplyTheoremUsing { application, premises },
-                            SimpleProofStep::Assumption,
-                        ] if application.name == *theorem_name && premises == selected
+                        [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                            if application.name == *theorem_name && premises == selected
                     ));
                 }
                 assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
