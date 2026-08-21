@@ -995,8 +995,86 @@ fn try_execute_checked_open_scope_and_continue<'a>(
     .map(Some)
 }
 
+// The complete mdtest and example gates both reach depth 9. Keep a modest
+// amount of room for ordinary proof nesting while rejecting hostile or
+// accidentally recursive certificates before the large interpreter frame is
+// entered. The wrapper must stay separate from `execute_internal_proof_inner`:
+// checking inside the inner function would reserve its frame before observing
+// the bound and could still abort on stack overflow.
+const MAX_INTERNAL_PROOF_REPLAY_DEPTH: usize = 12;
+
+thread_local! {
+    static INTERNAL_PROOF_REPLAY_DEPTH: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+struct InternalProofReplayDepthGuard;
+
+impl InternalProofReplayDepthGuard {
+    fn enter(claim_label: &str) -> Result<Self, ClickError> {
+        INTERNAL_PROOF_REPLAY_DEPTH.with(|depth| {
+            let current = depth.get();
+            if current >= MAX_INTERNAL_PROOF_REPLAY_DEPTH {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof replay nesting exceeds the supported maximum of \
+                     {MAX_INTERNAL_PROOF_REPLAY_DEPTH}; simplify nested proof blocks"
+                )));
+            }
+            depth.set(current + 1);
+            Ok(Self)
+        })
+    }
+}
+
+impl Drop for InternalProofReplayDepthGuard {
+    fn drop(&mut self) {
+        INTERNAL_PROOF_REPLAY_DEPTH.with(|depth| {
+            let current = depth.get();
+            debug_assert!(current > 0, "proof replay depth guard underflow");
+            depth.set(current.saturating_sub(1));
+        });
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn execute_internal_proof(
+    node: &InternalProofNode,
+    context: ProofReplayContext,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    claim_label: &str,
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function: &CFunction,
+    arguments: &[CExpression],
+) -> Result<Vec<ProofReplayContext>, ClickError> {
+    let _depth_guard = InternalProofReplayDepthGuard::enter(claim_label)?;
+    execute_internal_proof_inner(
+        node,
+        context,
+        expansion_capture.as_deref_mut(),
+        function_block,
+        parsed_function,
+        claims,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        function,
+        arguments,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_internal_proof_inner(
     node: &InternalProofNode,
     context: ProofReplayContext,
     mut expansion_capture: Option<&mut ExpansionCapture>,
@@ -2146,4 +2224,33 @@ pub(in crate::lang::click::proof) fn add_proof_branch_path(
         error = add_proof_branch_context(error, branch);
     }
     error
+}
+
+#[cfg(test)]
+mod depth_guard_tests {
+    use super::*;
+
+    #[test]
+    fn internal_proof_replay_depth_is_bounded_before_entering_the_large_frame() {
+        let mut guards = Vec::new();
+        for _ in 0..MAX_INTERNAL_PROOF_REPLAY_DEPTH {
+            guards.push(
+                InternalProofReplayDepthGuard::enter("deep_claim")
+                    .expect("depths through the documented maximum should be accepted"),
+            );
+        }
+        let error = match InternalProofReplayDepthGuard::enter("deep_claim") {
+            Ok(_) => panic!("depth beyond the documented maximum should be rejected"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .message()
+                .contains("proof replay nesting exceeds the supported maximum of 12"),
+            "{error:?}"
+        );
+        drop(guards);
+        InternalProofReplayDepthGuard::enter("next_claim")
+            .expect("dropping a replay must restore the thread-local depth");
+    }
 }

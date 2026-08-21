@@ -292,9 +292,9 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
     })
 }
 
-/// Frame-lean adapter for the shared canonical-name closure: the caller
-/// sits in a deep expansion-replay recursion where every frame byte
-/// counts, so the fact-vector materialization stays out of its frame.
+/// Frame-lean adapter for the shared canonical-name closure. Fact-vector
+/// materialization is local work and must not enlarge every statement replay
+/// frame; the expansion small-stack regression pins that boundary.
 #[inline(never)]
 fn premise_bridged_by_canonical_names(premise: &Proposition, facts: &ProofFacts) -> bool {
     super::super::fact_reasoning::premise_bridged_by_canonical_name_chain(premise, &facts.to_vec())

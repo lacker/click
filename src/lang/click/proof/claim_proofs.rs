@@ -114,7 +114,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         ProofReplayContext {
             state,
             pure_facts,
-            replay,
+            replay: Box::new(replay),
             branch_path: PersistentSequence::default(),
         },
         expansion_capture.as_deref_mut(),
@@ -240,7 +240,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
                 ProofReplayContext {
                     state,
                     pure_facts,
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 expansion_capture.as_deref_mut(),

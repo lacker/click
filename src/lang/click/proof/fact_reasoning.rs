@@ -2715,8 +2715,9 @@ pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain_with_origi
     }
 }
 
-/// The separation branch of bridged availability, never inlined to keep the
-/// caller's frame lean.
+/// The separation branch of bridged availability. Keep its range and
+/// proposition temporaries out of the shared fact-dispatch frame; the
+/// expansion small-stack regression pins that boundary.
 #[inline(never)]
 fn separation_bridged_available(
     required: &Proposition,
@@ -2740,7 +2741,8 @@ fn separation_bridged_available(
 /// canonical names resolved shallowly and load atoms bridged across proven
 /// snapshots — the relation the condition arm uses, applied to the terms a
 /// separation is made of. Separation is symmetric, so both pairings are
-/// tried. Never inlined: callers sit in deep proposition recursion.
+/// tried. Keep its range temporaries local rather than charging every caller;
+/// the expansion small-stack regression pins that boundary.
 #[inline(never)]
 fn separations_equal_modulo_proven_snapshots(
     left: &Proposition,

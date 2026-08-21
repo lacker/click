@@ -1930,7 +1930,7 @@ pub(super) enum ProofExecutionPoint {
 pub(super) struct ProofReplayContext {
     pub(super) state: CState,
     pub(super) pure_facts: Vec<Proposition>,
-    pub(super) replay: TacticReplayState,
+    pub(super) replay: Box<TacticReplayState>,
     pub(super) branch_path: PersistentSequence<String>,
 }
 

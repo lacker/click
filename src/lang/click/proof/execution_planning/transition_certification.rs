@@ -1077,8 +1077,9 @@ fn certified_transitions_from_execution(
 
 /// Replaces a transported fact's source with its target at the source's
 /// position: downstream premise selection is order-sensitive, so respelling
-/// must not reorder the working set. Never inlined — the caller participates
-/// in expansion recursion where added frame bytes overflow the stack.
+/// must not reorder the working set. Keep the by-value proposition handling
+/// out of the shared transition dispatcher; the expansion small-stack
+/// regression pins that boundary.
 #[inline(never)]
 fn replace_fact_in_place(facts: &mut Vec<Proposition>, source: &Proposition, target: &Proposition) {
     if let Some(position) = facts.iter().position(|fact| fact == source) {

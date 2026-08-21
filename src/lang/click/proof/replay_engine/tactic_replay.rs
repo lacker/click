@@ -600,7 +600,7 @@ fn try_smart_step_on_proof<'a>(
     let context = ProofReplayContext {
         state: std::mem::replace(state, CState::new()),
         pure_facts: std::mem::take(pure_facts),
-        replay: std::mem::take(replay),
+        replay: Box::new(std::mem::take(replay)),
         branch_path: std::mem::take(branch_path),
     };
     let root = Proof::for_execution_frontier(
@@ -623,7 +623,7 @@ fn try_smart_step_on_proof<'a>(
             let context = proof.into_execution_context()?;
             *state = context.state;
             *pure_facts = context.pure_facts;
-            *replay = context.replay;
+            *replay = *context.replay;
             *branch_path = context.branch_path;
             for step in certificate.steps() {
                 replay.proof_certificate_builder.push_step(step.clone());
@@ -634,7 +634,7 @@ fn try_smart_step_on_proof<'a>(
             let context = root.into_execution_context()?;
             *state = context.state;
             *pure_facts = context.pure_facts;
-            *replay = context.replay;
+            *replay = *context.replay;
             *branch_path = context.branch_path;
             Ok(false)
         }
@@ -668,7 +668,7 @@ fn try_exact_execute_on_proof<'a>(
     let context = ProofReplayContext {
         state: std::mem::replace(state, CState::new()),
         pure_facts: std::mem::take(pure_facts),
-        replay: std::mem::take(replay),
+        replay: Box::new(std::mem::take(replay)),
         branch_path: std::mem::take(branch_path),
     };
     let root = Proof::for_execution_frontier(
@@ -692,7 +692,7 @@ fn try_exact_execute_on_proof<'a>(
             let context = proof.into_execution_context()?;
             *state = context.state;
             *pure_facts = context.pure_facts;
-            *replay = context.replay;
+            *replay = *context.replay;
             *branch_path = context.branch_path;
             for step in certificate.steps() {
                 replay.proof_certificate_builder.push_step(step.clone());
@@ -703,7 +703,7 @@ fn try_exact_execute_on_proof<'a>(
             let context = root.into_execution_context()?;
             *state = context.state;
             *pure_facts = context.pure_facts;
-            *replay = context.replay;
+            *replay = *context.replay;
             *branch_path = context.branch_path;
             Ok(false)
         }
@@ -736,7 +736,7 @@ fn try_linear_execute_until_on_proof<'a>(
     let context = ProofReplayContext {
         state: std::mem::replace(state, CState::new()),
         pure_facts: std::mem::take(pure_facts),
-        replay: std::mem::take(replay),
+        replay: Box::new(std::mem::take(replay)),
         branch_path: std::mem::take(branch_path),
     };
     let root = Proof::for_execution_frontier(
@@ -759,7 +759,7 @@ fn try_linear_execute_until_on_proof<'a>(
             let context = proof.into_execution_context()?;
             *state = context.state;
             *pure_facts = context.pure_facts;
-            *replay = context.replay;
+            *replay = *context.replay;
             *branch_path = context.branch_path;
             for step in certificate.steps() {
                 replay.proof_certificate_builder.push_step(step.clone());
@@ -770,7 +770,7 @@ fn try_linear_execute_until_on_proof<'a>(
             let context = root.into_execution_context()?;
             *state = context.state;
             *pure_facts = context.pure_facts;
-            *replay = context.replay;
+            *replay = *context.replay;
             *branch_path = context.branch_path;
             Ok(false)
         }
@@ -809,7 +809,7 @@ fn apply_qualified_frame_using_on_proof<'a>(
         ProofReplayContext {
             state: std::mem::replace(state, CState::new()),
             pure_facts: std::mem::take(pure_facts),
-            replay: std::mem::take(replay),
+            replay: Box::new(std::mem::take(replay)),
             branch_path: std::mem::take(branch_path),
         },
         function_block,
@@ -834,7 +834,7 @@ fn apply_qualified_frame_using_on_proof<'a>(
     let context = proof.into_execution_context()?;
     *state = context.state;
     *pure_facts = context.pure_facts;
-    *replay = context.replay;
+    *replay = *context.replay;
     *branch_path = context.branch_path;
     for step in certificate.steps() {
         replay.proof_certificate_builder.push_step(step.clone());
@@ -871,7 +871,7 @@ fn try_smart_frame_on_proof<'a>(
     let context = ProofReplayContext {
         state: std::mem::replace(state, CState::new()),
         pure_facts: std::mem::take(pure_facts),
-        replay: std::mem::take(replay),
+        replay: Box::new(std::mem::take(replay)),
         branch_path: std::mem::take(branch_path),
     };
     let ordered_deferred = context.replay.ordered_finalization
@@ -925,7 +925,7 @@ fn try_smart_frame_on_proof<'a>(
             }
             *state = context.state;
             *pure_facts = context.pure_facts;
-            *replay = context.replay;
+            *replay = *context.replay;
             *branch_path = context.branch_path;
             // Function frames are recorded by their checked ordered drain.
             // A region frame contributes facts at that drain but its exact
@@ -942,7 +942,7 @@ fn try_smart_frame_on_proof<'a>(
             let context = root.into_execution_context()?;
             *state = context.state;
             *pure_facts = context.pure_facts;
-            *replay = context.replay;
+            *replay = *context.replay;
             *branch_path = context.branch_path;
             Ok(false)
         }
@@ -985,7 +985,7 @@ fn apply_resource_step_on_proof<'a>(
         ProofReplayContext {
             state: std::mem::replace(state, CState::new()),
             pure_facts: std::mem::take(pure_facts),
-            replay: std::mem::take(replay),
+            replay: Box::new(std::mem::take(replay)),
             branch_path: std::mem::take(branch_path),
         },
         function_block,
@@ -1002,7 +1002,7 @@ fn apply_resource_step_on_proof<'a>(
     let context = proof.into_execution_context()?;
     *state = context.state;
     *pure_facts = context.pure_facts;
-    *replay = context.replay;
+    *replay = *context.replay;
     *branch_path = context.branch_path;
     Ok(())
 }

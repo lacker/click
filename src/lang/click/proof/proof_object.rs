@@ -1854,7 +1854,7 @@ impl<'a> Proof<'a> {
                         unfolded_predicates: PersistentOrderedSet::default(),
                         execution: Some(Arc::new(ExecutionProofState {
                             state: state.into(),
-                            replay,
+                            replay: *replay,
                             branch_path,
                             last_step_delta: ExecutionProofStepDelta::default(),
                         })),
@@ -2302,7 +2302,10 @@ impl<'a> Proof<'a> {
     }
 
     /// Checks one explicit function-level frame step exactly once and records
-    /// private authority for the ordered outcome finalizer.
+    /// private authority for the ordered outcome finalizer. Keep this rule
+    /// outlined so its execution-state locals do not enlarge the common
+    /// simple-step dispatcher frame; the expansion small-stack test pins that
+    /// dispatch budget.
     #[inline(never)]
     fn apply_execution_frame_using(
         &self,
@@ -2833,6 +2836,9 @@ impl<'a> Proof<'a> {
         }
     }
 
+    // Each primitive rule stays outlined so adding a rule-local proposition
+    // payload cannot enlarge every `apply_step` dispatch frame. This is part
+    // of the expansion replay stack budget documented in testing-click.md.
     #[inline(never)]
     fn apply_assumption(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
@@ -2854,6 +2860,7 @@ impl<'a> Proof<'a> {
         Ok(self.closed_state())
     }
 
+    // Preserve the rule/dispatcher frame boundary described above.
     #[inline(never)]
     fn apply_normalize(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`normalize` requires a proposition goal")?;
@@ -2863,6 +2870,8 @@ impl<'a> Proof<'a> {
         Ok(self.closed_state())
     }
 
+    // Preserve the rule/dispatcher frame boundary described above; `intro`
+    // owns several by-value proposition variants.
     #[inline(never)]
     fn apply_intro(&self) -> Result<ProofState, ClickError> {
         let goal = self
@@ -2931,6 +2940,7 @@ impl<'a> Proof<'a> {
         })
     }
 
+    // Preserve the rule/dispatcher frame boundary described above.
     #[inline(never)]
     fn apply_split(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`split` requires a proposition goal")?;
@@ -2947,6 +2957,7 @@ impl<'a> Proof<'a> {
         Ok(self.closed_state())
     }
 
+    // Preserve the rule/dispatcher frame boundary described above.
     #[inline(never)]
     fn apply_left(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`left` requires a proposition goal")?;
@@ -2967,6 +2978,7 @@ impl<'a> Proof<'a> {
         Ok(self.closed_state())
     }
 
+    // Preserve the rule/dispatcher frame boundary described above.
     #[inline(never)]
     fn apply_right(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`right` requires a proposition goal")?;
@@ -2987,6 +2999,8 @@ impl<'a> Proof<'a> {
         Ok(self.closed_state())
     }
 
+    // Preserve the rule/dispatcher frame boundary described above; instance
+    // materialization is local to this rule.
     #[inline(never)]
     fn apply_enumerate(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`enumerate` requires a proposition goal")?;
@@ -6667,7 +6681,7 @@ impl<'a> Proof<'a> {
         Ok(ProofReplayContext {
             state: execution.state.into_value(),
             pure_facts: self.facts().to_vec(),
-            replay: execution.replay,
+            replay: Box::new(execution.replay),
             branch_path: execution.branch_path,
         })
     }
@@ -10594,6 +10608,8 @@ impl<'a> Proof<'a> {
         }
     }
 
+    // Keep lowering's large proposition temporaries out of the common rewrite
+    // dispatcher frame; the expansion small-stack test pins this boundary.
     #[inline(never)]
     fn apply_pure_rewrite(
         &self,
@@ -10608,6 +10624,8 @@ impl<'a> Proof<'a> {
         self.finish_rewrite(goal, equality, surface_equality)
     }
 
+    // Keep point-lowering and unfold temporaries out of the common rewrite
+    // dispatcher frame; the expansion small-stack test pins this boundary.
     #[inline(never)]
     fn apply_point_rewrite(
         &self,
@@ -10678,6 +10696,8 @@ impl<'a> Proof<'a> {
         self.finish_rewrite(goal, equality, surface_equality)
     }
 
+    // Keep the by-value goal/equality pair in the rewrite worker rather than
+    // every caller's frame; the expansion small-stack test pins this boundary.
     #[inline(never)]
     fn finish_rewrite(
         &self,
@@ -12624,13 +12644,13 @@ mod tests {
                 ProofReplayContext {
                     state: CState::new(),
                     pure_facts: Vec::new(),
-                    replay: TacticReplayState {
+                    replay: Box::new(TacticReplayState {
                         proof_site: Some(ProofSite::FunctionClaim {
                             function_name: "identity".to_string(),
                             claim,
                         }),
                         ..TacticReplayState::default()
-                    },
+                    }),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -15229,7 +15249,7 @@ mod tests {
                 ProofReplayContext {
                     state: state.clone(),
                     pure_facts,
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -15438,7 +15458,7 @@ mod tests {
                 ProofReplayContext {
                     state: state.clone(),
                     pure_facts,
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -19293,7 +19313,7 @@ mod tests {
                 ProofReplayContext {
                     state: state.clone(),
                     pure_facts,
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -19420,7 +19440,7 @@ mod tests {
                 ProofReplayContext {
                     state: state.clone(),
                     pure_facts: (0..size).map(indexed_fact).collect(),
-                    replay: TacticReplayState::default(),
+                    replay: Box::new(TacticReplayState::default()),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -19524,7 +19544,7 @@ mod tests {
                 ProofReplayContext {
                     state: state.clone(),
                     pure_facts: (0..size).map(indexed_fact).collect(),
-                    replay: TacticReplayState::default(),
+                    replay: Box::new(TacticReplayState::default()),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -19629,7 +19649,7 @@ mod tests {
                 ProofReplayContext {
                     state: state.clone(),
                     pure_facts: (0..size).map(indexed_fact).collect(),
-                    replay: TacticReplayState::default(),
+                    replay: Box::new(TacticReplayState::default()),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -19752,10 +19772,10 @@ mod tests {
                 ProofReplayContext {
                     state: state.clone(),
                     pure_facts: (0..size).map(indexed_fact).collect(),
-                    replay: TacticReplayState {
+                    replay: Box::new(TacticReplayState {
                         source_layout: SourceExecutionLayout::new(parsed_function.body()),
                         ..TacticReplayState::default()
-                    },
+                    }),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -19924,7 +19944,7 @@ mod tests {
                 ProofReplayContext {
                     state: state.clone(),
                     pure_facts,
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -20052,7 +20072,7 @@ mod tests {
                 ProofReplayContext {
                     state: state.clone(),
                     pure_facts,
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -20153,7 +20173,7 @@ mod tests {
                 ProofReplayContext {
                     state: CState::new(),
                     pure_facts: (0..size).map(indexed_fact).collect(),
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -20272,7 +20292,7 @@ mod tests {
                 ProofReplayContext {
                     state: state.clone(),
                     pure_facts,
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -20364,7 +20384,7 @@ mod tests {
                 ProofReplayContext {
                     state: CState::new(),
                     pure_facts: (0..size).map(indexed_fact).collect(),
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -20506,7 +20526,7 @@ mod tests {
                     ProofReplayContext {
                         state: CState::new(),
                         pure_facts: (0..size).map(indexed_fact).collect(),
-                        replay,
+                        replay: Box::new(replay),
                         branch_path: PersistentSequence::default(),
                     },
                     function_block,
@@ -20655,7 +20675,7 @@ mod tests {
                 ProofReplayContext {
                     state: CState::new(),
                     pure_facts: (0..size).map(indexed_fact).collect(),
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -20790,7 +20810,7 @@ mod tests {
                 ProofReplayContext {
                     state: CState::new(),
                     pure_facts: (0..size).map(indexed_fact).collect(),
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -21070,7 +21090,7 @@ mod tests {
                 ProofReplayContext {
                     state,
                     pure_facts: (0..size).map(indexed_fact).collect(),
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -21541,7 +21561,7 @@ mod tests {
                 ProofReplayContext {
                     state: CState::new(),
                     pure_facts: (0..size).map(indexed_fact).collect(),
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -21672,7 +21692,7 @@ mod tests {
                 ProofReplayContext {
                     state: CState::new(),
                     pure_facts: facts,
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,
@@ -21942,7 +21962,7 @@ mod tests {
                 ProofReplayContext {
                     state: CState::new(),
                     pure_facts: (0..size).map(indexed_fact).collect(),
-                    replay,
+                    replay: Box::new(replay),
                     branch_path: PersistentSequence::default(),
                 },
                 function_block,

@@ -1786,6 +1786,19 @@ fn selected_branched_post_execution_have_merges_path_certificates() {
 
 #[test]
 fn selected_pure_case_split_simp_expands_by_removal() {
+    // The default libtest worker stack is 2 MiB. This explicit 1.25 MiB
+    // budget catches replay-frame growth while leaving measured headroom for
+    // the corpus maximum of nine nested interpreter calls.
+    std::thread::Builder::new()
+        .name("small-stack-expansion-replay".to_string())
+        .stack_size(5 * 256 * 1024)
+        .spawn(selected_pure_case_split_simp_expands_by_removal_on_small_stack)
+        .expect("the small-stack replay canary thread should start")
+        .join()
+        .expect("the small-stack replay canary should not panic");
+}
+
+fn selected_pure_case_split_simp_expands_by_removal_on_small_stack() {
     // A smart exit `simp` whose claims all close by exact checks contributes
     // no surface tactics of its own. Its expansion must remove the tactic —
     // NOT graft the enclosing branch skeleton as an `if` tree with empty
