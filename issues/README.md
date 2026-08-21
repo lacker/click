@@ -18,7 +18,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 3
+## Other open issues: 4
 
 - [Canonicalization needs a proof-grounded model](canonicalization.md):
   competing term representations leave production pointer invariants,
@@ -29,6 +29,9 @@ when evidence exposes one.
   unrelated expansion test with a stack overflow and no backtrace; the
   depth is unbounded and unmeasured, and `#[inline(never)]` adapters are
   holding it back.
+- [Replay is a second proof engine](replay-smell.md): independent certificate
+  checking still advances a large parallel mutable replay state instead of
+  interpreting recorded operations through the audited proof-object model.
 - [Resource tracking across execution transitions](resource-tracking.md):
   owned-vector retains persistent `observe` projections across a consuming
   reallocation; audit the existing scoped resource mechanism and ensure
