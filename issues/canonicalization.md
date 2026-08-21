@@ -203,15 +203,25 @@ assumes a load term. Characterized so far:
   term or named by its variable, and no new certificate vocabulary is
   needed. All three rewrite walkers use it. Two fixtures cleared; 15
   remain under the switch.
-- **Cross-epoch load resolution (required feature, not a gap).** Across a
-  call whose footprint may write a cell, the read before and the read after
-  receive different load variables (the DAG walk cannot cross the call
-  havoc). Their equality is a proved fact from the callee's ensures.
-  Load resolution (`bitvector_terms_equal_for_memory_resolution`'s
-  load-variable arm and the store-cell lookup in
-  `evaluate_c_memory_load_paths`) must consult the equality graph's
-  name-to-name edges. Reproductions: `box_pipeline`'s `result == value`
-  (`modular_call_snapshot_anchor_replays_with_owned_resource`) and
+- **Load-variable congruence (done).** `box_pipeline`'s `result == value`
+  was not a cross-epoch problem: the callee's ensures named the written
+  cell by `data + scaled(index)` and the later read by `data + 0`, and the
+  link `index == 0` was sealed inside the first name. Names stay
+  context-free (one name per epoch and address); the equality-graph walk
+  (`bitvector_terms_equal_from_facts`) now follows a congruence edge from
+  a load variable to the load variable for its address lowered through
+  the ground equalities in scope (`load_variable_congruence_neighbor`,
+  walked from both ends because the edge only points toward the lowered
+  address). Regression:
+  `load_variables_are_congruent_through_ground_index_equalities`. 14
+  fixtures remain under the switch.
+- **Cross-epoch load resolution.** Across a call whose footprint may write
+  a cell, the read before and the read after receive different load
+  variables (the DAG walk cannot cross the call havoc). Their equality is
+  a proved fact from the callee's ensures. Load resolution
+  (`bitvector_terms_equal_for_memory_resolution`'s load-variable arm and
+  the store-cell lookup in `evaluate_c_memory_load_paths`) must consult
+  the equality graph's name-to-name edges. Reproduction:
   `input_cursor_shared_pipeline`'s Ensure(4).
 - **Chained bounds.** `owned_string_pop`'s expanded replay needs a
   two-fact bound chain that the single-fact `canonical_bound_holds` cannot

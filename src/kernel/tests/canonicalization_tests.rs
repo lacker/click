@@ -258,3 +258,54 @@ fn offsets_match_modulo_canonical_names_through_the_canonical_form() {
         &other_scaled,
     ));
 }
+
+#[test]
+fn load_variables_are_congruent_through_ground_index_equalities() {
+    // `data[index]` with `index == 0` in scope is the cell `data[0]`: the
+    // two load variables are content-addressed by different addresses, so
+    // comparison joins them by congruence rather than by a shared name.
+    let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("data", 8));
+    let index = Bitvector32Term::Variable(Variable(7));
+    let indexed = Bitvector32Term::MemoryLoad(
+        memory.clone(),
+        Box::new(Pointer {
+            block: "data".into(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(index.clone()),
+                byte_width: 4,
+            },
+        }),
+    );
+    let first = Bitvector32Term::MemoryLoad(
+        memory,
+        Box::new(Pointer {
+            block: "data".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }),
+    );
+    let indexed_name = crate::kernel::eval::canonical_term(&indexed);
+    let first_name = crate::kernel::eval::canonical_term(&first);
+    assert_ne!(
+        indexed_name, first_name,
+        "distinct addresses take distinct names"
+    );
+
+    let without_index_fact = PureFactContext::new();
+    assert!(!without_index_fact.bitvector_terms_equal_from_facts(&indexed_name, &first_name));
+
+    let with_index_fact = PureFactContext::new().assume_condition(
+        ConditionTerm::equal(index, Bitvector32Term::Constant(0)),
+        true,
+    );
+    assert!(with_index_fact.bitvector_terms_equal_from_facts(&indexed_name, &first_name));
+    assert!(with_index_fact.bitvector_terms_equal_from_facts(&first_name, &indexed_name));
+    // A different constant index names a different cell.
+    let other = PureFactContext::new().assume_condition(
+        ConditionTerm::equal(
+            Bitvector32Term::Variable(Variable(7)),
+            Bitvector32Term::Constant(1),
+        ),
+        true,
+    );
+    assert!(!other.bitvector_terms_equal_from_facts(&indexed_name, &first_name));
+}

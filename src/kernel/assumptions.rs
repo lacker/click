@@ -1444,12 +1444,33 @@ impl PureFactContext {
                 self.canonical_pointer_offset(right),
             ),
             PointerOffsetTerm::Int32Scaled { value, byte_width } => {
-                PointerOffsetTerm::Int32Scaled {
-                    value: Box::new(self.canonical_bitvector(value)),
-                    byte_width: *byte_width,
-                }
+                PointerOffsetTerm::scale_int32(self.canonical_bitvector(value), *byte_width)
             }
         }
+    }
+
+    /// The load-variable congruence neighbor of a term: a load variable
+    /// whose address lowers through the ground equalities in scope to a
+    /// different address names the same cell as the load variable for the
+    /// lowered address over the same epoch (`data[index]` with `index == 0`
+    /// is `data[0]`). One bounded lowering per visited vertex; terms that
+    /// are not load variables, or whose address is already lowest, have no
+    /// congruence neighbor.
+    pub(in crate::kernel) fn load_variable_congruence_neighbor(
+        &self,
+        term: &Bitvector32Term,
+    ) -> Option<Bitvector32Term> {
+        let Bitvector32Term::Variable(variable) = term else {
+            return None;
+        };
+        let (memory, pointer) = crate::kernel::eval::registered_canonical_load(variable)?;
+        let lowered = self.canonical_pointer(&pointer);
+        if lowered == pointer {
+            return None;
+        }
+        let congruent =
+            equality_graph_term_key(&Bitvector32Term::MemoryLoad(memory, Box::new(lowered)));
+        (congruent != *term).then_some(congruent)
     }
 
     fn memory_load_condition_index(

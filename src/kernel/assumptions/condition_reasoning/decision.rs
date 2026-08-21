@@ -354,18 +354,36 @@ impl PureFactContext {
         right: &Bitvector32Term,
     ) -> bool {
         let equality_index = self.bitvector_equality_index();
-        let right = equality_graph_term_key(right);
-        let mut seen = BTreeSet::new();
+        // Walked from both ends: a load variable's congruence edge points
+        // only toward the lowered address, so the meeting vertex may be
+        // reachable from one side alone.
+        let mut left_class = BTreeSet::new();
         let mut stack = vec![equality_graph_term_key(left)];
+        while let Some(term) = stack.pop() {
+            if !left_class.insert(term.clone()) {
+                continue;
+            }
+            if let Some(neighbors) = equality_index.get(&term) {
+                stack.extend(neighbors.keys().cloned());
+            }
+            if let Some(congruent) = self.load_variable_congruence_neighbor(&term) {
+                stack.push(congruent);
+            }
+        }
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![equality_graph_term_key(right)];
         while let Some(term) = stack.pop() {
             if !seen.insert(term.clone()) {
                 continue;
             }
-            if term == right {
+            if left_class.contains(&term) {
                 return true;
             }
             if let Some(neighbors) = equality_index.get(&term) {
                 stack.extend(neighbors.keys().cloned());
+            }
+            if let Some(congruent) = self.load_variable_congruence_neighbor(&term) {
+                stack.push(congruent);
             }
         }
 
