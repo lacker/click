@@ -237,7 +237,24 @@ assumes a load term. Characterized so far:
   fixtures prove in the kernel; what remains for them is surface
   synthesis of the proof object (below). Regression:
   `load_variables_compare_as_loads_under_bounds_pinned_indices`.
-- **Surface synthesis of proof objects (5 fixtures).** `bound_universal`
+- **Mixed per-path `simp` captures (done).** Under names a leaf
+  `assumption` can succeed on one execution path (`sort3`'s
+  `sorted_range` after `unfold`) where the same claim on sibling paths
+  falls to the implicit exact closer; the per-path captures then
+  disagree and cannot be stitched without the forbidden branch skeleton.
+  The drain now records whether the implicit closer would discharge each
+  path, and when captures disagree while every path is so closable the
+  tactic expands by removal — the certificate one path found is not
+  evidence the others needed one. No default-mode fixture exercises the
+  mixed case yet; `selected_pure_case_split_simp_expands_by_removal`
+  covers it once the switch flips.
+- **Expectation-text fixtures now include** the byte-predicate
+  `instantiate(` (the claim closes in exact certification directly, so
+  `simp()` legitimately expands to nothing), the linked-list retained
+  `have observed == node->value` (the fact rides the step's `using`; the
+  expansion replays under both modes), and the separation expansion's
+  anchored `rewrite(at(statement(2).entry, left->len) == …)` forms.
+- **Surface synthesis of proof objects (2 fixtures).** `bound_universal`
   ×2, `outcome_simp_instantiates_an_unfolded_byte_predicate`,
   `resource_example_pipelines`, `source_expander_derives_separation`,
   `selected_pure_case_split`: the kernel proves the claim, but the

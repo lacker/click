@@ -1200,6 +1200,11 @@ pub(super) fn finish_ordered_proof_replay(
         let mut surface_post_tactics_by_path = Vec::with_capacity(execution.paths().len());
         let mut deferred_capture_tactics_by_path = Vec::with_capacity(execution.paths().len());
         let mut deferred_capture_branches_by_path = Vec::with_capacity(execution.paths().len());
+        // Whether the implicit exact closer of a single-claim proof would
+        // have discharged every open proposition claim on the path without
+        // surface tactics. Consulted only when the captured expansions
+        // disagree across paths (see the stitch below).
+        let mut implicit_closure_by_path = Vec::with_capacity(execution.paths().len());
 
         crate::instrumentation::measure_operation(
             function_block.signature().name(),
@@ -3618,6 +3623,36 @@ pub(super) fn finish_ordered_proof_replay(
                     }
                     surface_grouped_closers_by_path.push(path_grouped_surface_closers);
                     surface_post_tactics_by_path.push(path_surface_post_tactics);
+                    let implicitly_closable = path_deferred_capture_tactics.is_empty()
+                        || (!require_explicit_closers
+                            && existence_tactics.is_empty()
+                            && claims.iter().all(|claim| match claim {
+                                FunctionClaimRef::Ensure(_, ensure_clause)
+                                    if matches!(ensure_clause.ensure(), Ensure::Proposition(_)) =>
+                                {
+                                    check_function_claim(
+                                        &function_claim_label(
+                                            function_block.signature().name(),
+                                            claim,
+                                        ),
+                                        path_index,
+                                        &path.execution_facts(),
+                                        &path_requirements,
+                                        claim,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        &outcome,
+                                        predicate_environment,
+                                        click_function_environment,
+                                        &replay.program_point_states,
+                                        &unfolded_predicates,
+                                    )
+                                    .is_ok()
+                                }
+                                _ => true,
+                            }));
+                    implicit_closure_by_path.push(implicitly_closable);
                     deferred_capture_tactics_by_path.push(path_deferred_capture_tactics);
                     deferred_capture_branches_by_path.push(deferred_capture_branch_path);
                     drop(_path_certification_timing);
@@ -3729,9 +3764,6 @@ pub(super) fn finish_ordered_proof_replay(
             // proof-level `if` conditions lower at each path's own outcome, so
             // an alien path meets another path's branch conditions as
             // contradictory facts it cannot use.
-            let contributes_no_tactics = deferred_capture_tactics_by_path
-                .iter()
-                .all(|tactics| tactics.is_empty());
             let mut capture = ProofCertificateBuilder::default();
             let path_independent_capture = !deferred_capture_tactics_by_path.is_empty()
                 && deferred_capture_tactics_by_path
@@ -3740,6 +3772,21 @@ pub(super) fn finish_ordered_proof_replay(
                 && deferred_capture_branches_by_path
                     .iter()
                     .all(Option::is_none);
+            // Paths that disagree — a certificate found on one, the implicit
+            // exact closer on the others — cannot be stitched without the
+            // branch skeleton. When every path is closable by that exact
+            // closer the tactic contributes nothing on any of them and is
+            // removed, exactly as when no path produced a certificate; the
+            // certificate one path happened to find is not evidence the
+            // others needed one.
+            let contributes_no_tactics = deferred_capture_tactics_by_path
+                .iter()
+                .all(|tactics| tactics.is_empty())
+                || (!path_independent_capture
+                    && deferred_capture_branches_by_path
+                        .iter()
+                        .all(Option::is_none)
+                    && implicit_closure_by_path.iter().all(|closable| *closable));
             if !contributes_no_tactics && path_independent_capture {
                 // No path can decide the enclosing branch skeleton — the
                 // tactic ran after the branches completed — and every path
