@@ -266,23 +266,78 @@ assumes a load term. Characterized so far:
   the switch. Regressions:
   `quantified_replay_key_sees_through_load_variables`,
   `load_variable_free_variables_include_its_snapshot_cells`.
-- **Remaining under the switch (7, all expectation text).** Three kernel
-  expression tests asserting a raw load value;
-  `expanded_branch_certificate_uses_the_branch_entry_state` and the
-  separation expansion asserting unanchored forms; the linked-list
-  retained-step substring; and the negative diagnostic manifest, which
-  now prints a bare load variable id (`v1374…u8`) where it printed
-  `load(p[1])` — that one is a diagnostics regression to fix before the
-  flip (print a load variable by surface synthesis), not an expectation
-  update.
-- **Cross-epoch load resolution.** Across a call whose footprint may write
-  a cell, the read before and the read after receive different load
-  variables (the DAG walk cannot cross the call havoc). Their equality is
-  a proved fact from the callee's ensures. Load resolution
-  (`bitvector_terms_equal_for_memory_resolution`'s load-variable arm and
-  the store-cell lookup in `evaluate_c_memory_load_paths`) must consult
-  the equality graph's name-to-name edges. Reproduction:
-  `input_cursor_shared_pipeline`'s Ensure(4).
+- **Diagnostics print names as loads (done).** `describe_bitvector`
+  prints a load variable as `load(p[1])`, never its id; the negative
+  diagnostic manifest passes under the switch. `step() using` now names
+  the premise it could not find.
+- **Remaining under the switch (5 expectation-text fixtures).** Three
+  kernel expression tests asserting a raw load value (wrap the expected
+  load in `canonical_term`); `expanded_branch_certificate…` (the branch
+  condition anchors at `statement(1).entry`, the point that branched) and
+  `source_expander_derives_separation…` (anchored `rewrite(at(...))`
+  forms); the linked-list retained step in `resource_example_pipelines`
+  (`rewrite(at(statement(5).entry, observed) == …)` replaces the `have`).
+  These assertion edits were prepared and verified and are applied at
+  the flip.
+- **Flip blockers (stage 4): three examples relied on laundering.**
+  Attempting the flip (2026-08-21) found proofs in `examples/` that only
+  passed because the load-term world identified loads across snapshots
+  without proof: `normalize_direct_atomic_memory_loads` and
+  `canonical_c_memory_for_pointer_load` restrict a snapshot to the
+  loaded block and so drop call-havoc markers (the known
+  havoc-marker laundering), and `old(x)` over the empty function-entry
+  memory matched "the current value" through `concretize_pristine_loads`.
+  Names are epoch-keyed and do not launder, so these proofs fail under
+  the switch and must be repaired — each needs a real frame proof, not
+  a weaker example:
+  - `input-cursor` (`input_cursor_shared_pipeline`): two `step() using`
+    premises `old(left->len) == at(statement(N).entry, length)` claim the
+    pre-`init` value of `left->len`, which nothing establishes; the old
+    mode accepted them as the current value. Delete both premises. The
+    later `transport(at(statement(5).entry, right->pos) == 0,
+    right->pos == 0)` crosses `take(left)`'s havoc and needs `left` and
+    `right` disjoint, which only the resource compositions know (two
+    owned objects). Landed toward this: the DAG havoc hop and the direct
+    effect-summary check consult the expanded compositions
+    (`ranges_proven_disjoint_from_pointer_for_frame`), and a function's
+    `local:` blocks are distinct from `ExternalArgument` memory
+    (`blocks_proven_distinct`). With those the transport succeeds; the
+    final `result == data[0]` then needs the names of `right->data` and
+    `right->pos` on either side of `take` related — a **framed-epoch
+    congruence edge** in the equality walk (name at the earliest epoch
+    the facts frame the cell to, via `memory_dag_cell_source` under the
+    context's facts, memoized by `memo_fingerprint`, run as a second
+    pass only when recorded and congruence edges do not meet). That
+    edge makes the example verify in 2.3 s (baseline 2.5 s) but lets
+    smart search select derivations whose name-to-name transport the
+    certificate vocabulary cannot write yet
+    (`execute_until_expands_vector_storage_call_postconditions`,
+    "fact transport has no recorded or synthesized Click comparison
+    form"), so it waits for surface synthesis of name-form transports.
+  - `owned-segmented-buffer` (`owned_segmented_buffer_pipeline`):
+    `have 0 < owner->second_len by { assumption(); }` after the step
+    over `set_first` passed only by laundering; under names the step's
+    `using` transport must rewrite the fact to the post-call name, which
+    needs the `set_first` range (owned through the composite) proved
+    disjoint from `owner->second_len` — the same composition evidence,
+    through the step's direct transport.
+  - `owned-vector` (`vector_grow`, else branch): lowering `have forall
+    (k) … owner->data[k] == old(owner->data[k])` fails with
+    `loadable(heap@k*4, 4)` unproved; the old mode proved it from the
+    heap range loadability facts, which are present across the steps in
+    both modes but absent from this `have`'s context under names (53
+    facts versus 136) — the context selection for the `have` has not
+    been traced yet. Indexing names under their address in the
+    memory-load condition index and matching them in
+    `condition_contains_contract_load` did not help and broke
+    `execute_until_expands_vector_storage_call_postconditions`; not
+    landed.
+  Repro: flip `canonicalize_at_creation_enabled` to `true`, run
+  `click verify` on the three sidecars. Acceptance: all examples verify
+  under the flip with no weakened claims, the six assertion edits land,
+  and the switch is deleted.
+- **Cross-epoch load resolution.** Subsumed by the framed-epoch
+  congruence edge above.
 - **Chained bounds.** `owned_string_pop`'s expanded replay needs a
   two-fact bound chain that the single-fact `canonical_bound_holds` cannot
   answer, so it falls into `has_order_path_for_memory_resolution`, which is

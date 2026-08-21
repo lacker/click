@@ -1216,6 +1216,19 @@ pub(super) fn describe_bitvector_with_context(
     }
     match term {
         Bitvector32Term::Constant(value) => format!("{}", *value as i32),
+        // A load variable is the kernel's name for a load; a diagnostic
+        // prints the load it names, never the name's id.
+        Bitvector32Term::Variable(variable)
+            if crate::kernel::is_canonical_load_variable(variable)
+                && crate::kernel::registered_canonical_load(variable).is_some() =>
+        {
+            let (_, pointer) = crate::kernel::registered_canonical_load(variable)
+                .expect("checked registered above");
+            format!(
+                "load({})",
+                describe_pointer(&pointer, parameters, arguments)
+            )
+        }
         Bitvector32Term::Variable(variable) => format!("v{}", variable.0),
         Bitvector32Term::Add(left, right) => {
             describe_binary_bitvector_with_context(left, "+", right, parameters, arguments)

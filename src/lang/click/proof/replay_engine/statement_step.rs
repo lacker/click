@@ -213,7 +213,8 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
         if !premise_is_available {
             let all_pure_facts = requirement_pure_facts.to_vec();
             return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise: {}",
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise `{}`: {}",
+                super::super::super::printing::source_click_proposition(surface_premise),
                 describe_missing_pure_fact(
                     &premise,
                     &all_pure_facts,

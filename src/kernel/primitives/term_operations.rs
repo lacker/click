@@ -704,13 +704,22 @@ impl Pointer {
     }
 
     pub(in crate::kernel) fn blocks_proven_distinct(&self, other: &Self) -> bool {
+        // A function's own scalar locals (`local:` blocks) are storage the
+        // function declared; memory reached through a parameter
+        // (`ExternalArgument`) existed before the call and cannot be one of
+        // them.
+        let local_versus_argument = |left: &PointerBlock, right: &PointerBlock| {
+            left.starts_with("local:") && matches!(right, PointerBlock::ExternalArgument)
+        };
         self.block != other.block
             && (matches!(self.block, PointerBlock::Heap(_))
                 || matches!(other.block, PointerBlock::Heap(_))
                 || matches!(
                     (&self.block, &other.block),
                     (PointerBlock::Concrete(left), PointerBlock::Concrete(right)) if left != right
-                ))
+                )
+                || local_versus_argument(&self.block, &other.block)
+                || local_versus_argument(&other.block, &self.block))
     }
 
     #[cfg_attr(not(test), allow(dead_code))]

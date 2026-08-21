@@ -1535,7 +1535,9 @@ fn memory_dag_cell_source(
                     assumptions,
                 ) {
                     MemoryDagHopJustification::CallHavocRanges { ranges }
-                } else if assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer) {
+                } else if assumptions
+                    .ranges_proven_disjoint_from_pointer_for_frame(mutable_ranges, pointer)
+                {
                     MemoryDagHopJustification::AssumptionDependent(
                         MemoryDagAssumptionKind::CallHavocRangeSeparation,
                     )
@@ -2103,8 +2105,10 @@ fn c_memory_load_is_directly_unchanged(
                 // distinctness already does.
                 let disjoint = after_matches
                     && (assumptions.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer)
-                        || assumptions
-                            .ranges_proven_disjoint_from_pointer(mutable_ranges, pointer));
+                        || assumptions.ranges_proven_disjoint_from_pointer_for_frame(
+                            mutable_ranges,
+                            pointer,
+                        ));
                 before_matches && after_matches && disjoint
             }
             Proposition::CHeapLifetimeRetired {
