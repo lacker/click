@@ -506,16 +506,25 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             return Ok(surface.clone());
         }
     }
-    if let Ok(surface) = checked_surface_fact_at_point_with_assumptions(
-        replay,
-        kernel,
-        assumptions,
-        parameters,
-        arguments,
-        state,
-        predicate_environment,
-        click_function_environment,
-    ) && strictly_replayable(&surface)
+    // A fact that mentions a load variable is anchored to the snapshot the
+    // cell was read from, so its program-point-anchored surface forms stay
+    // correct at every later proof point, while a plain current-state form
+    // is correct only until the cell changes. When canonicalizing at
+    // creation, anchored forms are tried first and plain forms last.
+    let prefer_anchored = crate::kernel::canonicalize_at_creation_enabled()
+        && crate::kernel::proposition_mentions_registered_canonical_load(kernel);
+    if !prefer_anchored
+        && let Ok(surface) = checked_surface_fact_at_point_with_assumptions(
+            replay,
+            kernel,
+            assumptions,
+            parameters,
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+        )
+        && strictly_replayable(&surface)
     {
         return Ok(surface);
     }
@@ -552,27 +561,34 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             bases.push(surface);
         }
     }
-    for base in &bases {
-        if let Ok(lowered) = lower_surface_candidate_at_point_with_assumptions(
-            replay,
-            base,
-            assumptions,
-            parameters,
-            arguments,
-            state,
-            predicate_environment,
-            click_function_environment,
-        ) && (matches_kernel(&lowered)
-            || proposition_contains_at_expression(base)
-                && quantified_replay_equivalent_available_fact(
-                    kernel,
-                    std::slice::from_ref(&lowered),
+    let plain_base_candidate = |bases: &[ClickProposition]| {
+        bases
+            .iter()
+            .find(|base| {
+                lower_surface_candidate_at_point_with_assumptions(
+                    replay,
+                    base,
+                    assumptions,
+                    parameters,
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
                 )
-                .is_some())
-            && strictly_replayable(base)
-        {
-            return Ok(base.clone());
-        }
+                .is_ok_and(|lowered| {
+                    matches_kernel(&lowered)
+                        || proposition_contains_at_expression(base)
+                            && quantified_replay_equivalent_available_fact(
+                                kernel,
+                                std::slice::from_ref(&lowered),
+                            )
+                            .is_some()
+                }) && strictly_replayable(base)
+            })
+            .cloned()
+    };
+    if !prefer_anchored && let Some(base) = plain_base_candidate(&bases) {
+        return Ok(base);
     }
     for (point, _) in exact_points.iter().chain(&compatible_points) {
         for base in &bases {
@@ -667,6 +683,24 @@ fn checked_surface_comparison_fact_at_point_with_availability(
                     return Ok(candidate);
                 }
             }
+        }
+    }
+    if prefer_anchored {
+        if let Ok(surface) = checked_surface_fact_at_point_with_assumptions(
+            replay,
+            kernel,
+            assumptions,
+            parameters,
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+        ) && strictly_replayable(&surface)
+        {
+            return Ok(surface);
+        }
+        if let Some(base) = plain_base_candidate(&bases) {
+            return Ok(base);
         }
     }
     if let Some(exhaustion) = surface_synthesis_exhaustion_description() {

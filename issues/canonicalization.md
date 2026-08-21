@@ -157,17 +157,28 @@ fail, and the examples harness stops at `bounded-pool` (an
 expansion/replay disagreement). Every failure is a consumer that still
 assumes a load term. Characterized so far:
 
-- **Surface synthesis must render a load variable through the program
-  point it was read from.** `push.contract`'s generated certificate
-  applies `int32_increment_strictly_increases` with `value` synthesized
-  as `owner->len`, which at the post-store apply point lowers to
-  `len + 1`, so the requirement `len + 1 < cap` is unavailable while
-  `len < cap` is. Before the switch the premise's load term synthesized
-  through a program-point form such as `at(statement(k).entry,
-  owner->len)`; a load variable must synthesize the same way (registry
-  snapshot to program point), and the round-trip check must reject a
-  synthesized form that lowers differently at the apply point. Also
-  behind the three `required exact fact for theorem` failures.
+- **Pristine placeholder loads are a non-canonical vocabulary.** Premise
+  lowering evaluates a plain field read such as `owner->len` against a
+  pristine empty memory as a placeholder for "the current value", to be
+  concretized at the point of use (`concretize_pristine_loads` recognizes
+  it by `memory == CMemory::new()`). Under load terms the placeholder was
+  distinguishable; under the invariant it hashes to `hash(empty, p)`, and
+  the function-entry load of an external-argument cell canonicalizes to
+  the same thing (restricting the entry snapshot to what that load can
+  observe leaves an empty memory). "Current value, unresolved" and "value
+  at entry" collapse into one load variable. Measured in `push.contract`:
+  a `step() using { owner->len < owner->cap }` at the post-store statement
+  accepts the recorded entry fact, re-records it anchored at that
+  statement's entry, and the generated `apply` of
+  `int32_increment_strictly_increases` then lowers `at(statement(6).entry,
+  owner->len)` to `len + 1` on replay. Two guards landed: surface
+  synthesis prefers program-point-anchored forms for facts mentioning a
+  load variable (switch-gated), and a premise is anchored at a statement
+  only when a fresh lowering there agrees with the recorded fact. The
+  fix proper is to retire the placeholder: lowering a premise at a point
+  reads that point's memory, so the lowered term is the point's canonical
+  value rather than a stand-in (`lower_point_proposition` and its
+  callers), with `concretize_pristine_loads` then deletable.
 - **Cross-epoch load resolution (required feature, not a gap).** Across a
   call whose footprint may write a cell, the read before and the read after
   receive different load variables (the DAG walk cannot cross the call

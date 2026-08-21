@@ -145,20 +145,36 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
                     error.message()
                 ))
             })?;
-        let entry_point = ProgramPointRef {
-            region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
-            kind: ProgramPointKind::Entry,
-        };
-        let source_surface = surface_with_source_site(surface_premise, &entry_point)?;
-        replay
-            .surface_propositions
-            .record_lowering(&source_surface, &premise)
-            .map_err(|error| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: could not record `{tactic_name}` premise source site: {}",
-                    error.message()
-                ))
-            })?;
+        // Anchor the premise at this statement's entry only when its
+        // surface form actually denotes the recorded fact here: a premise
+        // taken from the recorded cache may have been established at an
+        // earlier point, and a cell it reads may have changed since. With
+        // terms canonical at creation the recorded fact is
+        // snapshot-independent, so a stale anchor would silently bind the
+        // old value to this point's surface form.
+        let anchored_form_is_current = proposition_contains_at_expression(surface_premise)
+            || proposition_contains_old_expression(surface_premise)
+            || lower_at_current().is_ok_and(|fresh| {
+                fresh == premise
+                    || crate::kernel::canonical_condition_fact(&fresh)
+                        == crate::kernel::canonical_condition_fact(&premise)
+            });
+        if anchored_form_is_current {
+            let entry_point = ProgramPointRef {
+                region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
+                kind: ProgramPointKind::Entry,
+            };
+            let source_surface = surface_with_source_site(surface_premise, &entry_point)?;
+            replay
+                .surface_propositions
+                .record_lowering(&source_surface, &premise)
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: could not record `{tactic_name}` premise source site: {}",
+                        error.message()
+                    ))
+                })?;
+        }
         // Loadability premises additionally transport across
         // snapshot terms and recorded effects: the recorded
         // fact and the premise print identically but embed
