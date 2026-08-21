@@ -41,7 +41,7 @@ pub fn uint8(bits: impl Into<Bitvector32Term>) -> CValue {
 
 /// True when `pointer` addresses within a live heap allocation of `memory`,
 /// matching allocation keys either structurally or up to exact
-/// materialization of the loads embedded in the key and pointer spellings.
+/// materialization of the loads embedded in the key and pointer forms.
 /// Deterministic and assumption-free; never matches across an unresolved
 /// havoc.
 pub(crate) fn c_memory_holds_live_heap_allocation_at(
@@ -66,7 +66,7 @@ pub(crate) fn c_pointers_proven_equal_for_memory_resolution(
     super::reasoning::pointers_proven_equal_for_memory_resolution(left, right, assumptions)
 }
 
-/// Recognizes two condition-fact spellings as the same fact under the given
+/// Recognizes two condition-fact forms as the same fact under the given
 /// assumptions, with the exact matching rule the atomic prover applies when
 /// it consumes a context fact: memory-resolution load equality and
 /// decide-driven term equality. This is a bounded check, not a search.
@@ -711,7 +711,7 @@ pub fn c_function_entry_state(
 ///
 /// Composite requirements normally use their canonical contained resources.
 /// When proof replay has explicitly observed or unfolded part of a recursive
-/// resource, independent certification preserves that equivalent spelling so
+/// resource, independent certification preserves that equivalent form so
 /// both executions use the same boundary state.
 pub fn c_function_contract_entry_state(
     caller_state: &CState,
@@ -3929,7 +3929,7 @@ pub fn prove_int32_ge_transitive(
     ))
 }
 
-/// Signed greater-equal is the reversed spelling of signed less-equal.
+/// Signed greater-equal is the reversed form of signed less-equal.
 pub fn prove_int32_ge_implies_reversed_le(
     greater: Bitvector32Term,
     lower: Bitvector32Term,

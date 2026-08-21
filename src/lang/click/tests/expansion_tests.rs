@@ -9499,7 +9499,7 @@ fn source_expander_extracts_unfolded_conjuncts_inside_have() {
 }
 
 #[test]
-fn source_expander_preserves_pointer_field_spelling_inside_smart_have() {
+fn source_expander_preserves_pointer_field_form_inside_smart_have() {
     let c_source = r#"
             struct holder {
                 int32* data;
@@ -9552,7 +9552,7 @@ fn source_expander_preserves_pointer_field_spelling_inside_smart_have() {
 }
 
 #[test]
-fn source_expander_spells_an_indexed_load_through_a_pointer_field() {
+fn source_expander_synthesizes_an_indexed_load_through_a_pointer_field() {
     let c_source = r#"
             struct holder {
                 int32* data;
@@ -9606,7 +9606,7 @@ fn source_expander_spells_an_indexed_load_through_a_pointer_field() {
 
     let expanded =
         expand_c0_tactic_source_at(click_source, &[("holder.c", c_source)], line, column)
-            .expect("the indexed pointer-field fact should have a surface spelling");
+            .expect("the indexed pointer-field fact should have a surface form");
     assert!(expanded.contains("owner->data[1] == value"), "{expanded}");
     verify_c0_sources(&expanded, &[("holder.c", c_source)])
         .expect("the indexed pointer-field expansion should replay");

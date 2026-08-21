@@ -253,7 +253,7 @@ fn unrelated_external_cell_store_preserves_memory_load_with_stack_temporary() {
 }
 
 #[test]
-fn target_directed_transport_preserves_one_old_load_spelling() {
+fn target_directed_transport_preserves_one_old_load_form() {
     let old_memory = CMemory::new();
     let written = Pointer {
         block: "arg-memory".into(),

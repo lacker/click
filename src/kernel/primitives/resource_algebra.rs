@@ -5,7 +5,7 @@ thread_local! {
 }
 
 /// Proof-aware composition queries may nest: bridging a query's snapshot
-/// spelling to a carrier entry can itself ask whether a pointer survived a
+/// form to a carrier entry can itself ask whether a pointer survived a
 /// call havoc, which is served by the same composition. A binary lock would
 /// force those inner queries to fail where the former materialized pairs
 /// answered them, so nesting is allowed to a small fixed depth; the
@@ -521,7 +521,7 @@ impl ResourceContext {
 
     /// Pointer projection using an explicitly bounded caller-supplied
     /// containment relation. The context contributes only indexed candidates,
-    /// so callers can recognize shallow equality spellings without expanding
+    /// so callers can recognize shallow equality forms without expanding
     /// all owned pairs.
     /// Range projection using a caller-supplied proof-aware containment
     /// relation: two distinct owned facts of one valid composition are
@@ -1035,8 +1035,8 @@ impl ResourceContext {
         byte_width: u32,
         assumptions: &PureFactContext,
     ) -> Option<&CMemoryRange> {
-        // A kernel-minted address resolves to its load spelling first, so it
-        // matches owned ranges still spelled through loads.
+        // A kernel-minted address resolves to its load term first, so it
+        // matches owned ranges still written through loads.
         let resolved = crate::kernel::reasoning::resolve_minted_load_pointer(pointer, assumptions);
         let pointer = &resolved;
         for resource in self.memory_block_facts(&pointer.block) {
@@ -2018,7 +2018,7 @@ fn pointer_has_structural_range_base(pointer: &Pointer, base: &Pointer) -> bool 
 
 /// Range endpoints compare like ordinary terms, and additionally two loads
 /// of one pointer are equal when the pointed-to cell is provably unchanged
-/// between their snapshots — a range spelled through metadata loads then
+/// between their snapshots — a range written through metadata loads then
 /// survives writes to unrelated cells.
 fn range_endpoint_terms_equal(
     left: &Bitvector32Term,
@@ -2070,7 +2070,7 @@ fn range_endpoint_terms_equal(
     if loads_bridged(left, right, assumptions) {
         return true;
     }
-    // Structural descent covers the common affine endpoint spellings
+    // Structural descent covers the common affine endpoint forms
     // (base + load, load - base, load * scale).
     let structurally_bridged = match (left, right) {
         (Bitvector32Term::Add(left_a, left_b), Bitvector32Term::Add(right_a, right_b))
@@ -2092,7 +2092,7 @@ fn range_endpoint_terms_equal(
 }
 
 /// Pointer bases compare with the same load bridging as range endpoints:
-/// two spellings of one loaded base pointer are equal when the loaded cell
+/// two forms of one loaded base pointer are equal when the loaded cell
 /// is provably unchanged between their snapshots.
 fn pointer_bases_equal_with_load_bridging(
     left: &Pointer,
@@ -2260,7 +2260,7 @@ fn split_memory_range(
     required: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> Option<Vec<CMemoryRange>> {
-    // Prefer the held range's own start spelling when the required base is
+    // Prefer the held range's own start form when the required base is
     // provably that address. A merely structural delta can contain an
     // equivalent load from a later memory snapshot; retaining it would create
     // a symbolic zero-length residue when the required range exhausts the

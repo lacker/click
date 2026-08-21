@@ -516,7 +516,7 @@ fn certify_grouped_claims_result(
 /// Mid-execution the invariant is already structural — a smart step can only
 /// continue from the replay context `complete_smart_tactic` returns, and there is
 /// no other way to obtain one, so "accepted without a certificate" is not
-/// spellable. At function exit the per-claim drain used to spell it easily:
+/// synthesizable. At function exit the per-claim drain used to write it easily:
 /// closure was `closed_claims[i] = true`, a bool any site could set, with the
 /// certificates hanging off parallel arrays and the gate re-asserted by hand
 /// at every closing site.
@@ -543,7 +543,7 @@ mod exit_claim {
         GroupedTransition,
         /// Discharged by an exact kernel check rather than a proof search:
         /// `assumption`, `normalize`, `frame`, a certified frame, or the
-        /// implicit closer of a single-claim proof. Where the script spelled
+        /// implicit closer of a single-claim proof. Where the script written
         /// a closing tactic it is already in the path's recorded surface
         /// tactics; there is no search to certify.
         ExactCheck,
@@ -1469,7 +1469,7 @@ pub(super) fn finish_ordered_proof_replay(
                     // Facts established after execution all describe this fixed
                     // outcome snapshot. Keep them separately so `fold` can reuse an
                     // exact lowering without accidentally selecting the same surface
-                    // spelling from an earlier program point.
+                    // form from an earlier program point.
                     let mut current_outcome_surface_propositions = SurfacePropositionMap::default();
                     // This path's evolving result-aware proof: tactic kinds
                     // that have migrated onto the outcome goal advance this
@@ -2554,8 +2554,8 @@ pub(super) fn finish_ordered_proof_replay(
                                     }
                                 }
                                 // The ambient frame checks against every available
-                                // fact; its replayable surface spelling is exactly
-                                // `frame()`. Spelling out one snapshot's surface facts
+                                // fact; its replayable surface form is exactly
+                                // `frame()`. Form out one snapshot's surface facts
                                 // here produced a premise list replay could not
                                 // re-establish.
                                 record_post_execution_surface_tactic(
@@ -2586,7 +2586,7 @@ pub(super) fn finish_ordered_proof_replay(
                                 // outcome context. Re-lower explicit frame premises
                                 // here, at their actual deferred position, so a fact
                                 // established by a preceding `have` keeps that
-                                // current-outcome meaning instead of the spelling's
+                                // current-outcome meaning instead of the form's
                                 // obsolete pre-`have` lowering.
                                 let facts = crate::instrumentation::measure_operation(
                                     function_block.signature().name(),
@@ -2928,7 +2928,7 @@ pub(super) fn finish_ordered_proof_replay(
                                                 match ensure_clause.ensure() {
                                                     Ensure::Proposition(surface_goal) => {
                                                         // A rewritten claim proves the
-                                                        // original spelling with its
+                                                        // original form with its
                                                         // recorded rewrites replayed
                                                         // inside the checked scope.
                                                         direct_claims.push((
@@ -3086,7 +3086,7 @@ pub(super) fn finish_ordered_proof_replay(
                                             // In a grouped set with resource
                                             // padding, whole-contract replay
                                             // already carries pre-execution
-                                            // predicate unfolds. Spell the
+                                            // predicate unfolds. Write the
                                             // nested have at that structural
                                             // level: a have identical to the
                                             // current proposition claim would

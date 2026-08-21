@@ -463,7 +463,7 @@ pub(super) fn describe_function_outcome_delta(
         (!extra.is_empty()).then(|| describe_resource_facts(&extra, parameters, arguments));
     if missing_description.is_some() && missing_description == extra_description {
         differences.push(format!(
-            "resource facts have identical surface spellings but differ in hidden memory snapshots or internal identities: {}",
+            "resource facts have identical surface forms but differ in hidden memory snapshots or internal identities: {}",
             missing_description.as_deref().expect("checked as present")
         ));
     } else if let Some(missing_description) = &missing_description {

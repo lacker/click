@@ -1002,11 +1002,11 @@ pub enum CMemoryDerivation {
     },
     /// `base` with some cached cell values forgotten at one program point:
     /// the write path narrows the cell map before storing
-    /// (`without_possible_aliasing_cells`), which changes the spelling but
+    /// (`without_possible_aliasing_cells`), which changes the form but
     /// not the state, so every load still reads exactly what it read in
     /// `base`. Recorded ONLY where forgetting is unconditional; the
     /// case-split prune in the load path (`without_cell` under an assumed
-    /// distinctness branch) must never record one, because its two spellings
+    /// distinctness branch) must never record one, because its two forms
     /// agree only under that branch's assumption. Havoc forgetting keeps its
     /// own never-crossed / guarded edge kinds, so this edge cannot launder a
     /// havoc (conventions.md's soundness trap).
@@ -1637,7 +1637,7 @@ pub struct PropositionDerivation {
 /// One exact signed-order edge retained by an atomic derivation.
 ///
 /// The edge is oriented from `lower` to `upper`; `strict` distinguishes `<`
-/// from `<=`. Certificate consumers can spell this ordered path directly
+/// from `<=`. Certificate consumers can write this ordered path directly
 /// instead of rediscovering it from an unordered premise set.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SignedOrderDerivationStep {
@@ -1815,14 +1815,14 @@ pub struct PureFactContext {
     >,
     /// Condition facts containing a memory-load atom, indexed by the loaded
     /// pointer's snapshot-blind structural fingerprint. This is derived from
-    /// `condition_facts`; it narrows snapshot-aware load-spelling checks
+    /// `condition_facts`; it narrows snapshot-aware load-form checks
     /// without deciding them.
     pub(super) memory_load_condition_facts:
         std::sync::Arc<std::sync::OnceLock<BTreeMap<(PointerBlock, u64), BTreeSet<ConditionTerm>>>>,
     /// True bitvector and int32-scaled pointer-offset equalities, indexed as
     /// an undirected adjacency graph whose edges retain one exact source
     /// proposition. Memory-load vertices use their
-    /// assumption-free canonical snapshot spelling. Derived lazily from
+    /// assumption-free canonical snapshot term. Derived lazily from
     /// `condition_facts` and shared by unchanged clones.
     pub(super) bitvector_equality_facts: std::sync::Arc<
         std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>>>,

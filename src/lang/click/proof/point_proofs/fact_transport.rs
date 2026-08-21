@@ -103,7 +103,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_fact_transport(
             .filter(|fact| !candidates.iter().any(|(candidate, _)| candidate == *fact))
             .count();
         return Err(ClickError::new(format!(
-            "explicit surface premises do not replay the certified fact transport\n  source: {source:?}\n  target: {target:?}\n  selected surface premises: {}\n  unspellable ambient facts: {unavailable_count} (internal facts omitted)",
+            "explicit surface premises do not replay the certified fact transport\n  source: {source:?}\n  target: {target:?}\n  selected surface premises: {}\n  unsynthesizable ambient facts: {unavailable_count} (internal facts omitted)",
             selected.len(),
         )));
     }
@@ -295,7 +295,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
         )));
     }
 
-    // The target spelling is paired with an already-lowered focused goal, so
+    // The target form is paired with an already-lowered focused goal, so
     // the validated ambient context may justify only its expression
     // definedness (not the transport conclusion). This includes bounds such
     // as `n >= 1` needed to read one cell from `loadable(p[0..n])`; the
@@ -308,7 +308,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
             assumptions.assume_proposition(premise)
         });
     // Never resolve the target through the recorded surface map: the same
-    // surface spelling may deliberately name an older source snapshot.
+    // surface form may deliberately name an older source snapshot.
     let target = lower_point_proposition_with_assumptions(
         surface_target,
         &target_lowering_assumptions,
@@ -431,9 +431,9 @@ pub(in crate::lang::click::proof) fn fact_transport_planning_failure(
     )
 }
 
-/// Produces surface spellings that an outcome-level smart transport may try
+/// Produces surface forms that an outcome-level smart transport may try
 /// as explicit auxiliary premises. This is heuristic discovery only: the
-/// returned spellings carry no authority until `Proof::apply_step` accepts a
+/// returned forms carry no authority until `Proof::apply_step` accepts a
 /// `TransportUsing` step containing them.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn fact_transport_candidates_at_outcome(
@@ -471,7 +471,7 @@ pub(in crate::lang::click::proof) fn fact_transport_candidates_at_outcome(
 }
 
 /// Erases every embedded memory snapshot from a comparison proposition so
-/// two spellings of the same comparison at different snapshots compare
+/// two forms of the same comparison at different snapshots compare
 /// equal; used as a cheap prefilter before attempting a transport proof.
 pub(in crate::lang::click::proof) fn memory_erased_comparison(
     proposition: &Proposition,
@@ -548,8 +548,8 @@ pub(in crate::lang::click::proof) fn memory_erased_comparison(
 }
 
 /// Compares branch facts after erasing the memory snapshot captured at the
-/// branch point. In addition to the kernel's canonical spellings, accept the
-/// ordinary complementary and operand-reversed spellings of signed order
+/// branch point. In addition to the kernel's canonical forms, accept the
+/// ordinary complementary and operand-reversed forms of signed order
 /// comparisons (for example, `!(a < b)` and `a >= b`).
 pub(in crate::lang::click::proof) fn path_condition_equivalent(
     left: &Proposition,
@@ -630,8 +630,8 @@ pub(in crate::lang::click::proof) fn proposition_outer_load_memory(
 }
 
 /// Like [`certified_fact_transport_reaches`], but first rewrites the source
-/// through the transition facts' certified stores, so a fact spelled in
-/// pre-store terms can reach a post-store spelling.
+/// through the transition facts' certified stores, so a fact written in
+/// pre-store terms can reach a post-store form.
 pub(in crate::lang::click::proof) fn certified_fact_transport_reaches_through(
     source: &Proposition,
     target: &Proposition,
@@ -773,7 +773,7 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches(
     if matches!(target, Proposition::CMemoryLoadable { .. }) {
         return assumptions.derive_atomic_proposition(target).is_some();
     }
-    // Two spellings of the same condition fact — for example an element load
+    // Two forms of the same condition fact — for example an element load
     // whose symbolic index the listed order facts pin to a constant — match
     // by the same bounded rule the atomic prover uses on context facts.
     if crate::kernel::c_condition_facts_match_for_transport(source, target, assumptions) {

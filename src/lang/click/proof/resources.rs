@@ -2439,8 +2439,8 @@ fn fold_composite_resources_on_outcome_with_facts(
                     ))
                 })?
             };
-            // Available facts may spell this body fact through loads recorded
-            // at an earlier snapshot. Decide those spellings with the bounded
+            // Available facts may write this body fact through loads recorded
+            // at an earlier snapshot. Decide those forms with the bounded
             // replay matchers first: exact structural membership, the
             // snapshot-bridging relation with this execution's effect facts as
             // framing, and the direct separation-fact matcher. All of these do
@@ -2470,7 +2470,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                     .count();
                 let snapshot_note = if identically_printed > 0 {
                     format!(
-                        "\n  note: {identically_printed} available fact(s) print identically but carry different memory-snapshot spellings, and the recorded execution effects do not prove the snapshots agree at the loaded pointers"
+                        "\n  note: {identically_printed} available fact(s) print identically but carry different memory-snapshot terms, and the recorded execution effects do not prove the snapshots agree at the loaded pointers"
                     )
                 } else {
                     String::new()
@@ -2498,7 +2498,7 @@ fn fold_composite_resources_on_outcome_with_facts(
             )));
         };
         let mut post_state = state;
-        // Range spellings in held resource facts embed loads at their
+        // Range forms in held resource facts embed loads at their
         // creation snapshot; carrying them to the fold point needs the
         // execution's store effect facts alongside the pure facts.
         let mut assumptions = pure_facts.assumptions().clone();
@@ -2559,7 +2559,7 @@ fn fold_composite_resources_on_outcome_with_facts(
         for lowered in lowered_contained.as_slice() {
             // Prefer consuming an equivalent whole representation. Generic
             // range consumption is allowed to treat a requirement as a
-            // subrange; when the two endpoints are framed spellings from
+            // subrange; when the two endpoints are framed forms from
             // different snapshots, that would leave spurious fragments.
             let directly_matching = resources.facts().iter().find(|available| {
                 let quantities_match = match (available, lowered) {

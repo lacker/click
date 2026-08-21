@@ -680,11 +680,11 @@ impl Token {
             Self::CharLiteral(value) => {
                 format!("character literal `{}`", (*value as char).escape_default())
             }
-            other => format!("`{}`", other.spelling()),
+            other => format!("`{}`", other.form()),
         }
     }
 
-    fn spelling(&self) -> &'static str {
+    fn form(&self) -> &'static str {
         match self {
             Self::Ident(_) | Self::Number(_) | Self::CharLiteral(_) => "",
             Self::LParen => "(",
@@ -1262,7 +1262,7 @@ impl Parser {
                             .error_here(format!("expected statement, got identifier `{other}`")))
                     }
                 }
-                None => unreachable!("identifier token should have identifier spelling"),
+                None => unreachable!("identifier token should have identifier form"),
             },
             Some(token) => {
                 Err(self.error_here(format!("expected statement, got {}", token.describe())))

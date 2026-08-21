@@ -546,16 +546,16 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
 }
 
 /// The owned-string loadable shape: the permission fact and its bound facts
-/// spell `len` as a load at contract
-/// entry, while the index the goal extracts spells it at a later snapshot
+/// write `len` as a load at contract
+/// entry, while the index the goal extracts writes it at a later snapshot
 /// separated by a block declaration, stores, and a cell-forgetting prune —
 /// exactly the edges (`BlockDeclared`, `CellsForgotten`) that used to leave
-/// the two spellings in disjoint DAG components. The loadable prover's
+/// the two forms in disjoint DAG components. The loadable prover's
 /// extended bridging connects them; everywhere outside that prover the new
 /// edges must stay invisible (pinned by the frame-evidence test above and
 /// the byte-identical replay of the certified corpus).
 #[test]
-fn loadable_bound_check_bridges_len_spellings_across_block_and_prune_edges() {
+fn loadable_bound_check_bridges_len_forms_across_block_and_prune_edges() {
     if skip_without_memory_dag() {
         return;
     }
@@ -567,7 +567,7 @@ fn loadable_bound_check_bridges_len_spellings_across_block_and_prune_edges() {
     );
 
     // The recorded facts: the buffer permission and both `len` bounds, all
-    // spelled at entry.
+    // written at entry.
     let assumptions = PureFactContext::new()
         // Same-block permissions that cannot cover `buffer[len]`. These used
         // to trigger costly general equality searches before the matching
@@ -603,7 +603,7 @@ fn loadable_bound_check_bridges_len_spellings_across_block_and_prune_edges() {
 
     // The later snapshot: a local declared, a distinct cell written, and the
     // write-path prune that forgets it again. Its `len` load is a different
-    // spelling of the same cell.
+    // form of the same cell.
     let later = entry
         .clone()
         .with_block("local:i", 4)
@@ -615,7 +615,7 @@ fn loadable_bound_check_bridges_len_spellings_across_block_and_prune_edges() {
         Box::new(len_pointer),
     );
 
-    // loadable(buffer[len]) with `len` spelled at the later snapshot.
+    // loadable(buffer[len]) with `len` written at the later snapshot.
     let goal_base = Pointer {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Add(
@@ -628,7 +628,7 @@ fn loadable_bound_check_bridges_len_spellings_across_block_and_prune_edges() {
     };
     assert!(
         assumptions.proves_memory_loadable(&later, &goal_base, &Bitvector32Term::Constant(4)),
-        "the loadable bound check must connect the two len spellings along \
+        "the loadable bound check must connect the two len forms along \
          the recorded block-declaration and cell-forgetting edges"
     );
 }
@@ -648,7 +648,7 @@ fn a_store_to_the_loaded_cell_is_not_crossable() {
     );
 }
 
-/// The premise-availability path matches two spellings of one fact whose load
+/// The premise-availability path matches two forms of one fact whose load
 /// atoms carry different memory snapshots. The match is decided by proof, not
 /// by ignoring the snapshots: an unframed call havoc between the two snapshots
 /// blocks it, and an effect summary that frames the loaded pointer restores it.
@@ -679,14 +679,14 @@ fn conditions_equal_modulo_proven_snapshots_needs_frame_evidence() {
         )
     };
 
-    // Same snapshot: the two spellings are literally one condition.
+    // Same snapshot: the two forms are literally one condition.
     assert!(
         PureFactContext::new()
             .conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&before))
     );
 
     // A call havoc stands between the snapshots and nothing frames the load,
-    // so the later spelling is a different fact, not another spelling.
+    // so the later form is a different fact, not another form.
     assert!(
         !PureFactContext::new()
             .conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&after)),
@@ -694,7 +694,7 @@ fn conditions_equal_modulo_proven_snapshots_needs_frame_evidence() {
     );
 
     // With an effect summary whose mutable range misses the loaded pointer,
-    // the two snapshots provably agree there and the spellings match.
+    // the two snapshots provably agree there and the forms match.
     let framed = PureFactContext::new().assume_proposition(Proposition::CMemoryEffectSummary {
         before: before.clone(),
         after: after.clone(),

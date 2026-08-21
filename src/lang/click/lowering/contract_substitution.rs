@@ -330,7 +330,7 @@ pub(in crate::lang::click) fn substitute_click_proposition(
     }
 }
 
-/// Applies one exact Surface equality as an untrusted spelling transform.
+/// Applies one exact Surface equality as an untrusted form transform.
 ///
 /// The checked kernel rewrite remains authoritative. Callers must lower the
 /// returned candidate and compare it with the kernel successor before

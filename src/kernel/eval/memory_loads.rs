@@ -157,9 +157,9 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
 
     // A pointer-typed load of a materialized int32 cell that is not a bare
     // load term (for example a call-havoc variable standing for the framed
-    // field) cannot be reinterpreted as a stable pointer spelling. When the
+    // field) cannot be reinterpreted as a stable pointer form. When the
     // caller permits symbolic external loads, fall through to the symbolic
-    // load below — its load-term spelling relates across snapshots — instead
+    // load below — its load-term form relates across snapshots — instead
     // of failing the load.
     let pointer_cell_defers_to_symbolic = |value: &CValue| {
         matches!(value, CValue::Int32(_))
@@ -282,7 +282,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
     });
     // The reduced memory is embedded in the returned symbolic value, so it
-    // becomes a snapshot spelling other queries must relate back to its
+    // becomes a snapshot term other queries must relate back to its
     // source. Dropping cells provably distinct from the loaded pointer is a
     // no-op for every load, which is exactly the `CellsForgotten` edge;
     // without it the derivation walk dead-ends at this variant.
@@ -546,7 +546,7 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
 }
 
 /// The canonicalizing form of [`symbolic_load_value`]: a pointer loaded from
-/// an opaque cell is spelled through a minted verification variable instead
+/// an opaque cell is written through a minted verification variable instead
 /// of embedding the `MemoryLoad` term in its offset. Non-pointer loads pass
 /// through unchanged — the invariant governs pointer-offset positions, where
 /// arithmetic must stay over small terms.
@@ -654,7 +654,7 @@ pub(crate) fn registered_canonical_load(variable: &Variable) -> Option<(SharedCM
 }
 
 /// The first-seen live snapshot a canonical load variable was minted from.
-/// The canonical spelling is a jumped placeholder unsuited to frame checks;
+/// The canonical form is a jumped placeholder unsuited to frame checks;
 /// transport resolves through this origin, which is DAG-connected and
 /// cell-comparable to later effect snapshots. First-seen is deterministic
 /// because mint order is execution order.
@@ -682,8 +682,8 @@ pub(crate) fn viewed_as_memory_load(term: &Bitvector32Term) -> Option<Bitvector3
 }
 
 /// Whether a proposition mentions any registered canonical load variable.
-/// Cross-effect fact transport uses this to include canonical-spelled facts
-/// in respelling, exactly as load-spelled facts are included by mentioning
+/// Cross-effect fact transport uses this to include canonical-written facts
+/// in rewriting, exactly as load-term facts are included by mentioning
 /// their snapshots.
 pub(crate) fn proposition_mentions_registered_canonical_load(proposition: &Proposition) -> bool {
     let mut variables = std::collections::BTreeSet::new();
@@ -1168,7 +1168,7 @@ fn substitute_canonical_load_names_in_offset(
     }
 }
 
-/// Structural term equality modulo canonical load names: two spellings of
+/// Structural term equality modulo canonical load names: two forms of
 /// one value compare equal exactly when their [`canonical_term`] forms are
 /// identical. Load-free terms are fixed points of the canonical form, so
 /// they compare by identity without a canonicalization walk. Bounded by
@@ -1279,7 +1279,7 @@ fn offset_mentions_a_memory_load(offset: &PointerOffsetTerm) -> bool {
 /// a memory snapshot (by content) and a loaded pointer. The id is derived
 /// deterministically by hashing that identity into a reserved id space, so
 /// every pass — contract-grant lowering, requirement evaluation, and body
-/// execution — spells the same load with the same variable without sharing
+/// execution — writes the same load with the same variable without sharing
 /// any allocator state, and certificates replay across runs. A thread-local
 /// registry detects hash collisions between distinct load identities and
 /// stops verification loudly instead of silently conflating them.
@@ -1321,11 +1321,11 @@ pub(crate) fn canonical_load_variable_with_origin(
     variable
 }
 
-/// Names a load term through its provenance-stable spelling: the term is
+/// Names a load term through its provenance-stable form: the term is
 /// first canonicalized assumption-free (resolving cached cells and snapshot
 /// representation differences), so the same cell loaded at different
 /// execution points shares one canonical variable whenever the difference
-/// is representational. Returns the variable and the spelling its defining
+/// is representational. Returns the variable and the form its defining
 /// equation should use.
 pub(crate) fn canonical_load_variable_for_term(
     bits: &Bitvector32Term,

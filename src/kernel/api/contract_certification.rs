@@ -215,7 +215,7 @@ pub fn loadable_covered_by_fact(assumptions: &PureFactContext, goal: &Propositio
         if fact_base.block != base.block {
             return false;
         }
-        // Loadability of a covering span transports across snapshot spelling
+        // Loadability of a covering span transports across snapshot term
         // differences and recorded write effects just like an exact-range
         // fact does.
         if fact_memory != memory
@@ -805,7 +805,7 @@ pub(super) fn c_function_contract_certification_assumptions(
 ) -> Option<PureFactContext> {
     let mut entry_state = c_function_entry_state(caller_state, function, arguments)?;
     let mut budget = ExecutionBudget::default();
-    // Entry facts derived from declared parameter spellings (for example
+    // Entry facts derived from declared parameter forms (for example
     // sized array parameters) carry loadability that is part of the calling
     // convention; assume them before lowering requirements so requirement
     // side-obligations can be certified against them.
@@ -1845,7 +1845,7 @@ fn shifted_order_condition_proven(
         if exact {
             return true;
         }
-        // A recorded overflow fact may spell the operand through loads at a
+        // A recorded overflow fact may write the operand through loads at a
         // different snapshot; compare canonically.
         let canonical_base = canonicalize_atomic_loads(base);
         let recorded = assumptions.condition_facts.iter().any(|(condition, value)| {
@@ -1886,7 +1886,7 @@ fn shifted_order_condition_proven(
     };
     // `a + 1 <= b` follows from `a < b` for any terms when `a + 1` is
     // provably overflow-free; this converts a strict requirement into the
-    // non-strict spelling a successor produces.
+    // non-strict form a successor produces.
     if !strict {
         let (base, shift) = split_additive_constant(left);
         if shift == 1 {
@@ -2000,7 +2000,7 @@ fn pointer_offsets_equal_with_resolved_atoms(
         return false;
     }
     // Scaled values compare through snapshot-bridged load equality: two
-    // spellings of one loaded field, or a recorded PointerOffsetEqual fact
+    // forms of one loaded field, or a recorded PointerOffsetEqual fact
     // whose sides bridge to the compared values.
     let scaled_values_bridged = |left: &Bitvector32Term, right: &Bitvector32Term| {
         left == right
@@ -2115,9 +2115,9 @@ fn pointer_offsets_equal_with_resolved_atoms(
     right_atoms.is_empty()
 }
 
-/// The load spellings a term denotes: the term itself when it is a load,
+/// The load terms a term denotes: the term itself when it is a load,
 /// plus every load one equality fact away.
-fn load_spellings_of<'a>(
+fn load_forms_of<'a>(
     assumptions: &'a PureFactContext,
     term: &'a Bitvector32Term,
 ) -> Vec<(&'a CMemory, &'a Pointer)> {
@@ -2144,8 +2144,8 @@ fn load_spellings_of<'a>(
     loads
 }
 
-/// Certifies an equality by resolving each side to a load spelling (itself,
-/// or one equality fact away) and proving some pair of spellings denotes one
+/// Certifies an equality by resolving each side to a load term (itself,
+/// or one equality fact away) and proving some pair of forms denotes one
 /// framed cell: same block, offsets equal with constant-resolved atoms, and
 /// the loaded cell provably unchanged between the two snapshots.
 fn certification_proves_equality_via_load_fact(
@@ -2153,11 +2153,11 @@ fn certification_proves_equality_via_load_fact(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
 ) -> bool {
-    let left_loads = load_spellings_of(assumptions, left);
+    let left_loads = load_forms_of(assumptions, left);
     if left_loads.is_empty() {
         return false;
     }
-    let right_loads = load_spellings_of(assumptions, right);
+    let right_loads = load_forms_of(assumptions, right);
     left_loads.iter().any(|(left_memory, left_pointer)| {
         right_loads.iter().any(|(right_memory, right_pointer)| {
             left_pointer.block == right_pointer.block
@@ -2195,7 +2195,7 @@ pub(super) fn certification_proves_proposition(
         // Bound variables are freshened independently while the contract
         // assumptions and proof-derived entry facts are lowered. The
         // proposition is already assumed modulo that irrelevant binder
-        // spelling, so do not route hundreds of such facts through general
+        // form, so do not route hundreds of such facts through general
         // quantified proof search.
         return true;
     }
@@ -2302,7 +2302,7 @@ pub(super) fn certification_proves_proposition(
         {
             true
         }
-        // One side equals a recorded load spelling by an equality fact and
+        // One side equals a recorded load term by an equality fact and
         // the two loads denote the same framed cell.
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
             if std::env::var_os("CLICK_DISABLE_CERT_ARMS").is_none()

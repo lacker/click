@@ -233,7 +233,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
 
 /// Stable identifiers for the documented Surface Click declaration,
 /// contract, proposition, expression, and operator families. Individual word
-/// spellings are tracked separately in [`SURFACE_CLICK_WORDS`].
+/// forms are tracked separately in [`SURFACE_CLICK_WORDS`].
 pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "all",
     "and",
@@ -606,7 +606,7 @@ pub enum ClickProposition {
     },
 }
 
-/// Surface spellings paired with the exact kernel propositions they lowered
+/// surface forms paired with the exact kernel propositions they lowered
 /// to in one proof context.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SurfacePropositionMap {
@@ -615,33 +615,33 @@ pub struct SurfacePropositionMap {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct SurfacePropositionStorage {
-    by_kernel: PersistentMap<Proposition, KernelSurfaceSpellings>,
+    by_kernel: PersistentMap<Proposition, KernelSurfaceForms>,
     /// Recorded kernel facts grouped by a structural key that forgets only
     /// memory snapshot identities. Typed proof steps use this to recover a
-    /// replay-equivalent Surface spelling without scanning ambient facts.
+    /// replay-equivalent surface form without scanning ambient facts.
     by_snapshot_blind:
         PersistentMap<proof::SnapshotBlindPropositionKey, PersistentSet<Proposition>>,
-    // The debug spelling is a deterministic structural bucket key. Exact
+    // The debug form is a deterministic structural bucket key. Exact
     // equality inside the bucket preserves soundness even if two future
     // syntax variants ever acquire the same debug rendering.
     by_surface: PersistentMap<String, Vec<(ClickProposition, KernelLowerings)>>,
-    /// Kernel facts with a current Surface spelling that reads one named C
+    /// Kernel facts with a current surface form that reads one named C
     /// local. Assignment-step search probes only the assigned local's bucket
     /// instead of scanning every recorded fact.
     by_current_c_variable: PersistentMap<String, PersistentSet<Proposition>>,
-    /// Kernel facts whose recorded Surface spelling is one top-level
+    /// Kernel facts whose recorded surface form is one top-level
     /// predicate call. Checked predicate unfolds use this narrow bucket to
     /// recover an already-materialized body without scanning ambient facts.
     by_predicate: PersistentMap<String, PersistentSet<Proposition>>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct KernelSurfaceSpellings {
+struct KernelSurfaceForms {
     ordered: Vec<ClickProposition>,
     by_debug_key: BTreeMap<String, Vec<ClickProposition>>,
 }
 
-impl KernelSurfaceSpellings {
+impl KernelSurfaceForms {
     fn insert(&mut self, surface: &ClickProposition, debug_key: &str) {
         let bucket = self.by_debug_key.entry(debug_key.to_string()).or_default();
         if bucket.contains(surface) {
@@ -927,9 +927,9 @@ impl SurfacePropositionMap {
                 storage.by_current_c_variable =
                     storage.by_current_c_variable.with_inserted(name, facts);
             }
-            let mut spellings = storage.by_kernel.get(kernel).cloned().unwrap_or_default();
-            spellings.insert(surface, &surface_key);
-            storage.by_kernel = storage.by_kernel.with_inserted(kernel.clone(), spellings);
+            let mut forms = storage.by_kernel.get(kernel).cloned().unwrap_or_default();
+            forms.insert(surface, &surface_key);
+            storage.by_kernel = storage.by_kernel.with_inserted(kernel.clone(), forms);
             let snapshot_key = proof::snapshot_blind_proposition_key(kernel);
             let snapshot_facts = storage
                 .by_snapshot_blind
@@ -1019,7 +1019,7 @@ impl SurfacePropositionMap {
         }
     }
 
-    pub(in crate::lang::click) fn kernels_spelled_by_predicate(
+    pub(in crate::lang::click) fn kernels_written_by_predicate(
         &self,
         name: &String,
     ) -> impl Iterator<Item = &Proposition> {
@@ -1034,10 +1034,10 @@ impl SurfacePropositionMap {
         self.storage
             .by_kernel
             .get(kernel)
-            .and_then(|spellings| spellings.ordered.last())
+            .and_then(|forms| forms.ordered.last())
             .ok_or_else(|| {
                 ClickError::new(format!(
-                    "kernel proposition has no recorded Click surface spelling: {kernel:?}"
+                    "kernel proposition has no recorded Click surface form: {kernel:?}"
                 ))
             })
     }
@@ -1047,7 +1047,7 @@ impl SurfacePropositionMap {
             .by_kernel
             .get(kernel)
             .into_iter()
-            .flat_map(|spellings| spellings.ordered.iter())
+            .flat_map(|forms| forms.ordered.iter())
     }
 
     pub(in crate::lang::click) fn snapshot_blind_kernels(
@@ -1159,13 +1159,13 @@ impl SurfacePropositionMap {
     where
         F: FnMut(&ClickProposition) -> Result<Proposition, ClickError>,
     {
-        let spellings = self.storage.by_kernel.get(kernel).ok_or_else(|| {
+        let forms = self.storage.by_kernel.get(kernel).ok_or_else(|| {
             ClickError::new(format!(
-                "kernel proposition has no recorded Click surface spelling: {kernel:?}"
+                "kernel proposition has no recorded Click surface form: {kernel:?}"
             ))
         })?;
         let mut last_mismatch = None;
-        for surface in spellings.ordered.iter().rev() {
+        for surface in forms.ordered.iter().rev() {
             match lower_at_current_point(surface) {
                 Ok(lowered) if &lowered == kernel => return Ok(surface.clone()),
                 Ok(lowered) => last_mismatch = Some(format!("{surface:?} -> {lowered:?}")),
@@ -1173,7 +1173,7 @@ impl SurfacePropositionMap {
             }
         }
         Err(ClickError::new(format!(
-            "none of the recorded Click spellings lower to the proposition at the current proof point{}; expected {kernel:?}",
+            "none of the recorded surface forms lower to the proposition at the current proof point{}; expected {kernel:?}",
             last_mismatch
                 .map(|mismatch| format!(" (last mismatch: {mismatch})"))
                 .unwrap_or_default()
@@ -1713,7 +1713,7 @@ pub enum ComparisonOperator {
 
 impl fmt::Display for ComparisonOperator {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let spelling = match self {
+        let form = match self {
             Self::Equal => "==",
             Self::NotEqual => "!=",
             Self::LessThan => "<",
@@ -1721,7 +1721,7 @@ impl fmt::Display for ComparisonOperator {
             Self::GreaterThan => ">",
             Self::GreaterEqual => ">=",
         };
-        formatter.write_str(spelling)
+        formatter.write_str(form)
     }
 }
 
@@ -2810,9 +2810,9 @@ pub struct ProofIf {
     else_tactics: Vec<ProofTactic>,
 }
 
-/// Explicit elimination of a disjunctive fact: replay checks that the spelled
+/// Explicit elimination of a disjunctive fact: replay checks that the written
 /// disjunction is an available fact, then checks each branch under exactly its
-/// assumed disjunct. Both branches are always spelled; nothing is searched.
+/// assumed disjunct. Both branches are always written; nothing is searched.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProofCases {
     disjunction: ClickProposition,

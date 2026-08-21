@@ -182,7 +182,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                 &mut exported_pure_facts,
             );
             // An `old(...)`-interface ensure needs the exported view's
-            // loadability in its entry-memory spelling. Export it exactly
+            // loadability in its entry-memory form. Export it exactly
             // when the clause lowers at entry at all and the pre-advance
             // proof state establishes it, the same gate `fact` assertions
             // pass through.
@@ -577,7 +577,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                 kind: ProgramPointKind::Entry,
             },
         )?;
-        // Prefer a spelling in terms of the shared function-entry snapshot.
+        // Prefer a form in terms of the shared function-entry snapshot.
         // It remains available after independently explored paths are merged,
         // whereas a later statement-entry state can legitimately differ
         // across those paths and is therefore not retained in the common
@@ -944,7 +944,7 @@ pub(super) fn record_loop_program_point_state(
 }
 
 /// Swaps the listed program points to their pre-recording values (or removes
-/// points the recording introduced) so a surface step can be spelled against
+/// points the recording introduced) so a surface step can be written against
 /// the view its own replay will have; returns what must be put back.
 fn construction_point_overrides(
     program_point_states: &ProgramPointStates,
@@ -1213,7 +1213,7 @@ pub(super) fn predicate_call_source_site(surface: &ClickProposition) -> Option<P
 
 /// Returns a program point explicitly carried by a proposition produced by
 /// [`surface_with_source_site`]. This is a selector only: callers must still
-/// re-lower any newly anchored spelling and check that it denotes the exact
+/// re-lower any newly anchored form and check that it denotes the exact
 /// retained kernel fact.
 pub(super) fn surface_source_site(surface: &ClickProposition) -> Option<ProgramPointRef> {
     let expression_site = |expression: &ContractExpression| match expression {
@@ -1425,12 +1425,12 @@ pub(super) fn execute_step_from_execution_point(
     }
     let step_statement = source_statement;
 
-    // The surface step for this statement is spelled from the proof point
+    // The surface step for this statement is written from the proof point
     // *before* the statement runs. Its own replay establishes this
     // statement's entry snapshots only while re-executing it, so construction
     // must see the program points exactly as they were before these entry
     // recordings: points the recording adds or overwrites here are presented
-    // at their prior value (or absence) while the step is spelled.
+    // at their prior value (or absence) while the step is written.
     let mut construction_regions = vec![CodeRegion::Statement(statement_index)];
     if let Some(loop_index) = loop_index {
         construction_regions.push(CodeRegion::Loop(loop_index));
@@ -1748,8 +1748,8 @@ pub(super) fn execute_step_from_execution_point(
         restore_construction_point_view(replay, restore);
     }
     // A direct memory-snapshot transport needs no surface `transport`
-    // tactic, but its target still needs a stable source spelling for a
-    // later simple step. Record that spelling during both planning and
+    // tactic, but its target still needs a stable source form for a
+    // later simple step. Record that form during both planning and
     // explicit certificate replay; otherwise replay immediately forgets
     // evaluator guards such as `defined(x + 1)` that planning retained.
     let exit_point = ProgramPointRef {
@@ -1976,7 +1976,7 @@ pub(super) fn execute_step_from_execution_point(
             )));
         }
     }
-    // Standalone fact-transport steps are spelled against the post-statement
+    // Standalone fact-transport steps are written against the post-statement
     // state, so their construction runs after the statement's exit snapshots
     // are in place. Each transport adds its target to the replay-visible
     // certificate facts, and finishing the transports retires the stale

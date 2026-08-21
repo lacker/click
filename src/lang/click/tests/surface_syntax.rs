@@ -514,7 +514,7 @@ fn verifies_atomic_derivation_from_explicit_premises() {
 }
 
 #[test]
-fn records_checked_surface_spellings_for_lowered_propositions() {
+fn records_checked_surface_forms_for_lowered_propositions() {
     let left = ClickProposition::Comparison {
         left: current_var("x"),
         operator: ComparisonOperator::GreaterThan,
@@ -545,33 +545,33 @@ fn records_checked_surface_spellings_for_lowered_propositions() {
     let Proposition::And(kernel_left, kernel_right) = &kernel else {
         panic!("expected conjunction lowering");
     };
-    let mut spellings = SurfacePropositionMap::default();
-    spellings
+    let mut forms = SurfacePropositionMap::default();
+    forms
         .record_lowering(&surface, &kernel)
         .expect("matching logical structure should record");
 
-    assert_eq!(spellings.surface(&kernel).unwrap(), &surface);
-    assert_eq!(spellings.surface(kernel_left).unwrap(), &left);
-    assert_eq!(spellings.surface(kernel_right).unwrap(), &right);
+    assert_eq!(forms.surface(&kernel).unwrap(), &surface);
+    assert_eq!(forms.surface(kernel_left).unwrap(), &left);
+    assert_eq!(forms.surface(kernel_right).unwrap(), &right);
     assert!(
-        spellings
+        forms
             .surface(&Proposition::Not(kernel_left.clone()))
             .is_err()
     );
 
     assert_eq!(
-        spellings
+        forms
             .checked_surface(&kernel, |_| Ok(kernel.clone()))
             .expect("the same point lowering should remain usable"),
         surface
     );
-    let error = spellings
+    let error = forms
         .checked_surface(&kernel, |_| Ok(kernel_left.as_ref().clone()))
-        .expect_err("a spelling from another proof point must not be reused");
+        .expect_err("a surface form from another proof point must not be reused");
     assert!(
         error
             .message()
-            .contains("none of the recorded Click spellings"),
+            .contains("none of the recorded surface forms"),
         "{}",
         error.message()
     );
@@ -590,9 +590,9 @@ fn surface_synthesis_qualifies_a_c_local_named_result() {
     let state = CState::new().with_local("result", CValue::Int32(local));
 
     let surface = synthesize_surface_proposition(&proposition, &[], &[], &state)
-        .expect("the local comparison should have a surface spelling");
+        .expect("the local comparison should have a surface form");
     let ClickProposition::Comparison { left, .. } = surface else {
-        panic!("expected a comparison spelling");
+        panic!("expected a comparison form");
     };
     assert_eq!(left, ContractExpression::CBinding("result".to_string()));
 }

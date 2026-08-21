@@ -192,7 +192,7 @@ fn load_atoms_equal_ignoring_memories(left: &Bitvector32Term, right: &Bitvector3
 }
 
 /// Structural pointer equality that treats two loads of one location as
-/// equal regardless of which memory snapshot each spelling carries. Cheap:
+/// equal regardless of which memory snapshot each form carries. Cheap:
 /// no proving, no canonicalization.
 pub(crate) fn pointers_equal_ignoring_memories(left: &Pointer, right: &Pointer) -> bool {
     pointers_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
@@ -738,7 +738,7 @@ impl Drop for ConditionDecisionGuard {
     }
 }
 
-/// Pointer-offset equality up to exact materialization: two spellings of one
+/// Pointer-offset equality up to exact materialization: two forms of one
 /// offset whose embedded loads resolve, cell by known cell, to the same
 /// innermost term. Deterministic and assumption-free; never equates loads
 /// across an unresolved havoc.
@@ -774,7 +774,7 @@ pub(in crate::kernel) fn pointer_offsets_equal_after_exact_materialization(
     }
 }
 
-/// Two irreducible loads of the same cell whose memory spellings differ only
+/// Two irreducible loads of the same cell whose memory forms differ only
 /// by materialization drift: chase each load to its fixed point, then let the
 /// bounded snapshot matcher decide the memory pair at that one cell. Havoc
 /// markers must match on both sides, so this never equates loads across an
@@ -1380,7 +1380,7 @@ impl PureFactContext {
         }
         // Adopt the representative only when it genuinely lowers the term —
         // strictly fewer memory loads, or a constant for a non-constant.
-        // Same-shape alternates (a load respelled through another snapshot)
+        // Same-shape alternates (a load rewriteed through another snapshot)
         // are a new vocabulary, not a canonical form; keeping the original
         // preserves recordings that consumers re-derive and match
         // structurally.
@@ -1890,7 +1890,7 @@ impl PureFactContext {
     }
 
     /// Surface-certificate synthesis uses this only to structurally lower a
-    /// candidate spelling before comparing it with an already-certified
+    /// candidate form before comparing it with an already-certified
     /// kernel proposition. Ordinary proof checking must not enable it.
     pub(crate) fn allow_symbolic_contract_loads(mut self) -> Self {
         if !self.allow_symbolic_contract_loads {
@@ -2268,7 +2268,7 @@ impl PropositionDerivation {
 }
 
 /// The `(variable, pivot)` an assumed condition licenses splitting on, when it
-/// says `variable <= pivot` in either spelling. Shared by the search and the
+/// says `variable <= pivot` in either form. Shared by the search and the
 /// replay so the two cannot drift.
 fn upper_bound_split_candidate(condition: &ConditionTerm) -> Option<(Variable, &Bitvector32Term)> {
     let (left, right, plus_one) = match condition {

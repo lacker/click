@@ -18,7 +18,7 @@ pub(super) fn lower_surface_atomic_derivation(
         None => crate::instrumentation::measure_operation(
             "have",
             "atomic derivation lowering",
-            "derivation lowering: conclusion spelling",
+            "derivation lowering: conclusion form",
             || {
                 checked_surface_fact_at_point(
                     replay,
@@ -116,25 +116,25 @@ pub(super) fn lower_surface_atomic_derivation(
     }
     let mut premise_pairs = Vec::new();
     let mut unexpressed_premises = Vec::new();
-    let premise_spelling_span = crate::instrumentation::OperationTiming::new(
+    let premise_synthesis_span = crate::instrumentation::OperationTiming::new(
         "have",
         "atomic derivation lowering",
-        "derivation lowering: premise spelling",
+        "derivation lowering: premise form",
     );
     let parameter_names = parameters
         .iter()
         .map(syntax::C0Parameter::name)
         .collect::<BTreeSet<_>>();
-    // A premise spelled through canonical load variables has no direct
-    // Click spelling; resolving the internal names back to their load
-    // spellings through the defining equations recovers one.
+    // A premise written through canonical load variables has no direct
+    // surface form; resolving the internal names back to their load
+    // forms through the defining equations recovers one.
     let defining_premises: Vec<Proposition> = available
         .iter()
         .filter(|premise| crate::kernel::is_canonical_load_defining_fact(premise))
         .cloned()
         .collect();
     for premise in derivation.context_premises() {
-        let spell_premise = |premise: &Proposition| {
+        let synthesize_premise = |premise: &Proposition| {
             if derivation.has_typed_atomic_evidence() {
                 checked_surface_comparison_fact_for_typed_derivation(
                     replay,
@@ -161,7 +161,7 @@ pub(super) fn lower_surface_atomic_derivation(
                 )
             }
         };
-        match spell_premise(&premise).or_else(|error| {
+        match synthesize_premise(&premise).or_else(|error| {
             let resolved =
                 crate::kernel::resolve_canonical_load_variables_via(&premise, &defining_premises);
             let resolved = if resolved == premise {
@@ -172,7 +172,7 @@ pub(super) fn lower_surface_atomic_derivation(
             if resolved == premise {
                 return Err(error);
             }
-            spell_premise(&resolved)
+            synthesize_premise(&resolved)
         }) {
             Ok(surface) => {
                 let surface = match anchor_point {
@@ -180,8 +180,8 @@ pub(super) fn lower_surface_atomic_derivation(
                     // function context is built. Re-elaborating their
                     // parameter-only expression after resources have been
                     // folded can produce `false`, even though the exact
-                    // certified entry fact and its spelling remain
-                    // available. Keep that stable spelling so fresh replay
+                    // certified entry fact and its form remain
+                    // available. Keep that stable form so fresh replay
                     // resolves the same recorded fact instead of evaluating
                     // it against the later heap.
                     Some(_)
@@ -207,7 +207,7 @@ pub(super) fn lower_surface_atomic_derivation(
             Err(error) => unexpressed_premises.push((premise, error)),
         }
     }
-    drop(premise_spelling_span);
+    drop(premise_synthesis_span);
     let conclusion_lowering_span = crate::instrumentation::OperationTiming::new(
         "have",
         "atomic derivation lowering",
@@ -637,7 +637,7 @@ pub(super) fn lower_surface_atomic_derivation(
                 false,
             )
         });
-    let typed_path_spelled = typed_order_plan.is_some()
+    let typed_path_written = typed_order_plan.is_some()
         || typed_equality_plan.is_some()
         || typed_equality_rewrite_plan.is_some()
         || typed_increment_plan.is_some()
@@ -761,7 +761,7 @@ pub(super) fn lower_surface_atomic_derivation(
             .expect("a typed <=/!= strict-order plan retains both exact premises");
     }
     if !surface_normalizes_context_free
-        && !typed_path_spelled
+        && !typed_path_written
         && (premise_pairs.is_empty() || replay_kind(&premise_pairs).is_none())
     {
         return Err(ClickError::new(format!(
@@ -1034,9 +1034,9 @@ pub(super) fn lower_surface_atomic_derivation(
         return Ok((conclusion, SourceProof::Script(tactics)));
     }
     // A `rewrite` step substitutes the exact terms of its equality, so its
-    // premise is usable only when the surface spelling lowers at replay to
+    // premise is usable only when the surface form lowers at replay to
     // the same kernel equality the plan rewrote with. A snapshot-bridged
-    // spelling (the same fact recorded against an earlier memory) denotes
+    // form (the same fact recorded against an earlier memory) denotes
     // the value only through frame reasoning, which the simple rewrite
     // cannot check; those premises stay available to the transport path.
     let surface_replays_kernel = |kernel: &Proposition, surface: &ClickProposition| {
@@ -1066,9 +1066,9 @@ pub(super) fn lower_surface_atomic_derivation(
         .filter(|(kernel, surface)| surface_replays_kernel(kernel, surface))
         .cloned()
         .collect::<Vec<_>>();
-    // The premises the planner selected are already spelled and validated;
-    // when they suffice to spell the rewrite chain, the ambient harvest
-    // below never runs. Attributed measurement showed that harvest spelling
+    // The premises the planner selected are already written and validated;
+    // when they suffice to write the rewrite chain, the ambient harvest
+    // below never runs. Attributed measurement showed that harvest form
     // every ambient equality cost ninety-seven percent of one certificate
     // construction before this ordering.
     if let Some(tactics) =
@@ -1267,7 +1267,7 @@ fn plan_explicit_increment_lower_bound_transport(
 ) -> Option<Vec<ProofTactic>> {
     // A named local or post-store field bound can be proved at the latest
     // retained program point and then transported to the requested surface
-    // spelling. Keep those two proof steps explicit: the arithmetic theorem
+    // form. Keep those two proof steps explicit: the arithmetic theorem
     // does not itself know about stores or snapshot drift, and `transport
     // using` is the simple rule that crosses them.
     // Greater-equal surface goals have their own direct named rule later in
@@ -1537,7 +1537,7 @@ fn plan_explicit_universal_conclusion_discharge(
     {
         return None;
     }
-    // A residual spelling difference (for example a loop counter the listed
+    // A residual form difference (for example a loop counter the listed
     // order facts pin to a constant) crosses through an explicit transport
     // from the instantiated conclusion instead. The transported closure is
     // validated by the caller's immediate certificate replay, so no weaker
@@ -1545,7 +1545,7 @@ fn plan_explicit_universal_conclusion_discharge(
     let transport_closure = if closes_by_assumption {
         None
     } else {
-        // A loop-exit universal invariant fact is spelled through an
+        // A loop-exit universal invariant fact is written through an
         // `at(point, ...)` wrapper; peel it here and restore it on the
         // substituted transport source so the source lowers at the same
         // snapshot the premise denotes.
@@ -1725,7 +1725,7 @@ fn plan_explicit_forall_goal(
     )?;
     // The introduced bounds are what place the binder's cell inside the
     // preserved range, so the point-wise transport must name them. A simple
-    // transport consumes atomic premises; spell conjunction elimination
+    // transport consumes atomic premises; write conjunction elimination
     // explicitly after introducing the guarded antecedent.
     let mut extracted = Vec::new();
     if let Some(antecedent_surface) = &surface_antecedent {
@@ -1858,7 +1858,7 @@ fn plan_explicit_unchanged_load_transport(
         right: right.clone(),
     };
     // The reflexive source normalizes context-free; the transport replay
-    // materializes its symbolic load spelling itself, so no nested `have` is
+    // materializes its symbolic load term itself, so no nested `have` is
     // needed (a nested proof could not see an introduced universal binder).
     Some(vec![
         ProofTactic::TransportUsing {
@@ -1924,7 +1924,7 @@ pub(super) fn lower_restricted_simp_plan(
         // `left`/`right` replay accepts the selected disjunct when it is the
         // same total boolean condition as an available fact up to polarity
         // (e.g. `x > 0` from `not (x <= 0)`); construction mirrors exactly
-        // that check rather than demanding the literal spelling.
+        // that check rather than demanding the literal form.
         let disjunct_replays = pure_fact_is_replay_available(child_goal, &available)
             || available
                 .iter()
@@ -3337,7 +3337,7 @@ pub(super) fn plan_recorded_bitvector_equality_rewrite_paths(
 /// The goal-side counterpart of [`signed_strict_parts`]. A named-rule
 /// certificate closes with `assumption` against the applied theorem's exact
 /// conclusion, so a rule whose theorem concludes `<` may only fire when the
-/// goal is spelled `<`; a reversed (`>`) goal needs the reversed-form rule.
+/// goal is written `<`; a reversed (`>`) goal needs the reversed-form rule.
 fn goal_exact_less_than_parts(goal: &Proposition) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
     match goal {
         Proposition::ConditionIs(ConditionTerm::Bitvector32SignedLessThan(left, right), true) => {
@@ -3359,7 +3359,7 @@ fn goal_exact_less_equal_parts(goal: &Proposition) -> Option<(&Bitvector32Term, 
 }
 
 /// Exact `>=`-shaped goal parts as `(lower, value)`; see
-/// [`goal_exact_less_than_parts`]. For a theorem whose conclusion is spelled
+/// [`goal_exact_less_than_parts`]. For a theorem whose conclusion is written
 /// with `>=` (for example `int32_strictly_positive_is_nonnegative`).
 fn goal_exact_greater_equal_parts(
     goal: &Proposition,
@@ -3606,7 +3606,7 @@ fn plan_explicit_strict_implies_nonstrict(
 /// antecedent at some depth is refuted by a listed premise closes by
 /// introducing antecedents down to the refuted one, then naming the
 /// contradiction. Replay pushes each introduced antecedent exactly as the
-/// goal spells it, so the refuting premise must be that spelling's exact
+/// goal writes it, so the refuting premise must be that form's exact
 /// opposite (flipped condition polarity or a stripped `not`); anything looser
 /// would not survive the `contradiction` tactic's exact-match check.
 fn plan_explicit_implies_refuted_antecedent(
@@ -3638,7 +3638,7 @@ fn plan_explicit_implies_refuted_antecedent(
 /// Modus ponens over a listed implication premise: walk a (possibly chained)
 /// implication whose antecedents are each listed premises, and close the goal
 /// when a consequent along the walk is the goal. The emitted `extract` names
-/// the consequent's surface spelling, so replay re-checks the same bounded
+/// the consequent's surface form, so replay re-checks the same bounded
 /// rule; `assumption` then closes the goal from the extracted fact.
 fn plan_explicit_discharged_implication_consequent(
     goal: &Proposition,
@@ -4261,9 +4261,9 @@ fn plan_explicit_increment_constant_upper_bound(
 }
 
 /// A constant lower bound relaxes to any smaller constant: `c1 <= x` follows
-/// from a listed `x >= c2` (in either spelling) when `c1 <= c2`, through
+/// from a listed `x >= c2` (in either form) when `c1 <= c2`, through
 /// `int32_ge_transitive` over the context-free constant order and the
-/// reversed-spelling theorem.
+/// reversed-form theorem.
 fn plan_explicit_constant_lower_bound_weakening(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
@@ -4575,15 +4575,15 @@ fn plan_explicit_positive_predecessor_is_nonnegative(
 /// From `0 <= value` and `value <= bound`, the predecessor keeps the bound:
 /// `value - 1 <= bound` through `int32_nonnegative_predecessor_upper_bound`.
 /// When the nonnegativity leg is not itself a selected premise and
-/// `spell_missing_leg` is set, a nested `have` derives it from the same
+/// `synthesize_missing_leg` is set, a nested `have` derives it from the same
 /// premises with the explicit equality-rewrite search (closing by a listed
 /// premise or context-free normalization), so the emitted certificate still
-/// names every dependency. Only outcome contexts pass `spell_missing_leg`:
+/// names every dependency. Only outcome contexts pass `synthesize_missing_leg`:
 /// a pure theorem proof has no `have`, so its planner must not emit one.
 fn plan_explicit_predecessor_upper_bound(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    spell_missing_leg: bool,
+    synthesize_missing_leg: bool,
 ) -> Option<Vec<ProofTactic>> {
     let (predecessor, goal_upper) = goal_exact_less_equal_parts(goal)?;
     let Bitvector32Term::Subtract(value, amount) = predecessor else {
@@ -4618,7 +4618,7 @@ fn plan_explicit_predecessor_upper_bound(
             }) {
             surface.clone()
         } else {
-            if !spell_missing_leg {
+            if !synthesize_missing_leg {
                 continue;
             }
             let kernel_premises = premise_pairs
@@ -5037,7 +5037,7 @@ fn plan_explicit_increment_lower_bound(
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
     // The theorem concludes in less-equal orientation; a greater-equal goal
-    // spelling belongs to `int32_increment_greater_equal_lower_bound`, whose
+    // form belongs to `int32_increment_greater_equal_lower_bound`, whose
     // conclusion the closing `assumption` can match exactly.
     let (goal_lower, incremented) = goal_exact_less_equal_parts(goal)?;
     let base = increment_base(incremented)?;
@@ -5233,10 +5233,10 @@ pub(super) fn comparison_program_point_variants(
     }
     // A predicate call names its memory snapshot only through its array-ref
     // arguments, so the snapshot is selected by wrapping the arguments —
-    // uniformly, the way the recorded-spelling search in
+    // uniformly, the way the recorded-form search in
     // `checked_surface_fact_at_point` already does. Wrapping a value argument
     // is harmless: it evaluates to the same value at every point it is
-    // spellable at, and a wrapping that does not lower is discarded by the
+    // synthesizable at, and a wrapping that does not lower is discarded by the
     // caller's `check`.
     if let ClickProposition::PredicateCall { name, arguments } = proposition {
         let call = |wrap: &dyn Fn(&ContractExpression) -> ContractExpression| {

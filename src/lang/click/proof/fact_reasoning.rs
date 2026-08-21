@@ -1,9 +1,9 @@
 use super::*;
 
-/// The fixed set of condition spellings accepted by
+/// The fixed set of condition forms accepted by
 /// `condition_polarity_equivalent`. Callers can probe an exact index for these
 /// instead of maintaining another project-sized index.
-pub(super) fn condition_polarity_spellings(proposition: &Proposition) -> Vec<Proposition> {
+pub(super) fn condition_polarity_forms(proposition: &Proposition) -> Vec<Proposition> {
     let (condition, value) = match proposition {
         Proposition::ConditionIs(condition, value) => (condition.clone(), *value),
         Proposition::Not(negated) => match negated.as_ref() {
@@ -59,18 +59,18 @@ pub(super) fn condition_polarity_spellings(proposition: &Proposition) -> Vec<Pro
         };
         conditions.append(&mut equivalent);
     }
-    let mut spellings = Vec::new();
+    let mut forms = Vec::new();
     for (condition, value) in conditions {
         let direct = Proposition::ConditionIs(condition.clone(), value);
-        if !spellings.contains(&direct) {
-            spellings.push(direct);
+        if !forms.contains(&direct) {
+            forms.push(direct);
         }
         let negated = Proposition::Not(Box::new(Proposition::ConditionIs(condition, !value)));
-        if !spellings.contains(&negated) {
-            spellings.push(negated);
+        if !forms.contains(&negated) {
+            forms.push(negated);
         }
     }
-    spellings
+    forms
 }
 
 /// Structural key that deliberately forgets memory snapshot identities in
@@ -432,8 +432,8 @@ fn snapshot_blind_bitvector_key(term: &Bitvector32Term) -> SnapshotBlindBitvecto
             SnapshotBlindBitvectorKey::Load(Box::new(snapshot_blind_pointer_key(pointer)))
         }
         // A canonical load variable keys as the load it names: one O(1)
-        // registry lookup, no snapshot in the key, and canonical spellings
-        // bucket with the load spellings of the same cell.
+        // registry lookup, no snapshot in the key, and canonical forms
+        // bucket with the load terms of the same cell.
         Bitvector32Term::Variable(variable)
             if crate::kernel::is_canonical_load_variable(variable) =>
         {
@@ -487,7 +487,7 @@ pub(super) fn exact_fact_is_available(required: &Proposition, available: &[Propo
     exact_fact_is_available_across_effects(required, available, &[])
 }
 
-/// Availability where the required spelling may have been lowered at a later
+/// Availability where the required form may have been lowered at a later
 /// program point than the available one: `framing` supplies the recorded
 /// memory-effect facts that let the kernel see the two snapshots agree at the
 /// loaded pointers.
@@ -507,7 +507,7 @@ pub(super) fn exact_fact_is_available_across_effects(
 
 /// Second chance for a required condition that failed exact matching only
 /// because its load atoms carry different memory snapshots than the available
-/// spelling — the same fact reached through a different program point.
+/// form — the same fact reached through a different program point.
 ///
 /// The cheap snapshot-blind structural filter picks candidates; the kernel's
 /// snapshot-bridging prover decides them under the available facts plus
@@ -519,11 +519,10 @@ pub(super) fn snapshot_bridged_fact_is_available(
     available: &[Proposition],
     framing: &[ExecutionPureFact],
 ) -> bool {
-    let Some((required_spellings, candidates)) = snapshot_blind_candidates(required, available)
-    else {
+    let Some((required_forms, candidates)) = snapshot_blind_candidates(required, available) else {
         // Compound propositions (an implication ensure, a conjunction) have
         // no single condition to normalize, but their leaves can still be
-        // two spellings of one fact across snapshots. A cheap snapshot-blind
+        // two forms of one fact across snapshots. A cheap snapshot-blind
         // structural filter picks candidates first, so the assumption context
         // and the kernel bridge are built only when a same-shape fact exists.
         if matches!(required, Proposition::ConditionIs(_, _)) {
@@ -545,7 +544,7 @@ pub(super) fn snapshot_bridged_fact_is_available(
             .any(|fact| propositions_equal_modulo_proven_snapshots(fact, required, &assumptions));
     };
     let assumptions = assumptions_from_propositions(available);
-    snapshot_bridge_proves(&required_spellings, &candidates, assumptions, framing)
+    snapshot_bridge_proves(&required_forms, &candidates, assumptions, framing)
 }
 
 /// Snapshot-blind structural pre-filter for the compound bridge: identical
@@ -580,7 +579,7 @@ fn compound_propositions_match_ignoring_memories(left: &Proposition, right: &Pro
 }
 
 /// Structural proposition equality whose condition leaves are decided by the
-/// kernel's snapshot bridge: two spellings of one compound fact whose load
+/// kernel's snapshot bridge: two forms of one compound fact whose load
 /// atoms carry different certified snapshots. Structure must match exactly,
 /// so this never accepts a weaker or stronger proposition.
 fn propositions_equal_modulo_proven_snapshots(
@@ -753,7 +752,7 @@ pub(super) fn proposition_candidate_equals_modulo_proven_snapshots(
             assumptions.assume_proposition(fact.proposition().clone())
         });
     // Canonical names resolve to their loads so the snapshot-modulo
-    // comparison sees the spellings it was built for. Shallow: term
+    // comparison sees the forms it was built for. Shallow: term
     // positions only, never walking embedded snapshots.
     let candidate = resolve_canonical_names_shallow(candidate);
     let required = resolve_canonical_names_shallow(required);
@@ -772,7 +771,7 @@ fn normalize_condition_modulo_memories(condition: &ConditionTerm) -> ConditionTe
 ///
 /// Candidates still come only from `available`, so widening the assumptions
 /// cannot make an unlisted fact available — the wider context only decides
-/// whether two spellings denote one fact.
+/// whether two forms denote one fact.
 pub(super) fn snapshot_bridged_fact_is_available_under(
     required: &Proposition,
     available: &[Proposition],
@@ -784,16 +783,10 @@ pub(super) fn snapshot_bridged_fact_is_available_under(
     if matches!(required, Proposition::CResourceSeparate { .. }) {
         return separation_bridged_available(required, available, assumptions, framing);
     }
-    let Some((required_spellings, candidates)) = snapshot_blind_candidates(required, available)
-    else {
+    let Some((required_forms, candidates)) = snapshot_blind_candidates(required, available) else {
         return false;
     };
-    snapshot_bridge_proves(
-        &required_spellings,
-        &candidates,
-        assumptions.clone(),
-        framing,
-    )
+    snapshot_bridge_proves(&required_forms, &candidates, assumptions.clone(), framing)
 }
 
 /// Normalises `required` and collects the available conjuncts that could be
@@ -808,13 +801,13 @@ fn snapshot_blind_candidates(
         return None;
     };
     // Normalization resolves direct load atoms through materialized cells,
-    // which can rewrite a spelling the kernel comparator's certified-store
-    // reasoning needed; keep both required spellings and try each.
-    let mut required_spellings = vec![required_condition];
+    // which can rewrite a form the kernel comparator's certified-store
+    // reasoning needed; keep both required forms and try each.
+    let mut required_forms = vec![required_condition];
     if let Proposition::ConditionIs(original_condition, _) = required
-        && !required_spellings.contains(original_condition)
+        && !required_forms.contains(original_condition)
     {
-        required_spellings.push(original_condition.clone());
+        required_forms.push(original_condition.clone());
     }
     let mut candidates = Vec::new();
     for fact in available {
@@ -829,7 +822,7 @@ fn snapshot_blind_candidates(
             else {
                 continue;
             };
-            if conditions_equal_ignoring_memories(&condition, &required_spellings[0]) {
+            if conditions_equal_ignoring_memories(&condition, &required_forms[0]) {
                 if let Proposition::ConditionIs(original_condition, _) = conjunct
                     && original_condition != &condition
                     && !candidates.contains(original_condition)
@@ -842,11 +835,11 @@ fn snapshot_blind_candidates(
             }
         }
     }
-    (!candidates.is_empty()).then_some((required_spellings, candidates))
+    (!candidates.is_empty()).then_some((required_forms, candidates))
 }
 
 fn snapshot_bridge_proves(
-    required_spellings: &[ConditionTerm],
+    required_forms: &[ConditionTerm],
     candidates: &[ConditionTerm],
     assumptions: PureFactContext,
     framing: &[ExecutionPureFact],
@@ -855,18 +848,18 @@ fn snapshot_bridge_proves(
         assumptions.assume_proposition(fact.proposition().clone())
     });
     candidates.iter().any(|candidate| {
-        required_spellings.iter().any(|required| {
+        required_forms.iter().any(|required| {
             assumptions.conditions_equal_modulo_proven_snapshots(candidate, required)
         })
     })
 }
 
-/// Respells every spec-pristine load atom (a `MemoryLoad` whose memory has
-/// no blocks and no cells — the abstract "current value" spelling premise
+/// Rewrites every spec-pristine load atom (a `MemoryLoad` whose memory has
+/// no blocks and no cells — the abstract "current value" form premise
 /// lowering produces) over the given concrete memory. The result denotes the
 /// same value at the point whose memory this is, but in live vocabulary, so
-/// availability bridging can decide it against live-spelled facts by framing
-/// across recorded effects instead of by spelling coincidence.
+/// availability bridging can decide it against live-written facts by framing
+/// across recorded effects instead of by form coincidence.
 pub(super) fn concretize_pristine_loads(
     proposition: &Proposition,
     memory: &crate::kernel::CMemory,
@@ -1046,7 +1039,7 @@ pub(in crate::lang::click) fn condition_polarity_equivalent(
         return true;
     }
     // A negated condition fact is the same total boolean condition with the
-    // opposite expected value; flattening lets one spelling compare against
+    // opposite expected value; flattening lets one form compare against
     // the other and against the canonical order form of either.
     let flatten = |proposition: &Proposition| match proposition {
         Proposition::ConditionIs(condition, value) => Some((condition.clone(), *value)),
@@ -1175,11 +1168,11 @@ pub(super) fn quantified_binder_equivalent(left: &Proposition, right: &Propositi
 /// `quantified_binder_equivalent` sees through ONE binder renaming; a nested
 /// quantifier needs the rename applied at every level.
 ///
-/// Certificate generation compares a spelling it lowers itself against a fact
+/// Certificate generation compares a form it lowers itself against a fact
 /// the drain lowered separately, and the two lowerings mint different binder
 /// variables, so a nested `forall` fact is only recognizable up to renaming.
-/// This is a generation-side recognizer: it decides which surface spelling to
-/// WRITE, never whether a proof is accepted. The written spelling still has to
+/// This is a generation-side recognizer: it decides which surface form to
+/// WRITE, never whether a proof is accepted. The written form still has to
 /// satisfy `derivation.replay` and then the replay judgment itself, both of
 /// which instantiate quantifiers rather than compare them structurally.
 /// Applies `normalize_direct_atomic_memory_loads` below the propositional
@@ -1479,8 +1472,8 @@ pub(super) fn quantified_replay_index_key(
     alpha_proposition_key(proposition, &mut BTreeMap::new(), &mut 0).map(QuantifiedReplayKey)
 }
 
-/// Generation-side equality up to assumption-free canonical load spelling.
-/// A selected spelling still has to replay from its own lowered proposition,
+/// Generation-side equality up to assumption-free canonical load term.
+/// A selected form still has to replay from its own lowered proposition,
 /// so this can broaden candidate recognition without broadening acceptance.
 pub(super) fn propositions_match_up_to_canonical_loads(
     left: &Proposition,
@@ -1494,7 +1487,7 @@ pub(super) fn propositions_match_up_to_canonical_loads(
 /// See the doc comment below: a generation-side recognizer only. Besides the
 /// per-level binder renaming, bodies are also compared after canonical-load
 /// normalization, because the drain records facts with canonicalized load
-/// snapshots while a fresh lowering of the same spelling reads through the
+/// snapshots while a fresh lowering of the same form reads through the
 /// retained program-point state, whose memory still carries load-irrelevant
 /// local cells.
 pub(super) fn nested_quantified_binder_equivalent(
@@ -1605,7 +1598,7 @@ pub(in crate::lang::click) fn materialization_equivalent_available_fact(
 /// every named fact. Large, otherwise-simple certificates therefore became
 /// quadratic. The index covers the overwhelmingly common exact and
 /// materialization-equivalent cases; callers retain their semantic fallbacks
-/// for snapshot bridging and polarity-equivalent spellings.
+/// for snapshot bridging and polarity-equivalent forms.
 pub(super) struct ExactReplayFactIndex {
     exact: std::collections::BTreeSet<Proposition>,
     materialized: std::sync::OnceLock<std::collections::BTreeSet<Proposition>>,
@@ -1656,7 +1649,7 @@ pub(super) fn directly_matching_separation_fact(
 /// `directly_matching_separation_fact` where the caller already holds the
 /// assumption context the match should reason in (for example the available
 /// facts plus recorded execution effect facts, which let the bounded resource
-/// matcher see that two load spellings from different snapshots denote one
+/// matcher see that two load terms from different snapshots denote one
 /// pointer). Candidates still come only from `available`, so widening the
 /// assumptions cannot make an unlisted fact available.
 pub(super) fn directly_matching_separation_fact_under(
@@ -1970,7 +1963,7 @@ pub(super) fn assumptions_for_direct_fact_transport(
             | Proposition::CResourceSeparate { .. }
             // Owned ranges in one composition are pairwise separate; the
             // effect-disjointness legs of direct transport need that
-            // separation when no explicit separate(...) fact spells it.
+            // separation when no explicit separate(...) fact writes it.
             | Proposition::CResourceComposition(_) => facts.push(proposition.clone()),
             Proposition::And(left, right) => {
                 collect(left, facts);
@@ -2320,8 +2313,8 @@ mod tests {
 
     /// The perpetual-service `fold(service(owner))` near-miss: the body's
     /// separation fact is available from the unfold, but the fold point
-    /// respells it through a memory that retains this path's store cells, so
-    /// the two spellings print identically yet compare structurally unequal.
+    /// rewrites it through a memory that retains this path's store cells, so
+    /// the two forms print identically yet compare structurally unequal.
     /// The bounded separation matcher must equate them from the recorded
     /// pointer-offset equality and separation facts, without the open-ended
     /// kernel search whose budget truncation used to be misreported as a
@@ -2348,10 +2341,10 @@ mod tests {
             Bitvector32Term::MemoryLoad(intern_c_memory(memory.clone()), Box::new(pointer.clone()))
         };
         let empty = CMemory::new();
-        // The spelling recorded when the resource body was unfolded: the cell
+        // The form recorded when the resource body was unfolded: the cell
         // pointer read through the call-havoc snapshot.
         let havoc = CMemory::new().with_block("havoc:1000000", 0);
-        // The spelling carried by the recorded execution facts: the same
+        // The form carried by the recorded execution facts: the same
         // loads read through the branch-entry memory with its retained cells.
         let entry = empty
             .clone()
@@ -2364,9 +2357,9 @@ mod tests {
             value: Box::new(load(memory, &cell_field)),
             byte_width: 4,
         };
-        // The fold-point spelling reads the cell pointer through a memory
+        // The fold-point form reads the cell pointer through a memory
         // that still carries the `owner->cell[0] = owner->phase` store, whose
-        // written address is itself spelled through a loaded pointer, so no
+        // written address is itself written through a loaded pointer, so no
         // assumption-free normalization can drop the cell.
         let folded = havoc.clone().store(
             Pointer {
@@ -2395,7 +2388,7 @@ mod tests {
         let required = separation(0, 4, &folded);
         let available = separation(0, 4, &havoc);
 
-        // The two spellings print identically but are different propositions,
+        // The two forms print identically but are different propositions,
         // so plain exact matching must miss.
         assert_ne!(required, available);
         assert_eq!(
@@ -2407,7 +2400,7 @@ mod tests {
             std::slice::from_ref(&available)
         ));
 
-        // The recorded execution facts: the two spellings of the cell pointer
+        // The recorded execution facts: the two forms of the cell pointer
         // denote one offset, and the loaded pointer's field is separate from
         // the written cell range.
         let offsets_equal = Proposition::ConditionIs(
@@ -2427,7 +2420,7 @@ mod tests {
                 &assumptions,
             ),
             Some(available.clone()),
-            "the bounded separation matcher must transport the unfold spelling to the fold point"
+            "the bounded separation matcher must transport the unfold form to the fold point"
         );
     }
 }
@@ -2473,7 +2466,7 @@ impl CanonicalBridgeSide for PointerOffsetTerm {
 
 impl CanonicalBridgeSide for Bitvector32Term {
     /// A side names a load either by its canonical variable or by the load
-    /// itself; both spellings denote one atom, so both answer here.
+    /// itself; both forms denote one atom, so both answer here.
     fn canonical_variable(&self) -> Option<Variable> {
         match self {
             Bitvector32Term::Variable(variable) => {
@@ -2506,7 +2499,7 @@ impl CanonicalBridgeSide for Bitvector32Term {
 /// Whether an equality premise follows from recorded equalities of the same
 /// shape by chaining through canonical load variables. Canonical variables
 /// are kernel-internal names invisible to Click source, so a premise and the
-/// recorded facts may legitimately spell one user-level equality through
+/// recorded facts may legitimately write one user-level equality through
 /// different intermediate names. The closure is bounded: only equality facts
 /// with a canonical-variable endpoint contribute edges, and the walk visits
 /// each side at most once.
@@ -2607,7 +2600,7 @@ impl<'a> OriginsUnchanged<'a> {
     }
 }
 
-/// The spellings of `side` that name the same cell as one of `endpoints`.
+/// The forms of `side` that name the same cell as one of `endpoints`.
 fn origin_renamings<S: CanonicalBridgeSide>(
     side: &S,
     endpoints: &[S],
@@ -2616,19 +2609,17 @@ fn origin_renamings<S: CanonicalBridgeSide>(
     let Some(variable) = side.canonical_variable() else {
         return vec![side.clone()];
     };
-    let mut spellings = vec![side.clone()];
+    let mut forms = vec![side.clone()];
     for endpoint in endpoints {
         let candidate = endpoint
             .canonical_variable()
             .expect("filtered by the caller");
-        if candidate != variable
-            && origins.decide(variable, candidate)
-            && !spellings.contains(endpoint)
+        if candidate != variable && origins.decide(variable, candidate) && !forms.contains(endpoint)
         {
-            spellings.push(endpoint.clone());
+            forms.push(endpoint.clone());
         }
     }
-    spellings
+    forms
 }
 
 fn bridged_with_origins<S: CanonicalBridgeSide>(
@@ -2658,14 +2649,14 @@ fn bridged_with_origins<S: CanonicalBridgeSide>(
         .flat_map(|(left, right)| [left, right])
         .filter(|side| side.canonical_variable().is_some())
         .collect();
-    let start_spellings = origin_renamings(&start, &endpoints, &mut origins);
-    let goal_spellings = origin_renamings(&goal, &endpoints, &mut origins);
-    for start_spelling in &start_spellings {
-        for goal_spelling in &goal_spellings {
-            if start_spelling == goal_spelling {
+    let start_forms = origin_renamings(&start, &endpoints, &mut origins);
+    let goal_forms = origin_renamings(&goal, &endpoints, &mut origins);
+    for start_form in &start_forms {
+        for goal_form in &goal_forms {
+            if start_form == goal_form {
                 return true;
             }
-            let candidate = S::equality(start_spelling.clone(), goal_spelling.clone());
+            let candidate = S::equality(start_form.clone(), goal_form.clone());
             if bridged_by_canonical_name_edges::<S>(&candidate, facts) {
                 return true;
             }

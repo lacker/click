@@ -2471,7 +2471,7 @@ fn field_derived_capacity_range_covers_a_shorter_live_prefix() {
 
     assert!(
         assumptions.derive_atomic_proposition(&target).is_some(),
-        "a field-derived capacity range must cover an entry-spelled live-prefix cell"
+        "a field-derived capacity range must cover an entry-written live-prefix cell"
     );
 }
 
@@ -4321,7 +4321,7 @@ fn derived_order_contradiction_resolves_load_endpoints() {
 
 /// Pins the cross-snapshot reach of the order-conflict fallback: loads of one
 /// untouched cell from two snapshots related by a recorded effect are equal,
-/// so a strict order between them is a contradiction. Neither spelling is an
+/// so a strict order between them is a contradiction. Neither form is an
 /// equality-graph edge.
 #[test]
 fn derived_order_contradiction_bridges_snapshot_loads() {

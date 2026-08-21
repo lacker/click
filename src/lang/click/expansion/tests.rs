@@ -873,7 +873,7 @@ int32 increment_and_return_old(int32 p[1]) {
 }
 
 #[test]
-fn expansion_preserves_unfolded_resource_and_predicate_fact_spellings() {
+fn expansion_preserves_unfolded_resource_and_predicate_fact_forms() {
     let c_source = r#"
 struct box {
     int32 len;
@@ -930,7 +930,7 @@ int32 inspect(struct box* owner) {
 
     // The assertions below are about the emitted `step() using` premises,
     // not the resource declaration echoed above them; scope to the block
-    // so a spelling surviving only in the declaration cannot pass.
+    // so a form surviving only in the declaration cannot pass.
     let step_using = expanded
         .split("step() using {")
         .nth(1)

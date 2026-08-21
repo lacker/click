@@ -409,7 +409,7 @@ fn prove_mutation_footprint_with_policy(
                 // function entry, writes memory the caller could not have
                 // held when the footprint was declared (a callee reallocated
                 // it mid-execution); the entry footprint does not govern it.
-                // Spellings are kernel-minted, so an entry allocation always
+                // Forms are kernel-minted, so an entry allocation always
                 // matches its own entry key up to exact materialization.
                 && !(crate::kernel::c_memory_holds_live_heap_allocation_at(
                     before,

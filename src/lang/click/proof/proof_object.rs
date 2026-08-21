@@ -2652,7 +2652,7 @@ impl<'a> Proof<'a> {
         );
         for condition in &branch_conditions {
             let negated = ClickProposition::Not(Box::new(condition.clone()));
-            let mut surface_spellings = vec![condition.clone(), negated.clone()];
+            let mut surface_forms = vec![condition.clone(), negated.clone()];
             for candidate in [
                 reverse_surface_comparison(condition),
                 reverse_surface_comparison(&negated),
@@ -2660,8 +2660,8 @@ impl<'a> Proof<'a> {
             .into_iter()
             .flatten()
             {
-                if !surface_spellings.contains(&candidate) {
-                    surface_spellings.push(candidate);
+                if !surface_forms.contains(&candidate) {
+                    surface_forms.push(candidate);
                 }
             }
             for (path_index, path) in execution.paths().iter().enumerate() {
@@ -2676,7 +2676,7 @@ impl<'a> Proof<'a> {
                 };
                 let mut path_facts = available.clone();
                 path_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-                for surface in &surface_spellings {
+                for surface in &surface_forms {
                     let kernel = lower_outcome_proposition_with_program_points(
                         context.parsed_function.parameters(),
                         context.arguments,
@@ -2818,7 +2818,7 @@ impl<'a> Proof<'a> {
             return Ok(None);
         };
         if frame_candidate_needs_snapshot_legacy(&candidate) {
-            // Snapshot-qualified theorem spellings can add a kernel fact that
+            // Snapshot-qualified theorem forms can add a kernel fact that
             // is exact in this recorded lowering context but still require a
             // trailing `assumption` when replayed from fresh source. Until
             // Proof owns that stable surface identity, leave this candidate
@@ -2967,9 +2967,9 @@ impl<'a> Proof<'a> {
             );
         };
         if !self.facts().contains(left)
-            && !condition_polarity_spellings(left)
+            && !condition_polarity_forms(left)
                 .iter()
-                .any(|spelling| self.facts().contains(spelling))
+                .any(|form| self.facts().contains(form))
         {
             return Err(self.step_error(format!(
                 "`left` requires its selected disjunct as an exact fact: {left:?}"
@@ -2988,9 +2988,9 @@ impl<'a> Proof<'a> {
             );
         };
         if !self.facts().contains(right)
-            && !condition_polarity_spellings(right)
+            && !condition_polarity_forms(right)
                 .iter()
-                .any(|spelling| self.facts().contains(spelling))
+                .any(|form| self.facts().contains(form))
         {
             return Err(self.step_error(format!(
                 "`right` requires its selected disjunct as an exact fact: {right:?}"
@@ -3579,7 +3579,7 @@ impl<'a> Proof<'a> {
             PostExecutionTactic::CheckedFrameUsing {
                 authority: CheckedFrameAuthority::new(record.expected_effects.clone()),
                 // The structured node below owns the two exact surface
-                // spellings. This deferral is semantic authority only.
+                // forms. This deferral is semantic authority only.
                 region: None,
                 premises: Vec::new(),
                 surface_certificate: None,
@@ -3704,18 +3704,18 @@ impl<'a> Proof<'a> {
                 ProofContext::Pure(context) => context
                     .theorem_context
                     .surface_requirements
-                    .kernels_spelled_by_predicate(name)
+                    .kernels_written_by_predicate(name)
                     .cloned()
                     .collect::<Vec<_>>(),
                 ProofContext::Point(context) => context
                     .surface_propositions
-                    .kernels_spelled_by_predicate(name)
+                    .kernels_written_by_predicate(name)
                     .cloned()
                     .collect::<Vec<_>>(),
                 ProofContext::Execution(_) => self
                     .outcome_point_view()
                     .into_iter()
-                    .flat_map(|view| view.surface_propositions.kernels_spelled_by_predicate(name))
+                    .flat_map(|view| view.surface_propositions.kernels_written_by_predicate(name))
                     .cloned()
                     .collect::<Vec<_>>(),
             };
@@ -4018,7 +4018,7 @@ impl<'a> Proof<'a> {
             )
             .map_err(|message| {
                 self.step_error(format!(
-                    "could not retain the checked C branch condition spelling: {message}"
+                    "could not retain the checked C branch condition form: {message}"
                 ))
             })?;
             arm_execution
@@ -6052,7 +6052,7 @@ impl<'a> Proof<'a> {
                 })
             }
             // A judgment carrying outcome point data lowers result-aware:
-            // `result` and outcome-anchored spellings resolve against the
+            // `result` and outcome-anchored forms resolve against the
             // outcome's own state, recorded lowerings, and return value.
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
                 let view = self
@@ -6108,12 +6108,12 @@ impl<'a> Proof<'a> {
 
     /// Lowers a surface proposition at this Proof's actual semantic point,
     /// without accepting a historical Surface-to-kernel index entry as a
-    /// substitute for an in-scope spelling.
+    /// substitute for an in-scope form.
     ///
     /// The ordinary checker may use that index to recognize an exact fact.
     /// Smart theorem selection additionally needs arguments that can be
     /// lowered when the retained `apply` step runs. In particular, a local
-    /// that has left scope must be spelled through `at(...)` rather than
+    /// that has left scope must be written through `at(...)` rather than
     /// merely associated with an indexed historical fact.
     fn lower_surface_proposition_direct(
         &self,
@@ -6179,7 +6179,7 @@ impl<'a> Proof<'a> {
     /// Lowers a newly stated proof goal at the current semantic point.
     ///
     /// Fact references may deliberately resolve through a recorded surface
-    /// spelling, but a new goal may not: the same spelling can name facts
+    /// form, but a new goal may not: the same form can name facts
     /// retained from an older snapshot. Selecting such a fact here would let
     /// `have P by assumption` check one kernel proposition and serialize a
     /// surface `P` that independently lowers to another.
@@ -6211,7 +6211,7 @@ impl<'a> Proof<'a> {
             // A judgment stated at a function outcome lowers strictly at
             // that outcome: like the point arm above, this deliberately
             // skips the recorded-lowering shortcut so a newly stated goal
-            // cannot borrow a same-spelled fact's older snapshot anchoring.
+            // cannot borrow a same-written fact's older snapshot anchoring.
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
                 let view = self
                     .outcome_point_view()
@@ -6279,7 +6279,7 @@ impl<'a> Proof<'a> {
     /// Substitutes only logical binders introduced while refining this
     /// proposition goal. General proof locals participate in source-level
     /// selection elsewhere; eagerly substituting them into every transport
-    /// candidate turns prompt spelling rejection into expensive semantic
+    /// candidate turns prompt form rejection into expensive semantic
     /// alias search.
     fn substitute_goal_surface_bindings_in_proposition(
         &self,
@@ -6384,7 +6384,7 @@ impl<'a> Proof<'a> {
                     None => None,
                 };
                 // Point and outcome certificates replay `unfold` from its
-                // retained Surface spelling.  Re-lower that unfolded body
+                // retained surface form.  Re-lower that unfolded body
                 // against the checked successor facts as part of this same
                 // audited step, so resource counts and current memory loads
                 // resolve exactly as they do during independent replay.
@@ -6695,7 +6695,7 @@ impl<'a> Proof<'a> {
 
     /// Exact semantic facts selected or established by the latest step, in
     /// step-defined order. This lets enclosing surface bookkeeping record the
-    /// checker-owned spellings without re-lowering them.
+    /// checker-owned forms without re-lowering them.
     pub(super) fn checked_facts(&self) -> &[Proposition] {
         self.state.checked_facts.as_ref()
     }
@@ -6807,7 +6807,7 @@ impl<'a> Proof<'a> {
 
     /// Proves a two-edge non-strict outcome bound at the return entry or its
     /// immediate predecessor. Outcome lowering deliberately keeps selected
-    /// premises in their source spelling; anchoring those exact premises at
+    /// premises in their source form; anchoring those exact premises at
     /// the execution boundary lets the ordinary theorem checker connect a
     /// returned local to its result without consulting the retired planner.
     fn try_outcome_anchored_order_transitivity(
@@ -7212,7 +7212,7 @@ impl<'a> Proof<'a> {
 
     /// Closes from the just-introduced antecedent and one exact indexed
     /// opposite. The antecedent fixes the kernel pair; Surface lookup visits
-    /// only spellings recorded for those two facts, never the ambient set.
+    /// only forms recorded for those two facts, never the ambient set.
     fn try_introduced_antecedent_contradiction(
         &self,
         surface_antecedent: &ClickProposition,
@@ -7264,10 +7264,10 @@ impl<'a> Proof<'a> {
         Ok(None)
     }
 
-    /// Retains the kernel decision and every exact replayable Surface spelling
+    /// Retains the kernel decision and every exact replayable surface form
     /// among its context premises. A typed evidence translator selects and
     /// requires its own exact premises from this subset; unrelated transitive
-    /// search context need not be Surface-spellable. This is a read-only smart
+    /// search context need not be Surface-synthesizable. This is a read-only smart
     /// query: only the later `apply_step` calls may advance the proof.
     fn selected_simp_derivation(
         &self,
@@ -7297,7 +7297,7 @@ impl<'a> Proof<'a> {
                         &point.surface_propositions,
                         // Entry-anchored premises can add a replay-equivalent
                         // outcome fact without discharging the exact goal
-                        // spelling. Keep the ordinary trailing assumption so
+                        // form. Keep the ordinary trailing assumption so
                         // the checked successor decides whether it is needed.
                         false,
                         point.premise_anchor.as_ref(),
@@ -7314,11 +7314,11 @@ impl<'a> Proof<'a> {
             if let Some(surface) = self.replayable_surface_fact(surface_facts, anchor, premise) {
                 return Some((premise.clone(), surface));
             }
-            condition_polarity_spellings(premise)
+            condition_polarity_forms(premise)
                 .into_iter()
-                .find_map(|spelling| {
-                    let surface = self.replayable_surface_fact(surface_facts, anchor, &spelling);
-                    surface.map(|surface| (spelling, surface))
+                .find_map(|form| {
+                    let surface = self.replayable_surface_fact(surface_facts, anchor, &form);
+                    surface.map(|surface| (form, surface))
                 })
         };
         let mut premise_pairs = context_premises
@@ -7328,7 +7328,7 @@ impl<'a> Proof<'a> {
         // A structured branch continuation can clear `last_step_entry`, or a
         // later common statement can move it past the point where the
         // selected premises were established. If the initially resolved
-        // subset already carries one common explicit `at(...)` spelling,
+        // subset already carries one common explicit `at(...)` form,
         // retry this same finite premise list at that point. No ambient fact
         // or program-point scan participates.
         let anchors = premise_pairs
@@ -7353,10 +7353,10 @@ impl<'a> Proof<'a> {
         ))
     }
 
-    /// Resolves one exact retained fact to a surface spelling that will lower
+    /// Resolves one exact retained fact to a surface form that will lower
     /// back to that same kernel proposition when the selected simple step is
-    /// replayed. Historical locals are anchored before ordinary spellings are
-    /// considered, so a same-spelled newer snapshot cannot be substituted.
+    /// replayed. Historical locals are anchored before ordinary forms are
+    /// considered, so a same-written newer snapshot cannot be substituted.
     fn replayable_surface_fact(
         &self,
         surface_facts: &SurfacePropositionMap,
@@ -7374,7 +7374,7 @@ impl<'a> Proof<'a> {
                 return Some(());
             }
             let lowered = self
-                .lower_surface_proposition_direct(candidate, "typed simp premise spelling")
+                .lower_surface_proposition_direct(candidate, "typed simp premise form")
                 .ok()?;
             (lowered == *kernel || condition_polarity_equivalent(&lowered, kernel)).then_some(())
         };
@@ -7386,10 +7386,10 @@ impl<'a> Proof<'a> {
             return Some(surface.clone());
         }
         // Function requirements retain their original unanchored Surface
-        // spelling while their kernel fact is entry-relative. Probe that one
+        // form while their kernel fact is entry-relative. Probe that one
         // canonical source site before the moving statement-entry anchor;
         // the direct lowering check below rejects non-entry facts, and the
-        // lookup visits only spellings indexed under this selected premise.
+        // lookup visits only forms indexed under this selected premise.
         let function_entry = ProgramPointRef {
             region: CodeRegionRef::Function,
             kind: ProgramPointKind::Entry,
@@ -7473,8 +7473,8 @@ impl<'a> Proof<'a> {
             return Some(surface);
         }
         // Quantified execution facts may be retained in the canonical memory
-        // spelling used by the kernel while their recorded Surface form
-        // lowers to a replay-equivalent snapshot spelling. Probe only the
+        // form used by the kernel while their recorded Surface form
+        // lowers to a replay-equivalent snapshot term. Probe only the
         // persistent alpha/canonical-load bucket for this selected premise;
         // `InstantiateUsing` validates the same equivalence on replay.
         if matches!(kernel, Proposition::ForAll { .. }) {
@@ -7483,7 +7483,7 @@ impl<'a> Proof<'a> {
                     let lowered = self
                         .lower_surface_proposition_direct(
                             surface,
-                            "typed quantified simp premise spelling",
+                            "typed quantified simp premise form",
                         )
                         .ok()?;
                     if quantified_replay_equivalent_available_fact(
@@ -7502,7 +7502,7 @@ impl<'a> Proof<'a> {
         // Reconstruct only this derivation-selected premise at the current
         // semantic point and accept it only when ordinary lowering recovers
         // the exact kernel fact. This is constant work per typed proof edge,
-        // not an ambient spelling search.
+        // not an ambient form search.
         let synthesis_context = match self.context.as_ref() {
             ProofContext::Pure(_) => None,
             ProofContext::Point(context) => {
@@ -7631,7 +7631,7 @@ impl<'a> Proof<'a> {
     /// Searches the structured predecessor proof already expressible through
     /// the checked API. The goal itself fixes the value and upper bound, so
     /// this visits only selected equalities connected to that value and one
-    /// exact upper-bound premise; it never tries every partially spellable
+    /// exact upper-bound premise; it never tries every partially synthesizable
     /// context fact as a candidate step.
     fn try_selected_predecessor_upper_bound(
         &self,
@@ -7839,7 +7839,7 @@ impl<'a> Proof<'a> {
                 .collect::<BTreeMap<_, _>>(),
             _ => BTreeMap::new(),
         };
-        let surface_spelling = |fact: &Proposition| {
+        let surface_form = |fact: &Proposition| {
             let recorded = match self.context.as_ref() {
                 ProofContext::Pure(context) => context
                     .theorem_context
@@ -7885,7 +7885,7 @@ impl<'a> Proof<'a> {
             // Reject shape-incompatible universals before Surface lookup or
             // synthesis. Candidate extraction is structural and bounded by
             // this one indexed fact and the focused goal; the expensive
-            // spelling work is reserved for a specialization that can
+            // form work is reserved for a specialization that can
             // actually mention the goal's concrete argument.
             let candidate_values =
                 crate::kernel::forall_guided_instantiation_candidate_values(quantified, goal);
@@ -7959,7 +7959,7 @@ impl<'a> Proof<'a> {
                 surfaces.push(synthesized);
             }
             // Unfolding retains the opaque predicate fact alongside its
-            // checked body. Reconstruct that body's exact Surface spelling
+            // checked body. Reconstruct that body's exact surface form
             // from only the active predicate indexes when generic synthesis
             // cannot express it (notably byte-indexed loads).
             if surfaces.is_empty() {
@@ -8062,7 +8062,7 @@ impl<'a> Proof<'a> {
                                 continue;
                             }
                             let exact = std::iter::once(conjunct.clone())
-                                .chain(condition_polarity_spellings(conjunct))
+                                .chain(condition_polarity_forms(conjunct))
                                 .find(|candidate| self.facts().contains(candidate));
                             let selected = exact.map(|fact| vec![fact]).or_else(|| {
                                 self.facts()
@@ -8075,7 +8075,7 @@ impl<'a> Proof<'a> {
                                 break;
                             };
                             for actual in selected {
-                                let Some(spelling) = surface_spelling(&actual) else {
+                                let Some(form) = surface_form(&actual) else {
                                     guards_available = false;
                                     break;
                                 };
@@ -8083,7 +8083,7 @@ impl<'a> Proof<'a> {
                                     .iter()
                                     .any(|(candidate, _)| candidate == &actual)
                                 {
-                                    guard_facts.push((actual, spelling));
+                                    guard_facts.push((actual, form));
                                 }
                             }
                             if !guards_available {
@@ -8134,20 +8134,20 @@ impl<'a> Proof<'a> {
                         continue;
                     };
                     let mut transport_surfaces = Vec::new();
-                    let mut transport_spelled = true;
+                    let mut transport_written = true;
                     for premise in transport_derivation.context_premises() {
                         if premise == conclusion {
                             continue;
                         }
-                        let Some(spelling) = surface_spelling(&premise) else {
-                            transport_spelled = false;
+                        let Some(form) = surface_form(&premise) else {
+                            transport_written = false;
                             break;
                         };
-                        if !transport_surfaces.contains(&spelling) {
-                            transport_surfaces.push(spelling);
+                        if !transport_surfaces.contains(&form) {
+                            transport_surfaces.push(form);
                         }
                     }
-                    if !transport_spelled {
+                    if !transport_written {
                         continue;
                     }
                     let (selector, quantified_surface) = match &surface {
@@ -8215,7 +8215,7 @@ impl<'a> Proof<'a> {
     /// Retains the point-wise unchanged-load certificate for a guarded
     /// universal outcome. The kernel derivation has already selected the
     /// finite context premises relevant to this goal; after introducing the
-    /// binder and guard, transport searches only those spellings plus the
+    /// binder and guard, transport searches only those forms plus the
     /// freshly extracted guard leaves.
     fn try_selected_unchanged_load_forall_goal(
         &self,
@@ -9065,7 +9065,7 @@ impl<'a> Proof<'a> {
                 .or_else(|| execution.replay.surface_propositions.surfaces(&fact).next());
             let Some(surface) = surface.cloned() else {
                 // A resource-local justification need not have a standalone
-                // Surface proposition spelling. The empty simple candidate
+                // Surface proposition form. The empty simple candidate
                 // remains the only sound fallback and is checked normally.
                 return self.try_statement_step_using(Vec::new());
             };
@@ -9163,7 +9163,7 @@ impl<'a> Proof<'a> {
         };
         // Path preparation can unfold predicate requirements in place. Keep
         // the point view's requirement prefix aligned with the checked fact
-        // context so indexed `choose` sources use that exact spelling.
+        // context so indexed `choose` sources use that exact form.
         let requires = match self.context.as_ref() {
             ProofContext::Execution(context) => context.function_block.requires().len(),
             _ => 0,
@@ -9537,7 +9537,7 @@ impl<'a> Proof<'a> {
         self.try_linear_execute()
     }
 
-    /// Searches explicit premise spellings for one point fact transport.
+    /// Searches explicit premise forms for one point fact transport.
     ///
     /// Every candidate is checked by applying the corresponding simple step
     /// to this immutable root. Failed descendants are discarded; the
@@ -9566,7 +9566,7 @@ impl<'a> Proof<'a> {
 
     /// Tries the bounded source-local form of mid-execution fact transport on
     /// this immutable execution Proof. The smart operation checks the empty
-    /// candidate and the source's own explicit spelling; it never scans the
+    /// candidate and the source's own explicit form; it never scans the
     /// ambient fact set. Richer premise discovery remains on the legacy path
     /// until it has a relevance index rather than an environment-wide scan.
     pub(super) fn try_execution_fact_transport(
@@ -9889,8 +9889,8 @@ impl<'a> Proof<'a> {
             // Reuse the established snapshot-surface search for execution
             // proofs, with availability answered by persistent indexes. The
             // canonical fact above comes from the requirement's shape bucket,
-            // so sibling snapshot spellings remain visible without rebuilding
-            // the complete ambient fact vector. The returned spelling still
+            // so sibling snapshot terms remain visible without rebuilding
+            // the complete ambient fact vector. The returned form still
             // has to survive `apply_step` below.
             let mut snapshot_surface_error = None;
             if let ProofContext::Execution(_) = self.context.as_ref() {
@@ -9938,14 +9938,14 @@ impl<'a> Proof<'a> {
             }
             if candidates.is_empty() {
                 return Err(self.step_error(format!(
-                    "theorem application `{}` has no checked Click spelling for exact premise `{requirement:?}`",
+                    "theorem application `{}` has no checked surface form for exact premise `{requirement:?}`",
                     application.name
                 )));
             }
             let surface = candidates
                 .into_iter()
                 // SurfacePropositionMap treats the most recently recorded
-                // spelling as canonical. Prefer it here too; earlier entries
+                // form as canonical. Prefer it here too; earlier entries
                 // can be mechanically valid but over-anchor constants as
                 // `at(point, constant)` and produce needlessly unstable
                 // certificates.
@@ -9973,7 +9973,7 @@ impl<'a> Proof<'a> {
                 })
                 .ok_or_else(|| {
                     self.step_error(format!(
-                        "theorem application `{}` has no checked Click spelling for exact premise `{requirement:?}`{}",
+                        "theorem application `{}` has no checked surface form for exact premise `{requirement:?}`{}",
                         application.name,
                         snapshot_surface_error
                             .as_ref()
@@ -9993,7 +9993,7 @@ impl<'a> Proof<'a> {
     }
 
     /// Untrusted pure smart-tactic query for one explicit theorem step.
-    /// This instantiates the applied theorem's own requirement spellings and
+    /// This instantiates the applied theorem's own requirement forms and
     /// probes their lowered forms through the current persistent fact index;
     /// it cannot advance the proof or add the theorem's conclusion.
     pub(super) fn select_pure_theorem_application_step(
@@ -11188,7 +11188,7 @@ impl<'a> Proof<'a> {
     }
 }
 
-/// The source-level spelling of one simple step, for diagnostics that point
+/// The source-level form of one simple step, for diagnostics that point
 /// at a line the user wrote.
 fn simple_step_source_name(step: &SimpleProofStep) -> &'static str {
     match step {
@@ -11945,9 +11945,9 @@ impl ProofFacts {
     /// equivalence as the legacy structural checker.
     pub(super) fn contains_proper_conjunct(&self, required: &Proposition) -> bool {
         self.proper_conjuncts.contains(required)
-            || condition_polarity_spellings(required)
+            || condition_polarity_forms(required)
                 .iter()
-                .any(|spelling| self.proper_conjuncts.contains(spelling))
+                .any(|form| self.proper_conjuncts.contains(form))
     }
 
     /// Exact or direct-load-materialization-equivalent availability used by
@@ -12011,7 +12011,7 @@ impl ProofFacts {
 
     /// Returns one actual available fact accepted by explicit replay. Smart
     /// syntax selection needs the retained fact, not merely a yes/no answer:
-    /// its recorded Surface spelling may carry a statement snapshot that the
+    /// its recorded surface form may carry a statement snapshot that the
     /// freshly lowered theorem requirement no longer exposes.
     fn matching_replay_fact_across_effects(
         &self,
@@ -12036,7 +12036,7 @@ impl ProofFacts {
         // Preserve the legacy selector's canonical materialization choice,
         // but search only the requirement's persistent shape bucket. The
         // chosen sibling snapshot can have a stable recorded `at(...)`
-        // spelling even when the freshly lowered requirement is also present.
+        // form even when the freshly lowered requirement is also present.
         if let Some(candidate) =
             materialization_equivalent_available_fact(required, &indexed_candidates)
         {
@@ -12045,11 +12045,11 @@ impl ProofFacts {
         if self.exact.contains(required) {
             return Some(required.clone());
         }
-        if let Some(spelling) = condition_polarity_spellings(required)
+        if let Some(form) = condition_polarity_forms(required)
             .into_iter()
-            .find(|spelling| self.exact.contains(spelling))
+            .find(|form| self.exact.contains(form))
         {
-            return Some(spelling);
+            return Some(form);
         }
 
         if self.exact.contains(&normalized) {
@@ -12146,9 +12146,9 @@ impl ProofFacts {
         framing: &[ExecutionPureFact],
     ) -> bool {
         if self.contains(required)
-            || condition_polarity_spellings(required)
+            || condition_polarity_forms(required)
                 .iter()
-                .any(|spelling| self.exact.contains(spelling))
+                .any(|form| self.exact.contains(form))
         {
             return true;
         }
@@ -14015,7 +14015,7 @@ mod tests {
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(&surface, &older)
-            .expect("the older spelling should be recorded");
+            .expect("the older form should be recorded");
         let root = Proof::for_point_frontier(
             "point have current goal",
             0,
@@ -14038,7 +14038,7 @@ mod tests {
             .expect("the current point goal should lower independently");
         assert!(
             scope.apply_step(SimpleProofStep::Assumption).is_err(),
-            "an older fact with the same surface spelling must not close the current goal"
+            "an older fact with the same surface form must not close the current goal"
         );
         assert!(root.certificate().steps().is_empty());
     }
@@ -14594,7 +14594,7 @@ mod tests {
             assert_eq!(rewritten.certificate().steps(), &[step.clone()]);
             assert!(
                 rewritten.surface_goal().is_none(),
-                "a Surface spelling that lowers through extra normalization must not be paired with the unnormalized kernel successor"
+                "a surface form that lowers through extra normalization must not be paired with the unnormalized kernel successor"
             );
             assert!(rewritten.added_facts().is_empty());
             assert!(!rewritten.is_complete());
@@ -14703,7 +14703,7 @@ mod tests {
         ] {
             surface_requirements
                 .record_lowering(surface, kernel)
-                .expect("selected rewrite premise should have an exact spelling");
+                .expect("selected rewrite premise should have an exact form");
         }
 
         for size in [16_u32, 64, 256, 1024, 4096] {
@@ -15253,7 +15253,7 @@ mod tests {
             replay
                 .surface_propositions
                 .record_lowering(&premise, &kernel_premise)
-                .expect("the selected premise spelling should be recorded");
+                .expect("the selected premise form should be recorded");
             let root = Proof::for_execution_frontier(
                 "persistent theorem application",
                 0,
@@ -15462,7 +15462,7 @@ mod tests {
             replay
                 .surface_propositions
                 .record_lowering(&premise, &kernel_premise)
-                .expect("the selected premise spelling should be recorded");
+                .expect("the selected premise form should be recorded");
             let root = Proof::for_execution_frontier(
                 "branch theorem search",
                 0,
@@ -15791,7 +15791,7 @@ mod tests {
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(&premise, &kernel_premise)
-            .expect("the selected premise spelling should be recorded");
+            .expect("the selected premise form should be recorded");
 
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
@@ -16047,7 +16047,7 @@ mod tests {
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(surface_premise, &kernel_premise)
-            .expect("the selected premise spelling should be recorded");
+            .expect("the selected premise form should be recorded");
 
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
@@ -16279,7 +16279,7 @@ mod tests {
         for (kernel, surface) in premises.iter().zip(&surfaces) {
             surface_requirements
                 .record_lowering(surface, kernel)
-                .expect("the exact requirement spelling should be indexed");
+                .expect("the exact requirement form should be indexed");
         }
 
         for size in [16_u32, 64, 256, 1024, 4096] {
@@ -16371,7 +16371,7 @@ mod tests {
         let mut surface_requirements = SurfacePropositionMap::default();
         surface_requirements
             .record_lowering(&equality, &kernel_equality)
-            .expect("the exact equality spelling should be indexed");
+            .expect("the exact equality form should be indexed");
 
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut requires = (0..size).map(indexed_fact).collect::<Vec<_>>();
@@ -16479,7 +16479,7 @@ mod tests {
             let mut surface_requirements = SurfacePropositionMap::default();
             surface_requirements
                 .record_lowering(&equality_surface, &equality_fact)
-                .expect("the selected equality spelling should be indexed");
+                .expect("the selected equality form should be indexed");
             let theorem_context = PureTheoremContext {
                 memory: memory.clone(),
                 values: BTreeMap::new(),
@@ -16586,7 +16586,7 @@ mod tests {
             for (surface, kernel) in surfaces.iter().zip(selected.iter()) {
                 surface_requirements
                     .record_lowering(surface, kernel)
-                    .expect("the selected equality spelling should be indexed");
+                    .expect("the selected equality form should be indexed");
             }
             let theorem_context = PureTheoremContext {
                 memory: memory.clone(),
@@ -16693,10 +16693,10 @@ mod tests {
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(&equality, &kernel_equality)
-            .expect("the exact equality spelling should be indexed");
+            .expect("the exact equality form should be indexed");
         surface_propositions
             .record_lowering(&upper_bound, &kernel_upper_bound)
-            .expect("the exact upper-bound spelling should be indexed");
+            .expect("the exact upper-bound form should be indexed");
 
         for size in [16_u32, 64, 256, 1024, 4096] {
             let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
@@ -16796,7 +16796,7 @@ mod tests {
         for (kernel, surface) in premises.iter().zip(&surfaces) {
             surface_propositions
                 .record_lowering(surface, kernel)
-                .expect("the exact point spelling should be indexed");
+                .expect("the exact point form should be indexed");
         }
 
         for size in [16_u32, 64, 256, 1024, 4096] {
@@ -16901,7 +16901,7 @@ mod tests {
         for (kernel, surface) in premises.iter().zip(&surfaces) {
             surface_propositions
                 .record_lowering(surface, kernel)
-                .expect("the exact point spelling should be indexed");
+                .expect("the exact point form should be indexed");
         }
 
         for size in [16_u32, 64, 256, 1024, 4096] {
@@ -17006,7 +17006,7 @@ mod tests {
         for (kernel, surface) in premises.iter().zip(&surfaces) {
             surface_propositions
                 .record_lowering(surface, kernel)
-                .expect("the exact point spelling should be indexed");
+                .expect("the exact point form should be indexed");
         }
 
         for size in [16_u32, 64, 256, 1024, 4096] {
@@ -17547,9 +17547,9 @@ mod tests {
             right: constant(0),
         };
         let anchored_lower = surface_with_source_site(&lower_premise, &point)
-            .expect("the branch-exported lower bound should admit a point spelling");
+            .expect("the branch-exported lower bound should admit a point form");
         let anchored_upper = surface_with_source_site(&upper_premise, &point)
-            .expect("the continuation upper bound should admit a point spelling");
+            .expect("the continuation upper bound should admit a point form");
         let lower = |surface: &ClickProposition| {
             lower_point_proposition_with_assumptions(
                 surface,
@@ -19298,7 +19298,7 @@ mod tests {
             replay
                 .surface_propositions
                 .record_lowering(&surface, &predicate)
-                .expect("the selected predicate spelling should be recorded");
+                .expect("the selected predicate form should be recorded");
             let root = Proof::for_execution_frontier(
                 "persistent unfold",
                 0,
@@ -19929,7 +19929,7 @@ mod tests {
             replay
                 .surface_propositions
                 .record_lowering(&surface, &kernel)
-                .expect("the source spelling should be recorded");
+                .expect("the source form should be recorded");
             let root = Proof::for_execution_frontier(
                 "persistent transport",
                 0,
@@ -20057,7 +20057,7 @@ mod tests {
             replay
                 .surface_propositions
                 .record_lowering(&source, &kernel_source)
-                .expect("the selected source spelling should be recorded");
+                .expect("the selected source form should be recorded");
             let root = Proof::for_execution_frontier(
                 "persistent transport search",
                 0,

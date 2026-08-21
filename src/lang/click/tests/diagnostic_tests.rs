@@ -291,7 +291,7 @@ fn certificate_reconstruction_diagnostics_summarize_internal_snapshots() {
             (
                 fact.clone(),
                 ClickError::new(
-                    "comparison fact has no replayable Surface Click spelling at this proof point",
+                    "comparison fact has no replayable surface form at this proof point",
                 ),
             )
         })
@@ -301,7 +301,7 @@ fn certificate_reconstruction_diagnostics_summarize_internal_snapshots() {
 
     assert!(rendered.contains("int32 equality is true"), "{rendered}");
     assert!(
-        rendered.contains("no replayable Surface Click spelling"),
+        rendered.contains("no replayable surface form"),
         "{rendered}"
     );
     assert!(rendered.contains("8 more omitted"), "{rendered}");
@@ -468,7 +468,7 @@ fn verifier_diagnostics_bound_fact_items_and_show_resource_deltas() {
 }
 
 #[test]
-fn resource_delta_explains_identical_surface_spellings() {
+fn resource_delta_explains_identical_surface_forms() {
     let pointer = Pointer {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::Constant(0),
@@ -499,7 +499,7 @@ fn resource_delta_explains_identical_surface_spellings() {
 
     let delta = super::diagnostics::describe_function_outcome_delta(&desired, &certified, &[], &[]);
     assert!(
-        delta.contains("identical surface spellings")
+        delta.contains("identical surface forms")
             && delta.contains("hidden memory snapshots or internal identities"),
         "{delta}"
     );

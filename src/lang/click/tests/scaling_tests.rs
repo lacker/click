@@ -190,14 +190,14 @@ fn function_with_unrelated_facts(fact_count: usize, proof: &str) -> (String, Str
     (c_source, click_source)
 }
 
-fn theorem_with_many_spellings(spelling_count: usize) -> String {
+fn theorem_with_many_forms(form_count: usize) -> String {
     let mut requirements = String::new();
-    for zero_count in 0..spelling_count {
+    for zero_count in 0..form_count {
         let expression = format!("target{}", " + 0".repeat(zero_count));
         requirements.push_str(&format!("    requires {expression} == 7;\n"));
     }
     format!(
-        "theorem surface_spelling_scaling(target: int32) {{\n{requirements}    ensures target == 7 by {{ assumption(); }}\n}}\n"
+        "theorem surface_form_scaling(target: int32) {{\n{requirements}    ensures target == 7 by {{ assumption(); }}\n}}\n"
     )
 }
 
@@ -467,15 +467,15 @@ fn explicit_transport_scales_near_linearly_with_unrelated_ambient_facts() {
 }
 
 #[test]
-fn same_kernel_fact_with_many_surface_spellings_scales_near_linearly() {
+fn same_kernel_fact_with_many_surface_forms_scales_near_linearly() {
     let samples = [4, 8, 16, 32]
         .into_iter()
         .map(|size| {
-            let source = theorem_with_many_spellings(size);
+            let source = theorem_with_many_forms(size);
             let (verified, sample) = scaling_sample(size, || verify_click_theorems(&source));
             verified.unwrap_or_else(|error| {
                 panic!(
-                    "size {size} surface-spelling scaling fixture failed: {}",
+                    "size {size} surface-form scaling fixture failed: {}",
                     error.message()
                 )
             });
@@ -483,7 +483,7 @@ fn same_kernel_fact_with_many_surface_spellings_scales_near_linearly() {
         })
         .collect::<Vec<_>>();
 
-    assert_near_linear_scaling("same kernel fact with many surface spellings", &samples);
+    assert_near_linear_scaling("same kernel fact with many surface forms", &samples);
 }
 
 #[test]

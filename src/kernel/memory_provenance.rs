@@ -6,7 +6,7 @@ pub(crate) fn canonical_c_memory_for_pointer_load(memory: &CMemory, pointer: &Po
     canonical_memory_for_pointer_load(memory, pointer)
 }
 
-/// Checks whether two resource spellings denote the same resource using only
+/// Checks whether two resource forms denote the same resource using only
 /// exact facts and the bounded memory-resolution relation. This is intended
 /// for certificate replay: it does not search for containment or separation.
 pub(crate) fn c_resources_directly_match(
@@ -256,7 +256,7 @@ fn pointers_match_for_resource_replay(
 }
 
 /// Assumption-free canonical form of a whole memory: every cell key and
-/// value canonicalizes its embedded loads. Spellings of the same memory
+/// value canonicalizes its embedded loads. Forms of the same memory
 /// produced at different execution points compare equal when their
 /// difference is representational.
 pub(crate) fn canonical_c_memory_deep(memory: &CMemory) -> CMemory {
@@ -527,7 +527,7 @@ fn c_memory_load_is_unchanged_unmemoized(
 /// [`load_unchanged_via_effect_chain`] reconstructs a write history at proof
 /// time from `CMemoryMutatesOnly` / `CMemoryEffectSummary` facts and links
 /// hops by deep-canonical snapshot equality, this walks the history itself
-/// and links hops by arena identity, so two spellings of one location cannot
+/// and links hops by arena identity, so two forms of one location cannot
 /// drift apart between program points.
 ///
 /// Soundness rests on three things. Each `Store` hop is crossed only when
@@ -587,7 +587,7 @@ fn memory_derivations_reach(
         }
         // The replay and the independent kernel certification build parallel
         // derivation chains for one execution, so the target is often a
-        // sibling spelling of a snapshot on this chain rather than the same
+        // sibling form of a snapshot on this chain rather than the same
         // interned object. Decide that pair with the bounded pointer-load
         // matcher — havoc marker sets must agree, so this never crosses a
         // mutation event the edge rules would have refused.
@@ -604,7 +604,7 @@ fn memory_derivations_reach(
 
         // Ids strictly decrease along `base`, so an id at or below the
         // target's can no longer reach the target *object* — but a sibling
-        // spelling of the target on this chain can still match below that
+        // form of the target on this chain can still match below that
         // point, so the walk continues under its hop cap instead of exiting.
         let Some(derivation) = current.derivation() else {
             return false;
@@ -1188,7 +1188,7 @@ impl AtomicMemoryLoadEqualityEvidence {
 // The hop predicates reach `decide` and the range-disjointness provers,
 // which reach the cell-source provers again. One nested level is allowed —
 // a hop's range certificate may itself need a single DAG hop to match the
-// spelling of its base — and the cap makes the recursion depth-gated per
+// form of its base — and the cap makes the recursion depth-gated per
 // conventions.md. Answers computed at depth 1 see the cutoff and are never
 // memoized.
 const CELL_LOOKUP_DEPTH_LIMIT: u8 = 2;
@@ -1219,7 +1219,7 @@ const MEMORY_DAG_HOP_DISTINCTNESS_FUEL: usize = 128;
 // order-path load matching in assumptions.rs) runs ONLY inside the loadable
 // prover. Everywhere else — execution pruning, load canonicalization, simp
 // planning — behavior must stay byte-identical to the pre-arc path, because
-// certified spellings and case-split structure replay against it. The flag
+// certified forms and case-split structure replay against it. The flag
 // is scoped, not global, so generation and replay of the same query always
 // agree.
 thread_local! {
@@ -1416,7 +1416,7 @@ fn memory_dag_cell_source(
                 // `memory_derivations_reach` crosses `Store` hops with.
                 // Extended-bridging scope only, and under its own capped
                 // budget so this advisory walk can never drain the
-                // enclosing query's fuel — fuel-coupled spellings elsewhere
+                // enclosing query's fuel — fuel-coupled forms elsewhere
                 // must replay byte-for-byte.
                 if write.blocks_proven_distinct(pointer) {
                     MemoryDagHopJustification::StoreDistinctBlocks
@@ -1601,7 +1601,7 @@ pub(super) fn heap_allocation_proven_separate_from_pointer(
 /// wired in *ahead* of the canonicalizing comparisons rather than beside
 /// them. Where those take two embedded snapshots, deep-canonicalize both and
 /// compare the results structurally, this follows named edges and compares
-/// arena ids, so the common case — two spellings of one cell separated only
+/// arena ids, so the common case — two forms of one cell separated only
 /// by stores that provably missed it — costs a short walk instead of a deep
 /// term rewrite.
 ///
@@ -1686,7 +1686,7 @@ fn with_cell_lookup_depth<T>(body: impl FnOnce() -> T) -> Option<T> {
 /// Beyond the node-identity comparison, one side's walk may land on a
 /// `Store` whose recorded value IS the other side verbatim — the common case
 /// for a load-caching store (`cells[p] := load(older, p)`): the newer
-/// snapshot's cell literally pins the older spelling. That is still a pure
+/// snapshot's cell literally pins the older form. That is still a pure
 /// DAG answer (the value comes off a derivation edge, compared structurally),
 /// so it stays inside the exact-facts-plus-edges determinism boundary.
 pub(super) fn atomic_loads_equal_along_memory_derivations(
@@ -1934,7 +1934,7 @@ fn load_unchanged_via_effect_chain(
     if steps.is_empty() {
         return false;
     }
-    // Hops link pointer-relatively: two spellings of one snapshot may carry
+    // Hops link pointer-relatively: two forms of one snapshot may carry
     // different unrelated cells (deep-canonical equality then fails), but a
     // load-preservation chain only needs the pointed-at cell to agree at
     // every junction. The effect graph is finite, so traverse it to a fixed
@@ -2303,7 +2303,7 @@ fn transport_framed_separation_theorem(
 }
 
 /// A separation names two memory regions through address and extent terms;
-/// respelling those terms at the post-effect snapshot under the same frame
+/// rewriting those terms at the post-effect snapshot under the same frame
 /// evidence preserves the denoted regions, so the separation transports
 /// exactly as a condition fact does. Never inlined: the caller participates
 /// in transport recursion.
@@ -2354,7 +2354,7 @@ fn transport_framed_atomic_memory_range(
 }
 
 /// Rewrites subterms of a condition fact that equal a certified store's
-/// value into loads from that store's post-memory, so a fact spelled in
+/// value into loads from that store's post-memory, so a fact written in
 /// pre-store terms can be transported across the store. The rewriting is
 /// definitional: a certified store guarantees `load(after, pointer)` equals
 /// the stored value.
@@ -2471,7 +2471,7 @@ const CANONICAL_LOAD_DEPTH_LIMIT: usize = 24;
 
 /// Deep, assumption-free canonical form for a term: every load resolves its
 /// cached cell or canonicalizes its snapshot and pointer, at every depth,
-/// including inside conditionals, folds, and pointer offsets. Two spellings
+/// including inside conditionals, folds, and pointer offsets. Two forms
 /// of the same value produced at different execution points canonicalize
 /// identically whenever the difference is representational.
 pub(super) fn canonicalize_atomic_loads_with_depth(
@@ -2617,7 +2617,7 @@ pub(super) fn canonicalize_pointer_loads(pointer: &Pointer, depth: usize) -> Poi
 }
 
 /// Compares two condition facts operandwise under memory-resolution
-/// equality, so spellings that differ only in provably-irrelevant cached
+/// equality, so forms that differ only in provably-irrelevant cached
 /// cells compare equal.
 pub(crate) fn c_condition_facts_equivalent_for_memory_resolution(
     left: &Proposition,
@@ -2989,12 +2989,12 @@ fn transport_framed_atomic_bitvector(
         Bitvector32Term::Variable(variable) => {
             // A canonical load variable transports as the load it names:
             // when frame evidence rewrites that load to the post-effect
-            // snapshot, the fact is respelled with the post-point canonical
+            // snapshot, the fact is rewriteed with the post-point canonical
             // name — the content-addressed mint gives the same name any
             // later lowering at that snapshot produces. A defining equation
-            // in the ambient assumptions carries the mint-time spelling,
+            // in the ambient assumptions carries the mint-time form,
             // whose live snapshot the frame checks can actually relate to
-            // `after`; the registry's canonicalized spelling is the
+            // `after`; the registry's canonicalized form is the
             // fallback.
             let named_load = assumptions
                 .and_then(|(assumptions, _)| {
@@ -3362,7 +3362,7 @@ fn effect_pointer_equality_stops_at_the_verification_deadline() {
     });
 }
 
-/// Canonicalizes the loads inside a binary condition so spellings differing
+/// Canonicalizes the loads inside a binary condition so forms differing
 /// only in redundant cached cells compare and prove identically.
 pub(super) fn condition_with_canonical_loads(condition: &ConditionTerm) -> Option<ConditionTerm> {
     condition_with_canonical_loads_with_depth(condition, 0)
@@ -3403,7 +3403,7 @@ fn condition_with_canonical_loads_with_depth(
     })
 }
 
-/// Public form of canonical-load rewriting for condition facts: spellings
+/// Public form of canonical-load rewriting for condition facts: forms
 /// that differ only in redundant cached cells canonicalize identically.
 pub(crate) fn c_condition_fact_with_canonical_loads(fact: &Proposition) -> Proposition {
     let Proposition::ConditionIs(condition, value) = fact else {

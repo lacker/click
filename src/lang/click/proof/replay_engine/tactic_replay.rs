@@ -151,7 +151,7 @@ fn execute_frontier_local_loop(
     let mut next_statement_index = statement_index;
     let mut next_loop_index = loop_index;
     // `unfold` retains the opaque predicate atom alongside its definition so
-    // later surface tactics can still refer to either spelling.  A verified
+    // later surface tactics can still refer to either form.  A verified
     // loop rule must not turn that proof-context convenience into an ambient
     // kernel prerequisite: exact contract certification exposes the fully
     // unfolded definition.  Keep every other fact, including the expanded
@@ -929,7 +929,7 @@ fn try_smart_frame_on_proof<'a>(
             *branch_path = context.branch_path;
             // Function frames are recorded by their checked ordered drain.
             // A region frame contributes facts at that drain but its exact
-            // simple spelling is already owned by this Proof, so retain the
+            // simple form is already owned by this Proof, so retain the
             // node now just as the former construction path did.
             if !ordered_deferred || ordered_region_frame {
                 for step in certificate.steps() {
@@ -2146,7 +2146,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 // into the block's nested proof. A flat top-level exit frame
                 // is recorded by the drain instead: its independent replay
                 // defers the frame work, the deferrals carry into this
-                // replay, and the drain spells the same steps in deferral
+                // replay, and the drain writes the same steps in deferral
                 // order — merging here would misplace them before every
                 // earlier deferred tactic.
                 let merge_construction = replay.open_scopes > 0
@@ -2675,7 +2675,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
                 // Smart search and certificate construction are one event:
                 // the goal is proved exactly when its evidence has been
-                // spelled as a replayable ProofCertificate.
+                // written as a replayable ProofCertificate.
                 let smart_result = match (&checked_proof_result, &smart_unfolds) {
                     (Some(_), _) => None,
                     (None, Some(unfolded_predicates)) => Some(construct_smart_have_certificate(

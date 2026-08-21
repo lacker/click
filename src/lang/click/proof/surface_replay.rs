@@ -160,13 +160,13 @@ fn checked_surface_fact_at_point_with_assumptions(
     let candidate = synthesize_surface_proposition(&resolved_kernel, parameters, arguments, state)
         .ok_or_else(|| {
             ClickError::new(surface_synthesis_failure(
-                "kernel fact has no recorded or structurally synthesized Click spelling",
+                "kernel fact has no recorded or structurally synthesized surface form",
                 kernel,
             ))
         })?;
     let lowered = check(&candidate);
     // The round trip is judged against the resolved fact: fresh lowering
-    // spells loads as load terms, while the original may name them through
+    // writes loads as load terms, while the original may name them through
     // kernel-minted variables whose defining equations the resolution
     // already substituted.
     let round_trip_matches =
@@ -421,7 +421,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     // Candidates below are matched through the permissive candidate lowering
     // (symbolic contract loads allowed), but the emitted certificate is
     // replayed by the ordinary executor, whose strict lowering carries
-    // loadability obligations. A spelling that only lowers permissively —
+    // loadability obligations. A form that only lowers permissively —
     // for example a snapshot fact whose `at(...)` anchor was dropped so its
     // current-state loads are not provably loadable — must not be emitted.
     let strictly_replayable = |surface: &ClickProposition| {
@@ -440,10 +440,10 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         .as_ref()
         .is_ok_and(&fact_is_available)
     };
-    // A snapshot-indexed spelling paired with this exact available kernel fact
+    // A snapshot-indexed form paired with this exact available kernel fact
     // is replayable through the replay engine's program-point record. Requiring
     // it to lower again against the current heap would incorrectly demand that
-    // old loads remain loadable now. Current-state spellings do not have that
+    // old loads remain loadable now. Current-state forms do not have that
     // stable anchor and still go through `strictly_replayable` below.
     let mut recorded_surfaces = replay
         .surface_propositions
@@ -530,7 +530,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         crate::kernel::resolve_minted_load_variables(kernel, &replay.effect_facts);
     // Canonical variables name loads whose snapshots the point index needs;
     // resolve through the registry when no defining fact is in scope, and
-    // index points from the load spelling rather than the internal name.
+    // index points from the load term rather than the internal name.
     let resolved_kernel = if &resolved_kernel == kernel {
         crate::kernel::resolve_canonical_load_variables_from_registry(kernel)
     } else {
@@ -671,11 +671,11 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     }
     if let Some(exhaustion) = surface_synthesis_exhaustion_description() {
         return Err(ClickError::new(format!(
-            "comparison fact has no checked Click spelling at this proof point: {exhaustion}"
+            "comparison fact has no checked surface form at this proof point: {exhaustion}"
         )));
     }
     Err(ClickError::new(format!(
-        "comparison fact has no replayable Surface Click spelling at this proof point ({} exact and {} compatible recorded snapshots, {} structural bases)",
+        "comparison fact has no replayable surface form at this proof point ({} exact and {} compatible recorded snapshots, {} structural bases)",
         exact_points.len(),
         compatible_points.len(),
         bases.len(),
@@ -716,11 +716,11 @@ impl std::ops::DerefMut for ProofCertificateConstructionContext<'_> {
 /// Constructs the surface step(s) for one planned operation directly into the
 /// planning replay's own [`ProofCertificateBuilder`]. This is the plan-time
 /// counterpart of the old plan-lowering replay: search commits to a move and
-/// immediately records how that move is spelled in Surface Click, so a smart
+/// immediately records how that move is written in Surface Click, so a smart
 /// tactic's result is a [`ProofCertificate`] value rather than a private operation
-/// program that must be re-executed to discover its spelling.
+/// program that must be re-executed to discover its form.
 ///
-/// Premises are spelled against the builder's replay-visible
+/// Premises are written against the builder's replay-visible
 /// `certificate_facts`, not the planning executor's own fact set.
 pub(super) fn construct_simple_step_for_planned_operation(
     replay: &mut TacticReplayState,
@@ -844,7 +844,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     });
                 let Some(surface) = surface else {
                     replay.proof_certificate_builder.block(format!(
-                        "statement-local frame witness has no checked Click spelling: {:?}",
+                        "statement-local frame witness has no checked surface form: {:?}",
                         transport.target
                     ));
                     continue;
@@ -900,7 +900,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         .record_lowering(&surface, &lowered)
                     {
                         replay.proof_certificate_builder.block(format!(
-                            "public opaque-call result fact has no stable Surface Click spelling: {}",
+                            "public opaque-call result fact has no stable surface form: {}",
                             error.message()
                         ));
                         continue;
@@ -964,7 +964,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 // Preserve an explicit unfolding already present in the
                 // ambient proof. Reconstructing the same prerequisite from
                 // an opaque predicate would add an unnecessary local `have`
-                // and discard the user's established source spelling.
+                // and discard the user's established source form.
                 if let Ok(Some(derivation)) = minimal_proposition_derivation(exact, available)
                     && !derivation
                         .context_premises()
@@ -1097,11 +1097,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                 for fact in &selectable_available {
                     atomic_conjuncts(fact, &mut available_conjuncts);
                 }
-                // Source-spelled memory-range separation facts (for example
+                // Source-written memory-range separation facts (for example
                 // a resource body's canonical
                 // `separate(memory(object(owner)), ...)` aggregate) that can
                 // re-fold a decomposed per-field separation back to its
-                // declared spelling below. Entailment assumptions are built
+                // declared form below. Entailment assumptions are built
                 // lazily, at most once per candidate.
                 let memory_separation_bases = |fact: &Proposition| {
                     let Proposition::CResourceSeparate { left, right } = fact else {
@@ -1112,7 +1112,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     };
                     Some((left.base().clone(), right.base().clone()))
                 };
-                let mut spelled_separations = available_conjuncts
+                let mut written_separations = available_conjuncts
                     .iter()
                     .copied()
                     .filter_map(|candidate| {
@@ -1144,7 +1144,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     // A permission the resource projection reproduces is
                     // reconstructed by the replay for itself. One it does not
                     // reproduce is only available because the ambient context
-                    // carried it, so the certificate has to spell it.
+                    // carried it, so the certificate has to write it.
                     let non_reconstructible_permission =
                         statement_step_permission_needs_surface_premise(
                             fact,
@@ -1154,10 +1154,10 @@ pub(super) fn append_simple_proof_step_for_operation(
                         continue;
                     }
                     // A separation carried only as an ambient permission may
-                    // be one piece of a source-spelled aggregate (`unfold`
+                    // be one piece of a source-written aggregate (`unfold`
                     // decomposes `separate(memory(object(owner)), ...)` into
                     // per-field separations). Re-fold it: emit the strictly
-                    // stronger declared fact, whose canonical spelling the
+                    // stronger declared fact, whose canonical form the
                     // replay derives the per-field pieces from, instead of
                     // the decomposed piece.
                     let fact = 'fold: {
@@ -1170,7 +1170,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             break 'fold fact;
                         };
                         let mut fact_is_foldable = None;
-                        for (candidate, (left, right), cached) in &mut spelled_separations {
+                        for (candidate, (left, right), cached) in &mut written_separations {
                             if *candidate == fact
                                 || !(*left == fact_left && *right == fact_right
                                     || *left == fact_right && *right == fact_left)
@@ -1180,7 +1180,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             // An arithmetically true separation (same base,
                             // disjoint constant ranges) is derivable from
                             // any premise set, so entailment cannot pick a
-                            // fold target for it; keep its own spelling.
+                            // fold target for it; keep its own form.
                             let foldable = *fact_is_foldable.get_or_insert_with(|| {
                                 assumptions_from_propositions(&[])
                                     .derive_atomic_proposition(fact)
@@ -1670,7 +1670,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 premises
             });
             replay.proof_certificate_builder.block(match premises {
-                Ok(_) => "a detached loop-summary certificate has no surface spelling; use a frontier-local `loop { ... }` tactic".to_string(),
+                Ok(_) => "a detached loop-summary certificate has no surface form; use a frontier-local `loop { ... }` tactic".to_string(),
                 Err(error) => format!(
                     "could not express a loop-summary premise at the current proof point: {}",
                     error.message()
@@ -1679,7 +1679,7 @@ pub(super) fn append_simple_proof_step_for_operation(
         }
         (None, Some(ConstructionEvidence::CertifiedFactTransport { source, target, .. })) => {
             // A canonical-load defining equation is kernel-internal naming
-            // with no user-visible spelling; its transported form at the new
+            // with no user-visible form; its transported form at the new
             // snapshot is itself certified by construction, so expansion
             // needs no explicit step for it.
             if crate::kernel::is_canonical_load_defining_fact(source)
@@ -1734,7 +1734,7 @@ pub(super) fn append_simple_proof_step_for_operation(
             }
             if base_surfaces.is_empty() {
                 replay.proof_certificate_builder.block(format!(
-                    "fact transport has no recorded or synthesized Click comparison spelling\n  source: {source:?}\n  target: {target:?}"
+                    "fact transport has no recorded or synthesized Click comparison form\n  source: {source:?}\n  target: {target:?}"
                 ));
                 return;
             }
@@ -1800,7 +1800,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     // The certified pair may sit at a snapshot no recorded
                     // point reproduces syntactically; accept a candidate
                     // whose lowering provably transports to the certified
-                    // spelling.
+                    // form.
                     if memory_erased_comparison(&actual).is_some()
                         && memory_erased_comparison(&actual) == memory_erased_comparison(expected)
                         && let Some(after) = proposition_outer_load_memory(expected)
@@ -1834,7 +1834,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             .surface_propositions
                             .surfaces(source)
                             .any(|surface| surface == premise);
-                        let entry_spelling_matches = surface_with_source_site(premise, &step_entry)
+                        let entry_form_matches = surface_with_source_site(premise, &step_entry)
                             .ok()
                             .and_then(|candidate| {
                                 lower_surface_candidate_at_point(
@@ -1853,7 +1853,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 normalize_direct_atomic_memory_loads(&lowered)
                                     == normalize_direct_atomic_memory_loads(source)
                             });
-                        (recorded || entry_spelling_matches).then_some(premise.clone())
+                        (recorded || entry_form_matches).then_some(premise.clone())
                     })
                 });
             if let Some(surface_source) = &selected_by_preceding_step {
@@ -1868,7 +1868,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     .record_lowering(&surface_target, target)
                 {
                     replay.proof_certificate_builder.block(format!(
-                        "could not retain the selected statement transport target spelling: {}",
+                        "could not retain the selected statement transport target form: {}",
                         error.message()
                     ));
                 }
@@ -1884,7 +1884,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         .record_lowering(&surface_target, &lowered_surface_target)
                     {
                         replay.proof_certificate_builder.block(format!(
-                            "could not retain the certified fact transport target spelling: {}",
+                            "could not retain the certified fact transport target form: {}",
                             error.message()
                         ));
                     }
@@ -1919,7 +1919,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 .record_lowering(&surface_target, &lowered_surface_target)
                             {
                                 replay.proof_certificate_builder.block(format!(
-                                    "could not retain the certified fact transport target spelling: {}",
+                                    "could not retain the certified fact transport target form: {}",
                                     error.message()
                                 ));
                             }
@@ -1959,7 +1959,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                                     })
                                 {
                                     replay.proof_certificate_builder.block(format!(
-                                        "could not retain the statement-attached fact transport spelling: {}",
+                                        "could not retain the statement-attached fact transport form: {}",
                                         record_error.message()
                                     ));
                                 }
@@ -1992,7 +1992,7 @@ pub(super) fn append_simple_proof_step_for_operation(
             }),
         ) => {
             // Planning records the exact statement-entry point where the
-            // branch decision was made. Keep that spelling here: alternatives
+            // branch decision was made. Keep that form here: alternatives
             // can replay without their common statement-step prefix, so a
             // transient "last step" pointer is not a reliable anchor.
             let condition = condition.clone();
@@ -2026,7 +2026,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         .record_lowering(&surface_fact, certified_fact)
                     {
                         replay.proof_certificate_builder.block(format!(
-                            "could not retain the certified path-condition spelling: {}",
+                            "could not retain the certified path-condition form: {}",
                             error.message()
                         ));
                         return;
@@ -2114,7 +2114,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     for derivation in derivations {
                         check_verification_deadline()?;
                         // A derivation that merely bridges a kernel-minted
-                        // load variable to its defining load spelling is
+                        // load variable to its defining load term is
                         // certified bookkeeping: replay re-mints the same
                         // variable and equation deterministically, so the
                         // generated certificate neither needs nor can name
@@ -2487,17 +2487,17 @@ pub(super) fn surface_simp_plan_proof(
     Ok(SourceProof::Script(tactics))
 }
 
-/// How a restricted-`simp` premise's certificate spelling relates to the
+/// How a restricted-`simp` premise's certificate form relates to the
 /// replay-visible fact set. Certificates may cite `ExactlyAvailable`
-/// spellings directly; a `SnapshotBridged` spelling denotes an available fact
+/// forms directly; a `SnapshotBridged` form denotes an available fact
 /// only through the kernel's certified snapshot bridge and must be
 /// materialized by an explicit transport step before simple replay can use it.
-enum PremiseSpelling {
+enum PremiseForm {
     ExactlyAvailable,
     SnapshotBridged,
 }
 
-/// The snapshot-anchored reflexive spelling a transport re-anchors from when
+/// The snapshot-anchored reflexive form a transport re-anchors from when
 /// a listed premise equates one expression across two program points. For
 /// `x == at(P, x)` this is `at(P, x) == at(P, x)`: trivially derivable at the
 /// recorded point, with the certified bridge carrying one side to the current
@@ -2525,9 +2525,9 @@ fn reflexive_snapshot_transport_source(surface: &ClickProposition) -> Option<Cli
 }
 
 /// The single construction event for a smart `have`/`simp` at the current
-/// proof point: kernel search selects its evidence and the same call spells
+/// proof point: kernel search selects its evidence and the same call writes
 /// that evidence as a replayable [`ProofCertificate`]. Search may only succeed
-/// through derivations the surface vocabulary can spell; there is no retained
+/// through derivations the surface vocabulary can write; there is no retained
 /// plan between the two, and no separate lowering pass to disagree with the
 /// search that already succeeded.
 #[allow(clippy::too_many_arguments)]
@@ -2623,7 +2623,7 @@ pub(super) fn surface_smart_have_certificate(
                             .available_kernel(surface, restricted_context_available)
                             .cloned()
                         {
-                            return Ok((kernel, PremiseSpelling::ExactlyAvailable));
+                            return Ok((kernel, PremiseForm::ExactlyAvailable));
                         }
                         let freshly_lowered = lower_point_proposition(
                             surface,
@@ -2643,7 +2643,7 @@ pub(super) fn surface_smart_have_certificate(
                                     || condition_polarity_equivalent(fact, lowered)
                             })
                         {
-                            return Ok((fact.clone(), PremiseSpelling::ExactlyAvailable));
+                            return Ok((fact.clone(), PremiseForm::ExactlyAvailable));
                         }
                         if let Ok(lowered) = &freshly_lowered
                             && exact_proper_conjunct_is_available(
@@ -2651,7 +2651,7 @@ pub(super) fn surface_smart_have_certificate(
                                 restricted_context_available,
                             )
                         {
-                            return Ok((lowered.clone(), PremiseSpelling::ExactlyAvailable));
+                            return Ok((lowered.clone(), PremiseForm::ExactlyAvailable));
                         }
                         if let Ok(lowered) = &freshly_lowered
                             && let Some(fact) =
@@ -2660,7 +2660,7 @@ pub(super) fn surface_smart_have_certificate(
                                     restricted_context_available,
                                 )
                         {
-                            return Ok((fact, PremiseSpelling::ExactlyAvailable));
+                            return Ok((fact, PremiseForm::ExactlyAvailable));
                         }
                         if let Ok(lowered) = &freshly_lowered
                             && snapshot_bridged_fact_is_available(
@@ -2669,15 +2669,15 @@ pub(super) fn surface_smart_have_certificate(
                                 &[],
                             )
                         {
-                            // Retain the listed spelling after checking that
+                            // Retain the listed form after checking that
                             // it is the same available fact across certified
                             // snapshots. The restricted reasoning context is
                             // still exactly the listed premise vector — but
-                            // the spelling itself is not an exact replay-time
+                            // the form itself is not an exact replay-time
                             // fact, so the certificate must materialize it
                             // with an explicit snapshot transport before any
                             // simple step may cite it as evidence.
-                            return Ok((lowered.clone(), PremiseSpelling::SnapshotBridged));
+                            return Ok((lowered.clone(), PremiseForm::SnapshotBridged));
                         }
                         if let Ok(lowered) = &freshly_lowered
                             && premise_bridged_by_canonical_name_chain(
@@ -2688,9 +2688,9 @@ pub(super) fn surface_smart_have_certificate(
                             // Canonical load variables are kernel-internal
                             // names; recorded equalities chained through one
                             // are the same user-level fact, and replay closes
-                            // over the same chain, so the listed spelling is
+                            // over the same chain, so the listed form is
                             // exactly citable.
-                            return Ok((lowered.clone(), PremiseSpelling::ExactlyAvailable));
+                            return Ok((lowered.clone(), PremiseForm::ExactlyAvailable));
                         }
                         Err(ClickError::new(match freshly_lowered {
                             Ok(_) => format!(
@@ -2776,20 +2776,20 @@ pub(super) fn surface_smart_have_certificate(
                 .map(|(_, surface)| ProofTactic::Extract(surface.clone())),
         );
         // A snapshot-bridged premise is certified evidence, but its listed
-        // spelling is not an exact replay-time fact. Simple `rewrite` never
-        // searches, so the certificate must first materialize the spelling
+        // form is not an exact replay-time fact. Simple `rewrite` never
+        // searches, so the certificate must first materialize the form
         // with an explicit snapshot transport; the premise then reaches the
         // rewrite as an exact available fact.
         let resolved = restricted_resolved
             .as_ref()
             .expect("restricted premises were resolved above");
-        for ((_, surface), (_, spelling)) in pairs.iter().zip(resolved) {
-            if !matches!(spelling, PremiseSpelling::SnapshotBridged) {
+        for ((_, surface), (_, form)) in pairs.iter().zip(resolved) {
+            if !matches!(form, PremiseForm::SnapshotBridged) {
                 continue;
             }
             // Only tactics that demand the premise as an exact replay-time
-            // fact need the spelling materialized. `extract` and
-            // `assumption` replay decide a bridged spelling with the same
+            // fact need the form materialized. `extract` and
+            // `assumption` replay decide a bridged form with the same
             // snapshot bridge that certified the premise, so a bridged
             // premise consumed only by them needs no transport.
             let consumed_exactly = explicit.iter().any(|tactic| match tactic {

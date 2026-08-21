@@ -160,11 +160,9 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
                 while chars.get(index).is_some_and(|next| next.is_ascii_digit()) {
                     index += 1;
                 }
-                let spelling: String = chars[start..index].iter().collect();
-                let value = spelling.parse::<u32>().map_err(|_| {
-                    ClickError::new(format!(
-                        "{position}: number `{spelling}` does not fit in u32"
-                    ))
+                let form: String = chars[start..index].iter().collect();
+                let value = form.parse::<u32>().map_err(|_| {
+                    ClickError::new(format!("{position}: number `{form}` does not fit in u32"))
                 })?;
                 if chars.get(index) == Some(&'u') && chars.get(index + 1) == Some(&'8') {
                     if chars
@@ -172,13 +170,13 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
                         .is_some_and(|next| is_ident_continue(*next))
                     {
                         return Err(ClickError::new(format!(
-                            "{position}: invalid uint8 literal `{spelling}u8{}`",
+                            "{position}: invalid uint8 literal `{form}u8{}`",
                             chars[index + 2]
                         )));
                     }
                     let value = u8::try_from(value).map_err(|_| {
                         ClickError::new(format!(
-                            "{position}: uint8 literal `{spelling}u8` is outside 0..255"
+                            "{position}: uint8 literal `{form}u8` is outside 0..255"
                         ))
                     })?;
                     tokens.push(Token::UInt8Number(value));

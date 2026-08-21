@@ -471,8 +471,8 @@ fn parses_execute_and_simp_proof_tactics() {
 }
 
 #[test]
-fn rejects_retired_tactic_spellings_with_migrations() {
-    for (spelling, replacement) in [
+fn rejects_retired_tactic_forms_with_migrations() {
+    for (form, replacement) in [
         ("conjunction", "split"),
         ("apply_loop_summary", "frontier-local"),
         ("summarize", "frontier-local"),
@@ -486,19 +486,18 @@ fn rejects_retired_tactic_spellings_with_migrations() {
         ("double_negation", "intro"),
         ("vacuous", "intro"),
     ] {
-        let source =
-            format!("theorem legacy(x: int32) {{ ensures x == x by {{ {spelling}(); }} }}");
+        let source = format!("theorem legacy(x: int32) {{ ensures x == x by {{ {form}(); }} }}");
         let error = parse(&source).expect_err("retired tactic should be rejected");
         assert!(
             error.message().contains(replacement),
-            "{spelling}: {}",
+            "{form}: {}",
             error.message()
         );
     }
 }
 
 #[test]
-fn rejects_redundant_exact_premise_spellings_with_migrations() {
+fn rejects_redundant_exact_premise_forms_with_migrations() {
     let old_derive = r#"
         theorem legacy(x: int32) {
             requires x == x;

@@ -3,13 +3,13 @@ use super::*;
 /// Rewrites kernel-minted load variables back to their defining load terms,
 /// using the certified defining equations the canonicalizing loader pushed
 /// into the execution fact stream. Surface synthesis calls this before
-/// spelling a kernel fact, so a fact mentioning a minted variable spells as
+/// form a kernel fact, so a fact mentioning a minted variable writes as
 /// the loaded expression the source actually wrote.
 /// The pointer-level companion of [`resolve_minted_load_variables`]: rewrites
 /// kernel-minted load variables inside a pointer's offset using
 /// defining-shaped equations drawn from an assumption context. Range and
 /// containment provers call this on their query pointer so a minted address
-/// matches ranges still spelled through loads.
+/// matches ranges still written through loads.
 pub(crate) fn resolve_minted_load_pointer(
     pointer: &Pointer,
     assumptions: &PureFactContext,
@@ -36,11 +36,11 @@ pub(crate) fn resolve_minted_load_pointer(
 
 /// Resolves canonical load variables in a proposition through
 /// defining-equation propositions (`v == load(snapshot, ptr)`), restoring
-/// the load spellings. For surface-spelling synthesis, where the internal
-/// names have no Click spelling but their loads do.
+/// the load terms. For surface-form synthesis, where the internal
+/// names have no surface form but their loads do.
 /// Resolves canonical load variables in a proposition through the
-/// thread-local registry, restoring the load spellings the internal names
-/// stand for. For surface-spelling synthesis when no defining equation is
+/// thread-local registry, restoring the load terms the internal names
+/// stand for. For surface-form synthesis when no defining equation is
 /// in scope: the registry is the mint's own record of what each canonical
 /// variable names.
 pub fn resolve_canonical_load_variables_from_registry(proposition: &Proposition) -> Proposition {

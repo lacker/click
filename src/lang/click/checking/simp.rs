@@ -207,7 +207,7 @@ pub(in crate::lang::click) fn rewrite_proposition_by_exact_equality(
 /// Whether rewriting by this equality cannot change any goal: it states
 /// that a term equals itself, or it has already simplified to `true`.
 ///
-/// Both arise when the prover resolves two spellings a proof script still
+/// Both arise when the prover resolves two forms a proof script still
 /// distinguishes. The step is then vacuous rather than wrong, so it must not
 /// be reported as a missing occurrence or an unsupported equality shape.
 fn equality_is_vacuous(equality: &Proposition) -> bool {
@@ -243,7 +243,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
             // Canonical load variables are kernel-internal names. Recorded
             // equalities chained through one are the same user-level fact,
             // and two names framing shows to be one unchanged cell are the
-            // same atom, so an equality over either spelling is available.
+            // same atom, so an equality over either form is available.
             || crate::lang::click::proof::fact_reasoning::premise_bridged_by_canonical_name_chain_with_origins(
                 fact,
                 available,
@@ -275,7 +275,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
         ) -> PointerOffsetTerm {
             if offset == left
                 || normalize_direct_atomic_pointer_offset_loads(offset) == *normalized_left
-                // Canonical load names and load spellings of one atom are
+                // Canonical load names and load terms of one atom are
                 // the same occurrence.
                 || crate::kernel::offsets_match_modulo_canonical_names(offset, left)
             {
@@ -511,7 +511,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
             }
         };
         // A pointer equality also rewrites the subject of a load: replacing
-        // the loaded pointer with its proven-equal spelling is exact term
+        // the loaded pointer with its proven-equal form is exact term
         // congruence, with work bounded by the goal's size.
         fn rewrite_load_pointers(
             term: &Bitvector32Term,
@@ -650,7 +650,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
         if term == from
             || normalize_direct_atomic_memory_load(term)
                 == normalize_direct_atomic_memory_load(from)
-            // Canonical load names and load spellings of one atom are the
+            // Canonical load names and load terms of one atom are the
             // same occurrence.
             || crate::kernel::terms_match_modulo_canonical_names(term, from)
         {
@@ -1299,10 +1299,10 @@ fn normalize_direct_atomic_memory_load_uncached(term: &Bitvector32Term) -> Bitve
 }
 
 /// The checked kernel evidence behind one successful smart simplification.
-/// Search produces this at the moment it succeeds and immediately spells it
+/// Search produces this at the moment it succeeds and immediately writes it
 /// as explicit surface tactics; it is never stored, ordered into a plan, or
 /// replayed as a private operation program. A derivation the surface
-/// vocabulary cannot spell is a search failure, not a lowering error.
+/// vocabulary cannot write is a search failure, not a lowering error.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::lang::click) enum SimpEvidence {
     /// The goal is (an exact equivalent of) an available fact.

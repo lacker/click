@@ -860,7 +860,7 @@ fn point_have_certifies_a_post_call_fact_across_a_later_store() {
     // against the call's post-state snapshot; the later store to
     // `pair->high` moves the current memory past it. The mid-proof `have`
     // must still produce a replaying certificate for the fact in its
-    // current spelling. (The full stale-spelling rewrite rejection is
+    // current form. (The full stale-form rewrite rejection is
     // exercised by `examples/bounded-pool`'s `pool_pipeline`.)
     let reset_source = r#"
         struct pair {
@@ -919,7 +919,7 @@ fn point_have_certifies_a_post_call_fact_across_a_later_store() {
     )
     .unwrap_or_else(|error| {
         panic!(
-            "the post-call have should certify without a stale-spelling rewrite: {}",
+            "the post-call have should certify without a stale-form rewrite: {}",
             error.message()
         )
     });

@@ -497,7 +497,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn certified_load_spelling_transports_through_pointer_alias_and_store() {
+    fn certified_load_form_transports_through_pointer_alias_and_store() {
         let source_pointer = Pointer {
             block: "data".into(),
             offset: PointerOffsetTerm::Variable(Variable(70_001)),
@@ -546,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn contract_load_spelling_ignores_unrelated_pointer_shapes() {
+    fn contract_load_form_ignores_unrelated_pointer_shapes() {
         let memory = CMemory::new();
         let target = Pointer {
             block: "target".into(),
@@ -597,7 +597,7 @@ mod tests {
 
         assert!(
             samples.windows(2).all(|pair| pair[1].1 <= pair[0].1 + 1),
-            "fixed load spelling should not inspect unrelated pointer shapes: {samples:?}"
+            "fixed load term should not inspect unrelated pointer shapes: {samples:?}"
         );
     }
 }
@@ -647,7 +647,7 @@ fn symbolic_pointer_contract_memory_load(
         }
     };
     // A load never enters a pointer offset as a `MemoryLoad` term: the
-    // canonical load variable names it, so contract-lowered ranges spell
+    // canonical load variable names it, so contract-lowered ranges write
     // addresses exactly as kernel execution does.
     let bits = if let Some((variable, _)) = crate::kernel::canonical_load_variable_for_term(&bits) {
         Bitvector32Term::Variable(variable)

@@ -193,7 +193,7 @@ pub(super) struct TacticReplayState {
     pub(super) frontier_loop_clauses: PersistentSequence<StructuralClause>,
     pub(super) frontier_loop_rules: PersistentSequence<CVerifiedLoopRule>,
     /// The snapshot that `old(...)` — and `at(function.entry, ...)`, which is
-    /// the same reference under another spelling — names in this region.
+    /// the same reference under another form — names in this region.
     ///
     /// `old` denotes function entry, but certificate replay used to resolve it
     /// *positionally*, to whichever state the enclosing proof region started
@@ -505,7 +505,7 @@ pub(super) struct ProofCertificateBuilder {
     /// current point. Planning executes with automatically transported facts,
     /// but certificate replay carries only path facts, statement-local
     /// rewrites, and explicit surface transports across each step. Premises
-    /// are spelled against this replay-visible set so every generated
+    /// are written against this replay-visible set so every generated
     /// `using` list names a fact its replay can actually check.
     pub(super) certificate_facts: ProofFactStore,
     /// Prevents the planner-metadata wrapper for a statement transition from
@@ -1975,7 +1975,7 @@ impl TacticReplayState {
     /// candidate is accepted only by exact equality against the certified
     /// proposition, and a `MemoryLoad` carries its snapshot inside the term,
     /// so a candidate resolved to the wrong state cannot match: selecting the
-    /// state by name adds a spelling to search, and the certificate check
+    /// state by name adds a form to search, and the certificate check
     /// remains the thing that validates it.
     ///
     /// Falling back to [`Self::execution_start_state`] keeps every region that

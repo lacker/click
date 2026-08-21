@@ -1411,7 +1411,7 @@ fn prepare_function_resource_transfer(
     let mut callee_resources = if preserve_explicit_representation && has_explicit_representation {
         // Proof replay may have opened exactly the recursive branches needed
         // by the body with `observe` or `unfold`. Independent certification
-        // must execute from that same definitionally equivalent spelling.
+        // must execute from that same definitionally equivalent form.
         // The transfer checks below still consume every declared requirement,
         // so this cannot weaken the function contract or affect ordinary
         // calls, which always use the canonical boundary.
@@ -1553,7 +1553,7 @@ fn evaluate_function_return_resources(
         Err(error) => return Ok(Err(error)),
     };
     // A view returned to a caller that already owns the same resource does
-    // not create another persistent capability. Keeping both spellings would
+    // not create another persistent capability. Keeping both forms would
     // make a later valid mutation or free look as though a stale borrow were
     // still live.
     let newly_ensured_resources = crate::instrumentation::measure_operation(

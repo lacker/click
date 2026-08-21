@@ -941,7 +941,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                 certification_pure_theorems.extend(authorities.iter().cloned());
             }
         }
-        // A sized array parameter spelling (`int32 p[2]`) declares its span
+        // A sized array parameter form (`int32 p[2]`) declares its span
         // loadable as part of the calling convention; certification may rely
         // on it to discharge requirement side-obligations.
         for (name, bytes) in function_block.signature.declared_loadable_bytes() {

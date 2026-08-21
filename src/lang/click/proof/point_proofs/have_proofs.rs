@@ -347,7 +347,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     // Restricted simplification must reason from its named equalities; goal
     // lowering must not silently apply those (or other ambient equalities)
     // before the smart plan is recorded, or expansion loses a required proof
-    // step. Keep only the facts needed to spell direct program values.
+    // step. Keep only the facts needed to write direct program values.
     let _prologue_span = crate::instrumentation::OperationTiming::new(
         "have",
         claim_label,
@@ -1009,7 +1009,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 };
                 drop(source_timing);
                 // Materialization proved the surface source, while the
-                // symbolic spelling retains the load identity required by
+                // symbolic form retains the load identity required by
                 // the explicit frame transport. This is the same checked
                 // source fact, not an additional ambient premise.
                 if source != ordinary_source
@@ -1055,11 +1055,11 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     )));
                 }
 
-                // A source spelling may intentionally identify a retained
+                // A source form may intentionally identify a retained
                 // fact from an older snapshot. The target, however, denotes
                 // the fact being established at this proof frontier. Looking
                 // it up in the recorded-surface map can silently select the
-                // older source again when the two surface spellings coincide.
+                // older source again when the two surface forms coincide.
                 let target_timing = crate::instrumentation::OperationTiming::new(
                     profile_function,
                     claim_label,
@@ -1085,7 +1085,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 drop(target_timing);
                 if !exact_fact_is_available(&target, &available)
                     && materialization_equivalent_available_fact(&target, &available).is_none()
-                    // Canonical-name and snapshot respellings of an
+                    // Canonical-name and snapshot rewritings of an
                     // available fact transport trivially. The bridge reasons
                     // under the selected premises plus the recorded
                     // transitions, the same context the reachability walk
@@ -1103,7 +1103,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     )
                 {
                     // The effect-window selection keys on the memories the
-                    // source names; a canonical-variable spelling names its
+                    // source names; a canonical-variable form names its
                     // memory only through the registry, so resolve before
                     // selecting the window.
                     let window_source =
@@ -1117,8 +1117,8 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             assumptions.assume_proposition(fact.proposition().clone())
                         })
                         .assume_proposition(source.clone())
-                        // The resolved spelling is the same assumed fact
-                        // seen through the registry; the load-spelled
+                        // The resolved form is the same assumed fact
+                        // seen through the registry; the load-term
                         // reachability path needs it in this form.
                         .assume_proposition(window_source.clone());
                     let reaches = crate::instrumentation::measure_operation(
@@ -1616,7 +1616,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 };
                 match tactic {
                     ProofTactic::Assumption => {
-                        // A goal spelled for a sibling execution path can
+                        // A goal written for a sibling execution path can
                         // lower to a context-free truth on this path (after a
                         // constant assignment); it needs no ambient fact.
                         if !available.contains(&unfolded_goal)
@@ -1629,10 +1629,10 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             )
                             .is_none()
                             // The same fact reached through a different
-                            // program point spells its load atoms over a
+                            // program point writes its load atoms over a
                             // different snapshot; decide the pair by the
                             // snapshot bridge's framing proof rather than by
-                            // spelling coincidence.
+                            // form coincidence.
                             && !snapshot_bridged_fact_is_available(&unfolded_goal, &available, &[])
                             // Canonical load variables are kernel-internal
                             // names; recorded equalities chained through one,

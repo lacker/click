@@ -2,7 +2,7 @@ use super::*;
 
 fn linear_execution_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
     // `frame()` is source sugar for the smart frame search even though the
-    // surface certificate parser can represent its empty spelling as a
+    // surface certificate parser can represent its empty form as a
     // `FrameUsing`. Keep the source operation on the smart branch so mutable
     // effects can select and retain their contextual premises.
     if matches!(tactic, ProofTactic::SmartFrame(_)) {
@@ -1302,7 +1302,7 @@ fn execute_internal_proof_inner(
             let mut context = context;
             // A mid-execution case condition may name the current statement's
             // entry snapshot (`at(statement(N).entry, ...)`) before any step
-            // has crossed that statement; record it so the spelling lowers.
+            // has crossed that statement; record it so the form lowers.
             record_current_statement_entry(
                 &mut context.replay,
                 &context.state,
@@ -1341,7 +1341,7 @@ fn execute_internal_proof_inner(
                 // Record where this proof-level case split sits in the claim's
                 // surface record. Cross-context synthesis reassembles the
                 // whole-claim certificate at exactly these recorded choices,
-                // so the tactics a case runs are spelled inside its surface
+                // so the tactics a case runs are written inside its surface
                 // `if` branch instead of leaking into sibling paths.
                 if branch_context
                     .replay
@@ -1540,7 +1540,7 @@ fn execute_internal_proof_inner(
             }
             let mut context = context;
             let statement_index = context.replay.frontier.next_statement_index;
-            // The branch condition is spelled against the branch statement's
+            // The branch condition is written against the branch statement's
             // entry snapshot; record it so both the recorded surface choice
             // and a replayed `at(statement(N).entry, ...)` condition lower.
             record_current_statement_entry(
@@ -1607,7 +1607,7 @@ fn execute_internal_proof_inner(
                     kind: ProgramPointKind::Entry,
                 })
                 .cloned();
-            // Spells a proof-`if` case around a context's arm record: the
+            // Writes a proof-`if` case around a context's arm record: the
             // branch decision as a surface path choice at the branch point,
             // and the C `if` entry (plus an empty arm's immediate completion)
             // as explicit steps. Used for contexts that do not rejoin — their
@@ -1990,7 +1990,7 @@ fn execute_internal_proof_inner(
                 joined_context.replay.proof_certificate_builder = builder.into();
             }
             // Branch abstraction discards source-boundary snapshots, but the
-            // recorded surface branch choice is spelled against the branch
+            // recorded surface branch choice is written against the branch
             // statement's own entry snapshot — pre-branch history the claim
             // certificate must still be able to lower at function exit.
             let branch_entry_point = ProgramPointRef {

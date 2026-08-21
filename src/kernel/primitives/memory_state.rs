@@ -203,7 +203,7 @@ impl CMemory {
         // for one would launder the havoc (conventions.md's soundness trap,
         // pinned by `conditions_equal_modulo_proven_snapshots_needs_frame_
         // evidence`). The havoc producers insert their markers directly,
-        // but tests and any future caller may spell them through this
+        // but tests and any future caller may write them through this
         // constructor, so the refusal lives here.
         if memory_dag_disabled() || block.starts_with("havoc:") || block.starts_with("call-havoc:")
         {
@@ -457,9 +457,9 @@ impl CMemory {
         let write_set_fingerprint = {
             use std::hash::{Hash, Hasher};
             // The fingerprint must identify the write set across the replay
-            // and the independent certification, which spell one call's
+            // and the independent certification, which write one call's
             // ranges over different snapshot variants — so it hashes only
-            // spelling-invariant structure: the range count, each base
+            // form-invariant structure: the range count, each base
             // block, and constant endpoints. That is enough to separate
             // alpha-colliding call sequences whose havocs wrote different
             // shapes; the full claim-scoped salt design is recorded in the

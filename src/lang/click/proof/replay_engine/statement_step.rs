@@ -35,7 +35,7 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
     let loop_step_policy = LoopStepPolicy::EnterBody;
     // Resuming from a completed branch region reaches this
     // statement without recording its entry snapshot; a premise
-    // spelled `at(statement(N).entry, ...)` for the statement this
+    // written `at(statement(N).entry, ...)` for the statement this
     // step crosses must still lower.
     record_current_statement_entry(
         replay,
@@ -107,7 +107,7 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
         // Prefer an explicit program-point lowering when it names
         // an exact available fact. Fall back to the checked cache
         // when a partial expansion has not replayed that point, or
-        // when the cache records an equivalent polarity spelling
+        // when the cache records an equivalent polarity form
         // such as `not (a < b)` versus `a >= b`.
         let premise = if let Some(current) = current_indexed {
             current
@@ -160,21 +160,21 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
                 ))
             })?;
         // Loadability premises additionally transport across
-        // snapshot spellings and recorded effects: the recorded
+        // snapshot terms and recorded effects: the recorded
         // fact and the premise print identically but embed
         // different memory snapshots.
         let premise_is_available = requirement_pure_facts
                 .replay_available_across_effects(&premise, &replay.effect_facts)
                 || crate::kernel::loadable_covered_by_fact(assumptions, &premise)
-                // A premise spelled for a sibling execution path
+                // A premise written for a sibling execution path
                 // can lower to a context-free truth on this path
                 // (a shared post-branch step's premise after a
                 // constant assignment); it demands no evidence.
                 || PureFactContext::new().proves(&premise)
                 // A premise whose load atoms carry the abstract
-                // spec spelling ("the current value") cannot be
-                // related to live-spelled facts by history — the
-                // pristine memory is not a snapshot. Respell
+                // spec form ("the current value") cannot be
+                // related to live-written facts by history — the
+                // pristine memory is not a snapshot. Rewrite
                 // those atoms over the current point's memory
                 // and decide the live pair by framing across
                 // the recorded effects.
@@ -192,7 +192,7 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
                 // Canonical load variables are kernel-internal names; two
                 // recorded equalities chained through one are the same
                 // user-level fact, so availability closes over them rather
-                // than demanding the certificate spell the chain.
+                // than demanding the certificate write the chain.
                 || premise_bridged_by_canonical_names(&premise, requirement_pure_facts);
         if !premise_is_available {
             let all_pure_facts = requirement_pure_facts.to_vec();

@@ -2039,7 +2039,7 @@ fn enumerate_closes_a_constant_bounded_universal_goal() {
     "#;
 
     verify_c0_sources(click_source, &[("keep.c", c_source)])
-        .expect("spelled instances should close the bounded universal by enumeration");
+        .expect("written instances should close the bounded universal by enumeration");
 }
 
 #[test]
@@ -2049,7 +2049,7 @@ fn enumerate_requires_each_in_range_instance_as_an_available_fact() {
             return x;
         }
     "#;
-    // The `k == 0` instance (`0 <= x`) is neither spelled nor an available
+    // The `k == 0` instance (`0 <= x`) is neither written nor an available
     // fact, so the enumeration must fail instead of deriving the missing
     // case by search.
     let click_source = r#"
@@ -2176,7 +2176,7 @@ fn disjunctive_premise_simp_expands_to_a_cases_certificate() {
         .expect("the expansion should eliminate the disjunctive premise with `cases`");
     assert!(
         !format!("{cases:?}").contains("Simp"),
-        "both spelled branches should close with simple tactics: {cases:?}"
+        "both written branches should close with simple tactics: {cases:?}"
     );
     ProofCertificate::from_proof_tactics(&expanded)
         .expect("the disjunctive-premise expansion should be a surface certificate");
@@ -2387,10 +2387,10 @@ fn apply_predecessor_upper_bound_closes_from_both_listed_legs() {
 }
 
 #[test]
-fn outcome_predecessor_upper_bound_spells_a_rewritten_nonnegative_leg() {
-    // The decrement's kernel derivation pins `p->low` through the spelled
+fn outcome_predecessor_upper_bound_writes_a_rewritten_nonnegative_leg() {
+    // The decrement's kernel derivation pins `p->low` through the written
     // equality, so the nonnegativity leg of the predecessor rule is not a
-    // selected premise. The outcome planner must spell that leg as a nested
+    // selected premise. The outcome planner must write that leg as a nested
     // `have` closed by explicit rewrites, not silently absorb the
     // derivation.
     let c_source = r#"

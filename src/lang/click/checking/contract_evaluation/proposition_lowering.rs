@@ -172,7 +172,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_memory_resolution(
 /// Lowers a proposition while retaining symbolic external-memory loads even
 /// when the selected snapshot already materializes their values.
 ///
-/// Fact transport needs this spelling for propositions such as
+/// Fact transport needs this form for propositions such as
 /// `at(mark, field == 11)`: reducing the marked load to `11 == 11` proves the
 /// source but erases the memory identity needed to frame it to a later state.
 #[allow(clippy::too_many_arguments)]

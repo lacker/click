@@ -587,7 +587,7 @@ pub(in crate::lang::click) fn lower_predicate_call_arguments_with_environment(
 
     // Only a predicate that can observe `count(...)` includes the logical
     // resource-state snapshot in its identity. Giving every predicate that
-    // hidden dependency makes an ordinary memory predicate change spelling
+    // hidden dependency makes an ordinary memory predicate change form
     // after an unrelated resource transition. C memory and locals remain
     // explicit through the predicate's ordinary arguments.
     let resource_state = if predicate_observes_resource_state(

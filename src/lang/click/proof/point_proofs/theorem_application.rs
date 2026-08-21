@@ -103,10 +103,10 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
             click_function_environment,
         );
         // Prefer the current-state lowering when it is replayable. A retained
-        // Surface spelling can also name an older raw load whose value the
+        // surface form can also name an older raw load whose value the
         // current memory evaluates through (for example after swapping struct
         // fields); that historical kernel remains the fallback for premises
-        // that cannot be replayed under the current spelling.
+        // that cannot be replayed under the current form.
         let recorded = || {
             surface_propositions
                 .available_kernel_matching(surface_premise, |kernel| available.contains(kernel))
@@ -521,7 +521,7 @@ fn select_explicit_theorem_application_premises_with_kernel(
         )
         .map_err(|error| {
             ClickError::new(format!(
-                "theorem application `{}` has no checked Click spelling for exact premise `{requirement:?}`: {}",
+                "theorem application `{}` has no checked surface form for exact premise `{requirement:?}`: {}",
                 application.name,
                 error.message(),
             ))
@@ -715,17 +715,17 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
             || quantified_replay_equivalent_available_fact(kernel, std::slice::from_ref(lowered))
                 .is_some()
     };
-    // Recorded source spellings are the cheapest exact candidates and cover
+    // Recorded source forms are the cheapest exact candidates and cover
     // ordinary premises. Check them before synthesizing variants at every
-    // retained program point; an ambiguous spelling simply fails `check` and
+    // retained program point; an ambiguous form simply fails `check` and
     // falls through to the point-qualified search below.
     if let Ok(surface) = replay.surface_propositions.checked_surface(kernel, check) {
         return Ok(surface);
     }
-    // A statement-indexed spelling denotes the recorded proposition at that
+    // A statement-indexed form denotes the recorded proposition at that
     // program point. Re-lowering it after the function outcome can
     // materialize a dead local and turn an exact assignment equation into a
-    // tautology, even though the recorded spelling remains a valid premise.
+    // tautology, even though the recorded form remains a valid premise.
     let recorded_surfaces = replay
         .surface_propositions
         .surfaces(kernel)
@@ -831,7 +831,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
     }
     // A drain that unfolds predicates unfolds its ambient facts too, and the
     // unfolded body of an opaque predicate is not itself a recorded fact, so
-    // it has no spelling of its own. Unfold a spelling of the FOLDED fact at
+    // it has no form of its own. Unfold a form of the FOLDED fact at
     // the surface instead — the same rewrite the script's `unfold(...)`
     // performs — and let the round trip below decide whether the result is the
     // fact we were asked for.
@@ -842,8 +842,8 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
     {
         // A drain that unfolds an ambient predicate replaces the folded fact
         // with its quantified body, so the body can carry a recorded folded
-        // spelling while no Predicate fact survives in `available` for the
-        // loop below to start from. Unfold that recorded spelling at the
+        // form while no Predicate fact survives in `available` for the
+        // loop below to start from. Unfold that recorded form at the
         // surface and let the round trip decide.
         let mut kernel_folded_bases = Vec::new();
         for surface in replay.surface_propositions.surfaces(kernel) {
@@ -935,7 +935,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
     let surface = synthesize_surface_proposition(kernel, parameters, arguments, post_state)
         .ok_or_else(|| {
             ClickError::new(surface_synthesis_failure(
-                "no checked Click spelling for post-execution fact",
+                "no checked surface form for post-execution fact",
                 kernel,
             ))
         })?;
@@ -943,7 +943,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
         Ok(surface)
     } else {
         Err(ClickError::new(format!(
-            "synthesized post-execution spelling did not lower to {kernel:?}"
+            "synthesized post-execution form did not lower to {kernel:?}"
         )))
     }
 }

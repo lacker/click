@@ -254,12 +254,12 @@ fn synthesize_surface_proposition_with_bound_variables(
         _ => {}
     }
     // A declared predicate call starts with its hidden logical resource-state
-    // snapshot. Its source call does not spell that argument. Each array-ref
+    // snapshot. Its source call does not write that argument. Each array-ref
     // argument then lowers to a (memory, pointer) term pair and each value
     // argument to a single value term, so the remaining kernel argument list
     // reads back unambiguously: a `CMemory` term always opens an array-ref
-    // pair. The snapshot the pair names is not spelled here — the current
-    // memory needs no spelling, and every caller re-lowers the candidate and
+    // pair. The snapshot the pair names is not written here — the current
+    // memory needs no form, and every caller re-lowers the candidate and
     // compares it to the kernel fact, so a candidate built against the wrong
     // snapshot is rejected by that round trip rather than by a guess made
     // here.
@@ -936,10 +936,10 @@ fn synthesize_local_indexed_int32_load(
         if index == Bitvector32Term::Constant(0) {
             return None;
         }
-        // This candidate is for ordinary `local[index]` spellings. If the
+        // This candidate is for ordinary `local[index]` forms. If the
         // derived index itself reads memory, trying to synthesize that load
-        // can rediscover another local-relative spelling with a still larger
-        // index indefinitely. More specific field and pointer spellings are
+        // can rediscover another local-relative form with a still larger
+        // index indefinitely. More specific field and pointer forms are
         // tried by the surrounding reconstruction logic.
         if !bitvector_term_is_load_free(&index) {
             return None;

@@ -1071,7 +1071,7 @@ fn synthesizes_pointer_offset_equality_as_pointer_comparison() {
         &arguments,
         &CState::new(),
     )
-    .expect("pointer-offset equality should have a Click spelling");
+    .expect("pointer-offset equality should have a surface form");
 
     assert!(matches!(
         surface,
@@ -1136,7 +1136,7 @@ fn synthesizes_dynamically_indexed_pointer_offset_equality() {
         &arguments,
         &CState::new(),
     )
-    .expect("dynamically indexed pointer equality should have a Click spelling");
+    .expect("dynamically indexed pointer equality should have a surface form");
 
     assert!(matches!(
         surface,

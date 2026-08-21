@@ -79,7 +79,7 @@ impl PureFactContext {
         bytes: &Bitvector32Term,
     ) -> bool {
         // The loadable prover is the one consumer of the extended DAG
-        // bridging: a permission fact recorded at one snapshot spelling must
+        // bridging: a permission fact recorded at one snapshot term must
         // discharge a load extracted at another. Scoping the power here
         // keeps execution pruning and simp planning byte-identical to the
         // pre-arc path (see api.rs).
@@ -1069,7 +1069,7 @@ impl PureFactContext {
     }
 
     /// An exact ordering fact whose operands match the queried condition's
-    /// operands modulo canonical load names: facts may spell a load atom at
+    /// operands modulo canonical load names: facts may write a load atom at
     /// a recorded snapshot while the query carries the placeholder load or
     /// the canonical variable, and all of those are one atom. Bounded by
     /// the exact fact set and term size.
@@ -1122,20 +1122,20 @@ impl PureFactContext {
         if !matches!(one.as_ref(), Bitvector32Term::Constant(1)) {
             return false;
         }
-        // Facts may spell the load atom by its canonical name while the
-        // index carries the raw load (or vice versa); try both spellings.
-        let mut spellings = vec![term.as_ref().clone()];
+        // Facts may write the load atom by its canonical name while the
+        // index carries the raw load (or vice versa); try both forms.
+        let mut forms = vec![term.as_ref().clone()];
         if let Some((variable, _)) =
             crate::kernel::eval::canonical_load_variable_for_term(term.as_ref())
         {
             let named = Bitvector32Term::Variable(variable);
-            if !spellings.contains(&named) {
-                spellings.push(named);
+            if !forms.contains(&named) {
+                forms.push(named);
             }
         }
-        spellings.iter().any(|spelling| {
+        forms.iter().any(|form| {
             let nonnegative =
-                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), spelling.clone());
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), form.clone());
             (self.exact_condition_value(&nonnegative) == Some(true)
                 || self.exact_ordering_modulo_canonical_atoms(&nonnegative))
                 && self.condition_facts.iter().any(|(fact, value)| {
@@ -1144,7 +1144,7 @@ impl PureFactContext {
                             fact,
                             ConditionTerm::Bitvector32SignedLessThan(left, _)
                                 if crate::kernel::eval::terms_match_modulo_canonical_names(
-                                    left, spelling,
+                                    left, form,
                                 )
                         )
                 })

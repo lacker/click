@@ -716,7 +716,7 @@ fn certified_transitions_from_execution(
                             // exactly that set, after execution has deferred
                             // every non-exact obligation. This keeps certificate
                             // replay independent of the ambient proof context
-                            // without requiring callers to spell out internal
+                            // without requiring callers to write out internal
                             // evaluator predicates such as no-overflow facts.
                             let exact_derivation = if matches!(
                                 proposition,
@@ -1076,7 +1076,7 @@ fn certified_transitions_from_execution(
 }
 
 /// Replaces a transported fact's source with its target at the source's
-/// position: downstream premise selection is order-sensitive, so respelling
+/// position: downstream premise selection is order-sensitive, so rewriting
 /// must not reorder the working set. Keep the by-value proposition handling
 /// out of the shared transition dispatcher; the expansion small-stack
 /// regression pins that boundary.

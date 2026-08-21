@@ -195,7 +195,7 @@ pub fn format_fractional_duration(duration: Duration) -> String {
 /// when the variable is unset.
 ///
 /// The variable is parsed by [`parse_duration`], so every caller accepts the
-/// same spellings the binaries accept on the command line.
+/// same forms the binaries accept on the command line.
 pub fn duration_from_env(variable: &str, default: Duration) -> Result<Duration, String> {
     let source = std::env::var_os(variable);
     duration_from_optional_os(variable, source.as_deref(), default)

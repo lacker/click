@@ -676,7 +676,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     };
     if first_generated_tactic_index < tactics.len() {
         // Automatic preservation appends planned body steps and a closer
-        // after the source-spelled unfold prefix. They are owned by the loop
+        // after the source-written unfold prefix. They are owned by the loop
         // tactic, not additional source occurrences after `preserve`.
         // Detach them so a later nested clause (notably `immutable by frame`)
         // cannot be mistaken for one of these generated tactics by expand.

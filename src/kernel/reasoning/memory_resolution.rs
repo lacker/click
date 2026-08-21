@@ -185,7 +185,7 @@ pub(in crate::kernel) fn with_memory_resolution_fuel<T>(body: impl FnOnce() -> T
 /// caller had armed: the outer query sees its fuel untouched no matter what
 /// `body` spends. For advisory arms (memory-DAG hop checks) that run inside
 /// arbitrary resolution queries — without the shield their spending would
-/// perturb fuel-coupled answers elsewhere, and certified spellings must
+/// perturb fuel-coupled answers elsewhere, and certified forms must
 /// replay byte-for-byte. Deterministic: the cap is a constant, so the answer
 /// depends only on the inputs.
 pub(crate) fn with_isolated_memory_resolution_fuel<T>(
@@ -623,7 +623,7 @@ fn bitvector_terms_equal_for_memory_resolution(
     }
     // A canonical load variable is its load for equality reasoning: view it
     // through the registry so snapshot provenance fires exactly as it would
-    // for the load spelling, then fall through to the variable-spelling
+    // for the load term, then fall through to the variable-form
     // paths if the load view does not decide.
     let canonical_view = |term: &Bitvector32Term| {
         if let Bitvector32Term::Variable(variable) = term {

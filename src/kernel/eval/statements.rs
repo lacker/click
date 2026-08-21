@@ -109,7 +109,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     let mut obligations = obligations;
     let effective_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
     // The current owned resource composition is proof authority for memory
-    // separation even when callers retain only surface-spellable pure facts.
+    // separation even when callers retain only surface-synthesizable pure facts.
     // Attach its compact carrier directly while executing a write instead of
     // depending on eagerly materialized pair propositions.
     let resource_facts = state

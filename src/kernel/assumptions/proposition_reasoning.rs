@@ -70,8 +70,8 @@ fn canonical_contradiction_condition(condition: &ConditionTerm) -> ConditionTerm
 /// explicit equality-graph paths are handled separately by its caller.
 ///
 /// The remaining theory rules can only relate two conditionals, two folds, an
-/// additive spelling (including a split fold), or a memory load that resolves
-/// to another spelling. Keeping ordinary variables and constants out of those
+/// additive form (including a split fold), or a memory load that resolves
+/// to another form. Keeping ordinary variables and constants out of those
 /// recursive theories is important when contradiction checking considers
 /// order endpoints.
 fn bitvector_terms_may_be_theory_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
@@ -97,7 +97,7 @@ fn bitvector_terms_may_be_theory_equal(left: &Bitvector32Term, right: &Bitvector
 /// deterministic range order. `None` when the binder chain has no
 /// guard-derived constant range or the table would exceed the finite
 /// instantiation limit. This mirrors the ranges the kernel's `FiniteForAll`
-/// derivation enumerates, so a surface certificate that spells each in-range
+/// derivation enumerates, so a surface certificate that writes each in-range
 /// instance can be checked with work proportional to this table.
 pub(crate) fn finite_forall_goal_instances(
     proposition: &Proposition,
@@ -188,8 +188,8 @@ impl PureFactContext {
                                     left, right, self,
                                 )
                         )
-                    // Two spellings of one value that differ only
-                    // representationally (snapshot spellings inside loads,
+                    // Two terms for one value that differ only
+                    // representationally (snapshot terms inside loads,
                     // including under folds and conditionals) are equal by
                     // deep canonicalization; both calls are memoized.
                     || *value
@@ -667,8 +667,8 @@ impl PureFactContext {
                                     left, right, self,
                                 )
                         )
-                    // Two spellings of one value that differ only
-                    // representationally (snapshot spellings inside loads,
+                    // Two terms for one value that differ only
+                    // representationally (snapshot terms inside loads,
                     // including under folds and conditionals) are equal by
                     // deep canonicalization; both calls are memoized.
                     || *value
@@ -825,7 +825,7 @@ impl PureFactContext {
 
     /// Structural proposition equality where differing bitvector subterms
     /// are accepted when this context proves them equal; an assumed
-    /// universal over a loop counter then matches the goal spelled with the
+    /// universal over a loop counter then matches the goal written with the
     /// counter's proven final value.
     fn propositions_equal_modulo_proven_terms(
         &self,
@@ -2641,8 +2641,8 @@ impl PureFactContext {
     /// It is stated as a *goal-side* split rather than as a rule that extends
     /// a quantified fact's bound, which is what makes it cheap here: the
     /// earlier attempt on `claude/forall-extension-wip` had to re-prove the
-    /// final index against a fact spelled at another snapshot and drowned in
-    /// spelling drift, while each half of this split is derived in the
+    /// final index against a fact written at another snapshot and drowned in
+    /// form drift, while each half of this split is derived in the
     /// ordinary way against whatever facts are actually present.
     ///
     /// Sound at both bound shapes, including the wrapping edge: `k <= b`
@@ -3848,7 +3848,7 @@ impl PureFactContext {
         // add rule requires syntactically equal folded constants and addend
         // counts before it compares any addend, the load rule requires two
         // loads once resolution is exhausted, the if rule two conditionals,
-        // and the fold rules a fold spelling. Canonical forms fold the
+        // and the fold rules a fold form. Canonical forms fold the
         // per-term parts into the component labelling, and the remaining
         // genuinely pairwise comparisons are bucketed by those first-line
         // requirements, so unrelated facts are never compared.
@@ -3860,7 +3860,7 @@ impl PureFactContext {
 
         const CANONICAL_ORDER_ENDPOINT_DEPTH: usize = 6;
 
-        /// Depth-bounded canonical spelling of one order endpoint: loads
+        /// Depth-bounded canonical form of one order endpoint: loads
         /// resolve to their determined values, constants fold, addends sort,
         /// an unresolved load keeps its canonical memory, and a sum that
         /// collapses to one addend becomes that addend. Everything here is
@@ -3893,18 +3893,18 @@ impl PureFactContext {
                         collect_bitvector_add_terms(&canonical, &mut addends, &mut constant);
                     }
                     addends.sort();
-                    let mut spelled = if constant == 0 && !addends.is_empty() {
+                    let mut written = if constant == 0 && !addends.is_empty() {
                         None
                     } else {
                         Some(Bitvector32Term::Constant(constant))
                     };
                     for addend in addends.into_iter().rev() {
-                        spelled = Some(match spelled {
+                        written = Some(match written {
                             Some(rest) => Bitvector32Term::add(addend, rest),
                             None => addend,
                         });
                     }
-                    spelled.expect("an add spelling always has at least one part")
+                    written.expect("an add form always has at least one part")
                 }
                 Bitvector32Term::If {
                     condition,
@@ -3962,7 +3962,7 @@ impl PureFactContext {
         /// loads (and, when resolution substitutes a value, with whatever
         /// that value can compare with), sums compare only under equal folded
         /// constants and addend counts, conditionals with conditionals, and
-        /// fold spellings with fold spellings or fold splits. Two endpoints
+        /// fold forms with fold forms or fold splits. Two endpoints
         /// with disjoint bucket sets are rejected by the rules themselves, so
         /// skipping their comparison cannot lose a conclusion.
         fn residue_bucket_keys(

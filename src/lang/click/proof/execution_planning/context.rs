@@ -400,7 +400,7 @@ pub(in crate::lang::click::proof) struct CertifiedConditionTransition {
 /// immediately constructs its surface step against the current planning state.
 ///
 /// Fact transports that must become standalone surface steps are returned to
-/// the caller instead of being constructed here: their surface spelling is
+/// the caller instead of being constructed here: their surface form is
 /// resolved against the post-statement state, which does not exist yet at this
 /// call point.
 #[allow(clippy::too_many_arguments)]

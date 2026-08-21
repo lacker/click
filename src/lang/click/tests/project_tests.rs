@@ -285,8 +285,8 @@ int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
 
 /// A `simp() using` premise that equates one expression across two call
 /// transitions denotes an available fact only through the kernel's certified
-/// snapshot bridge — no single replay-time fact carries that exact spelling.
-/// The certificate cites the bridged premise spelling directly: canonical
+/// snapshot bridge — no single replay-time fact carries that exact form.
+/// The certificate cites the bridged premise form directly: canonical
 /// load variables are kernel-internal names, so `rewrite` replay closes over
 /// recorded equalities chained through them with a bounded, deterministic
 /// walk instead of demanding an explicit snapshot transport step.
@@ -409,7 +409,7 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
             .expect("the snapshot-bridged restricted simp should expand");
     assert!(
         expanded.contains("rewrite(owner->data == at(statement(2).entry, owner->data));"),
-        "the rewrite must cite the construction-time premise spelling:\n{expanded}"
+        "the rewrite must cite the construction-time premise form:\n{expanded}"
     );
     verify_c0_sources(&expanded, &sources)
         .expect("the explicit bridged-premise certificate should replay");
@@ -911,7 +911,7 @@ fn unrelated_non_comparison_conditions_are_not_polarity_equivalent() {
     }
 
     // Each is still equivalent to itself, and the canonical order form still
-    // relates the two spellings of one comparison.
+    // relates the two forms of one comparison.
     for condition in [&overflow, &constant, &equality] {
         assert!(condition_polarity_equivalent(condition, condition));
     }
@@ -1091,7 +1091,7 @@ int32 second(int32 x) { ensures result == x; } by simp;
 /// The perpetual-service example used to verify or fail depending on ambient
 /// machine load: `fold(service(owner))` decided its body's separation fact
 /// through an open-ended kernel search whose budget truncation was reported
-/// as a missing fact. The bounded matchers now decide the respelled body
+/// as a missing fact. The bounded matchers now decide the rewriteed body
 /// facts deterministically, so repeated verification must stay green under
 /// the deterministic work budgets this test suite runs with.
 #[test]

@@ -473,7 +473,7 @@ impl PureFactContext {
         // `condition_as_order_fact` intentionally normalizes polarity (for
         // example, false `x <= y` becomes `y < x`); replay must check the
         // proposition that was actually present, not merely the normalized
-        // spelling. This collection is local to derivation construction so
+        // form. This collection is local to derivation construction so
         // the durable evidence remains self-contained.
         let order_facts = self
             .condition_facts
@@ -523,7 +523,7 @@ impl PureFactContext {
         require_strict: bool,
     ) -> bool {
         let order_facts = self.condition_order_facts();
-        // Two spellings of one load at different snapshots connect along
+        // Two forms of one load at different snapshots connect along
         // recorded memory-derivation edges; the walk is deterministic (exact
         // facts plus DAG edges, no ambient condition reasoning), so an exact
         // order path may link through it — inside the loadable prover's

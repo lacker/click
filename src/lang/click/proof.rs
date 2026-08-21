@@ -82,7 +82,7 @@ use timing::{TacticTiming, has_independent_source_timing};
 
 /// Checked kernel evidence used as the input to constructing one
 /// [`SimpleProofStep`]. Evidence never forms an ordered replayable program of
-/// its own: search consumes it transiently to spell the surface step, and the
+/// its own: search consumes it transiently to write the surface step, and the
 /// resulting `ProofCertificate` is what replays.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::lang::click::proof) enum ConstructionEvidence {
@@ -195,7 +195,7 @@ fn apply_logical_goal_tactic(
             Ok(true)
         }
         ProofTactic::Enumerate => {
-            // Close a constant-bounded universal goal from its spelled
+            // Close a constant-bounded universal goal from its written
             // instances: the goal's guards fix each binder's constant range
             // (exactly the kernel `FiniteForAll` table), and every in-range
             // instance must either normalize context-free (a vacuous guard)
@@ -246,7 +246,7 @@ fn apply_logical_goal_tactic(
 }
 
 /// Checks a bitvector equality target by transitive chaining of the listed
-/// equality premises, with canonical load spellings as term identity. The
+/// equality premises, with canonical load terms as term identity. The
 /// decide engine chains constants and variables; certificates also chain
 /// through load terms recorded at intermediate states.
 fn pointer_offsets_match_by_term_equivalence(
@@ -340,7 +340,7 @@ fn equal_by_premise_chain(
         .cloned()
         .collect::<Vec<_>>();
     let frame_assumptions = assumptions_from_propositions(&framing_facts);
-    // Two spellings denote the same term when identical, or when they load
+    // Two forms denote the same term when identical, or when they load
     // the same pointer from memories the recorded effect facts prove
     // unchanged between (frame-justified, never by ignoring havoc alone).
     let terms_equivalent = |left: &Bitvector32Term, right: &Bitvector32Term| {
@@ -389,7 +389,7 @@ fn equal_by_premise_chain(
         // frame facts justify load unification. Keep the raw edge as well as its
         // canonical form: canonicalizing a store equation can reduce its written
         // load to the stored value and erase the edge needed to reach a later
-        // snapshot spelling.
+        // snapshot term.
         for premise in premises.iter().chain(available) {
             if let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
                 premise
@@ -632,7 +632,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
         return Ok(());
     }
     // Overflow side-conditions are execution-certified facts with no Surface
-    // Click spelling, so a certificate can never list them; replay consumes
+    // surface form, so a certificate can never list them; replay consumes
     // them from the ambient record, and this check may too. Only that shape
     // widens the premise set — evidence for everything else stays listed.
     let ambient_overflow_facts = available
@@ -705,7 +705,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
         return Ok(());
     }
     // Effect summaries and certified-write records are deterministic
-    // execution artifacts with no surface spelling; certificate generation
+    // execution artifacts with no surface form; certificate generation
     // deliberately omits them from the premise list (mirroring its
     // loadability carve-out), so the replay environment supplies them.
     // Only these two shapes ride along: everything else the derivation
@@ -735,8 +735,8 @@ pub(super) fn check_atomic_premise_derivation_goal(
             .or_else(|| assumptions.derive_simp_atomic_proposition(target))
             .or_else(|| assumptions.derive_simp_proposition(target))
     };
-    // Try the premises as spelled before normalizing: snapshot-bridging
-    // derivations can depend on the recorded load spellings that
+    // Try the premises as written before normalizing: snapshot-bridging
+    // derivations can depend on the recorded load terms that
     // normalization rewrites.
     let derivation = derive_from(&premises, target)
         .or_else(|| derive_from(&with_effect_context(&premises), target))
@@ -747,7 +747,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
                 &normalized_target,
             )
         });
-    // Premises recorded at different program points can spell the same load
+    // Premises recorded at different program points can write the same load
     // through different snapshots; retry with canonical loads so the chain
     // unifies.
     let derivation = derivation.or_else(|| {
@@ -816,7 +816,7 @@ pub(super) fn plan_restricted_simp_goal(
                 available == normalized || condition_polarity_equivalent(&available, &normalized)
             })
         })
-            // A premise spelled at a different program point carries other
+            // A premise written at a different program point carries other
             // snapshots in its load atoms; the snapshot bridge decides the
             // pair from the certified frame, with candidates drawn only from
             // the available facts.
@@ -1008,7 +1008,7 @@ mod certificate_tests {
     }
 
     #[test]
-    fn missing_snapshot_spelling_reports_a_concise_indexed_failure() {
+    fn missing_snapshot_form_reports_a_concise_indexed_failure() {
         let target_memory = CMemory::new().with_block("target", 4);
         let pointer = Pointer {
             block: "target".into(),
@@ -1038,7 +1038,7 @@ mod certificate_tests {
             &PredicateEnvironment::new(&[]),
             &ClickFunctionEnvironment::new(&[]),
         )
-        .expect_err("an unrecorded snapshot should have no surface spelling");
+        .expect_err("an unrecorded snapshot should have no surface form");
 
         assert!(
             error
@@ -1089,7 +1089,7 @@ mod certificate_tests {
     }
 
     #[test]
-    fn fresh_heap_separation_is_not_spelled_as_an_ambient_step_premise() {
+    fn fresh_heap_separation_is_not_written_as_an_ambient_step_premise() {
         let range = |block| {
             CResource::Memory(CMemoryRange::new(
                 Pointer {
@@ -1108,7 +1108,7 @@ mod certificate_tests {
         assert!(PureFactContext::new().proves(&separation));
         assert!(
             !statement_step_permission_needs_surface_premise(&separation, &[]),
-            "fresh heap provenance is replayable without a potentially stale surface spelling"
+            "fresh heap provenance is replayable without a potentially stale surface form"
         );
     }
 
@@ -1547,13 +1547,13 @@ struct ProofCaseAssumption {
 
 #[derive(Clone)]
 enum ProofCaseAssumptionKind {
-    /// Excluded-middle case split from proof-level `if`: assume the spelled
+    /// Excluded-middle case split from proof-level `if`: assume the written
     /// condition with the given polarity. Sound without an availability check.
     Condition {
         proposition: ClickProposition,
         value: bool,
     },
-    /// Disjunction elimination from `cases`: replay checks that the spelled
+    /// Disjunction elimination from `cases`: replay checks that the written
     /// disjunction is an available fact at the split point, then assumes
     /// exactly the selected disjunct.
     Disjunct {

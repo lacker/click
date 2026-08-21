@@ -1,7 +1,7 @@
 use super::*;
 
 impl PureFactContext {
-    /// Decides whether two conditions are two spellings of one fact that
+    /// Decides whether two conditions are two forms of one fact that
     /// differ only in the memory snapshots their load atoms carry.
     ///
     /// Sound because it is exact everywhere except at load atoms, and a pair
@@ -91,13 +91,13 @@ impl PureFactContext {
             ) {
                 return true;
             }
-            // Two spellings whose marker sets differ are never syntactically
+            // Two forms whose marker sets differ are never syntactically
             // equal and defeat the snapshot comparison's block-set filter,
             // but the load can still be provably unchanged across the marker
             // delta: the framed-load prover consumes the recorded effect
             // summaries and mutates-only facts to frame the loaded pointer
             // across each intervening effect. Deciding the pair by that
-            // proof, instead of by spelling coincidence, is what keeps fact
+            // proof, instead of by form coincidence, is what keeps fact
             // transport working once canonicalization stops laundering havoc
             // markers (see
             // issues/canonical-load-jump-launders-havoc-markers.md).
