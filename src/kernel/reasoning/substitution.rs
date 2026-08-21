@@ -1600,6 +1600,31 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_condition(
     }
 }
 
+fn substitute_through_load_variable(
+    variable: Variable,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> Option<Bitvector32Term> {
+    if !crate::kernel::is_canonical_load_variable(&variable) {
+        return None;
+    }
+    let (memory, pointer) = crate::kernel::eval::registered_canonical_load(&variable)?;
+    let substituted_pointer = Pointer {
+        block: pointer.block.clone(),
+        offset: substitute_bitvector_variable_in_pointer_offset(&pointer.offset, from, to),
+    };
+    let substituted_memory = substitute_bitvector_variable_in_memory(&memory, from, to);
+    if substituted_pointer == pointer && substituted_memory == *memory {
+        return None;
+    }
+    Some(crate::kernel::eval::canonical_term(
+        &Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(substituted_memory),
+            Box::new(substituted_pointer),
+        ),
+    ))
+}
+
 pub(in crate::kernel) fn substitute_bitvector_variable(
     term: &Bitvector32Term,
     from: Variable,
@@ -1608,7 +1633,16 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
     match term {
         Bitvector32Term::Constant(value) => Bitvector32Term::Constant(*value),
         Bitvector32Term::Variable(variable) if *variable == from => to.clone(),
-        Bitvector32Term::Variable(variable) => Bitvector32Term::Variable(*variable),
+        Bitvector32Term::Variable(variable) => {
+            // A load variable names a load whose address may mention the
+            // substituted variable (a universal's body names `p[k]` with
+            // the bound `k` inside the address). Substitution reaches
+            // through the name into the load it names and takes the
+            // canonical form of the result, so instantiating a universal
+            // yields the same name a direct read of that cell takes.
+            substitute_through_load_variable(*variable, from, to)
+                .unwrap_or(Bitvector32Term::Variable(*variable))
+        }
         Bitvector32Term::Add(left, right) => Bitvector32Term::add(
             substitute_bitvector_variable(left, from, to),
             substitute_bitvector_variable(right, from, to),

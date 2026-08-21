@@ -3177,6 +3177,18 @@ impl PureFactContext {
                 candidates.insert(target.clone());
                 return;
             }
+            // A load variable is the kernel's name for a load: match it as
+            // the load it names, so a universal over array cells
+            // instantiates against a cell read under the creation-time
+            // invariant exactly as against a load term.
+            let pattern_load = crate::kernel::eval::viewed_as_memory_load(pattern);
+            let target_load = crate::kernel::eval::viewed_as_memory_load(target);
+            if let (Some(pattern_load), Some(target_load)) = (&pattern_load, &target_load)
+                && (pattern_load != pattern || target_load != target)
+            {
+                collect_term_candidates(pattern_load, target_load, bound, candidates);
+                return;
+            }
             if std::mem::discriminant(pattern) != std::mem::discriminant(target) {
                 return;
             }

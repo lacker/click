@@ -309,3 +309,44 @@ fn load_variables_are_congruent_through_ground_index_equalities() {
     );
     assert!(!other.bitvector_terms_equal_from_facts(&indexed_name, &first_name));
 }
+
+#[test]
+fn substitution_reaches_through_a_load_variable_naming_a_bound_index() {
+    // A universal's body names `p[k]` with the bound `k` sealed inside the
+    // load variable's address. Instantiating `k := 0` must reach through
+    // the name and produce the load variable a direct read of `p[0]` takes.
+    let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("p", 12));
+    let bound = Variable(3_000_000);
+    let cell = |offset: PointerOffsetTerm| {
+        Bitvector32Term::MemoryLoad(
+            memory.clone(),
+            Box::new(Pointer {
+                block: "p".into(),
+                offset,
+            }),
+        )
+    };
+    let indexed_name = crate::kernel::eval::canonical_term(&cell(PointerOffsetTerm::Int32Scaled {
+        value: Box::new(Bitvector32Term::Variable(bound)),
+        byte_width: 4,
+    }));
+    assert!(matches!(indexed_name, Bitvector32Term::Variable(_)));
+    let instantiated = crate::kernel::reasoning::substitute_bitvector_variable(
+        &indexed_name,
+        bound,
+        &Bitvector32Term::Constant(0),
+    );
+    assert_eq!(
+        instantiated,
+        crate::kernel::eval::canonical_term(&cell(PointerOffsetTerm::Constant(0)))
+    );
+    // Substituting an unrelated variable leaves the name untouched.
+    assert_eq!(
+        crate::kernel::reasoning::substitute_bitvector_variable(
+            &indexed_name,
+            Variable(3_000_001),
+            &Bitvector32Term::Constant(0),
+        ),
+        indexed_name
+    );
+}

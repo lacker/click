@@ -215,6 +215,17 @@ assumes a load term. Characterized so far:
   address). Regression:
   `load_variables_are_congruent_through_ground_index_equalities`. 14
   fixtures remain under the switch.
+- **Names capturing bound variables (done).** Lowering a universal's
+  body names `p[k]` with the bound `k` sealed inside the load variable's
+  address, so instantiation by substitution could not reach it and the
+  instance named a cell no read ever names. Substitution
+  (`substitute_bitvector_variable`) now reaches through a load variable
+  whose registered load mentions the substituted variable and takes the
+  canonical form of the result; the universal trigger matcher
+  (`guided_forall_condition_candidates`) views load variables as the loads
+  they name. Names stay context-free. Regression:
+  `substitution_reaches_through_a_load_variable_naming_a_bound_index`.
+  11 fixtures remain under the switch, six of them expected-text.
 - **Cross-epoch load resolution.** Across a call whose footprint may write
   a cell, the read before and the read after receive different load
   variables (the DAG walk cannot cross the call havoc). Their equality is
