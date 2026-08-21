@@ -77,7 +77,7 @@ Landed on master (commits `335868c4` through `abdf4180`, 2026-08-20/21):
 - Creation-time canonicalization for loaded **indices** entering pointer
   offsets is implemented at the three birth sites (`apply_c_add`,
   `evaluate_spec_pointer_offset_paths`, contract `offset_pointer_by_elements`)
-  behind `CLICK_OFFSET_INDEX_LOAD_VARIABLES=1`, off by default; three
+  behind `CLICK_CANONICALIZE_AT_CREATION=1`, off by default; three
   fixtures fail with it on (below).
 
 ## Plan
@@ -115,39 +115,58 @@ with an example. Run over both fixture gates:
   reflexive `v == v`; under the invariant they are redundant and can be
   dropped at creation.
 
-### Stage 2: canonicalize at every creation point, behind one switch
+### Stage 2: canonicalize at every creation point, behind one switch (implemented 2026-08-21)
 
-Rename the switch to `CLICK_CANONICALIZE_AT_CREATION=1` and make it govern:
+`CLICK_CANONICALIZE_AT_CREATION=1` (`canonicalize_at_creation_enabled`)
+makes memory loads evaluate to their load variable where they are born,
+so every fact, offset, and range built from them is canonical without
+touching the sites that build facts:
 
-- **Symbolic execution.** Facts pass through canonicalization where
-  `ExecutionPureFact` values are built (`public`, `certified`, condition
-  facts), with two exemptions: defining facts, and certified store records,
-  whose structured `CertifiedMemoryStore` data stays as recorded while the
-  proposition is canonical. Values in offsets use
-  `canonicalized_offset_index_term` (already implemented).
-- **Lowering.** The kernel proposition produced for a Surface Click
-  proposition is canonicalized before it is recorded, compared, or cited, so
-  a certificate citation `owner->len < owner->cap` lowers to the canonical
-  fact and a replay context rebuilt from citations holds canonical facts.
-- **Contract and spec evaluation.** Range endpoints, composite arguments,
-  segment endpoints, and loadability propositions canonicalize at
-  construction (`evaluate_spec_resource_at_state`,
-  `lower_spec_memory_loadable_at_state`, `evaluate_effect_segment`,
-  `evaluate_loop_effect_segment`).
-- **Resource fact projection.** The facts projected from composite
-  resource declarations and resource contexts canonicalize where they are
-  produced (`project_resource_context_observable_facts`,
-  `append_composite_resource_declared_facts`,
-  `evaluate_composite_resource_fact_propositions`,
-  `LegacyResourcePureFacts::new`).
+- **Resource materialization.** Resource lowering stores each owned or
+  viewed cell's value as the load variable for (base snapshot, pointer)
+  instead of the load term (`resource_lowering.rs`, `proof/resources.rs`
+  via `canonical_load_term`). This was the root of most non-canonical
+  facts: a later read of `owner->len` returned the materialized load term
+  as the cell's recorded value, never reaching the symbolic-load path.
+- **Symbolic execution.** `canonicalized_symbolic_load_value` returns a
+  load variable for int and byte loads too, with the defining fact in the
+  path's facts. Pointer reinterpretation of a materialized cell accepts a
+  load variable and records its defining fact
+  (`canonicalized_pointer_value_from_int_cell`).
+- **Contract evaluation.** `symbolic_contract_memory_load` returns the
+  load variable for int and byte loads, and pointer reinterpretation
+  accepts a load variable (`evaluate_contract_memory_load_from_memory`).
+- `canonicalized_offset_index_term` remains under the same switch as a
+  safety net for indices built from loads created elsewhere.
 
-Comparison-time canonicalization stays on throughout as the safety net.
+Two fact shapes are the base of the construction and keep their load
+term: defining facts `v == load(snapshot, p)`, and store facts
+`load(after, p) == v` where `after` records `v` at `p` (exported from a
+certified store record and cited by certificates through
+`at(statement(n).exit, ...)`). The stage-1 checker exempts both.
+
+Measured with the switch and the checker on: **zero** creation-time
+violations over the lib suite and both fixture corpora. Comparison-time
+canonicalization stays on as the safety net. With the switch off the tree
+is unchanged and green.
 
 ### Stage 3: fix the consumers the switch exposes
 
-Run the suite under the switch and repair each consumer that still assumes
-a load term. Two are already characterized:
+With the switch on, the lib suite has 19 failures, 17 of 398 mdtests
+fail, and the examples harness stops at `bounded-pool` (an
+expansion/replay disagreement). Every failure is a consumer that still
+assumes a load term. Characterized so far:
 
+- **Certificate synthesis must spell a load variable at the program point
+  it was read.** `push.contract`'s generated certificate applies
+  `int32_increment_strictly_increases` with `value` spelled `owner->len`,
+  which at the post-store apply point lowers to `len + 1`, so the
+  requirement `len + 1 < cap` is unavailable while `len < cap` is. Before
+  the switch the premise's load term synthesized through a program-point
+  form; a load variable must synthesize the same way (registry snapshot
+  to program point), and the strictly-replayable check must reject a
+  spelling that lowers differently at the apply point. Also behind the
+  three `required exact fact for theorem` failures.
 - **Cross-epoch load resolution (required feature, not a gap).** Across a
   call whose footprint may write a cell, the read before and the read after
   receive different load variables (the DAG walk cannot cross the call
@@ -161,10 +180,21 @@ a load term. Two are already characterized:
 - **Chained bounds.** `owned_string_pop`'s expanded replay needs a
   two-fact bound chain that the single-fact `canonical_bound_holds` cannot
   answer, so it falls into `has_order_path_for_memory_resolution`, which is
-  unmemoized inside fuel scopes and costs ~19k units per query. First
-  confirm the exact missing bound with the attribution spans already in
-  place; then either index two-hop bounds by canonical form or give the
-  order search scope-safe memoization.
+  unmemoized inside fuel scopes and costs ~19k units per query. Either
+  index two-hop bounds by canonical form or give the order search
+  scope-safe memoization.
+- **Loop invariant bundle preservation replay** (`bubble_pass3_max_suffix`,
+  `bubble_sort3_two_pass_sorted`, `bound_universal_*`): "could not replay
+  invariant closer" — the invariant-lowering paths compare or spell terms
+  by load shape.
+- **Smart `simp` goals left unproved** (`byte_slice_*`, predicate
+  unfolding, quantified cells): planners that select facts or instantiate
+  predicates by load shape.
+- **Expected-text tests**: kernel expression tests asserting raw load
+  values from symbolic loads, and expansion tests asserting certificate
+  text (`at(function.entry, p[1])`, `bytes_contains(p, 0, n, 120u8)`).
+  These update when the default flips; they are expectations of the old
+  creation form, not consumer bugs.
 - **Remaining typed evidence kinds.** Each `AtomicPropositionDerivationEvidence`
   constructor and replay checker that ties a premise to a goal by exact
   term gets the canonical tie already given to

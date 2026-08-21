@@ -510,15 +510,32 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
     facts: &mut Vec<ExecutionPureFact>,
     assumptions: &PureFactContext,
 ) -> Option<CValue> {
-    let CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) = value else {
-        return None;
-    };
     let pointee_byte_width = match value_type {
         CType::Int32Pointer => 4,
         CType::UInt8Pointer => 1,
         _ => return None,
     };
-    let fresh = mint_canonical_load_variable(bits, next_verification_variable, facts, assumptions)?;
+    let fresh = match value {
+        CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+            mint_canonical_load_variable(bits, next_verification_variable, facts, assumptions)?
+        }
+        // A cell materialized with its load variable (canonicalizing at
+        // creation) already carries the variable; record its defining fact
+        // in this path's stream, as minting would have.
+        CValue::Int32(Bitvector32Term::Variable(variable))
+            if is_canonical_load_variable(variable) =>
+        {
+            if let Some((memory, pointer)) = registered_canonical_load(variable) {
+                record_load_variable_defining_fact(
+                    *variable,
+                    Bitvector32Term::MemoryLoad(memory, Box::new(pointer)),
+                    facts,
+                );
+            }
+            *variable
+        }
+        _ => return None,
+    };
     Some(CValue::Pointer(Pointer {
         block: pointer.block.clone(),
         offset: PointerOffsetTerm::scale_int32(
@@ -542,6 +559,32 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
     assumptions: &PureFactContext,
 ) -> Option<CValue> {
     let value = symbolic_load_value(memory, pointer, value_type)?;
+    // Canonicalizing at creation: an int or byte load evaluates to its load
+    // variable, with the defining fact beside it, so every fact, offset, and
+    // range built from the value is canonical.
+    if canonicalize_at_creation_enabled() {
+        match &value {
+            CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+                let fresh = mint_canonical_load_variable(
+                    bits,
+                    next_verification_variable,
+                    facts,
+                    assumptions,
+                )?;
+                return Some(CValue::Int32(Bitvector32Term::Variable(fresh)));
+            }
+            CValue::UInt8(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+                let fresh = mint_canonical_load_variable(
+                    bits,
+                    next_verification_variable,
+                    facts,
+                    assumptions,
+                )?;
+                return Some(CValue::UInt8(Bitvector32Term::Variable(fresh)));
+            }
+            _ => {}
+        }
+    }
     let CValue::Pointer(Pointer {
         block,
         offset:
@@ -711,24 +754,41 @@ pub(crate) fn canonicalized_offset_index_term(
     bits: Bitvector32Term,
     facts: &mut Vec<ExecutionPureFact>,
 ) -> Bitvector32Term {
-    if !offset_index_load_variables_enabled() || !term_mentions_a_memory_load(&bits) {
+    if !canonicalize_at_creation_enabled() || !term_mentions_a_memory_load(&bits) {
         return bits;
     }
     substitute_canonical_load_names(&bits, &mut Some(facts))
 }
 
-/// Whether producers introduce load variables for loaded index terms at
-/// offset birth. Deferred by default: naming a store's index and a later load's
-/// index at different derivation epochs yields distinct names whose equality
-/// needs the memory-DAG bridge at load-resolution time, which does not yet
-/// close (see issues/canonicalization.md). Comparison-side canonicalization
-/// does not depend on this switch. `CLICK_OFFSET_INDEX_LOAD_VARIABLES=1` enables
-/// the producer side for investigation.
-fn offset_index_load_variables_enabled() -> bool {
+/// Whether terms are canonicalized at creation (stage 2 of
+/// `issues/canonicalization.md`): memory loads evaluate to their load
+/// variable where they are born — resource materialization, symbolic
+/// execution, and contract evaluation — so every fact, offset, and range
+/// built from them is canonical. Off by default until the consumers it
+/// exposes are repaired; comparison-time canonicalization does not depend
+/// on it. `CLICK_CANONICALIZE_AT_CREATION=1` enables it.
+pub(crate) fn canonicalize_at_creation_enabled() -> bool {
     thread_local! {
-        static ENABLED: bool = std::env::var("CLICK_OFFSET_INDEX_LOAD_VARIABLES").is_ok_and(|v| v == "1");
+        static ENABLED: bool =
+            std::env::var("CLICK_CANONICALIZE_AT_CREATION").is_ok_and(|v| v == "1");
     }
     ENABLED.with(|enabled| *enabled)
+}
+
+/// The term for reading `pointer` from `memory` at a creation point with no
+/// fact stream (resource materialization, contract evaluation): the load
+/// variable when canonicalizing at creation, else the load term. Load
+/// variables are content-addressed, so this agrees with every other
+/// creation point; the defining fact is available through the registry.
+pub(crate) fn canonical_load_term(memory: SharedCMemory, pointer: Pointer) -> Bitvector32Term {
+    let load = Bitvector32Term::MemoryLoad(memory, Box::new(pointer));
+    if !canonicalize_at_creation_enabled() {
+        return load;
+    }
+    match canonical_load_variable_for_term(&load) {
+        Some((variable, _)) => Bitvector32Term::Variable(variable),
+        None => load,
+    }
 }
 
 /// Debug-only check of the creation-time invariant (see
@@ -751,7 +811,7 @@ pub(crate) fn check_canonical_at_creation(condition: &ConditionTerm, value: bool
         return;
     }
     let proposition = Proposition::ConditionIs(condition.clone(), value);
-    if is_canonical_load_defining_fact(&proposition) {
+    if is_canonical_load_defining_fact(&proposition) || is_store_fact(condition, value) {
         return;
     }
     let canonical = canonical_condition(condition);
@@ -809,9 +869,36 @@ pub(crate) fn check_canonical_at_creation(condition: &ConditionTerm, value: bool
     if !first_time {
         return;
     }
+    let width = std::env::var("CLICK_CHECK_CANONICAL_AT_CREATION_WIDTH")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(240usize);
     let shown = format!("{condition:?}");
-    let shown = &shown[..shown.len().min(240)];
+    let shown = &shown[..shown.len().min(width)];
     eprintln!("CANONICAL-AT-CREATION violation [{kind}] created in {creator}\n  example: {shown}");
+}
+
+/// Whether a condition is a store fact `load(after, p) == v` where `after`
+/// records `v` at `p`: the memory-content counterpart of a defining fact,
+/// exported from a certified store record and cited by certificates through
+/// `at(statement(n).exit, ...)`. Like defining facts, store facts are the
+/// base the invariant rests on and keep their load term.
+fn is_store_fact(condition: &ConditionTerm, value: bool) -> bool {
+    if !value {
+        return false;
+    }
+    let ConditionTerm::Bitvector32Equal(left, right) = condition else {
+        return false;
+    };
+    let (load, stored) = match (left.as_ref(), right.as_ref()) {
+        (Bitvector32Term::MemoryLoad(memory, pointer), stored)
+        | (stored, Bitvector32Term::MemoryLoad(memory, pointer)) => ((memory, pointer), stored),
+        _ => return false,
+    };
+    matches!(
+        load.0.known_value(load.1),
+        Some(CValue::Int32(recorded) | CValue::UInt8(recorded)) if &recorded == stored
+    )
 }
 
 /// The canonical form for a condition: every operand takes its

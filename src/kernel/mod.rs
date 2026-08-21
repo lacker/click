@@ -23,6 +23,7 @@ pub(crate) use assumptions::{
     record_implicit_reasoning_provenance, with_search_attempt_rollback,
 };
 pub(crate) use eval::canonical_condition_fact;
+pub(crate) use eval::canonical_load_term;
 pub(crate) use eval::canonical_load_variable_for_term;
 #[cfg(test)]
 pub(crate) use eval::canonical_load_variable_with_origin;

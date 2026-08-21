@@ -138,7 +138,7 @@ canonicalization stays as a safety net.
 
 Today the invariant holds at one creation point: loaded pointers.
 Creation-time canonicalization for loaded indices entering pointer offsets
-is implemented behind `CLICK_OFFSET_INDEX_LOAD_VARIABLES=1`, off by default
+is implemented behind `CLICK_CANONICALIZE_AT_CREATION=1`, off by default
 until the consumers it exposes are repaired: cross-call load resolution
 through proved equalities between two load variables for one cell, and
 range checks needing a two-fact bound chain. The plan establishes the

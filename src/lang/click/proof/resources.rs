@@ -2961,9 +2961,9 @@ fn materialize_composite_resource_cells(
         if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
             continue;
         }
-        let load = Bitvector32Term::MemoryLoad(
+        let load = crate::kernel::canonical_load_term(
             crate::kernel::intern_c_memory(base_memory.clone()),
-            Box::new(pointer.clone()),
+            pointer.clone(),
         );
         let value = match element_width {
             1 => CValue::UInt8(load),

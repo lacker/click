@@ -102,9 +102,9 @@ pub(in crate::lang::click) fn memory_with_symbolic_loadable_cells(
                         Bitvector32Term::Constant(offset),
                         1,
                     );
-                    let value = CValue::UInt8(Bitvector32Term::MemoryLoad(
+                    let value = CValue::UInt8(crate::kernel::canonical_load_term(
                         crate::kernel::intern_c_memory(base_memory.clone()),
-                        Box::new(pointer.clone()),
+                        pointer.clone(),
                     ));
                     memory = memory.store(pointer, value);
                     offset += 1;
@@ -116,9 +116,9 @@ pub(in crate::lang::click) fn memory_with_symbolic_loadable_cells(
                         range.base.clone(),
                         Bitvector32Term::Constant(offset / 4),
                     );
-                    let value = CValue::Int32(Bitvector32Term::MemoryLoad(
+                    let value = CValue::Int32(crate::kernel::canonical_load_term(
                         crate::kernel::intern_c_memory(base_memory.clone()),
-                        Box::new(pointer.clone()),
+                        pointer.clone(),
                     ));
                     memory = memory.store(pointer, value);
                     offset += 4;
@@ -178,9 +178,9 @@ fn materialize_access_segment_cells(
         if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
             continue;
         }
-        let load = Bitvector32Term::MemoryLoad(
+        let load = crate::kernel::canonical_load_term(
             crate::kernel::intern_c_memory(base_memory.clone()),
-            Box::new(pointer.clone()),
+            pointer.clone(),
         );
         let value = match element_width {
             1 => CValue::UInt8(load),

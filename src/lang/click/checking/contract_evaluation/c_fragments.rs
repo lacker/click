@@ -287,6 +287,15 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
         )) if matches!(value_type, CType::Int32Pointer | CType::UInt8Pointer) => {
             symbolic_pointer_contract_memory_load(pointer, bits, value_type)
         }
+        // A cell materialized with its load variable (canonicalizing at
+        // creation) reinterprets as a pointer exactly as its load would.
+        crate::kernel::CExpressionOutcome::Value(CValue::Int32(
+            bits @ Bitvector32Term::Variable(variable),
+        )) if matches!(value_type, CType::Int32Pointer | CType::UInt8Pointer)
+            && crate::kernel::is_canonical_load_variable(&variable) =>
+        {
+            symbolic_pointer_contract_memory_load(pointer, bits, value_type)
+        }
         crate::kernel::CExpressionOutcome::Value(_) => Err(format!(
             "contract load produced a value incompatible with {value_type:?}"
         )),
@@ -604,8 +613,16 @@ pub(in crate::lang::click) fn symbolic_contract_memory_load(
     );
     match value_type {
         CType::Void => Err("cannot symbolically load void".to_string()),
-        CType::Int32 => Ok(CValue::Int32(load)),
-        CType::UInt8 => Ok(CValue::UInt8(load)),
+        // Canonicalizing at creation: the contract-side read evaluates to the
+        // same load variable symbolic execution introduces for this cell.
+        CType::Int32 => Ok(CValue::Int32(crate::kernel::canonical_load_term(
+            crate::kernel::intern_c_memory(memory.clone()),
+            pointer,
+        ))),
+        CType::UInt8 => Ok(CValue::UInt8(crate::kernel::canonical_load_term(
+            crate::kernel::intern_c_memory(memory.clone()),
+            pointer,
+        ))),
         CType::Int32Pointer | CType::UInt8Pointer => {
             symbolic_pointer_contract_memory_load(pointer, load, value_type)
         }
