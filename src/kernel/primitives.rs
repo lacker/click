@@ -938,7 +938,7 @@ impl From<&CMemory> for SharedCMemory {
 }
 
 /// How a memory snapshot was produced from an earlier one: the edges of the
-/// named-memory-state DAG (`docs/advanced/memory-dag.md`). Each
+/// named-memory-state DAG (`docs/internals/memory-dag.md`). Each
 /// variant names its base snapshot, so following `base` walks backwards
 /// through the write history that execution already knew when it built the
 /// snapshot — instead of reconstructing that history at proof time from

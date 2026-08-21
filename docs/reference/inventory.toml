@@ -1,0 +1,1022 @@
+# Public documentation coverage inventory.
+# IDs are stable review keys; paths are relative to docs/.
+
+[[item]]
+id = "stdlib.resource.allocation"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "language.verifying"
+path = "reference/language/index.md#file-shape"
+
+[[item]]
+id = "language.predicate"
+path = "reference/language/index.md#file-shape"
+
+[[item]]
+id = "language.function"
+path = "reference/language/index.md#file-shape"
+
+[[item]]
+id = "language.resource"
+path = "reference/language/index.md#file-shape"
+
+[[item]]
+id = "language.theorem"
+path = "reference/language/index.md#file-shape"
+
+[[item]]
+id = "language.decreases"
+path = "reference/language/index.md#optional-c-termination"
+
+[[item]]
+id = "language.ensures"
+path = "reference/language/index.md#pure-theorems"
+
+[[item]]
+id = "language.by"
+path = "reference/language/index.md#pure-theorems"
+
+[[item]]
+id = "language.auto"
+path = "reference/language/index.md#pure-theorems"
+
+[[item]]
+id = "language.requires"
+path = "reference/language/index.md#requirements"
+
+[[item]]
+id = "language.read"
+path = "reference/language/index.md#requirements"
+
+[[item]]
+id = "language.write"
+path = "reference/language/index.md#requirements"
+
+[[item]]
+id = "language.resource-clause"
+path = "reference/language/index.md#read-and-write-resources"
+
+[[item]]
+id = "language.immutable"
+path = "reference/language/index.md#read-and-write-resources"
+
+[[item]]
+id = "language.mutable"
+path = "reference/language/index.md#read-and-write-resources"
+
+[[item]]
+id = "language.contains"
+path = "reference/language/index.md#read-and-write-resources"
+
+[[item]]
+id = "language.and"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.or"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.implies"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.not"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.forall"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.exists"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.let-where"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.all"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.any"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.defined"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.loadable"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.separate"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.contains-proposition"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.at"
+path = "reference/language/index.md#propositions"
+
+[[item]]
+id = "language.old"
+path = "reference/language/index.md#old"
+
+[[item]]
+id = "language.c-fragment"
+path = "reference/language/index.md#c"
+
+[[item]]
+id = "language.at-expression"
+path = "reference/language/index.md#at"
+
+[[item]]
+id = "language.fold"
+path = "reference/language/index.md#pure-click-functions"
+
+[[item]]
+id = "language.if-expression"
+path = "reference/language/index.md#pure-click-functions"
+
+[[item]]
+id = "language.predicate-call"
+path = "reference/language/index.md#predicates"
+
+[[item]]
+id = "language.modifies"
+path = "reference/language/index.md#effects"
+
+[[item]]
+id = "language.preserves"
+path = "reference/language/index.md#effects"
+
+[[item]]
+id = "language.effect"
+path = "reference/language/index.md#effects"
+
+[[item]]
+id = "language.operator-plus"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-minus"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-multiply"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-divide"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-remainder"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-bit-and"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-bit-or"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-bit-xor"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-bit-not"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-shift-left"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-shift-right"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-eq"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-ne"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-lt"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-le"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-gt"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-ge"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-range"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-index"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "language.operator-field"
+path = "reference/language/grammar.md#grammar-and-operators"
+
+[[item]]
+id = "tactic.mark"
+path = "reference/tactics/index.md#execution"
+
+[[item]]
+id = "tactic.step"
+path = "reference/tactics/index.md#execution"
+
+[[item]]
+id = "tactic.execute"
+path = "reference/tactics/index.md#execution"
+
+[[item]]
+id = "tactic.execute_until"
+path = "reference/tactics/index.md#execution"
+
+[[item]]
+id = "tactic.branch"
+path = "reference/tactics/index.md#execution"
+
+[[item]]
+id = "tactic.loop"
+path = "reference/tactics/index.md#execution"
+
+[[item]]
+id = "tactic.simp"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.assumption"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.extract"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.normalize"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.rewrite"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.intro"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.split"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.left"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.right"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.enumerate"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.contradiction"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.instantiate"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.apply"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.induct"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.have"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.open"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.if"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.cases"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.witness"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.choose"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
+id = "tactic.frame"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+
+[[item]]
+id = "tactic.transport"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+
+[[item]]
+id = "tactic.unfold"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+
+[[item]]
+id = "tactic.fold"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+
+[[item]]
+id = "tactic.observe"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+
+[[item]]
+id = "tactic.close_invariants"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+
+[[item]]
+id = "tactic.conjunction"
+path = "reference/tactics/index.md#compatibility"
+
+[[item]]
+id = "tactic.apply_loop_summary"
+path = "reference/tactics/index.md#compatibility"
+
+[[item]]
+id = "tactic.summarize"
+path = "reference/tactics/index.md#compatibility"
+
+[[item]]
+id = "tactic.execute_rest"
+path = "reference/tactics/index.md#compatibility"
+
+[[item]]
+id = "tactic.symbolic_execute"
+path = "reference/tactics/index.md#compatibility"
+
+[[item]]
+id = "tactic.execute_step"
+path = "reference/tactics/index.md#compatibility"
+
+[[item]]
+id = "tactic.execute_then_step"
+path = "reference/tactics/index.md#compatibility"
+
+[[item]]
+id = "tactic.execute_else_step"
+path = "reference/tactics/index.md#compatibility"
+
+[[item]]
+id = "tactic.bounded_execute"
+path = "reference/tactics/index.md#compatibility"
+
+[[item]]
+id = "tactic.calculate"
+path = "reference/tactics/index.md#compatibility"
+
+[[item]]
+id = "tactic.double_negation"
+path = "reference/tactics/index.md#compatibility"
+
+[[item]]
+id = "tactic.vacuous"
+path = "reference/tactics/index.md#compatibility"
+
+[[item]]
+id = "cli.verify.command"
+path = "reference/cli/verify.md#click-verify-command"
+
+[[item]]
+id = "cli.verify.--time-limit"
+path = "reference/cli/verify.md#options"
+
+[[item]]
+id = "cli.verify.--changed-since"
+path = "reference/cli/verify.md#options"
+
+[[item]]
+id = "cli.verify.--explain"
+path = "reference/cli/verify.md#options"
+
+[[item]]
+id = "cli.verify.--help"
+path = "reference/cli/verify.md#options"
+
+[[item]]
+id = "cli.verify.-h"
+path = "reference/cli/verify.md#options"
+
+[[item]]
+id = "cli.verify.--"
+path = "reference/cli/verify.md#options"
+
+[[item]]
+id = "cli.profile.command"
+path = "reference/cli/profile.md#click-profile-command"
+
+[[item]]
+id = "cli.profile.--smart-threshold"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.profile.--simple-threshold"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.profile.--control-threshold"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.profile.--top"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.profile.--threshold"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.profile.--time-limit"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.profile.--help"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.profile.-h"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.profile.--"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.expand.command"
+path = "reference/cli/expand.md#click-expand-command"
+
+[[item]]
+id = "cli.expand.--output"
+path = "reference/cli/expand.md#options"
+
+[[item]]
+id = "cli.expand.--in-place"
+path = "reference/cli/expand.md#options"
+
+[[item]]
+id = "cli.expand.--time-limit"
+path = "reference/cli/expand.md#options"
+
+[[item]]
+id = "cli.expand.--claim"
+path = "reference/cli/expand.md#options"
+
+[[item]]
+id = "cli.expand.--help"
+path = "reference/cli/expand.md#options"
+
+[[item]]
+id = "cli.expand.-h"
+path = "reference/cli/expand.md#options"
+
+[[item]]
+id = "cli.expand.--"
+path = "reference/cli/expand.md#options"
+
+[[item]]
+id = "cli.audit.command"
+path = "reference/cli/audit.md#click-audit-command"
+
+[[item]]
+id = "cli.audit.--session-time-limit"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--discovery-time-limit"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--expansion-time-limit"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--verification-time-limit"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--performance-slack"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--slow-site-limit"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--time-limit"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--start-at"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--claim"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--changed-since"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--verbose"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--keep-going"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--max-sites"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--help"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.-h"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.audit.--"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "stdlib.theorem.int32_increment_upper_bound"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_increment_strictly_increases"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_increment_lower_bound"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_increment_greater_equal_lower_bound"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_increment_strict_greater_lower_bound"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_increment_preserves_order"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_successor_le_implies_lt"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_positive_is_nonnegative"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_lt_implies_le"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_not_lt_implies_ge"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_strictly_positive_is_nonnegative"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_increment_below_max_is_defined"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_one_plus_below_max_is_defined"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_one_plus_strictly_increases"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_nonnegative_add_within_max_is_defined"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_nonnegative_subtract_within_value_is_defined"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_move_one_from_right_to_left_preserves_sum"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_subtract_equal_sum_right_cancels"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_add_nonnegative_right_is_at_least_left"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_add_nonnegative_left_is_at_least_right"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_positive_predecessor_is_nonnegative"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_above_one_predecessor_is_at_least_one"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_positive_predecessor_strictly_decreases"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_nonnegative_predecessor_upper_bound"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_le_lt_transitive"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_le_transitive"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_lt_transitive"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_lt_le_transitive"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_ge_transitive"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_ge_implies_reversed_le"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_le_implies_reversed_ge"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_le_and_not_lt_implies_eq"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_le_and_neq_implies_lt"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.int32_ge_and_not_gt_implies_eq"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.function.count"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.predicate.permutation"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.function.byte_count"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.predicate.bytes_equal"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.predicate.bytes_equal_range"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.predicate.bytes_all_eq"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.predicate.bytes_contains"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.predicate.bytes_all_not_eq"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.predicate.cstr_prefix"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.predicate.cstr_len"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.predicate.cstr"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.predicate.cstr_bounded"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.cstr_len_nonnegative"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.cstr_len_has_prefix"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "stdlib.theorem.cstr_len_has_terminator"
+path = "reference/library/index.md#current-prelude"
+
+[[item]]
+id = "glossary.alias"
+path = "reference/glossary.md#a"
+
+[[item]]
+id = "glossary.assumption"
+path = "reference/glossary.md#a"
+
+[[item]]
+id = "glossary.audit"
+path = "reference/glossary.md#a"
+
+[[item]]
+id = "glossary.binder"
+path = "reference/glossary.md#b"
+
+[[item]]
+id = "glossary.bounded-search"
+path = "reference/glossary.md#b"
+
+[[item]]
+id = "glossary.branch"
+path = "reference/glossary.md#b"
+
+[[item]]
+id = "glossary.c-fragment"
+path = "reference/glossary.md#c"
+
+[[item]]
+id = "glossary.c0"
+path = "reference/glossary.md#c"
+
+[[item]]
+id = "glossary.certificate"
+path = "reference/glossary.md#c"
+
+[[item]]
+id = "glossary.completeness"
+path = "reference/glossary.md#c"
+
+[[item]]
+id = "glossary.contract"
+path = "reference/glossary.md#c"
+
+[[item]]
+id = "glossary.control-flow-tactic"
+path = "reference/glossary.md#c"
+
+[[item]]
+id = "glossary.definedness"
+path = "reference/glossary.md#d"
+
+[[item]]
+id = "glossary.effect"
+path = "reference/glossary.md#e"
+
+[[item]]
+id = "glossary.elaboration"
+path = "reference/glossary.md#e"
+
+[[item]]
+id = "glossary.execution-path"
+path = "reference/glossary.md#e"
+
+[[item]]
+id = "glossary.expansion"
+path = "reference/glossary.md#e"
+
+[[item]]
+id = "glossary.fact"
+path = "reference/glossary.md#f"
+
+[[item]]
+id = "glossary.frame"
+path = "reference/glossary.md#f"
+
+[[item]]
+id = "glossary.frontier"
+path = "reference/glossary.md#f"
+
+[[item]]
+id = "glossary.goal"
+path = "reference/glossary.md#g"
+
+[[item]]
+id = "glossary.induction"
+path = "reference/glossary.md#i"
+
+[[item]]
+id = "glossary.instantiation"
+path = "reference/glossary.md#i"
+
+[[item]]
+id = "glossary.invariant"
+path = "reference/glossary.md#i"
+
+[[item]]
+id = "glossary.join"
+path = "reference/glossary.md#j"
+
+[[item]]
+id = "glossary.kernel"
+path = "reference/glossary.md#k"
+
+[[item]]
+id = "glossary.kernel-click"
+path = "reference/glossary.md#k"
+
+[[item]]
+id = "glossary.loadability"
+path = "reference/glossary.md#l"
+
+[[item]]
+id = "glossary.lowering"
+path = "reference/glossary.md#l"
+
+[[item]]
+id = "glossary.mdtest"
+path = "reference/glossary.md#m"
+
+[[item]]
+id = "glossary.old"
+path = "reference/glossary.md#o"
+
+[[item]]
+id = "glossary.ownership"
+path = "reference/glossary.md#o"
+
+[[item]]
+id = "glossary.permission"
+path = "reference/glossary.md#p"
+
+[[item]]
+id = "glossary.postcondition"
+path = "reference/glossary.md#p"
+
+[[item]]
+id = "glossary.precondition"
+path = "reference/glossary.md#p"
+
+[[item]]
+id = "glossary.premise"
+path = "reference/glossary.md#p"
+
+[[item]]
+id = "glossary.profiling"
+path = "reference/glossary.md#p"
+
+[[item]]
+id = "glossary.proof"
+path = "reference/glossary.md#p"
+
+[[item]]
+id = "glossary.proof-mark"
+path = "reference/glossary.md#p"
+
+[[item]]
+id = "glossary.proof-object"
+path = "reference/glossary.md#p"
+
+[[item]]
+id = "glossary.proof-state"
+path = "reference/glossary.md#p"
+
+[[item]]
+id = "glossary.proof-unit"
+path = "reference/glossary.md#p"
+
+[[item]]
+id = "glossary.proposition"
+path = "reference/glossary.md#p"
+
+[[item]]
+id = "glossary.quantifier"
+path = "reference/glossary.md#q"
+
+[[item]]
+id = "glossary.replay"
+path = "reference/glossary.md#r"
+
+[[item]]
+id = "glossary.resource"
+path = "reference/glossary.md#r"
+
+[[item]]
+id = "glossary.sidecar"
+path = "reference/glossary.md#s"
+
+[[item]]
+id = "glossary.simple-tactic"
+path = "reference/glossary.md#s"
+
+[[item]]
+id = "glossary.smart-tactic"
+path = "reference/glossary.md#s"
+
+[[item]]
+id = "glossary.snapshot"
+path = "reference/glossary.md#s"
+
+[[item]]
+id = "glossary.soundness"
+path = "reference/glossary.md#s"
+
+[[item]]
+id = "glossary.surface-click"
+path = "reference/glossary.md#s"
+
+[[item]]
+id = "glossary.symbolic-execution"
+path = "reference/glossary.md#s"
+
+[[item]]
+id = "glossary.tactic"
+path = "reference/glossary.md#t"
+
+[[item]]
+id = "glossary.theorem"
+path = "reference/glossary.md#t"
+
+[[item]]
+id = "glossary.trusted-computing-base"
+path = "reference/glossary.md#t"
+
+[[item]]
+id = "glossary.undefined-behavior"
+path = "reference/glossary.md#u"
+
+[[item]]
+id = "glossary.view"
+path = "reference/glossary.md#v"
+
+[[item]]
+id = "glossary.witness"
+path = "reference/glossary.md#w"
+
+[[item]]
+id = "glossary.at"
+path = "reference/glossary.md#special-forms"

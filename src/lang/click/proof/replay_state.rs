@@ -202,7 +202,7 @@ pub(super) struct TacticReplayState {
     /// loop-entry memory here and function-entry memory in the Click -> Spec
     /// lowering the kernel certified against. Naming the state explicitly is
     /// what makes the two agree; see
-    /// `docs/advanced/memory-dag.md` (stage 2a).
+    /// `docs/internals/memory-dag.md` (stage 2a).
     ///
     /// `None` keeps the previous positional resolution, so every region that
     /// does not record a function-entry snapshot behaves exactly as before.

@@ -9,11 +9,11 @@ corresponding issue here.
 
 Policy lives in the docs, not here: `AGENTS.md` for when tooling failures
 block feature work and what always warrants an issue, the
-[proof-failure triage guide](../docs/advanced/proof-failure-triage.md) for
+[proof-failure triage guide](../docs/concepts/proof-failure-triage.md) for
 classifying a failure before filing (including the smart-versus-simple
-tactic rule), [Testing Click](../docs/advanced/testing-click.md) for
+tactic rule), [Testing Click](../docs/internals/testing.md) for
 quarantine, profiling order, and the expansion workflow, and
-[Verification Efficiency](../docs/advanced/verification-efficiency.md) for
+[Verification Efficiency](../docs/internals/verification-efficiency.md) for
 the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
