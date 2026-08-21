@@ -18,12 +18,16 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 3
+## Other open issues: 4
 
 - [Canonicalization needs a proof-grounded model](canonicalization.md):
   competing term representations leave production pointer invariants,
   simple certificate replay, proof authority, and deterministic scaling
   without one coherent contract.
+- [Rebuild the technical documentation as an exhaustive AI-written reference](documentation.md):
+  reorganize and complete the language, tactic, CLI, library, glossary,
+  concept, and internal documentation with source-backed coverage, verified
+  examples, Google style, and a clear AI-versus-human authorship boundary.
 - [Replay is a second proof engine](replay-smell.md): independent certificate
   checking still advances a large parallel mutable replay state instead of
   interpreting recorded operations through the audited proof-object model.
