@@ -1,5 +1,6 @@
 use super::prelude::*;
 
+mod canonicalization_tests;
 mod contract_execution_tests;
 mod execution_tests;
 mod expression_tests;

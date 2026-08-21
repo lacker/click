@@ -52,10 +52,34 @@ inside pointer-offset arithmetic. Loaded pointers and indices must first be
 given the model's stable representation, with the defining evidence emitted
 beside it. The implementation does this in
 `canonicalized_pointer_value_from_int_cell` and
-`canonicalized_symbolic_load_value`, but no structural regression walks
-pointers from the real evaluation and lowering entry points. Kernel tests
-that deliberately construct raw load-bearing offsets do not establish the
-production invariant.
+`canonicalized_symbolic_load_value`, and a structural regression now walks
+the loaded-pointer case from the real evaluation entry points
+(`src/kernel/tests/canonicalization_tests.rs`). Loaded **indices** remain
+unenforced: kernel pointer addition (`apply_c_add`), spec pointer-offset
+evaluation (`evaluate_spec_pointer_offset_paths`), the lang-side
+effect-segment evaluator (`evaluate_effect_segment` in
+`src/lang/click/checking/effects.rs`), and resource-range endpoint
+evaluation all still admit raw loads. Kernel tests that deliberately
+construct raw load-bearing offsets do not establish the production
+invariant.
+
+**Producer adoption is atomic.** Minting canonical names at one
+offset-birth site while other producers of the same fact family still
+spell raw loads splits one load identity into two spellings that only a
+proved equality could reconnect, which frame checks and exact `assumption`
+matching rightly refuse to assume. Measured on 2026-08-20 by
+canonicalizing only `apply_c_add` and the spec offset path: mutable-
+footprint containment failed in four contract fixtures (write pointers
+named, footprint segments raw, e.g. `vector_push.contract` "write to
+`owner[((v… + v…) - v…)]` is outside the mutable footprint" with segments
+spelled `load(arg-memory@v… * 4)`), an expanded pipeline's exact
+`assumption` selection lost a fact to mixed spellings
+(`input_cursor_shared_pipeline.contract`), and a frame tactic blew its
+100ms budget (`owned_string_pop.contract`). The loaded-index migration
+must land as one coherent change across kernel C evaluation, kernel spec
+evaluation, the lang-side segment and endpoint evaluators, and re-expanded
+certificates, with the loaded-array-index structural regression enabled in
+the same change.
 
 ### Canonical facts without a simple certificate
 
