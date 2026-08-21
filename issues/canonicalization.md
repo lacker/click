@@ -186,13 +186,24 @@ assumes a load term. Characterized so far:
   premises) now try anchored forms first when canonicalizing at creation
   (switch-gated until the flip). With this and the annotation fix, the
   increment certificate in `push.contract` replays end to end.
-- **Order-chain derivations need a simple certificate.** The next
-  `push.contract` failure: smart reasoning derives a `<=` goal from
-  `1 <= len` and `len <= cap`, and the typed-plan dispatcher has no simple
-  certificate shape for that chain ("no explicit simple certificate for
-  signed less-or-equal"). Before the switch the goal was reached another
-  way; under canonical terms it needs a transitivity plan. One instance
-  of the "remaining typed evidence kinds" item.
+- **Materialization cells hold load variables.** Done: the two
+  consumers that recognized a materialization cell by its load-term shape
+  (`canonical_memory_for_pointer_load`'s common-source jump and the
+  outcome equality's unchanged-load check) take the source snapshot from
+  the registry when the cell holds a load variable. `plan_explicit_nonstrict_transitive`
+  supplies the two-step `<=` chain certificate. Three fixtures cleared;
+  17 remain under the switch.
+- **Load-variable congruence.** With load terms, simp rewrote a pointer
+  inside a load (`load(m, data + v_old)` to `load(m, data + 0)` from
+  `v_old == 0`) by structural substitution. A load variable is opaque to
+  that rewrite, so two reads of one cell through pointers that are equal
+  only by a proved fact get two variables with no connecting edge. The
+  model's answer is a congruence rule: from `p == q` (proved) derive
+  `load_var(m, p) == load_var(m, q)`, recorded as a fact with the pointer
+  equality as its premise and a typed evidence kind, so certificates can
+  cite it. Reproductions: `restricted_simp_rewrites_pointer_aliases_inside_memory_loads`,
+  `box_pipeline`'s `data[0] == value` from `data[old(value)] == value` and
+  `old(value) == 0`.
 - **Cross-epoch load resolution (required feature, not a gap).** Across a
   call whose footprint may write a cell, the read before and the read after
   receive different load variables (the DAG walk cannot cross the call
