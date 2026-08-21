@@ -26,6 +26,34 @@ become accepted evidence. It also explains expansion: expansion prints the
 simple surface tactics represented by a replayable certificate, not a trace of
 every failed search attempt.
 
+## What a step carries
+
+Advancing the frontier across a statement changes which facts are still
+about the current state. The rule is fixed and cheap:
+
+- A fact that mentions no memory is unaffected by the step and stays
+  available as it is.
+- A fact that mentions memory (a load term or a load variable) crosses the
+  step only if the step's frame check shows the loaded cell is outside the
+  statement's declared effect. `step() using { ... }` lists exactly the
+  facts the step attempts to carry; `execute()` attempts every available
+  fact, and its expansion writes the list it found. Each attempt is one
+  bounded, deterministic check against the effect: distinct blocks, offset
+  arithmetic, constant ranges, and a direct lookup of ownership (two owned
+  resources are disjoint, including memory owned through a resource's
+  footprint). The check does not search.
+- A fact the step could not carry is not lost, but it remains a fact about
+  the pre-step snapshot. Relating it to the current state afterwards takes
+  an explicit `transport`, which may do more reasoning because the
+  certificate asks for it.
+- Comparing two terms never does frame reasoning. Two load variables for
+  one cell on either side of an effect are equal only because a step or a
+  `transport` carried the fact across.
+
+The point of the rule is cost and honesty together: a step's work is
+proportional to the facts it is told to carry, and every frame proof a
+certificate depends on is a transition the certificate names.
+
 Proof branches create path-specific states. A join is valid only after the
 required facts and resources can be reconciled across all relevant branches.
 Loop invariants play a similar role across an unbounded number of iterations:

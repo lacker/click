@@ -279,15 +279,26 @@ assumes a load term. Characterized so far:
   (`rewrite(at(statement(5).entry, observed) == …)` replaces the `have`).
   These assertion edits were prepared and verified and are applied at
   the flip.
-- **Flip blockers (stage 4): three examples relied on laundering.**
+- **Step rule (decided 2026-08-21).** A step carries exactly the facts it
+  is told to, one bounded frame check each against the statement's
+  declared effect, with ownership by direct lookup; an uncarried fact
+  stays at its pre-step snapshot and needs an explicit `transport`;
+  comparison never does frame reasoning. Documented in
+  `docs/concepts/proof-state-and-replay.md` ("What a step carries") and
+  `docs/internals/verification-efficiency.md`. Consequences for the
+  blockers below: the framed-epoch congruence edge is ruled out as a
+  comparison move (it may serve as the checker behind a `transport`),
+  and the repair for all three is the step's direct frame check seeing
+  a composite resource's memory footprint.
+- **Flip blockers (stage 4): three examples relied on structural snapshot matching.**
   Attempting the flip (2026-08-21) found proofs in `examples/` that only
   passed because the load-term world identified loads across snapshots
   without proof: `normalize_direct_atomic_memory_loads` and
   `canonical_c_memory_for_pointer_load` restrict a snapshot to the
   loaded block and so drop call-havoc markers (the known
-  havoc-marker laundering), and `old(x)` over the empty function-entry
+  havoc-marker issue), and `old(x)` over the empty function-entry
   memory matched "the current value" through `concretize_pristine_loads`.
-  Names are epoch-keyed and do not launder, so these proofs fail under
+  Names are epoch-keyed and never match across an effect structurally, so these proofs fail under
   the switch and must be repaired — each needs a real frame proof, not
   a weaker example:
   - `input-cursor` (`input_cursor_shared_pipeline`): two `step() using`
@@ -316,7 +327,7 @@ assumes a load term. Characterized so far:
     form"), so it waits for surface synthesis of name-form transports.
   - `owned-segmented-buffer` (`owned_segmented_buffer_pipeline`):
     `have 0 < owner->second_len by { assumption(); }` after the step
-    over `set_first` passed only by laundering; under names the step's
+    over `set_first` passed only by structural snapshot matching; under names the step's
     `using` transport must rewrite the fact to the post-call name, which
     needs the `set_first` range (owned through the composite) proved
     disjoint from `owner->second_len` — the same composition evidence,

@@ -66,6 +66,14 @@ It may not, by default:
 - use a bounded linear cache with deep structural comparison as the durable
   identity mechanism.
 
+A statement step is the canonical instance. It attempts to carry exactly the
+facts it is told to (`step() using`), one bounded frame check per fact
+against the statement's declared effect, with ownership consulted by direct
+lookup only. A fact it cannot carry stays at its pre-step snapshot; an
+explicit `transport` pays for anything more. Term comparison performs no
+frame reasoning. The user-facing statement of this rule is
+[What a step carries](../concepts/proof-state-and-replay.md#what-a-step-carries).
+
 ## Output-sensitive exceptions
 
 Some verification work is inherently larger than one lookup. Its cost must be
