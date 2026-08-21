@@ -1786,12 +1786,15 @@ fn selected_branched_post_execution_have_merges_path_certificates() {
 
 #[test]
 fn selected_pure_case_split_simp_expands_by_removal() {
-    // The default libtest worker stack is 2 MiB. This explicit 1.25 MiB
-    // budget catches replay-frame growth while leaving measured headroom for
-    // the corpus maximum of nine nested interpreter calls.
+    // The default libtest worker stack is 2 MiB. This explicit 1.75 MiB
+    // budget catches replay-frame growth while staying below that default.
+    // Calibration (2026-08-21): the replay needs between 1216 and 1280 KiB
+    // on rustc 1.92 / macOS, and overflowed a 1.25 MiB budget on CI's Linux
+    // stable toolchain, so the budget carries about 40% headroom over the
+    // measured need. Recalibrate on the CI platform before tightening it.
     std::thread::Builder::new()
         .name("small-stack-expansion-replay".to_string())
-        .stack_size(5 * 256 * 1024)
+        .stack_size(7 * 256 * 1024)
         .spawn(selected_pure_case_split_simp_expands_by_removal_on_small_stack)
         .expect("the small-stack replay canary thread should start")
         .join()

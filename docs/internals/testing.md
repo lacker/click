@@ -469,9 +469,12 @@ stack overflow.
 
 `ProofReplayContext` keeps its large `TacticReplayState` behind a `Box`; this
 reduced the ordinary debug interpreter frame from 123,264 to 62,688 bytes.
-`selected_pure_case_split_simp_expands_by_removal` runs on an explicit 1.25 MiB
+`selected_pure_case_split_simp_expands_by_removal` runs on an explicit 1.75 MiB
 thread stack, below libtest's 2 MiB default, and pins that representation
-budget. The outlined proof-rule and replay adapters keep rule-local enum and
+budget. The replay needs between 1216 and 1280 KiB on rustc 1.92 / macOS and
+overflowed a 1.25 MiB budget on CI's Linux stable toolchain, so the budget
+carries about 40% headroom over the measured need; recalibrate on the CI
+platform before tightening it. The outlined proof-rule and replay adapters keep rule-local enum and
 proposition payloads out of their dispatchers' frames; they are stable stack
 budget boundaries, not substitutes for the depth guard. Changes to those
 boundaries must keep the small-stack canary green. The larger architectural
