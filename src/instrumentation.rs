@@ -5,7 +5,7 @@
 //! `CLICK_TIMINGS` text stream remains available for engine debugging, but
 //! normal tooling consumes these values directly.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -252,6 +252,7 @@ thread_local! {
     static DEADLINE_CAPTURED: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
     static TACTIC_LIMITS: RefCell<Vec<TacticLimits>> = const { RefCell::new(Vec::new()) };
     static TACTIC_WORK_LIMITS: RefCell<Vec<TacticWorkLimits>> = const { RefCell::new(Vec::new()) };
+    static TACTIC_TIME_LIMITS_DISABLED: Cell<usize> = const { Cell::new(0) };
     static ACTIVE_TACTICS: RefCell<Vec<ActiveTactic>> = const { RefCell::new(Vec::new()) };
     static ACTIVE_PHASES: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
     static PENDING_LIMIT: RefCell<Option<PendingLimit>> = const { RefCell::new(None) };
@@ -307,6 +308,14 @@ impl Drop for TacticWorkLimitGuard {
     }
 }
 
+struct TacticTimeLimitsDisabledGuard;
+
+impl Drop for TacticTimeLimitsDisabledGuard {
+    fn drop(&mut self) {
+        TACTIC_TIME_LIMITS_DISABLED.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
 fn clear_pending_limit(kind: PendingLimitKind) {
     PENDING_LIMIT.with(|pending| {
         let mut pending = pending.borrow_mut();
@@ -339,6 +348,16 @@ pub fn with_tactic_work_limits<R>(limits: TacticWorkLimits, operation: impl FnOn
     operation()
 }
 
+/// Runs fixture verification with deterministic tactic-work budgets but
+/// without production's latency-oriented tactic clocks. This does not disable
+/// an explicitly installed outer deadline; callers that need hang containment
+/// should own it at the process boundary.
+pub fn without_tactic_time_limits<R>(operation: impl FnOnce() -> R) -> R {
+    TACTIC_TIME_LIMITS_DISABLED.with(|depth| depth.set(depth.get() + 1));
+    let _guard = TacticTimeLimitsDisabledGuard;
+    operation()
+}
+
 pub fn with_default_tactic_limits<R>(operation: impl FnOnce() -> R) -> R {
     if std::env::var_os("CLICK_DISABLE_TACTIC_BUDGETS").is_some() {
         return operation();
@@ -353,6 +372,9 @@ pub fn with_default_tactic_limits<R>(operation: impl FnOnce() -> R) -> R {
 }
 
 fn with_default_tactic_time_limit<R>(operation: impl FnOnce() -> R) -> R {
+    if TACTIC_TIME_LIMITS_DISABLED.with(|depth| depth.get() > 0) {
+        return operation();
+    }
     if TACTIC_LIMITS.with(|limits| !limits.borrow().is_empty()) {
         return operation();
     }

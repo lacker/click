@@ -79,11 +79,15 @@ verified fixtures, so their outer test-process allowance is not a per-project
 verification budget.
 
 Plain `cargo test` does not apply nextest's outer Rust-test deadline. The
-fixture harnesses still report per-fixture limits from the shared event stream:
-each mdtest gets 30 seconds by default (`MDTEST_TIME_LIMIT`), and each example
-sidecar gets the ordinary `click verify` 30-second limit
-(`CLICK_EXAMPLE_TIME_LIMIT`). Override those variables while reducing a slow
-fixture; neither disables tactic budgets.
+fixture harnesses deliberately have no wall-clock proof limit: deterministic
+tactic-work budgets decide their verdicts. Under nextest, the aggregate mdtest
+and example test processes retain a 20-minute outer timeout as crash/hang
+containment. A nextest timeout is therefore a tooling failure, visibly distinct
+from the verifier's deterministic-budget diagnostic, and is not evidence that
+a particular proof is invalid or too expensive. On 2026-08-20 the complete
+mdtest and example harnesses took 58.2 and 17.6 seconds respectively, so the
+20-minute containment boundary has more than 20x headroom over the slower
+aggregate gate.
 
 Production tactics have two independent bounds, and the deterministic work
 budget is the primary one: it counts cooperative prover checkpoints, so the
@@ -128,14 +132,14 @@ hide quadratic growth and is not sufficient. Conversely, explicitly emitted
 paths, quantified instances, premises, and definition members count as input
 or output and may be charged accordingly.
 
-Rust library tests enforce deterministic tactic-work budgets but do not
-inherit the production time limits. Tests specifically about real-time
-interruption install explicit time limits. The mdtest integration gate retains
-a per-fixture hang deadline. The example gate deliberately matches ordinary
-`click verify`: production tactic budgets and an independent 30-second
-wall-clock deadline for every sidecar, traversed serially and fail-fast across
-projects. The gates do not rerun a successful proof to decide whether a noisy
-timing observation was
+Rust library tests and both fixture gates enforce deterministic tactic-work
+budgets but do not inherit production time limits. Tests specifically about
+real-time interruption install explicit time limits. Fixture traversal remains
+serial and fail-fast, while nextest owns the narrow process-level timeout for
+an uncooperative hang. The former load-sensitive bubble-sort canary is pinned
+at 100,000 deterministic units per tactic class; its measured maxima on
+2026-08-20 were 146 simple, 21,090 smart, and 42,169 control units. The gates
+do not rerun a successful proof to decide whether a noisy timing observation was
 "confirmed": host throughput cannot change the semantic result in the first
 place.
 

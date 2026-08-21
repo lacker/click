@@ -7,8 +7,10 @@
 slow-timeout = { period = "10s", terminate-after = 6 }
 
 # The mdtest and example-project harnesses are single test functions that each
-# run a whole suite of isolated child processes with their own per-child time
-# limits, so the parent functions get a larger budget (20 minutes).
+# run a whole fixture suite. Their proof verdicts are deterministic; this
+# larger outer timeout is process-level containment for an uncooperative hang.
+# Measured 2026-08-20: mdtests 58.2s, examples 17.6s; 20 minutes leaves more
+# than 20x headroom over the slower aggregate gate.
 [[profile.default.overrides]]
 filter = "binary(mdtests) | binary(examples)"
 slow-timeout = { period = "60s", terminate-after = 20 }

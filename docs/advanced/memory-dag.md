@@ -251,8 +251,9 @@ CLICK_EXAMPLE=owned-vector cargo test --test examples
 CLICK_DISABLE_MEMORY_DAG=1 <any of the above>   # A/B against the pre-arc path
 ```
 
-field_derived takes ~200 s to fail; bubble_sort3 ~137 s to pass.
-Bound with `MDTEST_TIME_LIMIT`; neither belongs in a foreground loop.
+Historical pre-optimization measurements were ~200 s for field_derived to fail
+and ~137 s for bubble_sort3 to pass. Fixture gates now decide from deterministic
+work budgets; neither wall-clock measurement is a correctness threshold.
 
 
 ## Edge kinds added 2026-07-31

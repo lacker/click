@@ -1,17 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use click::cli::{
-    DISABLE_TACTIC_BUDGETS, MdTestExpectation, duration_from_env, format_duration, read_mdtest,
-    run_parallel,
-};
+use click::cli::{MdTestExpectation, read_mdtest, run_parallel};
 use click::instrumentation;
 use click::lang::click::verify_c0_sources;
 
-const MDTEST_TIME_LIMIT: &str = "MDTEST_TIME_LIMIT";
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
-const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
+const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
 
 /// Known-broken mdtests, skipped by default so the suite is a meaningful
 /// green gate. Run one with `MDTEST_FILTER=<name>`, or all of them with
@@ -66,11 +61,10 @@ fn mdtests() {
         mdtests_dir.display()
     );
 
-    let time_limit = mdtest_time_limit();
     // Keep file verification serial to bound peak memory. Tactic correctness
     // is enforced by deterministic work budgets, not by how much CPU time
     // happens to be available to this fixture process.
-    let failures = run_parallel(&paths, 1, |path| run_mdtest_with_timeout(path, time_limit));
+    let failures = run_parallel(&paths, 1, |path| run_mdtest_in_thread(path));
     if failures.is_empty() {
         return;
     }
@@ -82,12 +76,7 @@ fn mdtests() {
     panic!("{message}");
 }
 
-fn mdtest_time_limit() -> Duration {
-    duration_from_env(MDTEST_TIME_LIMIT, DEFAULT_MDTEST_TIME_LIMIT)
-        .unwrap_or_else(|message| panic!("{message}"))
-}
-
-fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) -> Result<(), String> {
+fn run_mdtest_in_thread(path: &Path) -> Result<(), String> {
     let path = path.to_path_buf();
     let thread_name = path.file_stem().and_then(|name| name.to_str()).map_or_else(
         || "click-mdtest".to_string(),
@@ -96,35 +85,31 @@ fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) -> Result<(), Stri
     std::thread::Builder::new()
         .name(thread_name)
         .stack_size(64 * 1024 * 1024)
-        .spawn(move || run_mdtest_attempt(&path, time_limit))
+        .spawn(move || run_mdtest_attempt(&path))
         .map_err(|error| format!("failed to start mdtest verifier: {error}"))?
         .join()
         .map_err(|_| "mdtest verifier panicked".to_string())?
 }
 
-fn run_mdtest_attempt(path: &Path, time_limit: Duration) -> Result<(), String> {
-    let started = std::time::Instant::now();
-    let operation = || run_mdtest(path);
-    let result = if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_some() {
-        instrumentation::with_deadline(time_limit, operation)
-    } else {
-        let fixture_limits = instrumentation::TacticLimits {
-            simple: time_limit,
-            smart: time_limit,
-            control: time_limit,
-        };
-        instrumentation::with_deadline(time_limit, || {
-            instrumentation::with_tactic_limits(fixture_limits, operation)
-        })
-    };
-    result?;
-    if started.elapsed() > time_limit {
-        return Err(format!(
-            "exceeded the per-file mdtest time limit of {}; set {MDTEST_TIME_LIMIT} to override it",
-            format_duration(time_limit)
-        ));
-    }
-    Ok(())
+fn run_mdtest_attempt(path: &Path) -> Result<(), String> {
+    instrumentation::without_tactic_time_limits(|| {
+        if path
+            .file_name()
+            .is_some_and(|name| name == "bubble_sort3_loop_permutation.md")
+        {
+            // This is the former load-sensitive clock canary. Its measured
+            // maxima are simple 146, smart 21,090, and control 42,169 work
+            // units. Pin all three classes below 100,000 so machine load
+            // cannot change the result.
+            let limits = instrumentation::TacticWorkLimits {
+                simple: BUBBLE_SORT3_WORK_LIMIT,
+                smart: BUBBLE_SORT3_WORK_LIMIT,
+                control: BUBBLE_SORT3_WORK_LIMIT,
+            };
+            return instrumentation::with_tactic_work_limits(limits, || run_mdtest(path));
+        }
+        run_mdtest(path)
+    })
 }
 
 fn run_mdtest(path: &Path) -> Result<(), String> {

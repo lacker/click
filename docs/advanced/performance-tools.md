@@ -284,11 +284,9 @@ rewritten artifact before deciding that expansion improved performance.
 ## Tooling flags
 
 - `CLICK_TIMINGS=1` — per-tactic and certification-phase timing lines.
-- `MDTEST_FILTER=<name>`, `CLICK_RUN_QUARANTINED=1`, and
-  `MDTEST_TIME_LIMIT=<duration>` (default 30 s) — mdtest harness controls.
-- `CLICK_EXAMPLE=<name>` and `CLICK_EXAMPLE_TIME_LIMIT=<duration>` (default
-  30 seconds per sidecar, matching `click verify`) — example-project harness
-  controls.
+- `MDTEST_FILTER=<name>` and `CLICK_RUN_QUARANTINED=1` — mdtest selection and
+  quarantine controls.
+- `CLICK_EXAMPLE=<name>` — example-project selection.
 - `CLICK_DISABLE_TACTIC_BUDGETS`, `CLICK_DISABLE_DECIDE_MEMO`,
   `CLICK_DISABLE_CERT_ARMS`, `CLICK_DISABLE_MEMORY_DAG`, and
   `CLICK_DISABLE_CLOSER_REUSE` — A/B handles; each restores its pre-feature

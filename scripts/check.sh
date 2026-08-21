@@ -20,11 +20,9 @@ if command -v cargo-nextest >/dev/null 2>&1; then
     #
     # Unit tests may use every core.
     cargo nextest run --lib --bins "$@"
-    # The fixture gates enforce real-time tactic budgets, so they must not
-    # compete for CPU with the unit tests or with each other: on a small
-    # machine, contention rather than prover slowness would decide the result.
-    # Each harness already verifies its own fixtures serially. Budgets are
-    # unchanged — this only stops starvation from being measured as slowness.
+    # The fixture harnesses verify serially to bound peak memory. Their proof
+    # verdicts come from deterministic tactic-work budgets; nextest's outer
+    # timeout is process-level hang containment, not a proof budget.
     cargo nextest run --test mdtests --test examples --test-threads 1 "$@"
 else
     echo "cargo-nextest not found; falling back to cargo test without the" >&2

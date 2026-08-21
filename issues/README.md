@@ -18,7 +18,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 4
+## Other open issues: 3
 
 - [Canonicalization needs a proof-grounded model](canonicalization.md):
   competing term representations leave production pointer invariants,
@@ -29,10 +29,6 @@ when evidence exposes one.
   unrelated expansion test with a stack overflow and no backtrace; the
   depth is unbounded and unmeasured, and `#[inline(never)]` adapters are
   holding it back.
-- [Fixture gates decide green from wall clock](fixture-gates-decide-green-from-wall-clock.md):
-  the mdtest and example harnesses enforce real-time limits, so machine
-  load flips `scripts/check.sh`'s verdict on an unchanged tree; the
-  verifier already has load-independent unit budgets to decide with.
 - [Resource tracking across execution transitions](resource-tracking.md):
   owned-vector retains persistent `observe` projections across a consuming
   reallocation; audit the existing scoped resource mechanism and ensure

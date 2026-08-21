@@ -1,15 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use click::cli::{
-    DEFAULT_VERIFY_TIME_LIMIT, duration_from_env, files_with_extension, format_duration,
-    read_verifying_sources, source_refs,
-};
+use click::cli::{files_with_extension, read_verifying_sources, source_refs};
 use click::instrumentation;
 use click::lang::click::verify_c0_sources;
 
-const EXAMPLE_TIME_LIMIT: &str = "CLICK_EXAMPLE_TIME_LIMIT";
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 
 /// Known-broken or pathologically slow projects, skipped by default so the
@@ -72,39 +67,30 @@ fn example_projects() {
         examples_dir.display(),
     );
 
-    let time_limit = example_time_limit();
-    // This is the same serial, fail-fast policy as `click verify examples`:
-    // verify N projects as ordinary projects, with an independent production
-    // deadline and production tactic budgets for each sidecar.
+    // Keep project verification serial and fail fast. Deterministic tactic
+    // work budgets decide correctness; the test runner owns hang containment.
     for project in &projects {
         println!("verifying example project `{}`", project.display());
-        if let Err(diagnostics) = run_example_with_timeout(project, time_limit) {
+        if let Err(diagnostics) = run_example_in_thread(project) {
             panic!("example project `{}` {diagnostics}", project.display());
         }
     }
 }
 
-fn example_time_limit() -> Duration {
-    duration_from_env(EXAMPLE_TIME_LIMIT, DEFAULT_VERIFY_TIME_LIMIT)
-        .unwrap_or_else(|message| panic!("{message}"))
-}
-
-fn run_example_with_timeout(project: &Path, time_limit: Duration) -> Result<(), String> {
+fn run_example_in_thread(project: &Path) -> Result<(), String> {
     let project = project.to_path_buf();
     std::thread::Builder::new()
         .name("click-example".to_string())
         .stack_size(64 * 1024 * 1024)
-        .spawn(move || run_example_attempt(&project, time_limit))
+        .spawn(move || {
+            instrumentation::without_tactic_time_limits(|| run_example_project(&project))
+        })
         .map_err(|error| format!("failed to start example verifier: {error}"))?
         .join()
         .map_err(|_| "example verifier panicked".to_string())?
 }
 
-fn run_example_attempt(project: &Path, time_limit: Duration) -> Result<(), String> {
-    run_example_project(project, time_limit)
-}
-
-fn run_example_project(project: &Path, time_limit: Duration) -> Result<(), String> {
+fn run_example_project(project: &Path) -> Result<(), String> {
     let mut click_paths = files_with_extension(project, "click")?;
 
     if click_paths.is_empty() {
@@ -117,18 +103,15 @@ fn run_example_project(project: &Path, time_limit: Duration) -> Result<(), Strin
     click_paths.sort();
 
     for click_path in click_paths {
-        instrumentation::with_deadline(time_limit, || {
-            let click_source = fs::read_to_string(&click_path)
-                .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-            let c_sources = read_verifying_sources(&click_path, &click_source)?;
-            verify_c0_sources(&click_source, &source_refs(&c_sources)).map_err(|error| {
-                format!(
-                    "sidecar `{}` failed under its {} limit: {}",
-                    click_path.display(),
-                    format_duration(time_limit),
-                    error.message()
-                )
-            })
+        let click_source = fs::read_to_string(&click_path)
+            .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
+        let c_sources = read_verifying_sources(&click_path, &click_source)?;
+        verify_c0_sources(&click_source, &source_refs(&c_sources)).map_err(|error| {
+            format!(
+                "sidecar `{}` failed: {}",
+                click_path.display(),
+                error.message()
+            )
         })?;
         println!("verified {}", click_path.display());
     }
