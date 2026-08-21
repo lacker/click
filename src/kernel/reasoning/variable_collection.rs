@@ -831,9 +831,11 @@ pub(in crate::kernel) fn collect_bitvector_variables(
             // free in the term: a case split or substitution keyed on the
             // term's variables must see them.
             if crate::kernel::is_canonical_load_variable(variable)
-                && let Some((_, pointer)) = crate::kernel::eval::registered_canonical_load(variable)
+                && let Some((memory, pointer)) =
+                    crate::kernel::eval::registered_canonical_load(variable)
             {
-                collect_pointer_offset_bitvector_variables(&pointer.offset, variables);
+                collect_memory_bitvector_variables(&memory, variables);
+                collect_pointer_bitvector_variables(&pointer, variables);
             }
         }
         Bitvector32Term::Add(left, right)

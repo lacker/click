@@ -390,3 +390,32 @@ fn load_variables_compare_as_loads_under_bounds_pinned_indices() {
     assert!(pinned.bitvector_terms_proven_equal(&indexed, &third));
     assert!(!PureFactContext::new().bitvector_terms_proven_equal(&indexed, &third));
 }
+
+#[test]
+fn load_variable_free_variables_include_its_snapshot_cells() {
+    // A name over a snapshot whose cells mention a loop counter denotes a
+    // term mentioning that counter: finite context splits keyed on a goal's
+    // variables must see it through the name.
+    let counter = Variable(11);
+    let written = CMemory::new().with_block("p", 12).store(
+        Pointer {
+            block: "p".into(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::Variable(counter)),
+                byte_width: 4,
+            },
+        },
+        CValue::Int32(Bitvector32Term::Constant(5)),
+    );
+    let name = crate::kernel::eval::canonical_term(&Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(written),
+        Box::new(Pointer {
+            block: "p".into(),
+            offset: PointerOffsetTerm::Constant(8),
+        }),
+    ));
+    assert!(matches!(name, Bitvector32Term::Variable(_)));
+    let mut variables = BTreeSet::new();
+    crate::kernel::reasoning::collect_bitvector_variables(&name, &mut variables);
+    assert!(variables.contains(&counter));
+}

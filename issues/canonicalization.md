@@ -254,17 +254,27 @@ assumes a load term. Characterized so far:
   `have observed == node->value` (the fact rides the step's `using`; the
   expansion replays under both modes), and the separation expansion's
   anchored `rewrite(at(statement(2).entry, left->len) == …)` forms.
-- **Surface synthesis of proof objects (2 fixtures).** `bound_universal`
-  ×2, `outcome_simp_instantiates_an_unfolded_byte_predicate`,
-  `resource_example_pipelines`, `source_expander_derives_separation`,
-  `selected_pure_case_split`: the kernel proves the claim, but the
-  proof-object closers (`try_simp_closure` and the
-  `surface_certificates` planners) plan simple steps from the kernel
-  derivation by term shape and miss or mis-plan when a load is a name:
-  "checked outcome `simp` search did not retain a complete proof",
-  missing `instantiate(`/`rewrite(` steps in expansion text, and "a
-  path-independent tactic expansion conflicts with a leaf's existing
-  expansion".
+- **Universals through names (done).** Two more places keyed on term
+  shape: the quantified replay index (`alpha_bitvector_key`) keyed a load
+  variable by its id, so a universal lowered to names and the recorded
+  fact with a different binder id never shared a bucket and `instantiate`
+  reported the fact "not exactly available"; and the free-variable
+  collector did not reach a name's snapshot cells, so the finite context
+  split (`j` pinned to `[0, 0]` by a cell written at `p[j]`) never
+  fired. A name now keys as the load it names and collects the variables
+  of its snapshot and address. Both `bound_universal` fixtures pass under
+  the switch. Regressions:
+  `quantified_replay_key_sees_through_load_variables`,
+  `load_variable_free_variables_include_its_snapshot_cells`.
+- **Remaining under the switch (7, all expectation text).** Three kernel
+  expression tests asserting a raw load value;
+  `expanded_branch_certificate_uses_the_branch_entry_state` and the
+  separation expansion asserting unanchored forms; the linked-list
+  retained-step substring; and the negative diagnostic manifest, which
+  now prints a bare load variable id (`v1374…u8`) where it printed
+  `load(p[1])` — that one is a diagnostics regression to fix before the
+  flip (print a load variable by surface synthesis), not an expectation
+  update.
 - **Cross-epoch load resolution.** Across a call whose footprint may write
   a cell, the read before and the read after receive different load
   variables (the DAG walk cannot cross the call havoc). Their equality is

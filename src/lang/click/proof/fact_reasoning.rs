@@ -1276,8 +1276,20 @@ fn alpha_bitvector_key(
         };
     Some(match term {
         Bitvector32Term::Constant(value) => AlphaBitvectorKey::Constant(*value),
+        // A load variable keys as the load it names: the load key is
+        // snapshot-blind, so a universal recorded with load terms and one
+        // lowered to names share a bucket, and a bound index sealed in the
+        // name keys by its binder ordinal rather than by the name's id.
         Bitvector32Term::Variable(variable) => {
-            AlphaBitvectorKey::Variable(alpha_variable_key(*variable, bindings))
+            match crate::kernel::is_canonical_load_variable(variable)
+                .then(|| crate::kernel::registered_canonical_load(variable))
+                .flatten()
+            {
+                Some((_, pointer)) => {
+                    AlphaBitvectorKey::Load(Box::new(alpha_pointer_key(&pointer, bindings)?))
+                }
+                None => AlphaBitvectorKey::Variable(alpha_variable_key(*variable, bindings)),
+            }
         }
         Bitvector32Term::Add(left, right) => binary(AlphaBitvectorBinaryOp::Add, left, right)?,
         Bitvector32Term::Subtract(left, right) => {
@@ -2272,6 +2284,55 @@ mod tests {
             quantified_replay_index_key(&different_free),
             "free variable identities remain part of the key"
         );
+    }
+
+    #[test]
+    fn quantified_replay_key_sees_through_load_variables() {
+        // A universal lowered to load variables keys as the loads the names
+        // denote: the bound index sealed in a name keys by binder ordinal,
+        // so renamed binders share a bucket with each other and with the
+        // same universal written in load terms.
+        let memory = intern_c_memory(CMemory::new().with_block("p", 12));
+        let cell = |index: Variable| {
+            Bitvector32Term::MemoryLoad(
+                memory.clone(),
+                Box::new(Pointer {
+                    block: "p".into(),
+                    offset: PointerOffsetTerm::Int32Scaled {
+                        value: Box::new(Bitvector32Term::Variable(index)),
+                        byte_width: 4,
+                    },
+                }),
+            )
+        };
+        let universal = |index: Variable, term: Bitvector32Term| Proposition::ForAll {
+            var: index,
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(term),
+                    Box::new(Bitvector32Term::Variable(index)),
+                ),
+                true,
+            )),
+        };
+        let named = |index: Variable| crate::kernel::canonical_term(&cell(index));
+        assert!(matches!(
+            named(Variable(3_000_000)),
+            Bitvector32Term::Variable(_)
+        ));
+        let left = universal(Variable(3_000_000), named(Variable(3_000_000)));
+        let renamed = universal(Variable(2_000_000), named(Variable(2_000_000)));
+        let written = universal(Variable(3_000_001), cell(Variable(3_000_001)));
+        assert_eq!(
+            quantified_replay_index_key(&left),
+            quantified_replay_index_key(&renamed)
+        );
+        assert_eq!(
+            quantified_replay_index_key(&left),
+            quantified_replay_index_key(&written)
+        );
+        assert!(quantified_binder_equivalent(&left, &renamed));
     }
 
     #[test]
