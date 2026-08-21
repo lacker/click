@@ -655,16 +655,16 @@ fn bitvector_terms_equal_for_memory_resolution(
     if crate::kernel::api::atomic_loads_equal_along_memory_derivations(left, right, assumptions) {
         return true;
     }
-    // Deep canonicalization covers every term variant, including folds and
-    // conditionals the structural arms below do not descend into; two
-    // spellings of one value differing only representationally compare
-    // equal here. Both calls are memoized. Pathologically deep terms skip
-    // this arm: canonicalization and memo hashing recurse structurally.
+    // The full canonical form covers every term variant, including folds
+    // and conditionals the structural arms below do not descend into; two
+    // spellings of one value differing only representationally — a raw
+    // load and the canonical name for it included — compare equal here.
+    // Both stages are memoized. Pathologically deep terms skip this arm:
+    // canonicalization and memo hashing recurse structurally.
     const CANONICAL_COMPARE_DEPTH_LIMIT: usize = 64;
     if !crate::kernel::api::bitvector_term_deeper_than(left, CANONICAL_COMPARE_DEPTH_LIMIT)
         && !crate::kernel::api::bitvector_term_deeper_than(right, CANONICAL_COMPARE_DEPTH_LIMIT)
-        && crate::kernel::api::canonicalize_atomic_loads(left)
-            == crate::kernel::api::canonicalize_atomic_loads(right)
+        && crate::kernel::eval::canonical_term(left) == crate::kernel::eval::canonical_term(right)
     {
         return true;
     }
@@ -1112,27 +1112,6 @@ pub(in crate::kernel) fn canonical_memory_for_pointer_load(
     // Canonicalization is assumption-free and deterministic, so memoize by
     // interned snapshot identity; the intern also dedups the key storage.
     let key = (super::intern_c_memory_ref(memory), pointer.clone());
-    if let Some(hit) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
-        return hit;
-    }
-    let result = canonical_memory_for_pointer_load_with_depth(memory, pointer, 0);
-    CACHE.with(|cache| cache.borrow_mut().insert(key, result.clone()));
-    result
-}
-
-/// Canonicalization keyed by an already-interned snapshot: the cache lookup
-/// hashes and compares by interned identity, with no re-interning, no
-/// structural hash, and no clone on the hit path.
-pub(in crate::kernel) fn canonical_memory_for_shared_pointer_load(
-    memory: &super::SharedCMemory,
-    pointer: &Pointer,
-) -> CMemory {
-    thread_local! {
-        static CACHE: std::cell::RefCell<
-            std::collections::HashMap<(super::SharedCMemory, Pointer), CMemory>,
-        > = std::cell::RefCell::new(std::collections::HashMap::new());
-    }
-    let key = (memory.clone(), pointer.clone());
     if let Some(hit) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
         return hit;
     }

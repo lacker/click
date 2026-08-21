@@ -109,16 +109,15 @@ evaluation, lang-side contract pointer arithmetic). The minting for those
 sites is implemented behind `CLICK_OFFSET_INDEX_MINTING=1`
 (`canonicalized_offset_index_term`), off by default.
 
-Two lessons from enabling it are recorded in
-`issues/canonicalization.md`. First, producer adoption is atomic: naming
-one birth site while another producer of the same fact family spells raw
-loads splits one load identity into two spellings, which broke
-mutable-footprint containment and exact fact selection. Comparison-side
-canonical keying (above) removes most of that hazard. Second, and still
-open: one cell loaded at different derivation epochs mints *different*
-names whose equality is a provenance fact, and load resolution
-(`bitvector_terms_equal_for_memory_resolution` and the store-cell lookup)
-does not yet close name-to-name equality across a call boundary even when
-an ensures equality connects the underlying loads. Until it does, minting
-indices trades a raw-load spelling problem for an unproved name-equality
-problem.
+The canonical joins extend through the arithmetic provers: the
+memory-resolution equality's deep arm compares full canonical forms, the
+signed-order-bounds index is dual-keyed under each fact spelling and its
+canonical alias, and the overflow helpers match bases canonically — all
+deterministic, so decisions replay. With those, footprint containment
+under index minting proves.
+
+The open blocker, recorded in `issues/canonicalization.md`, is
+certificate provenance: derivations decided through canonical-form joins
+do not yet record premises that reconstruct the decision on replay, so
+contextual frame certificates fail to lower. Until derivation evidence
+for canonically-decided steps replays, minting stays off by default.

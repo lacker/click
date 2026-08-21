@@ -545,7 +545,11 @@ impl PureFactContext {
         let Some((term_base, addend)) = term.add_const_parts() else {
             return false;
         };
-        if &term_base != base || signed_u32_constant(addend).is_none_or(|value| value <= 0) {
+        // Base matching is by canonical form: a raw load and the canonical
+        // name for it are one base. Deterministic, so decisions replay.
+        if !crate::kernel::eval::terms_match_modulo_canonical_names(&term_base, base)
+            || signed_u32_constant(addend).is_none_or(|value| value <= 0)
+        {
             return false;
         }
         self.decide(&ConditionTerm::signed_add_overflows(
@@ -562,7 +566,9 @@ impl PureFactContext {
         let Some((term_base, subtrahend)) = term.subtract_const_parts() else {
             return false;
         };
-        if &term_base != base || signed_u32_constant(subtrahend).is_none_or(|value| value <= 0) {
+        if !crate::kernel::eval::terms_match_modulo_canonical_names(&term_base, base)
+            || signed_u32_constant(subtrahend).is_none_or(|value| value <= 0)
+        {
             return false;
         }
         self.decide(&ConditionTerm::signed_subtract_overflows(
@@ -579,7 +585,9 @@ impl PureFactContext {
         let Some((term_base, addend)) = term.add_const_parts() else {
             return false;
         };
-        if &term_base != base || signed_u32_constant(addend).is_none_or(|value| value < 0) {
+        if !crate::kernel::eval::terms_match_modulo_canonical_names(&term_base, base)
+            || signed_u32_constant(addend).is_none_or(|value| value < 0)
+        {
             return false;
         }
         self.decide(&ConditionTerm::signed_add_overflows(
