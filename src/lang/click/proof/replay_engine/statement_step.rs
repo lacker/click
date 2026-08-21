@@ -164,7 +164,7 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
                 region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
                 kind: ProgramPointKind::Entry,
             };
-            let source_surface = surface_with_source_site(surface_premise, &entry_point)?;
+            let source_surface = surface_anchored_where_unanchored(surface_premise, &entry_point)?;
             replay
                 .surface_propositions
                 .record_lowering(&source_surface, &premise)

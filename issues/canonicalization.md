@@ -157,28 +157,42 @@ fail, and the examples harness stops at `bounded-pool` (an
 expansion/replay disagreement). Every failure is a consumer that still
 assumes a load term. Characterized so far:
 
-- **Pristine placeholder loads are a non-canonical vocabulary.** Premise
-  lowering evaluates a plain field read such as `owner->len` against a
-  pristine empty memory as a placeholder for "the current value", to be
-  concretized at the point of use (`concretize_pristine_loads` recognizes
-  it by `memory == CMemory::new()`). Under load terms the placeholder was
-  distinguishable; under the invariant it hashes to `hash(empty, p)`, and
-  the function-entry load of an external-argument cell canonicalizes to
-  the same thing (restricting the entry snapshot to what that load can
-  observe leaves an empty memory). "Current value, unresolved" and "value
-  at entry" collapse into one load variable. Measured in `push.contract`:
-  a `step() using { owner->len < owner->cap }` at the post-store statement
-  accepts the recorded entry fact, re-records it anchored at that
-  statement's entry, and the generated `apply` of
-  `int32_increment_strictly_increases` then lowers `at(statement(6).entry,
-  owner->len)` to `len + 1` on replay. Two guards landed: surface
-  synthesis prefers program-point-anchored forms for facts mentioning a
-  load variable (switch-gated), and a premise is anchored at a statement
-  only when a fresh lowering there agrees with the recorded fact. The
-  fix proper is to retire the placeholder: lowering a premise at a point
-  reads that point's memory, so the lowered term is the point's canonical
-  value rather than a stand-in (`lower_point_proposition` and its
-  callers), with `concretize_pristine_loads` then deletable.
+- **Source-site annotation must not move an anchored form.**
+  `surface_with_source_site` stripped an operand's existing `at(point, ...)`
+  selector and re-anchored it at the new point, so recording a step
+  premise `at(statement(0).entry, owner->len) < ...` at statement 6
+  produced `at(statement(6).entry, owner->len) < ...` — a different
+  statement, after the `len` store. Under load terms the lowering mismatch
+  masked this; under the invariant it surfaced as `push.contract`'s
+  generated `apply` lowering its argument to `len + 1`. Re-reading at the
+  new point is right for fact transport across a statement (the transport
+  proved the cells unchanged) and wrong for recording where a premise was
+  read, so the annotation now has two forms: `surface_with_source_site`
+  re-reads, and `surface_anchored_where_unanchored` leaves operands that
+  already name their point (`old` or `at`) untouched; premise recording
+  uses the latter. (An earlier
+  reading of this failure blamed a "pristine placeholder" memory; that
+  was wrong — the empty base memory in `memory_with_symbolic_loadable_cells`
+  is simply the function-entry snapshot's base, and
+  `concretize_pristine_loads` rewrites entry-state loads to a later point.
+  Whether that rewrite is still needed under the invariant is a separate
+  question.)
+- **Surface synthesis prefers anchored forms for load-variable facts.**
+  A fact mentioning a load variable is anchored to the snapshot its cell
+  was read from, so its program-point-anchored surface form stays correct
+  at every later replay point, while a plain form is correct only until
+  the cell changes. Both synthesis entry points (`checked_surface_fact_at_point`
+  for conclusions, `checked_surface_comparison_fact_at_point` for
+  premises) now try anchored forms first when canonicalizing at creation
+  (switch-gated until the flip). With this and the annotation fix, the
+  increment certificate in `push.contract` replays end to end.
+- **Order-chain derivations need a simple certificate.** The next
+  `push.contract` failure: smart reasoning derives a `<=` goal from
+  `1 <= len` and `len <= cap`, and the typed-plan dispatcher has no simple
+  certificate shape for that chain ("no explicit simple certificate for
+  signed less-or-equal"). Before the switch the goal was reached another
+  way; under canonical terms it needs a transitivity plan. One instance
+  of the "remaining typed evidence kinds" item.
 - **Cross-epoch load resolution (required feature, not a gap).** Across a
   call whose footprint may write a cell, the read before and the read after
   receive different load variables (the DAG walk cannot cross the call

@@ -157,6 +157,40 @@ fn checked_surface_fact_at_point_with_assumptions(
         } else {
             resolved_kernel
         };
+    // The round trip is judged against the resolved fact: fresh lowering
+    // writes loads as load terms, while the original may name them through
+    // kernel-minted variables whose defining equations the resolution
+    // already substituted.
+    let round_trip_matches =
+        |lowered: &Proposition| lowered == kernel || *lowered == resolved_kernel;
+    // A fact that mentions a load variable is anchored to the snapshot its
+    // cell was read from; when canonicalizing at creation, synthesize it
+    // through the program point recorded for that snapshot, so the form
+    // stays correct at every later proof point where the certificate is
+    // replayed, rather than a plain form that is correct only until the
+    // cell changes.
+    if crate::kernel::canonicalize_at_creation_enabled()
+        && crate::kernel::proposition_mentions_registered_canonical_load(kernel)
+    {
+        let (exact_points, compatible_points) =
+            snapshot_indexed_program_points(&resolved_kernel, &replay.program_point_states);
+        for (point, point_state) in exact_points.iter().chain(&compatible_points) {
+            let Some(candidate) = synthesize_surface_proposition(
+                &resolved_kernel,
+                parameters,
+                arguments,
+                point_state,
+            ) else {
+                continue;
+            };
+            let Ok(anchored) = surface_with_source_site(&candidate, point) else {
+                continue;
+            };
+            if check(&anchored).as_ref().is_ok_and(&round_trip_matches) {
+                return Ok(anchored);
+            }
+        }
+    }
     let candidate = synthesize_surface_proposition(&resolved_kernel, parameters, arguments, state)
         .ok_or_else(|| {
             ClickError::new(surface_synthesis_failure(
@@ -165,12 +199,6 @@ fn checked_surface_fact_at_point_with_assumptions(
             ))
         })?;
     let lowered = check(&candidate);
-    // The round trip is judged against the resolved fact: fresh lowering
-    // writes loads as load terms, while the original may name them through
-    // kernel-minted variables whose defining equations the resolution
-    // already substituted.
-    let round_trip_matches =
-        |lowered: &Proposition| lowered == kernel || *lowered == resolved_kernel;
     if lowered.as_ref().is_ok_and(&round_trip_matches) {
         return Ok(candidate);
     }
@@ -590,7 +618,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     if !prefer_anchored && let Some(base) = plain_base_candidate(&bases) {
         return Ok(base);
     }
-    for (point, _) in exact_points.iter().chain(&compatible_points) {
+    for (point, point_state) in exact_points.iter().chain(&compatible_points) {
         for base in &bases {
             if let Ok(candidate) = surface_with_source_site(base, point)
                 && lower_surface_candidate_at_point_with_assumptions(
