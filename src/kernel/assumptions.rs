@@ -2595,32 +2595,46 @@ fn pointer_in_range_for_memory_resolution_with_depth(
         .into_iter()
         .collect::<Vec<_>>();
     if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
-        if super::reasoning::pointer_offsets_equal_for_memory_resolution(
-            left,
-            &base.offset,
-            assumptions,
-            depth + 1,
-        ) == Some(true)
-            && let Some(index) = int32_element_index_from_offset(right)
-            && !indexes.contains(&index)
-        {
-            indexes.push(index);
-        }
-        if super::reasoning::pointer_offsets_equal_for_memory_resolution(
-            right,
-            &base.offset,
-            assumptions,
-            depth + 1,
-        ) == Some(true)
-            && let Some(index) = int32_element_index_from_offset(left)
-            && !indexes.contains(&index)
-        {
-            indexes.push(index);
-        }
+        crate::instrumentation::measure_operation(
+            "kernel",
+            "explicit range arms",
+            "range membership: offset equality",
+            || {
+                if super::reasoning::pointer_offsets_equal_for_memory_resolution(
+                    left,
+                    &base.offset,
+                    assumptions,
+                    depth + 1,
+                ) == Some(true)
+                    && let Some(index) = int32_element_index_from_offset(right)
+                    && !indexes.contains(&index)
+                {
+                    indexes.push(index);
+                }
+                if super::reasoning::pointer_offsets_equal_for_memory_resolution(
+                    right,
+                    &base.offset,
+                    assumptions,
+                    depth + 1,
+                ) == Some(true)
+                    && let Some(index) = int32_element_index_from_offset(left)
+                    && !indexes.contains(&index)
+                {
+                    indexes.push(index);
+                }
+            },
+        );
     }
-    indexes
-        .iter()
-        .any(|index| bitvector_index_in_range_shallow(index, start, end, assumptions))
+    crate::instrumentation::measure_operation(
+        "kernel",
+        "explicit range arms",
+        "range membership: index in range",
+        || {
+            indexes
+                .iter()
+                .any(|index| bitvector_index_in_range_shallow(index, start, end, assumptions))
+        },
+    )
 }
 
 /// Pins a term to a signed constant using EXACT facts only: either the term
@@ -2683,6 +2697,9 @@ fn bitvector_index_in_range_shallow(
     let lower_bound_is_exact = assumptions.exact_condition_value(
         &ConditionTerm::signed_less_equal(start.clone(), index.clone()),
     ) == Some(true)
+        // Canonical-keyed bound lookup before any searching arm: indexed
+        // and deterministic, so replay sees the same answer.
+        || assumptions.canonical_bound_holds(start, index, false)
         || assumptions.has_exact_order_path(start, index, false)
         || assumptions.should_defer_non_exact_condition_reasoning()
             && assumptions.has_order_path_for_memory_resolution(start, index, false)
@@ -2713,6 +2730,7 @@ fn bitvector_index_in_range_shallow(
     let upper_bound_is_exact = assumptions
         .exact_condition_value(&ConditionTerm::signed_less_than(index.clone(), end.clone()))
         == Some(true)
+        || assumptions.canonical_bound_holds(index, end, true)
         || assumptions.has_exact_order_path(index, end, true)
         || assumptions.should_defer_non_exact_condition_reasoning()
             && assumptions.has_order_path_for_memory_resolution(index, end, true);

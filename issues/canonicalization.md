@@ -102,20 +102,25 @@ get the same treatment as minting failures surface them.
 Index minting stays behind `CLICK_OFFSET_INDEX_MINTING=1` with two
 remaining fronts, measured 2026-08-21:
 
-- **Unmemoized explicit-range distinctness burn.** `fold` in
-  `push.contract` (and the expanded `owned_string_pop` replay) exhausts
-  its 500k-unit budget in `general distinctness: explicit range` at ~19k
-  units per query across ~48 queries. The units are structural snapshot
-  interning (`record_c_memory_structural_lookup_work`), and
-  `resolution_query_memo_id` returns `None` inside fuel scopes, so
-  repeated queries recompute. This profile predates the consumer keying
-  (it appeared in the very first minting run) and needs the
-  `click profile` workflow: either memoize under fuel scopes or stop the
-  per-query re-interning.
-- **Cross-call value tracking.** `box_pipeline`'s `result == value`:
-  the caller's read of `owner->data[owner->value]` after `box_set` does
-  not resolve against the callee's store when both indices are named at
-  different derivation epochs.
+- **Chained-bound order search cost.** The fold-family budget burn is
+  fixed: attribution spans on the explicit-range arms showed the units
+  in `bitvector_index_in_range_shallow`'s searching bound arms (not in
+  interning or canonicalization), and the canonical-keyed
+  `canonical_bound_holds` fast path — an indexed single-fact bound
+  lookup joining endpoints by canonical form — answers those queries
+  before any search runs (`push.contract` passes under minting). What
+  remains is the same shape one step deeper: `owned_string_pop`'s
+  expanded replay burns ~760k units in `range membership: index in
+  range` on bounds needing a two-fact chain (`len-1 < len <= cap`),
+  which the single-fact lookup cannot answer, so the unmemoized
+  `has_order_path_for_memory_resolution` search runs per candidate per
+  query (`resolution_query_memo_id` is `None` inside fuel scopes).
+  Either the chained lookup becomes canonical-keyed and indexed, or the
+  order search gains scope-safe memoization.
+- **Cross-call value tracking.** `box_pipeline`'s `result == value` and
+  `input_cursor_shared_pipeline`'s Ensure(4): a caller's read after a
+  callee's store does not resolve against the store when the indices are
+  named at different derivation epochs.
 
 A fact-recording companion (also asserting each load-spelled fact's
 canonical form at `assume_condition` time) was tried and rejected: it

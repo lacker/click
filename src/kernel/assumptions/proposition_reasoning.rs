@@ -2343,6 +2343,31 @@ impl PureFactContext {
             .find_map(|(spelled, upper, _, _)| self.exact_direct_order_step(&spelled, &upper, true))
     }
 
+    /// Whether one recorded order fact bounds `lower` by `upper` (strictly
+    /// when `strict`), joining both endpoints by canonical form through the
+    /// dual-keyed bounds index. Indexed and deterministic: a cheap answer
+    /// for range checks before any searching arm runs.
+    pub(in crate::kernel) fn canonical_bound_holds(
+        &self,
+        lower: &Bitvector32Term,
+        upper: &Bitvector32Term,
+        strict: bool,
+    ) -> bool {
+        self.signed_order_bound_entries(lower)
+            .any(|(_, other, entry_strict, forward)| {
+                forward
+                    && (entry_strict || !strict)
+                    && crate::kernel::eval::terms_match_modulo_canonical_names(&other, upper)
+            })
+            || self
+                .signed_order_bound_entries(upper)
+                .any(|(_, other, entry_strict, forward)| {
+                    !forward
+                        && (entry_strict || !strict)
+                        && crate::kernel::eval::terms_match_modulo_canonical_names(&other, lower)
+                })
+    }
+
     fn exact_direct_order_step(
         &self,
         lower: &Bitvector32Term,

@@ -1360,10 +1360,12 @@ pub(crate) fn cell_epoch_for_canonical_naming(
     if memory_dag_disabled() {
         return None;
     }
-    with_cell_lookup_depth(|| {
-        memory_dag_cell_source(memory, pointer, &PureFactContext::new())
-            .node()
-            .clone()
+    crate::instrumentation::measure_operation("kernel", "canonical form", "cell epoch walk", || {
+        with_cell_lookup_depth(|| {
+            memory_dag_cell_source(memory, pointer, &PureFactContext::new())
+                .node()
+                .clone()
+        })
     })
 }
 
@@ -2455,7 +2457,12 @@ pub(crate) fn canonicalize_atomic_loads(term: &Bitvector32Term) -> Bitvector32Te
     if let Some(hit) = CACHE.with(|cache| cache.borrow().get(term).cloned()) {
         return hit;
     }
-    let result = canonicalize_atomic_loads_with_depth(term, 0);
+    let result = crate::instrumentation::measure_operation(
+        "kernel",
+        "canonical form",
+        "canonicalize atomic loads: miss",
+        || canonicalize_atomic_loads_with_depth(term, 0),
+    );
     CACHE.with(|cache| cache.borrow_mut().insert(term.clone(), result.clone()));
     result
 }

@@ -1115,7 +1115,12 @@ pub(in crate::kernel) fn canonical_memory_for_pointer_load(
     if let Some(hit) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
         return hit;
     }
-    let result = canonical_memory_for_pointer_load_with_depth(memory, pointer, 0);
+    let result = crate::instrumentation::measure_operation(
+        "kernel",
+        "canonical form",
+        "canonical memory for load: miss",
+        || canonical_memory_for_pointer_load_with_depth(memory, pointer, 0),
+    );
     CACHE.with(|cache| cache.borrow_mut().insert(key, result.clone()));
     result
 }

@@ -748,33 +748,52 @@ impl PureFactContext {
         // snapshot-aware containment prover, which may itself inspect memory
         // loads and is deliberately the more expensive second phase.
         let mut candidates = self.memory_separation_candidates(&left.block, &right.block);
-        if candidates.clone().any(|(_, left_range, right_range)| {
-            #[cfg(test)]
-            MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
-            pointer_in_memory_range_shallow(left, left_range)
-                && pointer_in_memory_range_shallow(right, right_range)
-                || pointer_in_memory_range_shallow(right, left_range)
-                    && pointer_in_memory_range_shallow(left, right_range)
-        }) {
+        if crate::instrumentation::measure_operation(
+            "kernel",
+            "explicit range arms",
+            "explicit range: shallow candidates",
+            || {
+                candidates.clone().any(|(_, left_range, right_range)| {
+                    #[cfg(test)]
+                    MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
+                    pointer_in_memory_range_shallow(left, left_range)
+                        && pointer_in_memory_range_shallow(right, right_range)
+                        || pointer_in_memory_range_shallow(right, left_range)
+                            && pointer_in_memory_range_shallow(left, right_range)
+                })
+            },
+        ) {
             return true;
         }
-        if self
-            .resource_compositions
-            .iter()
-            .any(|resources| resources.proves_owned_pointers_separate_shallow(left, right))
-        {
+        if crate::instrumentation::measure_operation(
+            "kernel",
+            "explicit range arms",
+            "explicit range: resource shallow",
+            || {
+                self.resource_compositions
+                    .iter()
+                    .any(|resources| resources.proves_owned_pointers_separate_shallow(left, right))
+            },
+        ) {
             return true;
         }
-        if self.resource_compositions.iter().any(|resources| {
-            resources.proves_owned_pointers_separate_by(left, right, |pointer, range| {
-                self.pointer_in_range_by_shallow_fact_graph(
-                    pointer,
-                    range.base(),
-                    range.start(),
-                    range.end(),
-                )
-            })
-        }) {
+        if crate::instrumentation::measure_operation(
+            "kernel",
+            "explicit range arms",
+            "explicit range: resource fact graph",
+            || {
+                self.resource_compositions.iter().any(|resources| {
+                    resources.proves_owned_pointers_separate_by(left, right, |pointer, range| {
+                        self.pointer_in_range_by_shallow_fact_graph(
+                            pointer,
+                            range.base(),
+                            range.start(),
+                            range.end(),
+                        )
+                    })
+                })
+            },
+        ) {
             return true;
         }
 
@@ -785,25 +804,32 @@ impl PureFactContext {
         if depth > crate::kernel::reasoning::MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT {
             return false;
         }
-        candidates.any(|(_, left_range, right_range)| {
-            #[cfg(test)]
-            MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
-            pointer_in_memory_range_for_memory_resolution_with_depth(left, left_range, self, depth)
-                && pointer_in_memory_range_for_memory_resolution_with_depth(
-                    right,
-                    right_range,
-                    self,
-                    depth,
-                )
-                || pointer_in_memory_range_for_memory_resolution_with_depth(
-                    right, left_range, self, depth,
-                ) && pointer_in_memory_range_for_memory_resolution_with_depth(
-                    left,
-                    right_range,
-                    self,
-                    depth,
-                )
-        })
+        crate::instrumentation::measure_operation(
+            "kernel",
+            "explicit range arms",
+            "explicit range: recursive candidates",
+            || {
+                candidates.any(|(_, left_range, right_range)| {
+                    #[cfg(test)]
+                    MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
+                    pointer_in_memory_range_for_memory_resolution_with_depth(
+                        left, left_range, self, depth,
+                    ) && pointer_in_memory_range_for_memory_resolution_with_depth(
+                        right,
+                        right_range,
+                        self,
+                        depth,
+                    ) || pointer_in_memory_range_for_memory_resolution_with_depth(
+                        right, left_range, self, depth,
+                    ) && pointer_in_memory_range_for_memory_resolution_with_depth(
+                        left,
+                        right_range,
+                        self,
+                        depth,
+                    )
+                })
+            },
+        )
     }
 
     pub(in crate::kernel) fn memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
