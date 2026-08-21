@@ -2,10 +2,10 @@
 authors = ["Click contributors"]
 language = "en"
 src = "docs"
-title = "The Click Book"
+title = "Click documentation"
 
 [build]
-build-dir = "target/click-book"
+build-dir = "target/click-docs"
 create-missing = false
 
 [output.html]

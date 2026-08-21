@@ -31,7 +31,7 @@ fn reinterning_retained_memory_uses_shallow_component_identity() {
 }
 
 // --- named-memory-states arc: the derivation DAG -------------------------
-// See docs/advanced/memory-dag.md. These pin the two invariants
+// See docs/internals/memory-dag.md. These pin the two invariants
 // the arc's safety argument rests on (advisory-only, and parent id < child
 // id) plus the havoc-identity property that must hold by construction.
 

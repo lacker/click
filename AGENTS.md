@@ -170,8 +170,8 @@ and treat that result as an incomplete diagnostic frontier, not an
 optimization profile. Never expand a tactic from an incomplete run.
 
 See `issues/README.md` for issue policy and
-`docs/advanced/proof-failure-triage.md` for failure classification, and
-`docs/advanced/testing-click.md` for the performance and expansion workflow.
+`docs/concepts/proof-failure-triage.md` for failure classification, and
+`docs/internals/testing.md` for the performance and expansion workflow.
 
 ## Scalable verification is a correctness requirement
 
@@ -192,4 +192,4 @@ Performance-sensitive representation changes require deterministic scaling
 regressions over multiple input sizes. A fixed corpus timing or a faster warm
 run is supporting evidence, not proof of acceptable asymptotic behavior. The
 canonical complexity contract, output-sensitive exceptions, and review rules
-are in `docs/advanced/verification-efficiency.md`.
+are in `docs/internals/verification-efficiency.md`.

@@ -14,6 +14,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # so drift cannot accumulate. Run `cargo fmt` to fix a failure.
 cargo fmt --check
 
+# Keep the rendered technical documentation and its source-backed public
+# inventories in the same deterministic gate as the verifier.
+cargo test --test documentation
+scripts/mdbook-build.sh
+
 if command -v cargo-nextest >/dev/null 2>&1; then
     # Applies the per-test time budgets in `.config/nextest.toml`: prover
     # regressions usually manifest as hangs, which must fail fast.
