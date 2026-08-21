@@ -33,6 +33,7 @@ when evidence exposes one.
   the mdtest and example harnesses enforce real-time limits, so machine
   load flips `scripts/check.sh`'s verdict on an unchanged tree; the
   verifier already has load-independent unit budgets to decide with.
-- [Observed views survive reallocation](observed-views-survive-reallocation.md):
-  owned-vector now fails promptly because child views observed from an owned
-  allocation remain usable after `vector_grow` retires that allocation.
+- [Resource tracking across execution transitions](resource-tracking.md):
+  owned-vector retains persistent `observe` projections across a consuming
+  reallocation; audit the existing scoped resource mechanism and ensure
+  direct and opaque frontier steps apply one documented lifetime law.

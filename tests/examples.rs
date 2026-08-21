@@ -18,7 +18,7 @@ const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 /// remove entries as they are fixed (see docs/advanced/testing-click.md).
 const QUARANTINED: &[(&str, &str)] = &[(
     "owned-vector",
-    "allocated_vector_push.contract retains an observed child view after vector_grow retires its allocation; see issues/observed-views-survive-reallocation.md",
+    "allocated_vector_push.contract retains an observed child view after vector_grow retires its allocation; see issues/resource-tracking.md",
 )];
 
 #[test]
