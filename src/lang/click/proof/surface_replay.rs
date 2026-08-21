@@ -618,7 +618,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     if !prefer_anchored && let Some(base) = plain_base_candidate(&bases) {
         return Ok(base);
     }
-    for (point, point_state) in exact_points.iter().chain(&compatible_points) {
+    for (point, _) in exact_points.iter().chain(&compatible_points) {
         for base in &bases {
             if let Ok(candidate) = surface_with_source_site(base, point)
                 && lower_surface_candidate_at_point_with_assumptions(

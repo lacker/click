@@ -1143,7 +1143,7 @@ fn canonical_memory_for_pointer_load_with_depth(
         .map(|(cell_pointer, value)| {
             let source = materialized_cell_source(cell_pointer, value)?;
             Some(canonical_memory_for_pointer_load_with_depth(
-                source,
+                &source,
                 cell_pointer,
                 depth + 1,
             ))
@@ -1253,13 +1253,26 @@ fn cell_disjoint_from_load_by_constant_offset(
     cell_shift + cell_width <= load_shift || load_shift + MAX_SCALAR_LOAD_BYTES <= cell_shift
 }
 
-fn materialized_cell_source<'a>(cell_pointer: &Pointer, value: &'a CValue) -> Option<&'a CMemory> {
+/// The source snapshot a materialization cell stands for: a cell at `p`
+/// whose value is `load(source, p)`, or — with terms canonical at creation —
+/// the load variable registered for a load of `p`, whose source the registry
+/// records. Materialization changes which cells are concrete, not what the
+/// load means.
+fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<SharedCMemory> {
     match value {
         CValue::Int32(Bitvector32Term::MemoryLoad(source, source_pointer))
         | CValue::UInt8(Bitvector32Term::MemoryLoad(source, source_pointer))
             if source_pointer.as_ref() == cell_pointer =>
         {
-            Some(source)
+            Some(source.clone())
+        }
+        CValue::Int32(Bitvector32Term::Variable(variable))
+        | CValue::UInt8(Bitvector32Term::Variable(variable))
+            if crate::kernel::eval::is_canonical_load_variable(variable) =>
+        {
+            let (source, source_pointer) =
+                crate::kernel::eval::registered_canonical_load(variable)?;
+            (&source_pointer == cell_pointer).then_some(source)
         }
         CValue::Void | CValue::Int32(_) | CValue::UInt8(_) | CValue::Pointer(_) => None,
     }
@@ -1312,10 +1325,10 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_bounded_alias(
                 return value
                     .and_then(|value| materialized_cell_source(&cell_pointer, value))
                     .is_some_and(|source| {
-                        memories_match_for_pointer_load(source, left, pointer)
-                            || memories_match_for_pointer_load(source, right, pointer)
-                            || crate::kernel::api::c_memories_canonically_equal(source, left)
-                            || crate::kernel::api::c_memories_canonically_equal(source, right)
+                        memories_match_for_pointer_load(&source, left, pointer)
+                            || memories_match_for_pointer_load(&source, right, pointer)
+                            || crate::kernel::api::c_memories_canonically_equal(&source, left)
+                            || crate::kernel::api::c_memories_canonically_equal(&source, right)
                     });
             }
             value.is_some_and(|value| {

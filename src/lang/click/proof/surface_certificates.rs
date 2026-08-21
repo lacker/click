@@ -2004,6 +2004,7 @@ pub(super) fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_increment_greater_equal_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_strict_greater_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_strict_transitive(goal, premise_pairs))
+        .or_else(|| plan_explicit_nonstrict_transitive(goal, premise_pairs))
         .or_else(|| plan_explicit_nonstrict_then_strict_transitive(goal, premise_pairs))
         .or_else(|| plan_explicit_strict_then_nonstrict_transitive(goal, premise_pairs))
         .or_else(|| plan_explicit_constant_lower_bound_weakening(goal, premise_pairs))
@@ -4015,6 +4016,51 @@ fn plan_explicit_increment_strict_greater_from_strict_lower(
         },
         ProofTactic::Assumption,
     ])
+}
+
+/// `first <= middle` and `middle <= last` give `first <= last` through
+/// `int32_le_transitive`; the non-strict counterpart of
+/// [`plan_explicit_strict_transitive`].
+fn plan_explicit_nonstrict_transitive(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessEqual(goal_first, goal_last),
+        true,
+    ) = goal
+    else {
+        return None;
+    };
+    for (first_kernel, first_surface) in premise_pairs {
+        let Some((first, middle)) = signed_nonstrict_parts(first_kernel) else {
+            continue;
+        };
+        if first != goal_first.as_ref() {
+            continue;
+        }
+        for (second_kernel, second_surface) in premise_pairs {
+            let Some((second_middle, last)) = signed_nonstrict_parts(second_kernel) else {
+                continue;
+            };
+            if second_middle != middle || last != goal_last.as_ref() {
+                continue;
+            }
+            let (surface_first, surface_middle) = surface_nonstrict_parts(first_surface)?;
+            let (_, surface_last) = surface_nonstrict_parts(second_surface)?;
+            return Some(vec![
+                ProofTactic::ApplyTheoremUsing {
+                    application: TheoremApplication {
+                        name: "int32_le_transitive".to_string(),
+                        arguments: vec![surface_first, surface_middle, surface_last],
+                    },
+                    premises: vec![first_surface.clone(), second_surface.clone()],
+                },
+                ProofTactic::Assumption,
+            ]);
+        }
+    }
+    None
 }
 
 fn plan_explicit_strict_transitive(

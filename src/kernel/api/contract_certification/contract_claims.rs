@@ -450,12 +450,24 @@ fn materialized_load_is_unchanged(
     let load = match value {
         CValue::Int32(Bitvector32Term::MemoryLoad(memory, load_pointer))
         | CValue::UInt8(Bitvector32Term::MemoryLoad(memory, load_pointer)) => {
-            (memory.as_ref(), load_pointer.as_ref())
+            (memory.clone(), load_pointer.as_ref().clone())
+        }
+        // With terms canonical at creation a materialized cell holds the
+        // load variable for its load; the registry records the load it
+        // stands for.
+        CValue::Int32(Bitvector32Term::Variable(variable))
+        | CValue::UInt8(Bitvector32Term::Variable(variable))
+            if crate::kernel::eval::is_canonical_load_variable(variable) =>
+        {
+            let Some(load) = crate::kernel::eval::registered_canonical_load(variable) else {
+                return false;
+            };
+            load
         }
         _ => return false,
     };
-    pointers_proven_equal_for_memory_resolution(load.1, pointer, assumptions)
-        && c_memory_load_is_unchanged(load.0, symbolic_memory, pointer, assumptions)
+    pointers_proven_equal_for_memory_resolution(&load.1, pointer, assumptions)
+        && c_memory_load_is_unchanged(&load.0, symbolic_memory, pointer, assumptions)
 }
 
 /// Changes only the bounded symbolic representation of a certified return path.
