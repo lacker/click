@@ -35,7 +35,7 @@ sidecar and project count.
 
 | Option | Meaning |
 | --- | --- |
-| `--time-limit DURATION` | Set the outer deadline independently for each selected sidecar or proof unit. The default is 30 seconds. |
+| `--time-limit DURATION` | Set the outer deadline independently for each selected sidecar or proof unit. The default is `30s`. |
 | `--changed-since REVISION` | Select claims affected since a Git revision. Reuse requires a valid full-verification marker for the baseline and verifier binary. |
 | `--explain` | With `--changed-since`, print the incremental selection without verifying it. |
 | `-h`, `--help` | Print command help and exit successfully. |

@@ -3,8 +3,9 @@
 Click proves more than postconditions. It also checks that the modeled C0
 execution is safe under the function's requirements.
 
-For beginner scalar code, signed overflow is the first place this appears.
+For scalar code, signed overflow is often the first place this appears.
 
+<!-- verified-example: mdtests/overflow.md -->
 ```c
 int32 increment(int32 x) {
     return x + 1;
@@ -13,6 +14,7 @@ int32 increment(int32 x) {
 
 This contract is incomplete:
 
+<!-- verified-example: mdtests/overflow.md -->
 ```click
 int32 increment(int32 x) {
     ensures result == x + 1 by auto;
@@ -22,6 +24,7 @@ int32 increment(int32 x) {
 If `x` is `2147483647`, then `x + 1` overflows signed `int32`, which is C
 undefined behavior. The proof needs:
 
+<!-- verified-example: mdtests/overflow.md -->
 ```click
 requires x < 2147483647;
 ```
@@ -45,6 +48,7 @@ The C0 subset reference has the full current list.
 A requirement can be needed even when the mathematical postcondition looks
 obvious:
 
+<!-- verified-example: mdtests/overflow.md -->
 ```click
 requires y != 0;
 ensures result == x / y by auto;

@@ -2,6 +2,7 @@
 
 Start with a C0 function that cannot fail:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```c
 int32 zero() {
     return 0;
@@ -10,6 +11,7 @@ int32 zero() {
 
 The matching Click sidecar is:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 verifying "zero.c";
 
@@ -32,6 +34,7 @@ and proves the postcondition.
 
 Now consider:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```c
 int32 increment(int32 x) {
     return x + 1;
@@ -40,6 +43,7 @@ int32 increment(int32 x) {
 
 The natural postcondition is:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 ensures result == x + 1 by auto;
 ```
@@ -47,6 +51,7 @@ ensures result == x + 1 by auto;
 But in C, signed overflow is undefined behavior. The call is safe only when
 `x + 1` fits in `int32`. The full contract needs a requirement:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 verifying "increment.c";
 
@@ -67,9 +72,9 @@ When a proof fails, it usually means one of three things:
 - the contract is missing a required precondition,
 - or Click does not yet have enough proof support for the claim.
 
-The proof failure is the start of the debugging process. The next beginner
-chapters explain the two languages you need to read that process: contracts and
-propositions. Once ordinary contract debugging is not enough, use the
+The proof failure is the start of the debugging process. Next, read
+[Contracts](contracts.md) and [Propositions](propositions.md) to learn the two
+languages used in that process. Once ordinary contract debugging is not enough, use the
 [proof-failure triage guide](proof-failure-triage.md) to distinguish
 proof-authoring work from unsupported semantics, missing functionality,
 correctness bugs, and tooling failures.

@@ -3,7 +3,7 @@
 Click verifies C0, the repository's current C subset.
 
 C0 is not intended to be a new production language. It is the precise target
-Click can reason about today while it grows toward more realistic C.
+Click can reason about while it grows toward more realistic C.
 
 ## C0 source
 
@@ -17,6 +17,7 @@ For the full list, see the C0 subset reference.
 
 Click specs can contain C-like expressions:
 
+<!-- verified-example: mdtests/c_multiplication.md -->
 ```click
 ensures result == x + 1 by auto;
 ensures p[k] == old(p[k]) by auto;
@@ -58,6 +59,7 @@ logic underneath.
 
 For example:
 
+<!-- verified-example: mdtests/c_multiplication.md -->
 ```click
 ensures p[0] == old(p[0]) by auto;
 ```

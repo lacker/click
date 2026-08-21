@@ -266,4 +266,5 @@ questions:
 5. What scaling regression protects the claimed bound?
 
 See [Testing Click](testing.md) for commands, budgets, and profiling.
-The open implementation work is ordered in [`issues/README.md`](../../issues/README.md).
+The open implementation work is ordered in
+[`issues/README.md`](https://github.com/lacker/click/blob/master/issues/README.md).

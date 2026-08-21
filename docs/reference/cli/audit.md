@@ -10,9 +10,12 @@ fixed point without introducing a new smart tactic.
 usage: click audit [OPTIONS] <sidecar.click|example-project|examples-directory|mdtest.md|mdtests-directory|repository-root>
 ```
 
+## Target selection
+
 `TARGET` can be a sidecar, example project, examples directory, mdtest,
 mdtests directory, or repository root. A repository-root audit covers both
-`examples/` and `mdtests/`.
+`examples/` and `mdtests/`. `--claim`, `--changed-since`, and `--start-at`
+narrow that target; their exact interaction and defaults are listed below.
 
 ## Checks
 

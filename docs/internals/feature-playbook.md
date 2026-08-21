@@ -76,7 +76,7 @@ Checklist:
 - Add new kernel semantic terms only when needed.
 - Add undefined-behavior obligations if C semantics require them.
 - Add C parser unit tests and mdtests.
-- Update [c0-subset.md](../reference/language/c0.md).
+- Update [Supported C0](../reference/language/c0.md).
 
 ## Adding proof power
 
@@ -97,7 +97,7 @@ Checklist:
 - Add source to `stdlib/prelude.click`.
 - Add an mdtest that imports it implicitly.
 - If the proof needs special support, add general kernel support and unit tests.
-- Update [standard-library.md](../reference/library/index.md).
+- Update the [standard-library reference](../reference/library/index.md).
 
 ## Updating README
 

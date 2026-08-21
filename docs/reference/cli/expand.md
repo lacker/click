@@ -14,7 +14,7 @@ usage: click expand [--time-limit <DURATION>] [--output <PATH> | --in-place] <si
 
 Replace the following:
 
-- `DURATION`: the whole-command limit; the default is 60 seconds.
+- `DURATION`: the whole-command limit; the default is `1m` (60 seconds).
 - `PATH`: a destination for the complete rewritten sidecar or mdtest.
 - `LINE` and `COLUMN`: one-based coordinates selecting a smart tactic.
 - `LABEL`: one function-claim label whose smart tactics are all selected.
@@ -35,7 +35,7 @@ output is written. Unselected source text is preserved byte for byte.
 | Option | Meaning |
 | --- | --- |
 | `--claim LABEL` | Expand all smart tactics in one named claim instead of selecting a location. |
-| `--time-limit DURATION` | Override the 60-second whole-command limit. |
+| `--time-limit DURATION` | Override the default `1m` whole-command limit. |
 | `--output PATH` | Write the complete verified rewrite to a different path. |
 | `--in-place` | Atomically replace the input only after verification succeeds. |
 | `-h`, `--help` | Print command help and exit successfully. |

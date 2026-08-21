@@ -2,8 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use click::cli::{
+    DEFAULT_EXPANSION_TIME_LIMIT, DEFAULT_VERIFY_TIME_LIMIT, PUBLIC_CLI_BEHAVIORS,
+    PUBLIC_ENVIRONMENT_VARIABLES, format_duration,
+};
 use click::lang::c::syntax::C0_PUBLIC_FORMS;
-use click::lang::click::SURFACE_CLICK_WORDS;
+use click::lang::click::{PUBLIC_TACTIC_FORMS, SURFACE_CLICK_FORMS, SURFACE_CLICK_WORDS};
 
 #[derive(Debug)]
 struct InventoryItem {
@@ -168,6 +172,12 @@ fn every_page_has_structural_markdown_and_navigation() {
             }
         }
         for (line, text) in source.lines().enumerate() {
+            if text.contains("![](") || text.contains("![ ](") {
+                failures.push(format!(
+                    "{relative}:{}: image needs meaningful alternative text",
+                    line + 1
+                ));
+            }
             let Some(heading) = text
                 .strip_prefix('#')
                 .map(|text| text.trim_start_matches('#').trim())
@@ -226,6 +236,7 @@ fn every_page_has_structural_markdown_and_navigation() {
 #[test]
 fn local_markdown_links_resolve() {
     let docs = root().join("docs");
+    let canonical_docs = docs.canonicalize().expect("canonical docs directory");
     let mut files = Vec::new();
     markdown_files(&docs, &mut files);
     let mut failures = Vec::new();
@@ -251,6 +262,13 @@ fn local_markdown_links_resolve() {
                 path.parent().expect("page parent").join(target)
             };
             let target_path = target_path.canonicalize().unwrap_or(target_path);
+            if !target_path.starts_with(&canonical_docs) {
+                failures.push(format!(
+                    "{}: local link {link} escapes docs/ and won't be published",
+                    path.display()
+                ));
+                continue;
+            }
             let Ok(target_source) = fs::read_to_string(&target_path) else {
                 failures.push(format!("{}: broken link {link}", path.display()));
                 continue;
@@ -269,6 +287,117 @@ fn local_markdown_links_resolve() {
         failures.is_empty(),
         "broken local links:\n{}",
         failures.join("\n")
+    );
+}
+
+#[test]
+fn normative_technical_examples_are_backed_by_mdtests() {
+    let docs = root().join("docs");
+    let mut pages = Vec::new();
+    markdown_files(&docs, &mut pages);
+    let mut failures = Vec::new();
+
+    for page in pages {
+        if page.starts_with(docs.join("reference/library")) {
+            // Library declarations are exact source includes and every symbol
+            // has a separately checked use in stdlib_every_symbol.md.
+            continue;
+        }
+        let source = fs::read_to_string(&page).expect("read language reference");
+        let lines = source.lines().collect::<Vec<_>>();
+        for (index, line) in lines.iter().enumerate() {
+            if !matches!(*line, "```click" | "```c") {
+                continue;
+            }
+            let marker = index
+                .checked_sub(1)
+                .and_then(|previous| lines.get(previous))
+                .and_then(|line| line.strip_prefix("<!-- verified-example: "))
+                .and_then(|line| line.strip_suffix(" -->"));
+            let Some(fixture) = marker else {
+                failures.push(format!(
+                    "{}:{}: normative code block has no verified-example marker",
+                    page.display(),
+                    index + 1
+                ));
+                continue;
+            };
+            if !fixture.starts_with("mdtests/") || !fixture.ends_with(".md") {
+                failures.push(format!(
+                    "{}:{}: verified example must name an mdtests/*.md fixture: {fixture}",
+                    page.display(),
+                    index + 1
+                ));
+                continue;
+            }
+            let fixture_path = root().join(fixture);
+            let Ok(fixture_source) = fs::read_to_string(&fixture_path) else {
+                failures.push(format!(
+                    "{}:{}: missing verified fixture {fixture}",
+                    page.display(),
+                    index + 1
+                ));
+                continue;
+            };
+            assert!(
+                fixture_source.contains("```click") && fixture_source.contains("```expect"),
+                "{fixture}: documentation fixtures must contain Click source and an expected result"
+            );
+            if *line == "```c" {
+                assert!(
+                    fixture_source.contains("```c filename="),
+                    "{fixture}: C example fixture must contain a named C source block"
+                );
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "unverified normative technical examples:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn example_catalog_only_names_checked_fixtures() {
+    let source = fs::read_to_string(root().join("docs/reference/examples.md"))
+        .expect("read example catalog");
+    let mut checked = 0usize;
+    for code in source.split('`').skip(1).step_by(2) {
+        if code.starts_with("mdtests/") && code.ends_with(".md") {
+            let fixture = root().join(code);
+            let fixture_source = fs::read_to_string(&fixture)
+                .unwrap_or_else(|error| panic!("catalog fixture `{code}`: {error}"));
+            assert!(
+                fixture_source.contains("```expect"),
+                "catalog fixture `{code}` has no expected mdtest result"
+            );
+            checked += 1;
+        } else if code.starts_with("examples/") && code.ends_with('/') {
+            let fixture = root().join(code);
+            assert!(
+                fixture.is_dir(),
+                "catalog example directory `{code}` is missing"
+            );
+            if code != "examples/" {
+                assert!(
+                    fs::read_dir(&fixture)
+                        .expect("read example project")
+                        .any(|entry| entry
+                            .expect("read example file")
+                            .path()
+                            .extension()
+                            .is_some_and(|extension| extension == "click")),
+                    "catalog example directory `{code}` has no Click sidecar"
+                );
+            }
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 200,
+        "example catalog unexpectedly covers only {checked} checked fixtures"
     );
 }
 
@@ -343,6 +472,24 @@ fn surface_click_word_inventory_is_bidirectional() {
 }
 
 #[test]
+fn surface_click_form_inventory_is_bidirectional() {
+    let implementation = SURFACE_CLICK_FORMS
+        .iter()
+        .map(|form| (*form).to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        implementation.len(),
+        SURFACE_CLICK_FORMS.len(),
+        "duplicate Surface Click form in registry"
+    );
+    let documented = inventory_ids("language.")
+        .into_iter()
+        .filter(|id| !id.starts_with("word."))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(implementation, documented);
+}
+
+#[test]
 fn c0_surface_inventory_is_bidirectional() {
     let implementation = C0_PUBLIC_FORMS
         .iter()
@@ -392,6 +539,23 @@ fn standard_library_declarations_are_exact_source_includes() {
 }
 
 #[test]
+fn every_standard_library_symbol_has_a_verified_use() {
+    let fixture = fs::read_to_string(root().join("mdtests/stdlib_every_symbol.md"))
+        .expect("read standard-library fixture");
+    assert!(fixture.contains("```expect\npass\n```"));
+    for id in inventory_ids("stdlib.") {
+        let name = id
+            .split_once('.')
+            .map(|(_, name)| name)
+            .unwrap_or_else(|| panic!("standard-library inventory ID has no kind: {id}"));
+        assert!(
+            fixture.contains(name),
+            "standard-library symbol `{name}` has no use in mdtests/stdlib_every_symbol.md"
+        );
+    }
+}
+
+#[test]
 fn tactic_inventory_matches_canonical_surface_names() {
     let source = fs::read_to_string(root().join("src/lang/click/validation/type_validation.rs"))
         .expect("read tactic names");
@@ -414,6 +578,96 @@ fn tactic_inventory_matches_canonical_surface_names() {
         .filter(|name| !RETIRED_TACTICS.contains(&name.as_str()))
         .collect::<BTreeSet<_>>();
     assert_eq!(names, active);
+}
+
+#[test]
+fn tactic_form_inventory_is_bidirectional() {
+    let implementation = PUBLIC_TACTIC_FORMS
+        .iter()
+        .map(|form| form.id.to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        implementation.len(),
+        PUBLIC_TACTIC_FORMS.len(),
+        "duplicate tactic form in registry"
+    );
+    assert_eq!(implementation, inventory_ids("tactic-form."));
+
+    let reference = fs::read_to_string(root().join("docs/reference/tactics/index.md"))
+        .expect("read tactic reference");
+    for form in PUBLIC_TACTIC_FORMS {
+        assert!(
+            reference.contains(form.syntax),
+            "tactic form `{}` is missing canonical syntax `{}`",
+            form.id,
+            form.syntax
+        );
+        assert!(
+            reference.contains(form.class),
+            "tactic form `{}` is missing class `{}`",
+            form.id,
+            form.class
+        );
+    }
+}
+
+#[test]
+fn every_tactic_form_has_a_checked_positive_fixture() {
+    let source = fs::read_to_string(root().join("docs/reference/tactics/fixtures.toml"))
+        .expect("read tactic fixture inventory");
+    let mut fixtures = BTreeMap::new();
+    let mut id = None;
+    let mut path = None;
+    let mut needle = None;
+    for line in source.lines().map(str::trim) {
+        if line == "[[form]]" {
+            if let (Some(id), Some(path), Some(needle)) = (id.take(), path.take(), needle.take()) {
+                assert!(
+                    fixtures.insert(id, (path, needle)).is_none(),
+                    "duplicate tactic fixture"
+                );
+            }
+        } else if let Some(value) = line.strip_prefix("id = ") {
+            id = Some(unquote(value));
+        } else if let Some(value) = line.strip_prefix("path = ") {
+            path = Some(unquote(value));
+        } else if let Some(value) = line.strip_prefix("needle = ") {
+            needle = Some(unquote(value));
+        }
+    }
+    if let (Some(id), Some(path), Some(needle)) = (id, path, needle) {
+        assert!(fixtures.insert(id, (path, needle)).is_none());
+    }
+
+    let expected = PUBLIC_TACTIC_FORMS
+        .iter()
+        .map(|form| form.id.to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(expected, fixtures.keys().cloned().collect());
+
+    for (id, (path, needle)) in fixtures {
+        assert!(
+            path.starts_with("mdtests/") || path.starts_with("src/lang/click/tests/"),
+            "tactic fixture `{id}` must use an ordinary checked test source: {path}"
+        );
+        let fixture = fs::read_to_string(root().join(&path))
+            .unwrap_or_else(|error| panic!("tactic fixture `{id}` {path}: {error}"));
+        assert!(
+            fixture.contains(&needle),
+            "tactic fixture `{id}` no longer contains `{needle}` in {path}"
+        );
+        if path.starts_with("mdtests/") {
+            assert!(
+                fixture.contains("```expect"),
+                "tactic fixture `{id}` has no mdtest expectation in {path}"
+            );
+        } else {
+            assert!(
+                fixture.contains("#[test]"),
+                "tactic fixture `{id}` isn't part of a Rust test file: {path}"
+            );
+        }
+    }
 }
 
 const RETIRED_TACTICS: &[&str] = &[
@@ -460,7 +714,99 @@ fn cli_inventory_matches_argument_parsers() {
             options, documented,
             "CLI inventory drift for click {command}"
         );
+        let reference = fs::read_to_string(root().join(format!("docs/reference/cli/{command}.md")))
+            .expect("read CLI reference");
+        for option in options {
+            assert!(
+                reference.contains(&format!("`{option}")),
+                "click {command} option `{option}` has no visible reference entry"
+            );
+        }
     }
+}
+
+#[test]
+fn cli_behavior_inventory_is_bidirectional() {
+    let implementation = PUBLIC_CLI_BEHAVIORS
+        .iter()
+        .map(|behavior| (*behavior).to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        implementation.len(),
+        PUBLIC_CLI_BEHAVIORS.len(),
+        "duplicate CLI behavior in registry"
+    );
+    assert_eq!(implementation, inventory_ids("cli.behavior."));
+}
+
+#[test]
+fn cli_defaults_are_source_backed() {
+    for (command, file) in [
+        ("profile", "src/bin/click-profile.rs"),
+        ("audit", "src/bin/click-audit.rs"),
+    ] {
+        let source = fs::read_to_string(root().join(file)).expect("read CLI source");
+        let defaults = source
+            .split("\ndefaults:\n")
+            .nth(1)
+            .expect("USAGE defaults block")
+            .split("\n\noptions:")
+            .next()
+            .expect("end of defaults block");
+        let reference = fs::read_to_string(root().join(format!("docs/reference/cli/{command}.md")))
+            .expect("read CLI reference");
+        for line in defaults.lines().map(str::trim) {
+            if !line.starts_with("--") {
+                continue;
+            }
+            let mut fields = line.split_whitespace();
+            let option = fields.next().expect("default option");
+            let value = fields.next().expect("default value");
+            assert!(
+                reference.contains(&format!("`{option}"))
+                    && reference.contains(&format!("`{value}`")),
+                "click {command} default `{option} {value}` is absent or stale"
+            );
+        }
+    }
+
+    for (command, default) in [
+        ("verify", DEFAULT_VERIFY_TIME_LIMIT),
+        ("expand", DEFAULT_EXPANSION_TIME_LIMIT),
+    ] {
+        let reference = fs::read_to_string(root().join(format!("docs/reference/cli/{command}.md")))
+            .expect("read CLI reference");
+        let default = format_duration(default);
+        assert!(
+            reference.contains(&format!("`{default}`")),
+            "click {command} default time limit `{default}` is absent or stale"
+        );
+    }
+}
+
+#[test]
+fn environment_variable_inventory_is_bidirectional() {
+    let implementation = PUBLIC_ENVIRONMENT_VARIABLES
+        .iter()
+        .map(|variable| (*variable).to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        implementation.len(),
+        PUBLIC_ENVIRONMENT_VARIABLES.len(),
+        "duplicate environment variable in registry"
+    );
+    assert_eq!(implementation, inventory_ids("cli.env."));
+}
+
+#[test]
+fn glossary_inventory_is_bidirectional() {
+    let source =
+        fs::read_to_string(root().join("docs/reference/glossary.md")).expect("read glossary");
+    let terms = source
+        .lines()
+        .filter_map(|line| line.strip_prefix("### ").map(slug))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(terms, inventory_ids("glossary."));
 }
 
 #[test]
@@ -519,4 +865,18 @@ fn technical_landing_page_discloses_ai_authorship() {
     assert!(source.contains("written and maintained by AI"));
     assert!(source.contains("human-written guide"));
     assert!(source.contains("accurate, exhaustive, and mechanically checked"));
+}
+
+#[test]
+fn rendered_site_keyboard_enhancement_is_configured() {
+    let book = fs::read_to_string(root().join("book.toml")).expect("read book.toml");
+    assert!(book.contains("docs/theme/click.css"));
+    assert!(book.contains("docs/theme/click.js"));
+
+    let script = fs::read_to_string(root().join("docs/theme/click.js"))
+        .expect("read documentation keyboard enhancement");
+    assert!(script.contains("toggle.tabIndex = 0"));
+    assert!(script.contains("event.key !== \"Enter\""));
+    assert!(script.contains("event.key !== \" \""));
+    assert!(script.contains("aria-controls"));
 }

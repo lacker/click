@@ -4,6 +4,7 @@ A Click contract describes a C function from the outside.
 
 The main clauses are:
 
+<!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
 let name [: type] = expression;
 let name: type where proposition;
@@ -13,13 +14,14 @@ immutable ...
 mutable ...
 ```
 
-Beginner proofs mostly use `requires` and `ensures`. Memory proofs later add
+Initial proofs mostly use `requires` and `ensures`. Memory proofs also add
 `immutable` and `mutable`.
 
 ## Local names
 
 A contract can define immutable local names:
 
+<!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
 let max: int32 = 2147483647;
 let expected = x + 1;
@@ -34,6 +36,7 @@ when Click can infer the intended value shape from use.
 
 A contract can also bind an immutable witness with `let ... where`:
 
+<!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
 let k: int32 where k == x;
 
@@ -52,6 +55,7 @@ required explicitly.
 
 A `requires` clause is a precondition:
 
+<!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
 requires x >= 0;
 requires x < 2147483647;
@@ -65,6 +69,7 @@ Requirements are also where simple C safety facts often live. For example,
 
 Resource verbs provide resource facts alongside pure requirements:
 
+<!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
 views p[0..1];
 consumes p[0..1];
@@ -72,12 +77,13 @@ consumes p[0..1];
 
 These give the verifier permission to check external memory accesses. `views`
 permits loads; an owned element permits both loads and stores.
-Resource facts are carried separately from pure facts. The intermediate
-[Permissions](permissions.md) chapter covers transfer through
+Resource facts are carried separately from pure facts. [Permissions](permissions.md)
+covers transfer through
 function calls and the distinction between loadability and authority.
 
 Requirements can be labeled:
 
+<!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
 requires positive: x > 0;
 ```
@@ -88,6 +94,7 @@ Labels are useful when a proof script needs to refer to a specific fact.
 
 An `ensures` clause is a postcondition:
 
+<!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
 ensures result == x + 1 by auto;
 ensures result > x by auto;
@@ -106,6 +113,7 @@ The name `result` means the function's return value.
 
 Guarantees can also be labeled:
 
+<!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
 ensures incremented: result == x + 1 by auto;
 ```
@@ -116,6 +124,7 @@ Labels make diagnostics easier to read and make proof scripts more durable.
 
 Memory-modifying functions also use frame clauses:
 
+<!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
 immutable src[0..n] by frame;
 mutable dst[0..n] by frame;
@@ -130,6 +139,7 @@ that later runs forever.
 
 The `by` clause says how a guarantee is proved:
 
+<!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
 ensures result == 0 by auto;
 ensures result == x by simp;

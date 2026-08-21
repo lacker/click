@@ -16,6 +16,7 @@ syntax accepted by the same parser. Generated text is not a private dialect.
 
 ## File shape
 
+<!-- verified-example: mdtests/argument_result.md -->
 ```click
 verifying "file.c";
 
@@ -70,6 +71,7 @@ component requires a checked `decreases` measure.
 Use `decreases` only when a caller needs separate evidence that a C function
 returns. A function-level measure ranks recursive calls:
 
+<!-- verified-example: mdtests/c_decreases_recursive.md -->
 ```click
 int32 countdown(int32 n) {
     decreases n;
@@ -79,6 +81,7 @@ int32 countdown(int32 n) {
 
 A loop measure belongs to the loop handled at the current execution frontier:
 
+<!-- verified-example: mdtests/c_decreases_loop.md -->
 ```click
 by {
   loop {
@@ -91,6 +94,7 @@ by {
 Recursive traversal of an inductive resource may instead use its hidden
 structural rank:
 
+<!-- verified-example: mdtests/c_decreases_resource_recursive.md -->
 ```click
 int32 list_destroy(struct node* node) {
     decreases resource list(node);
@@ -133,6 +137,7 @@ no `decreases` clause.
 A function with several effect and postcondition clauses may instead use one
 grouped execution proof after the contract block:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 int32 set_first(int32 p[], int32 value) {
     owns p[0..1];
@@ -162,6 +167,7 @@ or theorem applications; use an explicit grouped block for those operations.
 Goal-specific pure reasoning can be isolated with `have`, including after the
 function reaches its return frontier:
 
+<!-- verified-example: mdtests/post_execution_have_checks_each_path.md -->
 ```click
 execute();
 have exists (k: int32) { k == result } by {
@@ -194,6 +200,7 @@ coverage ever diverge.
 Pure theorem declarations prove Click propositions without attaching the proof
 to a C function:
 
+<!-- verified-example: mdtests/pure_theorem.md -->
 ```click
 theorem increment_preserves_positive(x: int32) {
     requires x >= 0;
@@ -221,6 +228,7 @@ resources. The exact inventory is in the
 
 Pure theorems can use explicit strong induction on an `int32` parameter:
 
+<!-- verified-example: mdtests/pure_induction_countdown.md -->
 ```click
 theorem countdown_is_zero(n: int32) {
     requires n >= 0;
@@ -245,6 +253,7 @@ C termination evidence.
 
 Theorems can be reused by explicit application:
 
+<!-- verified-example: mdtests/pure_theorem_apply.md -->
 ```click
 theorem nonnegative_body(x: int32) {
     requires nonnegative(x);
@@ -266,6 +275,7 @@ theorem reuses_nonnegative_body(y: int32) {
 Proof-level `if` performs explicit case analysis on a pure proposition. It
 checks the same current claim under the proposition and its negation:
 
+<!-- verified-example: mdtests/proof_if_cases.md -->
 ```click
 theorem int32_sign_split(x: int32) {
     ensures x <= 0 or x > 0 by {
@@ -286,6 +296,7 @@ arm. Expansion prints the corresponding `step() using { ... }` certificate.
 When a C `if` is at the execution frontier, use `branch` instead of repeating
 its condition as a logical case split:
 
+<!-- verified-example: mdtests/frontier_branch.md -->
 ```click
 branch {
     then {
@@ -306,6 +317,7 @@ closes its own outcome inside the arm; it does not run the continuation after
 
 When one transition needs contextual pure facts, list them explicitly:
 
+<!-- verified-example: mdtests/simple_statement_step_requires_exact_prerequisite.md -->
 ```click
 step() using {
     x < 2147483647;
@@ -324,6 +336,7 @@ iteration; it does not invent a loop summary.
 When the two arms need to expose facts or resources about changed state, add an
 optional common-frontier interface to `branch`:
 
+<!-- verified-example: mdtests/proof_branch_interface_continuation.md -->
 ```click
 branch {
     ensuring {
@@ -380,6 +393,7 @@ Requirements are shared by all guarantees for the function.
 
 Supported structural requirements:
 
+<!-- verified-example: mdtests/pointer_range_segment_syntax.md -->
 ```click
 requires input_nonnegative: n >= 0;
 requires loadable(p[0..n]);
@@ -422,6 +436,7 @@ base[start..end]` supplies persistent read access; `owns`, `consumes`, and
 These are resource facts, not classical predicates, and are carried in the
 verifier's resource context rather than copied as pure facts.
 
+<!-- verified-example: mdtests/resource_context_write.md -->
 ```click
 int32 write_next(int32 p[], int32 x) {
     owns p[0..1] by auto;
@@ -448,6 +463,7 @@ same context machinery with non-memory resources.
 
 Click also supports exact-match abstract resources:
 
+<!-- verified-example: mdtests/token_resource_borrow_return.md -->
 ```click
 abstract resource open_fd(fd: int32);
 ```
@@ -460,6 +476,7 @@ form a quantity; a requirement for two units cannot be satisfied by one.
 
 An ordinary resource declaration requires a body shared by all equal units:
 
+<!-- verified-example: mdtests/counted_resource_refcount_transitions.md -->
 ```click
 resource object_ref(obj: struct object*) {
     owns object(obj);
@@ -471,6 +488,7 @@ Repeated owned clauses denote a quantity rather than a duplicate-ownership
 error. Omitting a coefficient transfers one unit. An owned user-declared
 resource may instead transfer an `int32` quantity explicitly:
 
+<!-- verified-example: mdtests/symbolic_token_quantity_contracts.md -->
 ```click
 owns amount of object_ref(obj);
 consumes amount of object_ref(obj);
@@ -516,6 +534,7 @@ contract.
 
 Composite resources are declared resources with a body:
 
+<!-- verified-example: mdtests/resource_without_body_requires_abstract.md -->
 ```click
 abstract resource socket_open(fd: int32);
 
@@ -528,6 +547,7 @@ resource uncalled(flag: int32*) {
 
 A composite body may instead have one top-level guard:
 
+<!-- verified-example: mdtests/recursive_conditional_resource.md -->
 ```click
 resource list(node: struct node*) {
     if node != 0 {
@@ -568,6 +588,7 @@ claim.
 
 A function block may be resource-only when it consumes a resource:
 
+<!-- verified-example: mdtests/callback_resource_complete_once.md -->
 ```click
 int32 complete(int32 cb) {
     consumes can_complete(cb);
@@ -576,6 +597,7 @@ int32 complete(int32 cb) {
 
 Resource facts are written with resource verbs:
 
+<!-- verified-example: mdtests/token_resource_borrow_return.md -->
 ```click
 int32 update(int32* p) {
     owns p[0..1];
@@ -618,6 +640,7 @@ spelled separately with `object(base)`. Allocation authority cannot be
 the authority must be returned (possibly inside a composite resource) or
 consumed by an actual `free`.
 
+<!-- verified-example: mdtests/conditional_resource_body.md -->
 ```click
 resource owned_item(item: struct item*) {
     if item != 0 {
@@ -670,6 +693,7 @@ resources authorize the access.
 
 Click proposition connectives are words:
 
+<!-- verified-example: mdtests/click_proposition_logic.md -->
 ```click
 result == x and not (result != x)
 result == x implies result >= 0
@@ -682,6 +706,7 @@ propositions. Those remain C-fragment syntax.
 
 Range proposition helpers:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 (lo..hi).all(|k| { p[k] <= x })
 (0..3).any(|k| { p[k] == x })
@@ -701,6 +726,7 @@ Existential goals are proved explicitly in proof scripts with `witness`.
 The witness name must match the existential binder. For a symbolic `.any`, the
 range item name is the existential binder:
 
+<!-- verified-example: mdtests/exists_and_symbolic_any.md -->
 ```click
 ensures found: (lo..hi).any(|k| { p[k] == result }) by {
     execute();
@@ -714,6 +740,7 @@ ensures found: (lo..hi).any(|k| { p[k] == result }) by {
 `old(expression)` evaluates a contract expression in the function-entry state.
 It is mainly used in postconditions and invariants:
 
+<!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```click
 ensures p[0] == old(p[0]) by auto;
 ensures forall (k: int32) { 0 <= k and k < n implies p[k] == old(p[k]) } by auto;
@@ -724,7 +751,7 @@ Inside `old(...)`, `result` is unavailable.
 When `old(p)` is passed as an array argument to a pure Click function or
 predicate, it becomes an entry-state Click array ref. For example,
 `permutation(p, old(p), 0, 2)` compares post-state `p` to entry-state `p`.
-See [click-core.md](../../concepts/surface-and-kernel.md).
+See [Surface Click and Kernel Click](../../concepts/surface-and-kernel.md).
 
 ## `c(...)`
 
@@ -736,6 +763,7 @@ while `c(result)` is a C parameter or local named `result`.
 C locals exist only while they are in scope. After function exit, refer to a
 local through a recorded program point:
 
+<!-- verified-example: mdtests/statement_at_snapshots.md -->
 ```click
 result == at(statement(1).entry, c(result))
 ```
@@ -751,6 +779,7 @@ binding.
 to a program point. In a proposition position, `at(selector, proposition)`
 evaluates the complete proposition at that visit:
 
+<!-- verified-example: mdtests/statement_at_snapshots.md -->
 ```click
 at(function.entry, x)
 at(loop_label.entry, x)
@@ -763,6 +792,7 @@ at(statement(0).entry, loadable(p[0..n]))
 An execution proof can give its current frontier state a local name and use
 that bare name as a selector later:
 
+<!-- verified-example: mdtests/proof_mark_current_frontier.md -->
 ```click
 mark before_write;
 step();
@@ -814,6 +844,7 @@ Click functions are specification-level value definitions, not executable C
 functions. Their parameters are Click-native binders and therefore use
 `name: type`, unlike attached C function signatures.
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 function inc(x: int32) -> int32 {
     x + 1
@@ -838,6 +869,7 @@ range `.fold`, and calls to other Click functions.
 
 Recursive pure functions must declare a well-founded natural-number measure:
 
+<!-- verified-example: mdtests/pure_recursive_function.md -->
 ```click
 function countdown(n: int32) -> int32
     decreases n
@@ -863,6 +895,7 @@ than a theorem about the result.
 
 Function contracts may also use contract-level `let` bindings:
 
+<!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
 int32 bounded_increment(int32 x) {
     let max: int32 = 2147483647;
@@ -885,6 +918,7 @@ stable backing pointer even if the current `owner` metadata changes.
 
 Proposition clauses may also use witness lets:
 
+<!-- verified-example: mdtests/contract_let_where.md -->
 ```click
 let k: int32 where k == x;
 
@@ -933,6 +967,7 @@ field loadable for symbolic execution.
 
 Use `object(obj)` for the complete storage of a struct object:
 
+<!-- verified-example: mdtests/composite_resource_struct_owned_buffer.md -->
 ```click
 consumes object(owner);
 fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
@@ -963,6 +998,7 @@ the kernel and can be reasoned about by supported fold laws.
 
 Predicates return Click propositions:
 
+<!-- verified-example: mdtests/sorted_predicate.md -->
 ```click
 predicate sorted_range(p: int32[], lo: int32, hi: int32) {
     forall (i: int32) {
@@ -977,6 +1013,7 @@ Predicate calls are opaque by default. Requirements and loop invariants can
 reuse exact predicate facts, but Click does not unfold predicate bodies unless a
 proof asks for it:
 
+<!-- verified-example: mdtests/sorted_predicate.md -->
 ```click
 ensures sorted: sorted_range(p, 0, n) by {
     execute();
@@ -989,6 +1026,7 @@ Loop invariants are declared by the `loop` tactic when execution reaches that
 loop. Predicate bodies needed by the loop rule can be exposed in its
 `initialize` and `preserve` proofs:
 
+<!-- verified-example: mdtests/loop_sorted_range_invariant.md -->
 ```click
 by {
     loop {
@@ -1017,6 +1055,7 @@ passes arguments such as `p` and `old(p)`.
 
 Function-level effects are separate from postconditions:
 
+<!-- verified-example: mdtests/shifted_copy_effect_uses_covering_separate.md -->
 ```click
 immutable by frame;
 mutable p[0..n] by frame;

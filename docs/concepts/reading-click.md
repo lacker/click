@@ -6,6 +6,7 @@ When you open a `.click` file, read it in this order.
 
 Start at the top:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 verifying "file.c";
 ```
@@ -16,6 +17,7 @@ This tells you which C source the sidecar is proving.
 
 Find the function block:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 int32 max(int32 a, int32 b) {
     ...
@@ -29,6 +31,7 @@ body and read the C code if you do not know what the implementation does.
 
 Read every `requires` clause:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 requires n >= 0;
 requires loadable(p[0..n]);
@@ -41,6 +44,7 @@ requirements are the first place to look.
 
 Read each `ensures` clause as a separate promised fact:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 ensures result >= a by auto;
 ensures result >= b by auto;
@@ -52,6 +56,7 @@ The guarantee says what Click is proving. The `by` clause says how.
 
 For pointer code, check frame clauses:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 immutable src[0..n] by frame;
 mutable dst[0..n] by frame;
@@ -63,6 +68,7 @@ These describe which memory is preserved and which memory may change.
 
 Only after you understand the claim should you read the proof script:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 by {
     execute();
@@ -86,6 +92,6 @@ Ask:
 5. Is the proof about return values, memory, or both?
 6. Is the proof automated, simplified, framed, or scripted?
 
-That is enough to understand simple Click code. Intermediate Click adds memory
+That is enough to understand simple Click code. More involved Click adds memory
 loadability, aliasing, loops, predicates, pure functions, and eventually spec or
 model state.

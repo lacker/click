@@ -188,6 +188,7 @@ int32 example() {
 }
 ```text
 
+<!-- verified-example: mdtests/simple_tactics.md -->
 ```click
 verifying "example.c";
 

@@ -37,7 +37,13 @@ command page:
 - the repository root for a combined audit.
 
 Use `--` before a positional path that begins with a hyphen. Duration values
-accept plain seconds or a number followed by `ms`, `s`, `m`, or `h`.
+are described below.
+
+## Duration syntax
+
+Duration values accept a positive integer followed by `ms`, `s`, or `m`. A
+bare positive integer means seconds. For example, `500ms`, `30s`, `2m`, and
+bare `30` are valid; zero, fractional values, and an `h` suffix are invalid.
 
 ## Environment variables
 

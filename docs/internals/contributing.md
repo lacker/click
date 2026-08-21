@@ -10,8 +10,8 @@ The default workflow is:
 3. Confirm the expected failure.
 4. Implement the smallest parser, lowering, kernel, or prover change.
 5. Add unit tests if the change is below the mdtest level.
-6. Run the relevant tests, then `cargo test`.
-7. Update the docs.
+6. Update the relevant reference entry and public-surface inventory.
+7. Run focused tests, then run `scripts/check.sh` unpiped.
 
 The feature playbook is the detailed checklist.
 
@@ -30,30 +30,30 @@ This keeps the language smaller and makes kernel support more reusable.
 
 If you are changing Click itself, read:
 
-1. the beginner chapters, to understand the user-facing model,
-2. the intermediate chapters, to understand the proof concepts,
-3. the feature playbook, for the implementation workflow,
-4. the kernel internals page, for Rust module boundaries,
-5. the proof landscape and roadmap, for feature prioritization.
+1. [What Click proves](../concepts/what-click-proves.md), for the user-facing
+   boundary;
+2. the relevant [concept page](../concepts/index.md), for the mental model;
+3. the relevant [technical reference](../reference/index.md), for the public
+   contract;
+4. the [feature playbook](feature-playbook.md), for the change workflow;
+5. [Architecture](architecture.md) and [Kernel](kernel.md), for module and
+   trust boundaries.
 
 ## Documentation ownership
 
-The beginner chapters should optimize for teaching and trust. They may be
-rewritten by humans over time.
+The technical reference, concepts, and internals in this site are intentionally
+AI-written and AI-maintained. Keep them factual, exhaustive, source-backed, and
+consistent with the local [documentation style](../style.md). Update the
+machine-readable inventory or fixture mapping whenever a public surface
+changes. The future human-written guide is a separate work with its own voice;
+don't move or rewrite it as part of technical-reference maintenance without
+explicit authorization.
 
-The intermediate chapters should connect examples to concepts and stay accurate
-as features grow.
+## Working conventions
 
-The advanced and reference chapters should stay close to the implementation.
-They should be updated whenever tests, lowering, kernel behavior, or roadmap
-assumptions change.
-
-## Working conventions (from the 2026-07 performance-tools project)
-
-- Gates: `cargo nextest run --lib --bins` (the `--bins` matters — CLI
-  `#[cfg(test)]` modules are not covered by `--lib` alone),
-  `cargo test --test mdtests`, `cargo test --test examples`. Keep
-  master green; commit in small validated steps.
+- Gate: `scripts/check.sh` is the only green-tree verdict, and CI runs the same
+  script. Run it unpiped. It covers formatting, documentation, library and
+  binary tests, mdtests, and examples, using nextest when available.
 - Probe pattern: env-gated eprintln/file dumps at the failing check,
   run under a filter, strip probes before committing.
 - Guard and depth-gate any new recursive prover arm; structural

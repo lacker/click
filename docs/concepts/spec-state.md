@@ -34,6 +34,7 @@ They belong in the specification layer.
 
 Do not confuse this with `let`:
 
+<!-- verified-example: mdtests/resource_count_predicate_snapshot.md -->
 ```click
 let len: int32 = strlen_model(src);
 ```
@@ -41,7 +42,7 @@ let len: int32 = strlen_model(src);
 That is an immutable abbreviation for a specification expression. It is useful,
 but it is not mutable state.
 
-## What Click has today
+## Supported specification state
 
 Click already has a few spec-only mechanisms:
 

@@ -12,6 +12,7 @@ increment.click
 
 The C file contains the implementation:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```c
 int32 increment(int32 x) {
     return x + 1;
@@ -20,6 +21,7 @@ int32 increment(int32 x) {
 
 The Click sidecar names the C file and specifies the function:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 verifying "increment.c";
 
@@ -37,6 +39,7 @@ for the C function.
 
 Each sidecar starts with one or more source declarations:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 verifying "file.c";
 ```
@@ -48,6 +51,7 @@ sidecars can name multiple C files when a proof depends on helper functions.
 
 Each function block in a sidecar describes one C function:
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 int32 function_name(int32 x) {
     requires x >= 0;
@@ -67,6 +71,6 @@ There are two kinds of example material in this repository:
 - `examples/`: larger example projects with ordinary `.c` files and `.click`
   sidecars. These are best for library-shaped verification examples.
 
-For learning Click, start with the beginner chapters and then read the small
-mdtests listed in the examples catalog. For seeing how proofs are organized at a
+For learning Click, follow the introductory concept pages and then read the
+small mdtests listed in the examples catalog. For seeing how proofs are organized at a
 larger scale, read the project fixtures under `examples/`.

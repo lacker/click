@@ -1,0 +1,198 @@
+# Every selectable tactic form has a checked positive witness. The
+# documentation test verifies this list bidirectionally against
+# PUBLIC_TACTIC_FORMS and confirms that each needle remains in its fixture.
+
+[[form]]
+id = "mark"
+path = "mdtests/proof_mark_current_frontier.md"
+needle = "mark after_first_write;"
+
+[[form]]
+id = "step"
+path = "mdtests/smart_step_carries_prior_call_facts.md"
+needle = "step();"
+
+[[form]]
+id = "step-using"
+path = "mdtests/proof_branch_interface_continuation.md"
+needle = "step() using {"
+
+[[form]]
+id = "execute"
+path = "mdtests/tactic_execute.md"
+needle = "execute();"
+
+[[form]]
+id = "execute-until"
+path = "mdtests/execute_until_current_frontier.md"
+needle = "execute_until(statement(3));"
+
+[[form]]
+id = "frame"
+path = "mdtests/fill_n_mutable_segment.md"
+needle = "frame();"
+
+[[form]]
+id = "frame-using"
+path = "mdtests/conditional_ensure_modus_ponens.md"
+needle = "frame() using {"
+
+[[form]]
+id = "unfold-predicate"
+path = "mdtests/sorted_predicate.md"
+needle = "unfold(sorted);"
+
+[[form]]
+id = "unfold-resource"
+path = "mdtests/composite_resource_composes_token.md"
+needle = "unfold(live_server(fd, state));"
+
+[[form]]
+id = "fold-resource"
+path = "mdtests/composite_resource_composes_token.md"
+needle = "fold(live_server(fd, state));"
+
+[[form]]
+id = "induct"
+path = "mdtests/pure_induction_countdown.md"
+needle = "induct(n) as ih;"
+
+[[form]]
+id = "apply-induction"
+path = "mdtests/pure_induction_countdown.md"
+needle = "apply(ih(n - 1));"
+
+[[form]]
+id = "apply-theorem"
+path = "mdtests/pure_theorem_apply.md"
+needle = "apply(nonnegative_body(y));"
+
+[[form]]
+id = "apply-theorem-using"
+path = "mdtests/produced_population_count_in_ensured_predicate.md"
+needle = "apply(int32_ge_and_not_gt_implies_eq(amount, 0)) using {"
+
+[[form]]
+id = "have"
+path = "mdtests/post_execution_have_checks_each_path.md"
+needle = "have result == 1 by simp;"
+
+[[form]]
+id = "open"
+path = "mdtests/resource_population_open.md"
+needle = "open("
+
+[[form]]
+id = "if"
+path = "mdtests/proof_if_cases.md"
+needle = "if x <= 0 {"
+
+[[form]]
+id = "cases"
+path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+needle = "cases (x == 1 or x == 2) {"
+
+[[form]]
+id = "branch"
+path = "mdtests/frontier_branch.md"
+needle = "branch {"
+
+[[form]]
+id = "loop"
+path = "mdtests/count_to_n_loop_invariant.md"
+needle = "loop {"
+
+[[form]]
+id = "observe-resource"
+path = "mdtests/composite_resource_folded_nested_fact_projection.md"
+needle = "observe("
+
+[[form]]
+id = "witness"
+path = "mdtests/witness_and_choose.md"
+needle = "witness(k = 0);"
+
+[[form]]
+id = "choose"
+path = "mdtests/witness_and_choose.md"
+needle = "choose(k from requirement has_k);"
+
+[[form]]
+id = "assumption"
+path = "mdtests/simple_tactics.md"
+needle = "assumption();"
+
+[[form]]
+id = "extract"
+path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+needle = "extract(k == k);"
+
+[[form]]
+id = "normalize"
+path = "mdtests/simple_tactics.md"
+needle = "normalize();"
+
+[[form]]
+id = "intro"
+path = "mdtests/copy_n_segment_invariant.md"
+needle = "intro();"
+
+[[form]]
+id = "split"
+path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+needle = "split();"
+
+[[form]]
+id = "left"
+path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+needle = "left();"
+
+[[form]]
+id = "right"
+path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+needle = "right();"
+
+[[form]]
+id = "enumerate"
+path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+needle = "enumerate();"
+
+[[form]]
+id = "contradiction"
+path = "src/lang/click/tests/surface_syntax.rs"
+needle = "contradiction(x == x);"
+
+[[form]]
+id = "close-invariants"
+path = "mdtests/c_decreases_loop.md"
+needle = "close_invariants();"
+
+[[form]]
+id = "rewrite"
+path = "mdtests/simple_tactics.md"
+needle = "rewrite(x == y);"
+
+[[form]]
+id = "transport"
+path = "mdtests/simple_statement_step_explicit_transport.md"
+needle = "transport(old(p[0]) == 7, p[0] == 7);"
+
+[[form]]
+id = "transport-using"
+path = "mdtests/field_derived_precise_effect_after_metadata_write.md"
+needle = ") using {"
+
+[[form]]
+id = "instantiate-using"
+path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+needle = "instantiate(forall (k: int32) {"
+
+[[form]]
+id = "simp"
+path = "mdtests/simp_postconditions.md"
+needle = "simp();"
+
+[[form]]
+id = "simp-using"
+path = "mdtests/condition_search_explicit_decomposition.md"
+needle = "simp() using {"

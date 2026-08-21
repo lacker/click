@@ -26,7 +26,7 @@ abstract resource allocation(base: int32*, bytes: int32);
 
 **Kind:** abstract resource. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ## Signed `int32` theorems
 
@@ -44,7 +44,7 @@ theorem int32_increment_upper_bound(value: int32, upper: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_increment_strictly_increases`
 
@@ -60,7 +60,7 @@ theorem int32_increment_strictly_increases(value: int32, upper: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_increment_lower_bound`
 
@@ -77,7 +77,7 @@ theorem int32_increment_lower_bound(value: int32, lower: int32, upper: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_increment_greater_equal_lower_bound`
 
@@ -94,7 +94,7 @@ theorem int32_increment_greater_equal_lower_bound(value: int32, lower: int32, up
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_increment_strict_greater_lower_bound`
 
@@ -111,7 +111,7 @@ theorem int32_increment_strict_greater_lower_bound(value: int32, lower: int32, u
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_increment_preserves_order`
 
@@ -128,7 +128,7 @@ theorem int32_increment_preserves_order(value: int32, lower: int32, upper: int32
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_successor_le_implies_lt`
 
@@ -145,7 +145,7 @@ theorem int32_successor_le_implies_lt(lower: int32, value: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_positive_is_nonnegative`
 
@@ -161,7 +161,7 @@ theorem int32_positive_is_nonnegative(value: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_lt_implies_le`
 
@@ -177,7 +177,7 @@ theorem int32_lt_implies_le(left: int32, right: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_not_lt_implies_ge`
 
@@ -193,7 +193,7 @@ theorem int32_not_lt_implies_ge(left: int32, right: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_strictly_positive_is_nonnegative`
 
@@ -209,7 +209,7 @@ theorem int32_strictly_positive_is_nonnegative(value: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_increment_below_max_is_defined`
 
@@ -225,7 +225,7 @@ theorem int32_increment_below_max_is_defined(value: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_one_plus_below_max_is_defined`
 
@@ -241,7 +241,7 @@ theorem int32_one_plus_below_max_is_defined(value: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_one_plus_strictly_increases`
 
@@ -257,7 +257,7 @@ theorem int32_one_plus_strictly_increases(value: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_nonnegative_add_within_max_is_defined`
 
@@ -274,7 +274,7 @@ theorem int32_nonnegative_add_within_max_is_defined(value: int32, amount: int32)
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_nonnegative_subtract_within_value_is_defined`
 
@@ -291,7 +291,7 @@ theorem int32_nonnegative_subtract_within_value_is_defined(value: int32, amount:
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_move_one_from_right_to_left_preserves_sum`
 
@@ -313,7 +313,7 @@ theorem int32_move_one_from_right_to_left_preserves_sum(
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_subtract_equal_sum_right_cancels`
 
@@ -333,7 +333,7 @@ theorem int32_subtract_equal_sum_right_cancels(value: int32, left: int32, amount
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_add_nonnegative_right_is_at_least_left`
 
@@ -350,7 +350,7 @@ theorem int32_add_nonnegative_right_is_at_least_left(left: int32, right: int32) 
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_add_nonnegative_left_is_at_least_right`
 
@@ -367,7 +367,7 @@ theorem int32_add_nonnegative_left_is_at_least_right(left: int32, right: int32) 
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_positive_predecessor_is_nonnegative`
 
@@ -383,7 +383,7 @@ theorem int32_positive_predecessor_is_nonnegative(value: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_above_one_predecessor_is_at_least_one`
 
@@ -399,7 +399,7 @@ theorem int32_above_one_predecessor_is_at_least_one(value: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_positive_predecessor_strictly_decreases`
 
@@ -415,7 +415,7 @@ theorem int32_positive_predecessor_strictly_decreases(value: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_nonnegative_predecessor_upper_bound`
 
@@ -432,7 +432,7 @@ theorem int32_nonnegative_predecessor_upper_bound(value: int32, bound: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_le_lt_transitive`
 
@@ -449,7 +449,7 @@ theorem int32_le_lt_transitive(first: int32, middle: int32, last: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_le_transitive`
 
@@ -466,7 +466,7 @@ theorem int32_le_transitive(first: int32, middle: int32, last: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_lt_transitive`
 
@@ -483,7 +483,7 @@ theorem int32_lt_transitive(first: int32, middle: int32, last: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_lt_le_transitive`
 
@@ -500,7 +500,7 @@ theorem int32_lt_le_transitive(first: int32, middle: int32, last: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_ge_transitive`
 
@@ -517,7 +517,7 @@ theorem int32_ge_transitive(last: int32, middle: int32, first: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_ge_implies_reversed_le`
 
@@ -533,7 +533,7 @@ theorem int32_ge_implies_reversed_le(greater: int32, lower: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_le_implies_reversed_ge`
 
@@ -549,7 +549,7 @@ theorem int32_le_implies_reversed_ge(lower: int32, greater: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_le_and_not_lt_implies_eq`
 
@@ -566,7 +566,7 @@ theorem int32_le_and_not_lt_implies_eq(left: int32, right: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_le_and_neq_implies_lt`
 
@@ -583,7 +583,7 @@ theorem int32_le_and_neq_implies_lt(left: int32, right: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `int32_ge_and_not_gt_implies_eq`
 
@@ -600,7 +600,7 @@ theorem int32_ge_and_not_gt_implies_eq(left: int32, right: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ## Array specifications
 
@@ -618,7 +618,7 @@ function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 {
 
 **Kind:** function. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `permutation`
 
@@ -634,7 +634,7 @@ predicate permutation(a: int32[], b: int32[], lo: int32, hi: int32) {
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(permutation)` when a proof needs the predicate body.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(permutation)` when a proof needs the predicate body.
 
 ## Byte-range specifications
 
@@ -652,7 +652,7 @@ function byte_count(bytes: uint8[], lo: int32, hi: int32, value: uint8) -> int32
 
 **Kind:** function. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `bytes_equal`
 
@@ -668,7 +668,7 @@ predicate bytes_equal(left: uint8[], left_lo: int32, right: uint8[], right_lo: i
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_equal)` when a proof needs the predicate body.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_equal)` when a proof needs the predicate body.
 
 ### `bytes_equal_range`
 
@@ -684,7 +684,7 @@ predicate bytes_equal_range(left: uint8[], right: uint8[], lo: int32, hi: int32)
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_equal_range)` when a proof needs the predicate body.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_equal_range)` when a proof needs the predicate body.
 
 ### `bytes_all_eq`
 
@@ -700,7 +700,7 @@ predicate bytes_all_eq(bytes: uint8[], lo: int32, hi: int32, value: uint8) {
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_all_eq)` when a proof needs the predicate body.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_all_eq)` when a proof needs the predicate body.
 
 ### `bytes_contains`
 
@@ -716,7 +716,7 @@ predicate bytes_contains(bytes: uint8[], lo: int32, hi: int32, value: uint8) {
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_contains)` when a proof needs the predicate body.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_contains)` when a proof needs the predicate body.
 
 ### `bytes_all_not_eq`
 
@@ -732,7 +732,7 @@ predicate bytes_all_not_eq(bytes: uint8[], lo: int32, hi: int32, value: uint8) {
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_all_not_eq)` when a proof needs the predicate body.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(bytes_all_not_eq)` when a proof needs the predicate body.
 
 ## C-string specifications
 
@@ -748,7 +748,7 @@ predicate cstr_prefix(bytes: uint8[], len: int32) {
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_prefix)` when a proof needs the predicate body.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_prefix)` when a proof needs the predicate body.
 
 ### `cstr_len`
 
@@ -762,7 +762,7 @@ predicate cstr_len(bytes: uint8[], len: int32) {
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_len)` when a proof needs the predicate body.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_len)` when a proof needs the predicate body.
 
 ### `cstr`
 
@@ -778,7 +778,7 @@ predicate cstr(bytes: uint8[]) {
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr)` when a proof needs the predicate body.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr)` when a proof needs the predicate body.
 
 ### `cstr_bounded`
 
@@ -792,7 +792,7 @@ predicate cstr_bounded(bytes: uint8[], max: int32) {
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_bounded)` when a proof needs the predicate body.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_bounded)` when a proof needs the predicate body.
 
 ### `cstr_len_nonnegative`
 
@@ -811,7 +811,7 @@ theorem cstr_len_nonnegative(bytes: uint8[], len: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `cstr_len_has_prefix`
 
@@ -830,7 +830,7 @@ theorem cstr_len_has_prefix(bytes: uint8[], len: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ### `cstr_len_has_terminator`
 
@@ -849,7 +849,7 @@ theorem cstr_len_has_terminator(bytes: uint8[], len: int32) {
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](../../../mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ## Namespace and extension rules
 

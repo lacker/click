@@ -74,6 +74,7 @@ non-aliasing.
 
 If a proof relies on non-overlap, state it:
 
+<!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```click
 requires separate(memory(dst[0..n]), memory(src[0..n]));
 ```
@@ -85,6 +86,7 @@ unless their contract rules that out.
 
 Use `loadable` to prove memory safety:
 
+<!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```click
 requires loadable(p[0..3]);
 requires loadable(p[0..n]);
@@ -121,6 +123,7 @@ to justify loads from that range when the index bounds are known.
 In an explicit proof, use proposition-level `at(...)` to refer to loadability
 at a recorded program point:
 
+<!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```click
 have at(statement(0).entry, loadable(p[0..n])) by {
     assumption();
@@ -137,12 +140,14 @@ the current memory.
 
 `old(expression)` evaluates in the function-entry state:
 
+<!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```click
 ensures p[0] == old(p[0]) by auto;
 ```
 
 For quantified old-memory postconditions:
 
+<!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```click
 ensures forall (k: int32) {
     0 <= k and k < n implies p[k] == old(p[k])
@@ -155,6 +160,7 @@ invariants, loop effect summaries, or separation facts.
 When an array parameter is passed to a pure Click function or predicate,
 `old(p)` means the entry-state array ref, not just the old pointer value:
 
+<!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```click
 ensures permutation(p, old(p), 0, 2) by {
     execute();
@@ -176,6 +182,7 @@ load is still rejected as use-after-free.
 
 Function-level effects:
 
+<!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```click
 immutable by frame;
 mutable p[0..n] by frame;
@@ -205,6 +212,7 @@ is allowed.
 
 Example:
 
+<!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```c
 int32 local_array_roundtrip() {
     int32 a[3];
@@ -220,6 +228,7 @@ not count as an external mutation.
 
 A pure Click function or predicate parameter written as an array or pointer:
 
+<!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```click
 predicate permutation(a: int32[], b: int32[], lo: int32, hi: int32)
 ```
@@ -236,5 +245,5 @@ and whether the load yields an `int32` or `uint8` value. This lets
 `permutation(p, old(p), lo, hi)` compare post-state `p` to entry-state `p`
 without copying a snapshot array.
 
-See [click-core.md](surface-and-kernel.md) for the full C-pointer versus Click-array-ref
+See [Surface Click and Kernel Click](surface-and-kernel.md) for the full C-pointer versus Click-array-ref
 model.

@@ -10,10 +10,13 @@ Use it to classify unexpected slowness after the selected proof verifies.
 usage: click profile [OPTIONS] <sidecar.click|example-project|examples-directory|mdtest.md|mdtests-directory>
 ```
 
+## Target selection
+
 `TARGET` can be a sidecar, example project, examples directory, mdtest, or
 mdtests directory. An mdtest is loaded from its fenced C and Click blocks with
 the same extraction used by the mdtest gate. Profiling ignores quarantine so a
-specific quarantined fixture can be diagnosed.
+specific quarantined fixture can be diagnosed. Each selected project receives
+its own deadline and report.
 
 ## Options and defaults
 
