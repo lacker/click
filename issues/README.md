@@ -18,20 +18,12 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 6
+## Other open issues: 4
 
-- [Two sorts of canonicalization](two-sorts-of-canonicalization.md):
-  memory-provenance normalization and proof-context equality normalization
-  can produce competing forms, leaving consumers to compose them in an
-  order-dependent way instead of receiving one producer-side normal form.
-
-- [Canonical pointer offsets need a production invariant](canonical-pointer-offset-invariant.md):
-  loaded pointer values are canonicalized today, but no regression walks
-  production-generated pointers and rejects a nested `MemoryLoad` in their
-  offset arithmetic.
-- [Canonical loaded offsets need a scaling curve](canonical-loaded-offset-scaling.md):
-  the motivating metadata-write proof is green, but its deterministic work
-  is not pinned over multiple input sizes.
+- [Canonicalization needs a proof-grounded model](canonicalization.md):
+  competing term representations leave production pointer invariants,
+  simple certificate replay, proof authority, and deterministic scaling
+  without one coherent contract.
 - [Expansion replay recursion exhausts the stack](expansion-replay-recursion-exhausts-the-stack.md):
   ordinary edits — a local, a closure, an unboxed enum payload — abort an
   unrelated expansion test with a stack overflow and no backtrace; the
