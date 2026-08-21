@@ -657,8 +657,8 @@ fn bitvector_terms_equal_for_memory_resolution(
     }
     // The full canonical form covers every term variant, including folds
     // and conditionals the structural arms below do not descend into; two
-    // spellings of one value differing only representationally — a raw
-    // load and the canonical name for it included — compare equal here.
+    // terms that are equal by definition — a load and the load variable
+    // for it included — compare equal here.
     // Both stages are memoized. Pathologically deep terms skip this arm:
     // canonicalization and memo hashing recurse structurally.
     const CANONICAL_COMPARE_DEPTH_LIMIT: usize = 64;

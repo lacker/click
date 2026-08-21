@@ -25,7 +25,7 @@ impl PureFactContext {
 
     fn exact_signed_order_bounds(&self, term: &Bitvector32Term) -> Option<Vec<SignedOrderBound>> {
         // The index keys endpoints by canonical form; canonicalize the query
-        // so any spelling of the bounded value finds its bounds.
+        // so any term equal to the bounded value finds its bounds.
         let term = crate::kernel::eval::canonical_term(term);
         self.signed_order_bounds.get(&term).map(|bounds| {
             bounds

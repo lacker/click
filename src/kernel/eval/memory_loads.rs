@@ -655,12 +655,12 @@ pub(crate) fn proposition_mentions_registered_canonical_load(proposition: &Propo
 
 /// The single canonical form for a term: the deep, assumption-free
 /// structural canonicalization ([`canonicalize_atomic_loads`]) followed by
-/// canonical-name substitution, so every remaining load atom is spelled as
-/// its canonical load variable. Names are the canonical direction — a
-/// consumer never expands a name back into its snapshot-bearing load; the
-/// registered defining equation is the only bridge. Equality of canonical
-/// forms is representational: it needs no proof evidence. Deterministic and
-/// idempotent; both stages are memoized.
+/// load-variable substitution, so every remaining load becomes its load
+/// variable. The load variable is the canonical form of its load — a
+/// consumer never expands a load variable back into its snapshot-bearing
+/// load; the registered defining fact is the only bridge. Equality of
+/// canonical forms holds by definition: it needs no proof evidence.
+/// Deterministic and idempotent; both stages are memoized.
 ///
 /// [`canonicalize_atomic_loads`]: crate::kernel::memory_provenance::canonicalize_atomic_loads
 pub(crate) fn canonical_term(term: &Bitvector32Term) -> Bitvector32Term {
@@ -705,35 +705,35 @@ pub(crate) fn canonical_offset_term(offset: &PointerOffsetTerm) -> PointerOffset
 /// offset or evaluates a range endpoint must route the term through this,
 /// so a loaded index never enters a `PointerOffsetTerm` or a range bound as
 /// a raw `MemoryLoad`. Adoption is atomic across producers: naming one
-/// birth site while another spells raw loads splits one load identity into
-/// two spellings that only a proved equality could reconnect.
+/// birth site while another emits load terms splits one load identity into
+/// two terms that only a proved equality could reconnect.
 pub(crate) fn canonicalized_offset_index_term(
     bits: Bitvector32Term,
     facts: &mut Vec<ExecutionPureFact>,
 ) -> Bitvector32Term {
-    if !offset_index_minting_enabled() || !term_spells_a_memory_load(&bits) {
+    if !offset_index_load_variables_enabled() || !term_mentions_a_memory_load(&bits) {
         return bits;
     }
     substitute_canonical_load_names(&bits, &mut Some(facts))
 }
 
-/// Whether producers mint canonical names for loaded index terms at offset
-/// birth. Deferred by default: naming a store's index and a later load's
+/// Whether producers introduce load variables for loaded index terms at
+/// offset birth. Deferred by default: naming a store's index and a later load's
 /// index at different derivation epochs yields distinct names whose equality
 /// needs the memory-DAG bridge at load-resolution time, which does not yet
 /// close (see issues/canonicalization.md). Comparison-side canonicalization
-/// does not depend on this switch. `CLICK_OFFSET_INDEX_MINTING=1` enables
+/// does not depend on this switch. `CLICK_OFFSET_INDEX_LOAD_VARIABLES=1` enables
 /// the producer side for investigation.
-fn offset_index_minting_enabled() -> bool {
+fn offset_index_load_variables_enabled() -> bool {
     thread_local! {
-        static ENABLED: bool = std::env::var("CLICK_OFFSET_INDEX_MINTING").is_ok_and(|v| v == "1");
+        static ENABLED: bool = std::env::var("CLICK_OFFSET_INDEX_LOAD_VARIABLES").is_ok_and(|v| v == "1");
     }
     ENABLED.with(|enabled| *enabled)
 }
 
 /// The canonical form for a condition: every operand takes its
-/// [`canonical_term`] form, so spellings that differ only representationally
-/// compare identically. The comparison direction of the canonical model for
+/// [`canonical_term`] form, so terms that are equal by definition compare
+/// identically. The comparison direction of the canonical model for
 /// whole facts.
 pub(crate) fn canonical_condition(condition: &ConditionTerm) -> ConditionTerm {
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
@@ -811,9 +811,9 @@ pub(crate) fn canonical_condition_fact(fact: &Proposition) -> Proposition {
 }
 
 /// Replaces every load atom in a term with its canonical load variable.
-/// When `facts` carries a stream, this is the production minting mode: each
-/// substituted name's defining equation joins the stream, deduplicated, so
-/// the name always travels with its exact defining fact. Binder scopes
+/// When `facts` carries a stream, this is the production mode: each
+/// substituted load variable's defining fact joins the stream,
+/// deduplicated, so the variable always travels with its defining fact. Binder scopes
 /// (`RangeFold` bodies) are left untouched: a load under a fold can mention
 /// bound variables, which name no load identity.
 fn substitute_canonical_load_names(
@@ -833,9 +833,9 @@ fn substitute_canonical_load_names(
     match term {
         Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
         Bitvector32Term::MemoryLoad(_, _) => match canonical_load_variable_for_term(term) {
-            Some((variable, spelling)) => {
+            Some((variable, load)) => {
                 if let Some(facts) = facts.as_deref_mut() {
-                    record_canonical_load_defining_fact(variable, spelling, facts);
+                    record_load_variable_defining_fact(variable, load, facts);
                 }
                 Bitvector32Term::Variable(variable)
             }
@@ -1010,7 +1010,7 @@ pub(crate) fn terms_match_modulo_canonical_names(
     if left == right {
         return true;
     }
-    if !term_spells_a_memory_load(left) && !term_spells_a_memory_load(right) {
+    if !term_mentions_a_memory_load(left) && !term_mentions_a_memory_load(right) {
         return false;
     }
     canonical_term(left) == canonical_term(right)
@@ -1025,7 +1025,7 @@ pub(crate) fn offsets_match_modulo_canonical_names(
     if left == right {
         return true;
     }
-    if !offset_spells_a_memory_load(left) && !offset_spells_a_memory_load(right) {
+    if !offset_mentions_a_memory_load(left) && !offset_mentions_a_memory_load(right) {
         return false;
     }
     canonical_offset_term(left) == canonical_offset_term(right)
@@ -1034,7 +1034,7 @@ pub(crate) fn offsets_match_modulo_canonical_names(
 /// Whether a term contains any load atom the canonical form could rewrite.
 /// Load-free terms are fixed points of [`canonical_term`], which the
 /// comparators use to answer load-free mismatches without a walk.
-fn term_spells_a_memory_load(term: &Bitvector32Term) -> bool {
+fn term_mentions_a_memory_load(term: &Bitvector32Term) -> bool {
     match term {
         Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
         Bitvector32Term::MemoryLoad(_, _) => true,
@@ -1048,29 +1048,29 @@ fn term_spells_a_memory_load(term: &Bitvector32Term) -> bool {
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {
-            term_spells_a_memory_load(left) || term_spells_a_memory_load(right)
+            term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
         }
-        Bitvector32Term::BitwiseNot(value) => term_spells_a_memory_load(value),
+        Bitvector32Term::BitwiseNot(value) => term_mentions_a_memory_load(value),
         Bitvector32Term::If {
             condition,
             then_term,
             else_term,
         } => {
-            condition_spells_a_memory_load(condition)
-                || term_spells_a_memory_load(then_term)
-                || term_spells_a_memory_load(else_term)
+            condition_mentions_a_memory_load(condition)
+                || term_mentions_a_memory_load(then_term)
+                || term_mentions_a_memory_load(else_term)
         }
         // The structural stage canonicalizes inside fold bodies even though
         // name substitution stops at the binder, so a fold may still change
         // under the canonical form.
         Bitvector32Term::RangeFold { .. } => true,
         Bitvector32Term::PureFunctionApplication { name: _, arguments } => {
-            arguments.iter().any(term_spells_a_memory_load)
+            arguments.iter().any(term_mentions_a_memory_load)
         }
     }
 }
 
-fn condition_spells_a_memory_load(condition: &ConditionTerm) -> bool {
+fn condition_mentions_a_memory_load(condition: &ConditionTerm) -> bool {
     match condition {
         ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => false,
         ConditionTerm::Bitvector32SignedLessThan(left, right)
@@ -1083,24 +1083,25 @@ fn condition_spells_a_memory_load(condition: &ConditionTerm) -> bool {
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
         | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
-            term_spells_a_memory_load(left) || term_spells_a_memory_load(right)
+            term_mentions_a_memory_load(left) || term_mentions_a_memory_load(right)
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
-            offset_spells_a_memory_load(left) || offset_spells_a_memory_load(right)
+            offset_mentions_a_memory_load(left) || offset_mentions_a_memory_load(right)
         }
         ConditionTerm::PointerEqual(left, right) => {
-            offset_spells_a_memory_load(&left.offset) || offset_spells_a_memory_load(&right.offset)
+            offset_mentions_a_memory_load(&left.offset)
+                || offset_mentions_a_memory_load(&right.offset)
         }
     }
 }
 
-fn offset_spells_a_memory_load(offset: &PointerOffsetTerm) -> bool {
+fn offset_mentions_a_memory_load(offset: &PointerOffsetTerm) -> bool {
     match offset {
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
         PointerOffsetTerm::Add(left, right) => {
-            offset_spells_a_memory_load(left) || offset_spells_a_memory_load(right)
+            offset_mentions_a_memory_load(left) || offset_mentions_a_memory_load(right)
         }
-        PointerOffsetTerm::Int32Scaled { value, .. } => term_spells_a_memory_load(value),
+        PointerOffsetTerm::Int32Scaled { value, .. } => term_mentions_a_memory_load(value),
     }
 }
 
@@ -1215,24 +1216,24 @@ fn mint_canonical_load_variable(
     facts: &mut Vec<ExecutionPureFact>,
     _assumptions: &PureFactContext,
 ) -> Option<Variable> {
-    let (fresh, spelling) = canonical_load_variable_for_term(bits)?;
-    record_canonical_load_defining_fact(fresh, spelling, facts);
+    let (fresh, load) = canonical_load_variable_for_term(bits)?;
+    record_load_variable_defining_fact(fresh, load, facts);
     Some(fresh)
 }
 
-/// Records a canonical load name's exact defining equation in a fact
+/// Records a load variable's exact defining fact in a fact
 /// stream, deduplicated by proposition. The equation is kernel-certified by
 /// construction: the variable is the kernel's own name for this load. It
 /// must not demand a replayable assumption derivation downstream.
-fn record_canonical_load_defining_fact(
+fn record_load_variable_defining_fact(
     variable: Variable,
-    spelling: Bitvector32Term,
+    load: Bitvector32Term,
     facts: &mut Vec<ExecutionPureFact>,
 ) {
     let defining = ExecutionPureFact::certified(Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(Bitvector32Term::Variable(variable)),
-            Box::new(spelling),
+            Box::new(load),
         ),
         true,
     ));

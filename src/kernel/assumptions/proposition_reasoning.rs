@@ -1232,12 +1232,14 @@ impl PureFactContext {
                         return None;
                     };
                     self.signed_order_bound_entries(&base).find_map(
-                        |(spelled, candidate, strict, forward)| {
+                        |(fact_endpoint, candidate, strict, forward)| {
                             let Bitvector32Term::Constant(candidate_bits) = &candidate else {
                                 return None;
                             };
                             (!strict && forward && (*candidate_bits as i32) < (*goal_bits as i32))
-                                .then(|| self.exact_direct_order_step(&spelled, &candidate, false))
+                                .then(|| {
+                                    self.exact_direct_order_step(&fact_endpoint, &candidate, false)
+                                })
                                 .flatten()
                         },
                     )
@@ -1249,10 +1251,10 @@ impl PureFactContext {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedLessThan(base, incremented),
                 true,
-                // The goal's base and the increment's base may spell one
-                // value differently (a raw load and its canonical name);
-                // the tie is canonical, while the selected premise cites
-                // its exact fact spelling.
+                // The goal's base and the increment's base may be different
+                // terms for one value (a load and its load variable); the
+                // tie is canonical, while the selected premise cites the
+                // exact fact.
             ) if incremented
                 .add_const_base(1)
                 .as_ref()
@@ -1452,12 +1454,14 @@ impl PureFactContext {
             ) => match goal_lower.as_ref() {
                 Bitvector32Term::Constant(goal_bits) => self
                     .signed_order_bound_entries(value.as_ref())
-                    .find_map(|(spelled, candidate, strict, forward)| {
+                    .find_map(|(fact_endpoint, candidate, strict, forward)| {
                         let Bitvector32Term::Constant(candidate_bits) = &candidate else {
                             return None;
                         };
                         (!strict && !forward && (*goal_bits as i32) < (*candidate_bits as i32))
-                            .then(|| self.exact_direct_order_step(&candidate, &spelled, false))
+                            .then(|| {
+                                self.exact_direct_order_step(&candidate, &fact_endpoint, false)
+                            })
                             .flatten()
                     })
                     .map(AtomicPropositionDerivationEvidence::Int32ConstantLowerBoundWeakening),
@@ -1835,9 +1839,9 @@ impl PureFactContext {
             else {
                 return false;
             };
-            // The premise cites its exact fact spelling; its tie to the
-            // goal's base is canonical, which is deterministic and so
-            // replays identically.
+            // The premise cites the exact fact; its tie to the goal's base
+            // is canonical, which is deterministic and so replays
+            // identically.
             return incremented
                 .add_const_base(1)
                 .as_ref()
@@ -2309,9 +2313,9 @@ impl PureFactContext {
     }
 
     /// The signed-order bound entries for a term, looked up under its own
-    /// spelling and, when different, its canonical alias. Each entry yields
-    /// the fact's endpoint spelling first, so callers can cite the exact
-    /// fact even when the query reached it through the alias.
+    /// term and, when different, its canonical form. Each entry yields the
+    /// fact's own endpoint term first, so callers can cite the exact fact
+    /// even when the query reached it through the canonical form.
     fn signed_order_bound_entries(
         &self,
         term: &Bitvector32Term,
@@ -2329,8 +2333,8 @@ impl PureFactContext {
             .into_iter()
             .chain(alias)
             .flat_map(|bounds| bounds.keys())
-            .map(|(spelled, other, strict, forward)| {
-                (spelled.clone(), other.clone(), *strict, *forward)
+            .map(|(fact_endpoint, other, strict, forward)| {
+                (fact_endpoint.clone(), other.clone(), *strict, *forward)
             })
     }
 
@@ -2340,7 +2344,9 @@ impl PureFactContext {
     ) -> Option<SignedOrderDerivationStep> {
         self.signed_order_bound_entries(base)
             .filter(|(_, _, strict, forward)| *strict && *forward)
-            .find_map(|(spelled, upper, _, _)| self.exact_direct_order_step(&spelled, &upper, true))
+            .find_map(|(fact_endpoint, upper, _, _)| {
+                self.exact_direct_order_step(&fact_endpoint, &upper, true)
+            })
     }
 
     /// Whether one recorded order fact bounds `lower` by `upper` (strictly

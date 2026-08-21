@@ -165,7 +165,24 @@ The small trusted checker and semantic core that validates primitive proof
 Click's internal, explicit representation after validation and lowering.
   Kernel Click has no user-facing textual syntax.
 
+### Kernel variable
+
+A term standing for a value the kernel doesn't know concretely: a function
+  parameter at entry, a local a loop may modify, the result of an opaque
+  call, or the contents of an unknown memory cell. Kernel variables are
+  anonymous ids, not C names; they appear in facts and goals and are related
+  to each other only through facts.
+
 ## L
+
+### Load variable
+
+A kernel variable introduced for the unknown value of a memory load,
+  identified by the loaded cell and the last write to it, so every read of
+  that cell between writes uses the same variable. It is always recorded
+  with a defining fact equating it to the load it stands for. Load variables
+  are distinguished from other kernel variables only by a reserved id range,
+  not by type.
 
 ### Loadability
 
@@ -311,6 +328,13 @@ Evaluation of C over symbolic values and path conditions so one proof can
 ### Tactic
 
 A proof-script command that requests a transition of the current proof state.
+
+### Term
+
+A Kernel Click expression denoting a symbolic value: a constant, a
+  variable, arithmetic over other terms, or a memory load from a snapshot.
+  Symbolic execution, lowering, and contract evaluation each produce terms,
+  and different terms can denote one value.
 
 ### Theorem
 

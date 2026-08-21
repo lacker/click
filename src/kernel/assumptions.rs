@@ -264,9 +264,8 @@ pub(super) fn resources_equal_ignoring_memories(left: &CResource, right: &CResou
 }
 
 /// The equality-graph vertex key for a term is its canonical form, so a raw
-/// load spelling and the canonical load variable naming it share one vertex:
-/// the graph is spelling-blind by construction rather than by per-query
-/// bridging.
+/// load term and the load variable for it share one vertex: the graph
+/// joins equal terms by construction rather than by per-query bridging.
 fn equality_graph_term_key(term: &Bitvector32Term) -> Bitvector32Term {
     crate::kernel::eval::canonical_term(term)
 }
@@ -1185,12 +1184,11 @@ impl PureFactContext {
         let Some((left, right, strict)) = condition_as_order_fact(condition, value) else {
             return;
         };
-        // Each endpoint is indexed under its fact spelling and, when it
-        // differs, under its canonical form as an alias: a bound recorded
-        // through one spelling answers a lookup through any spelling of the
-        // same value. Every entry carries the fact's own endpoint spelling
-        // first, so evidence found through the alias still cites the exact
-        // fact.
+        // Each endpoint is indexed under the term the fact wrote and, when
+        // it differs, under its canonical form as an alias: a bound recorded
+        // through one term answers a lookup through any equal term. Every
+        // entry carries the fact's own endpoint term first, so evidence found
+        // through the alias still cites the exact fact.
         let left_alias = crate::kernel::eval::canonical_term(&left);
         let right_alias = crate::kernel::eval::canonical_term(&right);
         let mut entries = vec![

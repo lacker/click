@@ -451,8 +451,8 @@ fn exact_proposition_is_available_or_true(
     required: &Proposition,
     available: &[Proposition],
 ) -> bool {
-    // Comparison is by canonical form: a raw load spelling and the
-    // canonical name for the same load are one fact. The canonical form is
+    // Comparison is by canonical form: a load term and the load variable
+    // for the same load are one fact. The canonical form is
     // deterministic and assumption-free, so the exact policy stays
     // replay-identical.
     let required = crate::kernel::canonical_condition_fact(required);

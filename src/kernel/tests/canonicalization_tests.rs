@@ -1,11 +1,11 @@
 use super::*;
 
 // --- the canonicalization model's production invariants -------------------
-// See docs/advanced/canonicalization.md and issues/canonicalization.md.
+// See docs/internals/canonicalization.md and issues/canonicalization.md.
 // Production evaluation must never place a raw `MemoryLoad` inside
 // pointer-offset arithmetic: loaded pointers and indices take their
-// canonical load variable first, and every canonical name travels with its
-// exact defining equality in the emitted facts. These tests drive the real
+// load variable first, and every load variable travels with its exact
+// defining fact in the emitted facts. These tests drive the real
 // evaluation entry points; kernel tests that construct raw load-bearing
 // offsets directly do not establish this invariant.
 
@@ -71,8 +71,8 @@ fn collect_offset_names_from_offset(offset: &PointerOffsetTerm, names: &mut BTre
     }
 }
 
-/// Inside an `Int32Scaled` value nothing may spell a raw load; canonical
-/// load variables are recorded for the defining-fact check.
+/// Inside an `Int32Scaled` value no load term may appear; load variables
+/// are recorded for the defining-fact check.
 fn assert_scaled_index_free_of_raw_loads(term: &Bitvector32Term, names: &mut BTreeSet<Variable>) {
     match term {
         Bitvector32Term::Constant(_) => {}
@@ -110,8 +110,8 @@ fn assert_scaled_index_free_of_raw_loads(term: &Bitvector32Term, names: &mut BTr
     }
 }
 
-/// Every canonical name selected into an offset must carry its exact
-/// defining equality in the path's emitted facts.
+/// Every load variable selected into an offset must carry its exact
+/// defining fact in the path's emitted facts.
 fn assert_names_have_defining_facts(names: &BTreeSet<Variable>, facts: &[ExecutionPureFact]) {
     for name in names {
         let defined = facts.iter().any(|fact| {
@@ -124,16 +124,16 @@ fn assert_names_have_defining_facts(names: &BTreeSet<Variable>, facts: &[Executi
         });
         assert!(
             defined,
-            "canonical load name {name:?} has no defining equality in the emitted facts"
+            "load variable {name:?} has no defining fact in the emitted facts"
         );
     }
 }
 
 // The loaded-array-index analogue of the test below (a raw `p + *len_ptr`
-// index taking its canonical name at the pointer-addition birth site) is
-// still an open gap: minting names at one offset-birth site while the
-// lang-side segment and endpoint evaluators still spell raw loads splits
-// one load identity into two spellings and breaks frame matching. See
+// index taking its load variable at the pointer-addition birth site) is
+// still an open gap: introducing load variables at one offset-birth site
+// while the lang-side segment and endpoint evaluators still emit load terms
+// splits one load identity into two terms and breaks frame matching. See
 // issues/canonicalization.md — production adoption must land atomically
 // across every producer.
 
@@ -167,20 +167,20 @@ fn pointer_loaded_from_an_opaque_cell_takes_a_canonical_offset() {
     }
     assert!(
         saw_a_canonical_offset,
-        "the loaded pointer's offset should spell its load as a canonical name"
+        "the loaded pointer's offset should carry a load variable"
     );
 }
 
 // --- canonical form: determinism and idempotence --------------------------
 
 #[test]
-fn canonical_term_resolves_representational_spellings_to_one_form() {
+fn canonical_term_resolves_equal_loads_to_one_form() {
     let pointer = Pointer {
         block: "cells".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let base = CMemory::new().with_block("cells", 4);
-    // The same unresolved load, spelled at two snapshots that differ only by
+    // The same unresolved load, read from two snapshots that differ only by
     // a block this load cannot observe.
     let drifted = base.clone().with_block("unrelated", 4);
     let load_at_base = Bitvector32Term::MemoryLoad(
@@ -199,7 +199,7 @@ fn canonical_term_resolves_representational_spellings_to_one_form() {
         "representational snapshot drift must not change the canonical form"
     );
     let Bitvector32Term::Variable(name) = &canonical else {
-        panic!("an unresolved load's canonical form is its canonical name: {canonical:?}");
+        panic!("an unresolved load's canonical form is its load variable: {canonical:?}");
     };
     assert!(crate::kernel::is_canonical_load_variable(name));
     // Idempotence: the canonical form is its own canonical form.
@@ -235,7 +235,7 @@ fn offsets_match_modulo_canonical_names_through_the_canonical_form() {
         &scaled(base.clone()),
         &scaled(drifted.clone()),
     ));
-    // The raw spelling and its canonical name are one offset.
+    // The load term and its load variable are one offset.
     let named = crate::kernel::eval::canonical_offset_term(&scaled(base.clone()));
     assert!(crate::kernel::offsets_match_modulo_canonical_names(
         &named,

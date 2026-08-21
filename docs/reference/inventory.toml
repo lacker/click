@@ -1926,6 +1926,14 @@ id = "glossary.kernel-click"
 path = "reference/glossary.md#kernel-click"
 
 [[item]]
+id = "glossary.kernel-variable"
+path = "reference/glossary.md#kernel-variable"
+
+[[item]]
+id = "glossary.load-variable"
+path = "reference/glossary.md#load-variable"
+
+[[item]]
 id = "glossary.loadability"
 path = "reference/glossary.md#loadability"
 
@@ -2032,6 +2040,10 @@ path = "reference/glossary.md#symbolic-execution"
 [[item]]
 id = "glossary.tactic"
 path = "reference/glossary.md#tactic"
+
+[[item]]
+id = "glossary.term"
+path = "reference/glossary.md#term"
 
 [[item]]
 id = "glossary.theorem"

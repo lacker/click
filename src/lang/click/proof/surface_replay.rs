@@ -147,10 +147,10 @@ fn checked_surface_fact_at_point_with_assumptions(
     }
     let resolved_kernel =
         crate::kernel::resolve_minted_load_variables(kernel, &replay.effect_facts);
-    // Representative selection can spell derived facts through canonical
-    // load names whose defining equations are not in this replay's effect
-    // stream; the registry is the mint's own record, and resolving through
-    // it is the sanctioned display direction for surface spelling.
+    // Representative selection can derive facts through load variables
+    // whose defining facts are not in this replay's effect stream; the
+    // registry is the kernel's own record of what each one stands for, and
+    // resolving through it is the sanctioned display direction.
     let resolved_kernel =
         if crate::kernel::proposition_mentions_registered_canonical_load(&resolved_kernel) {
             crate::kernel::resolve_canonical_load_variables_from_registry(&resolved_kernel)
