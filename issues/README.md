@@ -20,10 +20,10 @@ when evidence exposes one.
 
 ## Other open issues: 3
 
-- [Canonicalization needs a proof-grounded model](canonicalization.md):
-  competing term representations leave production pointer invariants,
-  simple certificate replay, proof authority, and deterministic scaling
-  without one coherent contract.
+- [Canonicalize every term at creation](canonicalization.md):
+  terms are canonical at creation only for loaded pointers today;
+  establishing the invariant at every creation point needs cross-call
+  load resolution, chained bounds, and the remaining evidence ties.
 - [Replay is a second proof engine](replay-smell.md): independent certificate
   checking still advances a large parallel mutable replay state instead of
   interpreting recorded operations through the audited proof-object model.

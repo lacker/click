@@ -127,20 +127,21 @@ or `old(x)`, and diagnostics print one by looking up the load it stands for.
   is the printer's job, distinct from the forbidden comparison-side
   expansion.
 
-## What is not yet enforced
+## Direction: canonical at creation
 
-Loaded **indices** still enter pointer offsets as load terms at the
-remaining producer sites (C pointer addition, spec pointer-offset
-evaluation, contract pointer arithmetic). Introducing load variables there
-is implemented behind `CLICK_OFFSET_INDEX_LOAD_VARIABLES=1`
-(`canonicalized_offset_index_term`), off by default. Two consumers still
-assume load terms in those positions; both are recorded in
-`issues/canonicalization.md`:
+The target invariant, planned in `issues/canonicalization.md`, is that
+every term is canonical when it is created — by symbolic execution, by
+lowering, and by contract evaluation — so no consumer depends on bridging
+between canonical and non-canonical terms, and changing what
+canonicalization does later changes one function. Comparison-time
+canonicalization stays as a safety net.
 
-- a range check needing a two-fact bound chain falls past the indexed
-  single-fact lookup into an unmemoized search and exceeds its budget; and
-- across a call whose footprint may write a cell, the read before and the
-  read after receive different load variables, and load resolution does
-  not yet consult the proved equality between them.
-
-Until those close, the switch stays off.
+Today the invariant holds at one creation point: loaded pointers.
+Creation-time canonicalization for loaded indices entering pointer offsets
+is implemented behind `CLICK_OFFSET_INDEX_LOAD_VARIABLES=1`, off by default
+until the consumers it exposes are repaired: cross-call load resolution
+through proved equalities between two load variables for one cell, and
+range checks needing a two-fact bound chain. The plan establishes the
+invariant at all creation points together behind one switch, never one
+position at a time — partial canonicalization splits one value into two
+terms wherever a consumer still assumes the old one.
