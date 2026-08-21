@@ -82,19 +82,38 @@ Landed on master (commits `335868c4` through `abdf4180`, 2026-08-20/21):
 
 ## Plan
 
-The invariant is established at the three places terms are created —
+The invariant is established at the four places terms are created —
 symbolic execution (values and facts), lowering (Surface Click to kernel
-propositions), and contract and spec evaluation — together, behind one
-switch, never position by position.
+propositions), contract and spec evaluation, and resource fact projection
+— together, behind one switch, never position by position.
 
-### Stage 1: measure the distance
+### Stage 1: measure the distance (done 2026-08-21)
 
-Add a debug-only invariant check: given a fact, goal, or value, assert it
-equals its own canonical form (exempting defining facts). Wire it behind an
-environment switch at the points facts enter a `PureFactContext` and at
-certificate lowering, and report the first violation with the term. Run the
-fixture gates under it to enumerate which creation paths still emit
-non-canonical terms. This is the work list for stage 2.
+`check_canonical_at_creation` (`src/kernel/eval/memory_loads.rs`), behind
+`CLICK_CHECK_CANONICAL_AT_CREATION=1`, compares every condition fact
+entering a `PureFactContext` with its canonical form (defining facts
+exempt) and reports each distinct (rewrite kind, creating module) once
+with an example. Run over both fixture gates:
+
+- Every violation is the same rewrite: a load term whose canonical form
+  is a load variable (about 94%) or the value the snapshot records (about
+  6%). No other difference between created and canonical terms exists.
+- The creating modules are the four creation kinds: symbolic execution
+  (`execute_c_statement_verification_paths_with_prefix`,
+  `evaluate_c_memory_load_paths`), lowering (`lower_point_proposition`,
+  `lower_outcome_proposition_with_program_points`,
+  `lower_ensure_proposition_goal`), contract and spec evaluation
+  (`c_function_contract_certification_assumptions`,
+  `lower_spec_comparison_proposition_at_state`), and resource fact
+  projection (`project_resource_context_observable_facts`,
+  `append_composite_resource_declared_facts`,
+  `evaluate_composite_resource_fact_propositions`,
+  `LegacyResourcePureFacts::new`). The many proof-engine frames
+  (`claim_proofs`, `replay_engine`, `proof_object`) re-assume facts those
+  four created.
+- Some snapshot-bridge facts `load(A, p) == load(B, p)` canonicalize to a
+  reflexive `v == v`; under the invariant they are redundant and can be
+  dropped at creation.
 
 ### Stage 2: canonicalize at every creation point, behind one switch
 
@@ -115,6 +134,12 @@ Rename the switch to `CLICK_CANONICALIZE_AT_CREATION=1` and make it govern:
   construction (`evaluate_spec_resource_at_state`,
   `lower_spec_memory_loadable_at_state`, `evaluate_effect_segment`,
   `evaluate_loop_effect_segment`).
+- **Resource fact projection.** The facts projected from composite
+  resource declarations and resource contexts canonicalize where they are
+  produced (`project_resource_context_observable_facts`,
+  `append_composite_resource_declared_facts`,
+  `evaluate_composite_resource_fact_propositions`,
+  `LegacyResourcePureFacts::new`).
 
 Comparison-time canonicalization stays on throughout as the safety net.
 

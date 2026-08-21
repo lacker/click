@@ -731,6 +731,89 @@ fn offset_index_load_variables_enabled() -> bool {
     ENABLED.with(|enabled| *enabled)
 }
 
+/// Debug-only check of the creation-time invariant (see
+/// `issues/canonicalization.md`, stage 1): with
+/// `CLICK_CHECK_CANONICAL_AT_CREATION=1`, every condition fact entering a
+/// `PureFactContext` is compared with its canonical form. Each distinct
+/// (rewrite kind, creating module) pair is reported once on stderr with an
+/// example, where the creating module is the innermost `click::` frame
+/// outside the generic context-construction and reasoning layers. Defining
+/// facts are exempt: they are the base of the construction. The report is
+/// the work list for establishing the invariant at every creation point.
+pub(crate) fn check_canonical_at_creation(condition: &ConditionTerm, value: bool) {
+    thread_local! {
+        static ENABLED: bool =
+            std::env::var("CLICK_CHECK_CANONICAL_AT_CREATION").is_ok_and(|v| v == "1");
+        static SEEN: std::cell::RefCell<std::collections::BTreeSet<(String, String)>> =
+            std::cell::RefCell::new(std::collections::BTreeSet::new());
+    }
+    if !ENABLED.with(|enabled| *enabled) {
+        return;
+    }
+    let proposition = Proposition::ConditionIs(condition.clone(), value);
+    if is_canonical_load_defining_fact(&proposition) {
+        return;
+    }
+    let canonical = canonical_condition(condition);
+    if &canonical == condition {
+        return;
+    }
+    let kind = if !condition_mentions_a_memory_load(&canonical) {
+        let mut variables = std::collections::BTreeSet::new();
+        crate::kernel::reasoning::variable_collection::collect_condition_bitvector_variables(
+            &canonical,
+            &mut variables,
+        );
+        if variables.iter().any(is_canonical_load_variable) {
+            "load -> load variable"
+        } else {
+            "load -> recorded value"
+        }
+    } else {
+        "load rewritten, still a load"
+    };
+    const GENERIC: [&str; 12] = [
+        "check_canonical_at_creation",
+        "assume_condition",
+        "assume_proposition",
+        "assumptions_from_propositions",
+        "assumptions_with_path_context",
+        "assumptions_with_propositions",
+        "ProofFacts::",
+        "atomic_derivation_premises",
+        "derive_proposition",
+        "::proves",
+        "PureFactContext>::",
+        "path_facts::",
+    ];
+    let backtrace = std::backtrace::Backtrace::force_capture().to_string();
+    let creator = backtrace
+        .lines()
+        .filter_map(|line| line.trim().split_once(": ").map(|(_, frame)| frame))
+        .find(|frame| {
+            frame.starts_with("click::") && !GENERIC.iter().any(|generic| frame.contains(generic))
+        })
+        .map(|frame| {
+            frame
+                .split("::{{closure}}")
+                .next()
+                .unwrap_or(frame)
+                .trim_start_matches("click::")
+                .to_string()
+        })
+        .unwrap_or_else(|| "<no click frame>".to_string());
+    let first_time = SEEN.with(|seen| {
+        seen.borrow_mut()
+            .insert((kind.to_string(), creator.clone()))
+    });
+    if !first_time {
+        return;
+    }
+    let shown = format!("{condition:?}");
+    let shown = &shown[..shown.len().min(240)];
+    eprintln!("CANONICAL-AT-CREATION violation [{kind}] created in {creator}\n  example: {shown}");
+}
+
 /// The canonical form for a condition: every operand takes its
 /// [`canonical_term`] form, so terms that are equal by definition compare
 /// identically. The comparison direction of the canonical model for

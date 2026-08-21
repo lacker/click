@@ -1993,6 +1993,7 @@ impl PureFactContext {
         if self.condition_facts.get(&condition) == Some(&value) {
             return self;
         }
+        crate::kernel::eval::check_canonical_at_creation(&condition, value);
         if let ConditionTerm::Bitvector32Equal(left, right) = &condition
             && let Some((left, right)) = bitvector_equality_after_additive_cancellation(left, right)
         {
