@@ -698,6 +698,118 @@ pub(crate) fn canonical_offset_term(offset: &PointerOffsetTerm) -> PointerOffset
     }
 }
 
+/// Gives an index or endpoint term the model's stable representation before
+/// it enters pointer-offset or range arithmetic: every load atom is replaced
+/// by its canonical load variable and each name's defining equation joins
+/// the fact stream. Every producer that scales an integer term into an
+/// offset or evaluates a range endpoint must route the term through this,
+/// so a loaded index never enters a `PointerOffsetTerm` or a range bound as
+/// a raw `MemoryLoad`. Adoption is atomic across producers: naming one
+/// birth site while another spells raw loads splits one load identity into
+/// two spellings that only a proved equality could reconnect.
+pub(crate) fn canonicalized_offset_index_term(
+    bits: Bitvector32Term,
+    facts: &mut Vec<ExecutionPureFact>,
+) -> Bitvector32Term {
+    if !offset_index_minting_enabled() || !term_spells_a_memory_load(&bits) {
+        return bits;
+    }
+    substitute_canonical_load_names(&bits, &mut Some(facts))
+}
+
+/// Whether producers mint canonical names for loaded index terms at offset
+/// birth. Deferred by default: naming a store's index and a later load's
+/// index at different derivation epochs yields distinct names whose equality
+/// needs the memory-DAG bridge at load-resolution time, which does not yet
+/// close (see issues/canonicalization.md). Comparison-side canonicalization
+/// does not depend on this switch. `CLICK_OFFSET_INDEX_MINTING=1` enables
+/// the producer side for investigation.
+fn offset_index_minting_enabled() -> bool {
+    thread_local! {
+        static ENABLED: bool = std::env::var("CLICK_OFFSET_INDEX_MINTING").is_ok_and(|v| v == "1");
+    }
+    ENABLED.with(|enabled| *enabled)
+}
+
+/// The canonical form for a condition: every operand takes its
+/// [`canonical_term`] form, so spellings that differ only representationally
+/// compare identically. The comparison direction of the canonical model for
+/// whole facts.
+pub(crate) fn canonical_condition(condition: &ConditionTerm) -> ConditionTerm {
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        (
+            Box::new(canonical_term(left)),
+            Box::new(canonical_term(right)),
+        )
+    };
+    match condition {
+        ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => condition.clone(),
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32Equal(left, right)
+        }
+        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        }
+        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        }
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        }
+        ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        }
+        ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::PointerOffsetEqual(
+            Box::new(canonical_offset_term(left)),
+            Box::new(canonical_offset_term(right)),
+        ),
+        ConditionTerm::PointerEqual(left, right) => ConditionTerm::PointerEqual(
+            Box::new(Pointer {
+                block: left.block.clone(),
+                offset: canonical_offset_term(&left.offset),
+            }),
+            Box::new(Pointer {
+                block: right.block.clone(),
+                offset: canonical_offset_term(&right.offset),
+            }),
+        ),
+    }
+}
+
+/// The canonical form for a condition fact; non-condition propositions pass
+/// through unchanged.
+pub(crate) fn canonical_condition_fact(fact: &Proposition) -> Proposition {
+    let Proposition::ConditionIs(condition, value) = fact else {
+        return fact.clone();
+    };
+    Proposition::ConditionIs(canonical_condition(condition), *value)
+}
+
 /// Replaces every load atom in a term with its canonical load variable.
 /// When `facts` carries a stream, this is the production minting mode: each
 /// substituted name's defining equation joins the stream, deduplicated, so

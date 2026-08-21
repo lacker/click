@@ -263,16 +263,12 @@ pub(super) fn resources_equal_ignoring_memories(left: &CResource, right: &CResou
     }
 }
 
+/// The equality-graph vertex key for a term is its canonical form, so a raw
+/// load spelling and the canonical load variable naming it share one vertex:
+/// the graph is spelling-blind by construction rather than by per-query
+/// bridging.
 fn equality_graph_term_key(term: &Bitvector32Term) -> Bitvector32Term {
-    let Bitvector32Term::MemoryLoad(memory, pointer) = term else {
-        return term.clone();
-    };
-    Bitvector32Term::MemoryLoad(
-        crate::kernel::intern_c_memory(super::reasoning::canonical_memory_for_shared_pointer_load(
-            memory, pointer,
-        )),
-        pointer.clone(),
-    )
+    crate::kernel::eval::canonical_term(term)
 }
 
 thread_local! {
@@ -2837,7 +2833,13 @@ fn collect_affine_bitvector_terms(
             collect_affine_bitvector_terms(right, coefficient.checked_neg()?, terms, constant)?;
         }
         atom => {
-            let current = terms.entry(atom.clone()).or_default();
+            // Atoms are keyed by their canonical form, so a raw load and
+            // the canonical variable naming it cancel affinely; the verdict
+            // stays assumption-free and replay-identical because the
+            // canonical form is deterministic.
+            let current = terms
+                .entry(crate::kernel::eval::canonical_term(atom))
+                .or_default();
             *current = current.checked_add(coefficient)?;
         }
     }

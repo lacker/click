@@ -75,11 +75,23 @@ named, footprint segments raw, e.g. `vector_push.contract` "write to
 spelled `load(arg-memory@v… * 4)`), an expanded pipeline's exact
 `assumption` selection lost a fact to mixed spellings
 (`input_cursor_shared_pipeline.contract`), and a frame tactic blew its
-100ms budget (`owned_string_pop.contract`). The loaded-index migration
-must land as one coherent change across kernel C evaluation, kernel spec
-evaluation, the lang-side segment and endpoint evaluators, and re-expanded
-certificates, with the loaded-array-index structural regression enabled in
-the same change.
+100ms budget (`owned_string_pop.contract`).
+
+**Comparison-side canonical keying landed 2026-08-20** and removes most of
+the mixed-spelling hazard: the equality graph, affine cancellation, and
+the exact frame matchers key by canonical form, and surface synthesis
+resolves names through the mint registry. With that in place the remaining
+producer blocker is precise: one cell loaded at different derivation
+epochs mints different names (entry versus post-call snapshots across a
+`CallHavoc` edge), and load resolution does not close name-to-name
+equality even when an ensures equality connects the underlying loads —
+`box_pipeline`'s `result == value` fails because the caller's read of
+`owner->data[owner->value]` cannot resolve against the callee's store when
+both indices are named at different epochs. Index minting is implemented
+behind `CLICK_OFFSET_INDEX_MINTING=1` (`canonicalized_offset_index_term`)
+and stays off until cross-epoch name equality closes at the
+memory-resolution layer; the loaded-array-index structural regression
+lands when the switch defaults on.
 
 ### Canonical facts without a simple certificate
 

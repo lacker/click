@@ -76,32 +76,49 @@ Two consequences:
 
 ## What is enforced today
 
-- `canonical_term` / `canonical_offset_term` are the comparison form:
-  `terms_match_modulo_canonical_names` and
+- `canonical_term` / `canonical_offset_term` / `canonical_condition_fact`
+  are the comparison form: `terms_match_modulo_canonical_names` and
   `offsets_match_modulo_canonical_names` answer exactly by canonical-form
   equality (with a load-free fast path, since load-free terms are fixed
   points). Regressions live in `src/kernel/tests/canonicalization_tests.rs`.
+- **Comparison-side keying is canonical throughout the availability
+  boundary**: the explicit-equality graph keys its vertices by
+  `canonical_term` (`equality_graph_term_key`), affine cancellation keys
+  its atoms by `canonical_term` (`collect_affine_bitvector_terms`), and the
+  exact frame-containment matchers compare goals and available facts by
+  `canonical_condition_fact`. A raw load spelling and the canonical
+  variable naming it are therefore one vertex, one affine atom, and one
+  fact — spelling-blind by construction rather than by per-query bridging.
+  This keying is deterministic and assumption-free, so exact certificate
+  replay is unaffected.
 - Production evaluation gives loaded **pointers** their canonical names at
   birth (`canonicalized_pointer_value_from_int_cell`,
   `canonicalized_symbolic_load_value`), so a pointer loaded from an opaque
   cell never enters offset arithmetic as a raw load, and its defining fact
   is emitted beside it.
+- Surface synthesis resolves canonical names it cannot otherwise spell
+  through the mint registry (`resolve_canonical_load_variables_from_registry`)
+  — the sanctioned display direction: rendering a name as source syntax is
+  the printer's job, distinct from the forbidden comparison-side expansion.
 
-## What is not yet enforced, and why adoption is atomic
+## What is not yet enforced
 
-Loaded **indices** still enter pointer offsets as raw loads on some
-producer paths (C pointer addition, spec pointer-offset evaluation,
-lang-side effect-segment and resource-range-endpoint evaluation), and
-recorded expanded certificates pin the old spellings.
+Loaded **indices** still enter pointer offsets as raw loads at the
+remaining producer birth sites (C pointer addition, spec pointer-offset
+evaluation, lang-side contract pointer arithmetic). The minting for those
+sites is implemented behind `CLICK_OFFSET_INDEX_MINTING=1`
+(`canonicalized_offset_index_term`), off by default.
 
-These producers must convert together. Minting canonical names at one
-offset-birth site while another producer of the same fact family still
-spells raw loads splits one load identity into two spellings that only a
-proved equality could reconnect — which frame checks and exact `assumption`
-matching rightly do not get to assume. This was observed empirically:
-canonicalizing only the kernel-side pointer-addition path broke mutable-
-footprint containment (write pointers named, footprint segments raw) and
-exact fact selection in expanded pipelines. The producer-conformance
-migration is tracked in `issues/canonicalization.md` and must land as one
-coherent change across kernel C evaluation, kernel spec evaluation, the
-lang-side segment and endpoint evaluators, and re-expanded certificates.
+Two lessons from enabling it are recorded in
+`issues/canonicalization.md`. First, producer adoption is atomic: naming
+one birth site while another producer of the same fact family spells raw
+loads splits one load identity into two spellings, which broke
+mutable-footprint containment and exact fact selection. Comparison-side
+canonical keying (above) removes most of that hazard. Second, and still
+open: one cell loaded at different derivation epochs mints *different*
+names whose equality is a provenance fact, and load resolution
+(`bitvector_terms_equal_for_memory_resolution` and the store-cell lookup)
+does not yet close name-to-name equality across a call boundary even when
+an ensures equality connects the underlying loads. Until it does, minting
+indices trades a raw-load spelling problem for an unproved name-equality
+problem.

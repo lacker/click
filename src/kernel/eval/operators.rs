@@ -142,6 +142,7 @@ pub(in crate::kernel) fn apply_c_add(
                     obligations,
                 }];
             };
+            let offset = canonicalized_offset_index_term(offset, &mut facts);
             vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(CValue::Pointer(
                     pointer.offset_by_elements(offset, byte_width),
@@ -164,6 +165,7 @@ pub(in crate::kernel) fn apply_c_add(
                     obligations,
                 }];
             };
+            let offset = canonicalized_offset_index_term(offset, &mut facts);
             vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(CValue::Pointer(
                     pointer.offset_by_elements(offset, byte_width),

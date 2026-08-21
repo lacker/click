@@ -6,9 +6,11 @@ mod operators;
 mod statements;
 
 pub(super) use expression::*;
+pub(crate) use memory_loads::canonical_condition_fact;
 pub(crate) use memory_loads::canonical_load_variable_for_term;
 #[cfg(test)]
 pub(crate) use memory_loads::canonical_load_variable_with_origin;
+pub(crate) use memory_loads::canonicalized_offset_index_term;
 pub(crate) use memory_loads::is_canonical_load_defining_fact;
 pub(crate) use memory_loads::is_canonical_load_variable;
 pub(crate) use memory_loads::offsets_match_modulo_canonical_names;

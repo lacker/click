@@ -1233,7 +1233,7 @@ pub(super) fn evaluate_spec_pointer_offset_paths(
             let CValue::Int32(elements) = element_path.value else {
                 continue;
             };
-            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+            let Some((mut facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &pointer_path.facts,
                 &pointer_path.obligations,
                 &element_path.facts,
@@ -1242,6 +1242,7 @@ pub(super) fn evaluate_spec_pointer_offset_paths(
             ) else {
                 continue;
             };
+            let elements = canonicalized_offset_index_term(elements, &mut facts);
             paths.push(SpecExpressionPath {
                 value: CValue::Pointer(pointer.offset_by_elements(elements, byte_width)),
                 facts,

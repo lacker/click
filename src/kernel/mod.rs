@@ -22,9 +22,11 @@ pub(crate) use assumptions::{
     conditions_equal_ignoring_memories, finite_forall_goal_instances,
     record_implicit_reasoning_provenance, with_search_attempt_rollback,
 };
+pub(crate) use eval::canonical_condition_fact;
 pub(crate) use eval::canonical_load_variable_for_term;
 #[cfg(test)]
 pub(crate) use eval::canonical_load_variable_with_origin;
+pub(crate) use eval::canonicalized_offset_index_term;
 pub(crate) use eval::is_canonical_load_defining_fact;
 pub(crate) use eval::is_canonical_load_variable;
 pub(crate) use eval::offsets_match_modulo_canonical_names;

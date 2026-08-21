@@ -451,14 +451,19 @@ fn exact_proposition_is_available_or_true(
     required: &Proposition,
     available: &[Proposition],
 ) -> bool {
+    // Comparison is by canonical form: a raw load spelling and the
+    // canonical name for the same load are one fact. The canonical form is
+    // deterministic and assumption-free, so the exact policy stays
+    // replay-identical.
+    let required = crate::kernel::canonical_condition_fact(required);
     fn contains(fact: &Proposition, required: &Proposition) -> bool {
-        fact == required
+        crate::kernel::canonical_condition_fact(fact) == *required
             || matches!(fact, Proposition::And(left, right)
                 if contains(left, required) || contains(right, required))
     }
 
-    available.iter().any(|fact| contains(fact, required))
-        || matches!(normalize_proposition(required), SimpProposition::True)
+    available.iter().any(|fact| contains(fact, &required))
+        || matches!(normalize_proposition(&required), SimpProposition::True)
 }
 
 fn segment_contains_pointer_exact(
@@ -624,7 +629,11 @@ fn pointer_offsets_align_exact(
     right: &PointerOffsetTerm,
     available: &[Proposition],
 ) -> bool {
-    exact_proposition_is_available_or_true(&pointer_offset_alignment_goal(left, right), available)
+    crate::kernel::offsets_match_modulo_canonical_names(left, right)
+        || exact_proposition_is_available_or_true(
+            &pointer_offset_alignment_goal(left, right),
+            available,
+        )
 }
 
 fn pointer_element_index_from_base_exact(

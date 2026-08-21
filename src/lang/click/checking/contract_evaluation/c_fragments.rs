@@ -804,6 +804,13 @@ pub(in crate::lang::click) fn offset_pointer_by_elements(
     elements: Bitvector32Term,
     element_width: u32,
 ) -> Pointer {
+    // A loaded index never enters a pointer offset as a `MemoryLoad` term:
+    // the canonical load variable names it, spelling contract-side offsets
+    // exactly as kernel execution does. Names are content-addressed, so no
+    // fact stream is needed here — the defining equation is emitted wherever
+    // the kernel evaluates the same load.
+    let mut discarded_facts = Vec::new();
+    let elements = crate::kernel::canonicalized_offset_index_term(elements, &mut discarded_facts);
     Pointer {
         block: pointer.block,
         offset: add_pointer_offset(
